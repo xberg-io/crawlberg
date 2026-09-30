@@ -299,9 +299,96 @@ async fn hung_render_path_eval_script_is_terminated_and_the_native_worker_recove
 }
 
 #[tokio::test]
+async fn render_refuses_a_proxy_the_clients_cannot_use_instead_of_connecting_directly() {
+    let server = TestServer::start().await;
+    let named = [
+        ("socks5://127.0.0.1:1", Some("socks5")),
+        ("ftp://127.0.0.1:1", Some("ftp")),
+    ];
+    let unnamed = crate::net::proxy::credential_urls::URLS.map(|proxy| (proxy, None));
+    for (proxy, scheme) in named.into_iter().chain(unnamed) {
+        for stealth in [false, true] {
+            let config = NativeBrowserConfig {
+                proxy_url: Some(proxy.to_string()),
+                stealth,
+                ..test_config()
+            };
+            let result = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+                .await
+                .expect("a refused render must return, not hang");
+            assert_eq!(
+                server.accepted.load(Ordering::SeqCst),
+                0,
+                "{proxy} stealth={stealth}: a refused render must not reach the target server"
+            );
+            let message = match result.map(|page| page.final_url) {
+                Err(PageError::InvalidConfig(message)) => message,
+                other => panic!("{proxy} stealth={stealth}: expected a configuration error, got {other:?}"),
+            };
+            match scheme {
+                Some(scheme) => assert!(
+                    message.contains(&format!("'{scheme}'")),
+                    "{proxy} stealth={stealth}: the error must name the scheme, got {message}"
+                ),
+                None => crate::net::proxy::credential_urls::assert_not_shown(proxy, &message),
+            }
+        }
+    }
+
+    let page = render_url(&server.base_url, &test_config())
+        .await
+        .expect("a render with no proxy must succeed");
+    assert!(page.html.contains("Native executor"));
+    assert!(
+        server.accepted.load(Ordering::SeqCst) > 0,
+        "a successful render must be counted, or the zero above proves nothing"
+    );
+}
+
+#[tokio::test]
+async fn render_uses_a_scheme_less_proxy_as_an_http_proxy() {
+    let proxy = TestServer::start().await;
+    let address = proxy
+        .base_url
+        .strip_prefix("http://")
+        .expect("the test server URL is http");
+    let port = address.rsplit(':').next().expect("the address has a port");
+    // ~keep reqwest reads each of these as an HTTP proxy; `localhost` and `operator` are read
+    // ~keep by the url crate as a scheme, so they also need the retry on a missing host.
+    for bare in [
+        address.to_string(),
+        format!("localhost:{port}"),
+        format!("operator:s3cr3t@{address}"),
+    ] {
+        for stealth in [false, true] {
+            let before = proxy.accepted.load(Ordering::SeqCst);
+            let config = NativeBrowserConfig {
+                proxy_url: Some(bare.clone()),
+                stealth,
+                ..test_config()
+            };
+            let page = tokio::time::timeout(Duration::from_secs(30), render_url("http://origin.test/", &config))
+                .await
+                .expect("the render must finish")
+                .unwrap_or_else(|e| panic!("stealth={stealth}: {bare} must work as an HTTP proxy, got {e:?}"));
+            assert!(
+                page.html.contains("Native executor"),
+                "{bare} stealth={stealth}: the page must come from the proxy"
+            );
+            assert!(
+                proxy.accepted.load(Ordering::SeqCst) > before,
+                "{bare} stealth={stealth}: the render must go through the proxy"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn screenshot_content_height_uses_the_dom_scroll_height_when_larger_than_static_hints() {
     let server = TestServer::start().await;
-    let context = create_context(&test_config()).await;
+    let context = create_context(&test_config())
+        .await
+        .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), context);
     navigate_configured(&mut page, &server.base_url, &test_config())
         .await
@@ -368,6 +455,8 @@ async fn render_with_context_leaves_network_events_empty_when_capture_disabled()
 struct TestServer {
     base_url: String,
     max_in_flight: Arc<AtomicUsize>,
+    /// Connections accepted so far.
+    accepted: Arc<AtomicUsize>,
 }
 
 impl TestServer {
@@ -378,12 +467,15 @@ impl TestServer {
         let max_in_flight = Arc::new(AtomicUsize::new(0));
         let current_for_task = current.clone();
         let max_for_task = max_in_flight.clone();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_for_task = accepted.clone();
 
         tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     return;
                 };
+                accepted_for_task.fetch_add(1, Ordering::SeqCst);
                 let current = current_for_task.clone();
                 let max_in_flight = max_for_task.clone();
                 tokio::spawn(async move {
@@ -421,6 +513,7 @@ impl TestServer {
         Self {
             base_url: format!("http://{addr}"),
             max_in_flight,
+            accepted,
         }
     }
 }

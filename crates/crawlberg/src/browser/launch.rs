@@ -89,10 +89,21 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     Ok(())
 }
 
+/// A browser [`launch_or_connect`] launched or connected to, with what the session keeps
+/// until it is gone.
+pub(super) type Launched = (
+    Browser,
+    Handler,
+    Option<UserDataDir>,
+    Option<crate::net::egress::Egress>,
+);
+
 /// Launch a new managed browser or connect to an external CDP endpoint.
-pub(super) async fn launch_or_connect(
-    config: &CrawlConfig,
-) -> Result<(Browser, Handler, Option<UserDataDir>), CrawlError> {
+///
+/// A launch with `browser_profile` opens its page in the browser's own context, which has no
+/// proxy of its own, so under `deny_private` Chrome is launched through the SSRF proxy, handed
+/// back for the session to keep until the browser is gone.
+pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         crate::types::warn_ignored_launch_options(
             &config.browser,
@@ -106,11 +117,22 @@ pub(super) async fn launch_or_connect(
             );
         }
         let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
-        Ok((browser, handler, None))
+        Ok((browser, handler, None, None))
     } else {
+        let mut proxy = crate::proxy::chrome_proxy_for(config)?;
+        let egress = match config.browser_profile {
+            Some(_) => crate::net::egress::Egress::start(&config.ssrf, proxy.as_ref()).await?,
+            None => None,
+        };
+        if let Some(ref egress) = egress {
+            proxy = Some(egress.chrome_proxy());
+        }
         let user_data = resolve_user_data_dir(config)?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::disable_non_proxied_udp(user_data.path())?;
+        }
 
-        let browser_config = build_one_shot_launch_builder(user_data.path(), &config.browser)?
+        let browser_config = build_one_shot_launch_builder(user_data.path(), &config.browser, proxy.as_ref())?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -126,7 +148,7 @@ pub(super) async fn launch_or_connect(
         };
         let (browser, handler, user_data) =
             launched.map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
-        Ok((browser, handler, Some(user_data)))
+        Ok((browser, handler, Some(user_data), egress))
     }
 }
 
@@ -138,6 +160,7 @@ pub(super) async fn launch_or_connect(
 fn build_one_shot_launch_builder(
     user_data_dir: &std::path::Path,
     browser: &crate::types::BrowserConfig,
+    proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
@@ -154,6 +177,7 @@ fn build_one_shot_launch_builder(
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -358,9 +382,108 @@ mod tests {
         let builder = build_one_shot_launch_builder(
             std::path::Path::new("/tmp/browser-rs-test-profile"),
             &crate::types::BrowserConfig::default(),
+            None,
         )
         .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn the_one_shot_launch_routes_chrome_through_the_configured_proxy() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                proxy: Some(crate::types::ProxyConfig {
+                    url: "127.0.0.1:3128".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let proxy = crate::proxy::chrome_proxy_for(&config).expect("a usable proxy");
+        let debug = format!(
+            "{:?}",
+            build_one_shot_launch_builder(
+                std::path::Path::new("/tmp/browser-rs-test-profile"),
+                &config.browser,
+                proxy.as_ref()
+            )
+            .expect("the config names no binary to check")
+        );
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:3128\""),
+            "the render's Chrome must be launched through the proxy: {debug}"
+        );
+        assert!(
+            debug.contains("proxy-bypass-list=<-loopback>"),
+            "loopback requests must not bypass the proxy: {debug}"
+        );
+    }
+
+    #[test]
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
+        let proxy = crate::proxy::chrome_proxy(&crate::types::ProxyConfig {
+            url: "http://127.0.0.1:9".into(),
+            ..Default::default()
+        })
+        .expect("an http proxy is a Chrome proxy");
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
+            ("--proxy-pac-url=http://127.0.0.1:7/p.pac", "127.0.0.1:7/p.pac"),
+            ("--no-proxy-server", "no-proxy-server"),
+            ("--proxy-auto-detect", "proxy-auto-detect"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
+                ..Default::default()
+            };
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
+                build_one_shot_launch_builder(
+                    std::path::Path::new("/tmp/browser-rs-test-profile"),
+                    &browser,
+                    Some(&proxy),
+                )
+            });
+            let debug = format!("{:?}", built.expect("the config names no binary to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            // ~keep A switch with no value has no secret to hide; its name is what the warning prints.
+            if caller_flag.contains('=') {
+                crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+            }
+        }
+    }
+
+    #[test]
+    fn a_caller_proxy_flag_reaches_chrome_when_no_proxy_is_configured() {
+        let browser = crate::types::BrowserConfig {
+            chrome_args: vec![
+                "--proxy-server=http://127.0.0.1:7".to_owned(),
+                "--proxy-bypass-list=*.internal".to_owned(),
+            ],
+            ..Default::default()
+        };
+        let debug = format!(
+            "{:?}",
+            build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), &browser, None)
+                .expect("the config names no binary to check")
+        );
+        for flag in ["proxy-server=http://127.0.0.1:7", "proxy-bypass-list=*.internal"] {
+            assert!(
+                debug.contains(&format!("key: \"{flag}\"")),
+                "without a configured proxy the caller's {flag} must reach Chrome: {debug}"
+            );
+        }
     }
 
     #[test]
@@ -373,6 +496,7 @@ mod tests {
                     chrome_args,
                     ..Default::default()
                 },
+                None,
             )
         });
     }
@@ -402,7 +526,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn dropping_a_one_shot_launchs_profile_directory_stops_its_chrome() {
-        let (browser, handler, user_data) = match launch_or_connect(&CrawlConfig::default()).await {
+        let (browser, handler, user_data, _egress) = match launch_or_connect(&CrawlConfig::default()).await {
             Ok(launched) => launched,
             Err(error) => {
                 eprintln!("skipping: no usable Chrome: {error}");
@@ -567,7 +691,7 @@ mod tests {
     async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
         use tokio_stream::StreamExt;
 
-        let (browser, mut handler, data_dir) = match launch_or_connect(&CrawlConfig::default()).await {
+        let (browser, mut handler, data_dir, egress) = match launch_or_connect(&CrawlConfig::default()).await {
             Ok(launched) => launched,
             Err(error) => {
                 eprintln!("skipping: no usable Chrome: {error}");
@@ -585,6 +709,7 @@ mod tests {
             open_tab: None,
             handler_handle: Some(handler_handle),
             data_dir,
+            egress,
             shutdown_timeout: std::time::Duration::from_secs(5),
         });
 
@@ -610,7 +735,7 @@ mod tests {
             .build()
             .expect("a runtime must build");
         let path = runtime.block_on(async {
-            let (browser, mut handler, data_dir) = match launch_or_connect(&CrawlConfig::default()).await {
+            let (browser, mut handler, data_dir, egress) = match launch_or_connect(&CrawlConfig::default()).await {
                 Ok(launched) => launched,
                 Err(error) => {
                     eprintln!("skipping: no usable Chrome: {error}");
@@ -628,6 +753,7 @@ mod tests {
                 open_tab: None,
                 handler_handle: Some(handler_handle),
                 data_dir,
+                egress,
                 shutdown_timeout: std::time::Duration::from_secs(5),
             });
             Some(path)

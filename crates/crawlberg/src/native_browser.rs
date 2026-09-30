@@ -149,9 +149,8 @@ const DEFAULT_RENDERED_STATUS: u16 = 200;
 ///
 /// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds credentials via
 /// percent-encoded userinfo rather than a naive string splice — a `:`, `@`, or `/` in a
-/// credential can no longer corrupt the authority — and supports any scheme with an
-/// authority component (http, https, socks5, socks5h), not just an `http://`/`https://`
-/// prefix.
+/// credential can no longer corrupt the authority. The config check has already refused
+/// every scheme but http and https for this backend.
 fn resolve_proxy_url(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
     let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
         return Ok(None);
@@ -348,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn a_credential_free_proxy_is_passed_through_unchanged() {
+    fn a_credential_free_proxy_is_returned_as_parsed() {
         let plain = CrawlConfig {
             proxy: Some(proxy("http://proxy:8080", None, None)),
             ..CrawlConfig::default()
@@ -357,7 +356,7 @@ mod tests {
             resolve_proxy_url(&plain)
                 .expect("credential-free proxy must resolve")
                 .as_deref(),
-            Some("http://proxy:8080")
+            Some("http://proxy:8080/")
         );
 
         assert_eq!(
@@ -419,7 +418,7 @@ mod tests {
             resolve_proxy_url(&config)
                 .expect("browser proxy must resolve")
                 .as_deref(),
-            Some("http://browser-proxy:2")
+            Some("http://browser-proxy:2/")
         );
     }
 

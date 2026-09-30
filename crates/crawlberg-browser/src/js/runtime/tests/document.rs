@@ -453,14 +453,15 @@ async fn test_element_from_point_non_numeric_returns_null() {
 fn http_client_round_trips_proxy_url() {
     use crate::net::{CookieJar, HttpClient};
     let jar = std::sync::Arc::new(CookieJar::new());
-    let configured = HttpClient::with_options(jar.clone(), Some("http://proxy.test:8080"));
+    let configured =
+        HttpClient::with_options(jar.clone(), Some("http://proxy.test:8080")).expect("an http proxy must build");
     assert_eq!(
         configured.proxy_url(),
         Some("http://proxy.test:8080"),
         "proxy_url() must expose the value passed to with_options"
     );
 
-    let direct = HttpClient::with_options(jar, None);
+    let direct = HttpClient::with_options(jar, None).expect("no proxy, so the client must build");
     assert_eq!(
         direct.proxy_url(),
         None,
