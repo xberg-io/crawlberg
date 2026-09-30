@@ -10,7 +10,7 @@ use crate::types::{ArticleMetadata, PageMetadata};
 use super::selectors::{
     META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, ROBOTS_META_NAME, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE,
 };
-use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_inline_scheme, has_rel, resolve_url};
+use super::{attr_eq, clean_url, decode_attr_value, fetchable_address, get_attr, get_url_attr, has_rel};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -35,24 +35,45 @@ fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
 /// `article` and `og_locale_alternates` are only folded into the [`PageMetadata`] by
 /// [`MetaAccumulator::finish`] if at least one corresponding tag was seen, so an absent
 /// block stays `None` rather than becoming an empty one. ~keep
-struct MetaAccumulator {
+struct MetaAccumulator<'a> {
     metadata: PageMetadata,
     article: ArticleMetadata,
     has_article: bool,
     og_locale_alternates: Vec<String>,
+    base_url: &'a Url,
 }
 
-impl MetaAccumulator {
-    fn new(metadata: PageMetadata) -> Self {
+impl<'a> MetaAccumulator<'a> {
+    fn new(metadata: PageMetadata, base_url: &'a Url) -> Self {
         Self {
             metadata,
             article: ArticleMetadata::default(),
             has_article: false,
             og_locale_alternates: Vec::new(),
+            base_url,
         }
     }
 
     fn apply(&mut self, name_lower: &str, content: String) {
+        let field = match name_lower {
+            "og:url" => &mut self.metadata.og_url,
+            "og:image" => &mut self.metadata.og_image,
+            "og:video" => &mut self.metadata.og_video,
+            "og:audio" => &mut self.metadata.og_audio,
+            "twitter:image" => &mut self.metadata.twitter_image,
+            _ => return self.apply_text(name_lower, content),
+        };
+        // ~keep An address field holds only an address the crawler can fetch, resolved against the
+        // ~keep page's base URL like every other address on the page. A tag whose address is
+        // ~keep blank or not fetchable is skipped, so it never clears a value an earlier tag set.
+        if let Some(address) =
+            clean_url(Cow::Owned(content)).and_then(|address| fetchable_address(&address, self.base_url))
+        {
+            *field = Some(address.into());
+        }
+    }
+
+    fn apply_text(&mut self, name_lower: &str, content: String) {
         let md = &mut self.metadata;
         match name_lower {
             "description" => md.description = Some(content),
@@ -64,18 +85,13 @@ impl MetaAccumulator {
             "robots" => md.robots = Some(content),
             "og:title" => md.og_title = Some(content),
             "og:type" => md.og_type = Some(content),
-            "og:image" => md.og_image = Some(content),
             "og:description" => md.og_description = Some(content),
-            "og:url" => md.og_url = Some(content),
             "og:site_name" => md.og_site_name = Some(content),
             "og:locale" => md.og_locale = Some(content),
-            "og:video" => md.og_video = Some(content),
-            "og:audio" => md.og_audio = Some(content),
             "og:locale:alternate" => self.og_locale_alternates.push(content),
             "twitter:card" => md.twitter_card = Some(content),
             "twitter:title" => md.twitter_title = Some(content),
             "twitter:description" => md.twitter_description = Some(content),
-            "twitter:image" => md.twitter_image = Some(content),
             "twitter:site" => md.twitter_site = Some(content),
             "twitter:creator" => md.twitter_creator = Some(content),
             "dc.title" => md.dc_title = Some(content),
@@ -144,8 +160,8 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 /// Extract metadata from a parsed HTML document, with regex fallback for malformed content.
 ///
 /// The canonical URL resolves against `base_url`, the document's base URL. A blank `href` gives no
-/// canonical URL: it points at the page itself. Nor does one that resolves to an inline `data:` or
-/// script address.
+/// canonical URL: it points at the page itself. Nor does one whose address the crawler cannot
+/// fetch.
 pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
     let parser = dom.parser();
 
@@ -159,8 +175,8 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
         iter.filter_map(|h| h.get(parser).and_then(|node| node.as_tag()))
             .find(|tag| has_rel(tag, "canonical"))
             .and_then(|tag| get_url_attr(tag, "href"))
-            .map(|href| resolve_url(&href, base_url))
-            .filter(|url| !has_inline_scheme(url))
+            .and_then(|href| fetchable_address(&href, base_url))
+            .map(String::from)
     });
 
     let mut md = PageMetadata {
@@ -176,7 +192,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
         md.html_dir = get_attr(tag, "dir").map(Cow::into_owned);
     }
 
-    let mut accumulator = MetaAccumulator::new(md);
+    let mut accumulator = MetaAccumulator::new(md, base_url);
 
     super::query_tags(dom, SEL_META, |tag, _parser| {
         let name = get_attr(tag, "name")
@@ -375,6 +391,29 @@ mod tests {
     }
 
     #[test]
+    fn canonical_is_none_for_an_address_the_crawler_cannot_fetch() {
+        for href in [
+            "file:///etc/passwd",
+            "blob:https://example.com/x",
+            "file://[bad/x",
+            "http://[bad/x",
+        ] {
+            let md = parse(&format!(r#"<link rel="canonical" href="{href}">"#));
+            assert_eq!(
+                md.canonical_url, None,
+                "a canonical link the crawler can never fetch must be dropped, for {href}"
+            );
+        }
+        let dom = crate::html::parse_html(r#"<link rel="canonical" href="c.html">"#).expect("valid HTML");
+        let blob_base = Url::parse("blob:https://example.com/b").expect("valid URL");
+        assert_eq!(
+            extract_metadata(&dom, "", &blob_base).canonical_url,
+            None,
+            "a relative canonical link under a base that cannot take one does not resolve"
+        );
+    }
+
+    #[test]
     fn plain_named_meta_tags_map_to_their_fields() {
         let md = parse(
             r#"<meta name="description" content="d"><meta name="keywords" content="k">
@@ -407,17 +446,21 @@ mod tests {
         );
         assert_eq!(md.og_title.as_deref(), Some("ot"));
         assert_eq!(md.og_type.as_deref(), Some("oy"));
-        assert_eq!(md.og_image.as_deref(), Some("oi"));
+        assert_eq!(
+            md.og_image.as_deref(),
+            Some("https://example.com/dir/oi"),
+            "an address field resolves against the page base"
+        );
         assert_eq!(md.og_description.as_deref(), Some("od"));
-        assert_eq!(md.og_url.as_deref(), Some("ou"));
+        assert_eq!(md.og_url.as_deref(), Some("https://example.com/dir/ou"));
         assert_eq!(md.og_site_name.as_deref(), Some("os"));
         assert_eq!(md.og_locale.as_deref(), Some("ol"));
-        assert_eq!(md.og_video.as_deref(), Some("ov"));
-        assert_eq!(md.og_audio.as_deref(), Some("oa"));
+        assert_eq!(md.og_video.as_deref(), Some("https://example.com/dir/ov"));
+        assert_eq!(md.og_audio.as_deref(), Some("https://example.com/dir/oa"));
         assert_eq!(md.twitter_card.as_deref(), Some("tc"));
         assert_eq!(md.twitter_title.as_deref(), Some("tt"));
         assert_eq!(md.twitter_description.as_deref(), Some("td"));
-        assert_eq!(md.twitter_image.as_deref(), Some("ti"));
+        assert_eq!(md.twitter_image.as_deref(), Some("https://example.com/dir/ti"));
         assert_eq!(md.twitter_site.as_deref(), Some("ts"));
         assert_eq!(md.twitter_creator.as_deref(), Some("tr"));
         assert_eq!(

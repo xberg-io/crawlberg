@@ -126,7 +126,8 @@ async fn sitemap_urls_from_robots(
 
 /// The URL to fetch for one robots.txt `Sitemap:` directive, resolved against `robots_url`, the
 /// address that served robots.txt after redirects. `None` when `sitemap_ref` cannot be resolved
-/// against it at all, which the caller skips rather than fetching as raw text.
+/// against it at all, which the caller skips rather than fetching as raw text, or resolves to a
+/// scheme other than `http` or `https`, which the crawler cannot fetch.
 ///
 /// ~keep A directive on another host is fetched from that host: the sitemaps.org protocol lets
 /// ~keep robots.txt name a sitemap on another host. The SSRF policy gates the fetch, and seed
@@ -140,7 +141,7 @@ fn resolve_sitemap_directive(robots_url: &str, sitemap_ref: &str) -> Option<Stri
         );
         return None;
     };
-    Some(resolved.into())
+    crate::html::is_fetchable_scheme(&resolved).then(|| resolved.into())
 }
 
 /// Collect URLs from the conventional `/sitemap.xml`, if the origin serves one.
@@ -970,6 +971,42 @@ mod tests {
             vec![format!("{base}/page")],
             "a <loc> that is only a query is dropped for being query-only; one that is only a \
              fragment, or that names the sitemap's own address, is dropped for naming the sitemap itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_drops_a_urlset_loc_the_crawler_cannot_fetch() {
+        let locs = [
+            "file:///etc/passwd",
+            "FILE:///etc/passwd",
+            "blob:https://example.com/x",
+            "data:text/html,x",
+            "javascript:alert(1)",
+            "mailto:a@example.com",
+            "tel:+15550100",
+            "ftp://example.com/x",
+            "ws://example.com/x",
+            "page",
+        ];
+
+        let (base, urls) = map_well_known_urlset(&locs, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/page")],
+            "map reports only http and https addresses from a sitemap"
+        );
+    }
+
+    #[test]
+    fn a_sitemap_directive_the_crawler_cannot_fetch_is_skipped() {
+        for directive in ["file:///etc/sitemap.xml", "ftp://example.com/sitemap.xml", "data:,x"] {
+            let resolved = resolve_sitemap_directive("https://example.com/robots.txt", directive);
+            assert!(resolved.is_none(), "for {directive}, got {resolved:?}");
+        }
+        assert_eq!(
+            resolve_sitemap_directive("https://example.com/robots.txt", "/sitemap.xml").as_deref(),
+            Some("https://example.com/sitemap.xml")
         );
     }
 
