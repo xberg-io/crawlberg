@@ -42,15 +42,30 @@ pub struct StealthHttpClient {
 #[cfg(feature = "stealth")]
 impl StealthHttpClient {
     pub fn new(cookie_jar: Arc<CookieJar>) -> Self {
-        Self::with_proxy(cookie_jar, None)
+        Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()))
     }
 
-    pub fn with_proxy(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Self {
+    /// Build a stealth client that sends every request through `proxy_url`, if given.
+    ///
+    /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used, rather than
+    /// building a client that silently connects directly.
+    pub fn with_proxy(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Result<Self, NetError> {
         Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()))
     }
 
     /// Build a stealth client with an explicit SSRF policy.
-    pub fn with_ssrf(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>, ssrf: Arc<dyn SsrfValidator>) -> Self {
+    ///
+    /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used.
+    pub fn with_ssrf(
+        cookie_jar: Arc<CookieJar>,
+        proxy_url: Option<&str>,
+        ssrf: Arc<dyn SsrfValidator>,
+    ) -> Result<Self, NetError> {
+        let proxy = proxy_url.map(crate::net::proxy::wreq_proxy).transpose()?;
+        Ok(Self::build(cookie_jar, proxy, ssrf))
+    }
+
+    fn build(cookie_jar: Arc<CookieJar>, proxy: Option<wreq::Proxy>, ssrf: Arc<dyn SsrfValidator>) -> Self {
         let cert_store = wreq::tls::trust::CertStore::builder()
             .set_default_paths()
             .build()
@@ -67,8 +82,8 @@ impl StealthHttpClient {
             .timeout(Duration::from_secs(30))
             .redirect(wreq::redirect::Policy::none());
 
-        match proxy_url.and_then(|proxy| wreq::Proxy::all(proxy).ok()) {
-            Some(p) => builder = builder.proxy(p),
+        match proxy {
+            Some(proxy) => builder = builder.proxy(proxy),
             // ~keep Connect only to the addresses the policy resolved; see `ValidatorResolver`.
             // ~keep With a proxy, the proxy resolves the target.
             None => builder = builder.dns_resolver(ValidatorResolver::new(ssrf.clone())),
@@ -191,9 +206,12 @@ impl StealthHttpClient {
 
 #[cfg(all(test, feature = "stealth"))]
 mod tests {
-    use super::*;
-    use tokio::io::AsyncReadExt;
+    use std::sync::Mutex;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    use super::*;
 
     #[tokio::test]
     async fn a_url_with_userinfo_is_refused_before_the_network() {
@@ -233,7 +251,8 @@ mod tests {
         let (port, seen) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
         let policy = Arc::new(RebindingPolicy::default());
-        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone())
+            .expect("no proxy, so the client must build");
 
         client
             .fetch(&format!("http://localhost:{port}/").parse::<Url>().expect("valid URL"))
@@ -261,7 +280,8 @@ mod tests {
         let policy = Arc::new(RebindingPolicy::default());
         // ~keep A proxy named by host: a client that asked the policy for it would be refused.
         let proxy = format!("http://localhost:{}", proxy.port());
-        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone())
+            .expect("an http proxy must build");
 
         client
             .fetch(&"http://example.invalid/".parse::<Url>().expect("valid URL"))
@@ -289,9 +309,74 @@ mod tests {
         }
     }
 
+    fn proxied_client(proxy: &str) -> Result<StealthHttpClient, NetError> {
+        StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(proxy), Arc::new(AllowAll))
+    }
+
+    #[test]
+    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
+        for proxy in crate::net::proxy::credential_urls::URLS {
+            let Err(err) = proxied_client(proxy) else {
+                panic!("{proxy} must refuse the client, not build one that connects directly");
+            };
+            assert!(matches!(err, NetError::InvalidProxy(_)), "{proxy}: got {err:?}");
+            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err.to_string());
+        }
+    }
+
+    #[test]
+    fn a_socks5_or_other_unsupported_proxy_scheme_refuses_the_client() {
+        for (proxy, scheme) in [("socks5://proxy.test:1080", "socks5"), ("ftp://proxy.test:21", "ftp")] {
+            let Err(err) = proxied_client(proxy) else {
+                panic!("{proxy} must refuse the client");
+            };
+            assert!(
+                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref s)) if s == scheme),
+                "{proxy}: got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_http_proxy_carries_the_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let read = socket.read(&mut buf).await.unwrap_or(0);
+            log.lock()
+                .expect("lock")
+                .push(String::from_utf8_lossy(&buf[..read]).to_string());
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia-proxy")
+                .await;
+        });
+        let client = proxied_client(&proxy).expect("an http proxy must build");
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL")),
+        )
+        .await
+        .expect("the fetch must finish")
+        .expect("the proxy answers, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        let seen = seen.lock().expect("lock");
+        assert!(
+            seen.first()
+                .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
+            "the proxy must receive the absolute-form request, got {seen:?}"
+        );
+    }
+
     /// Serves `response` to every connection on a fresh loopback port, recording each request head.
     async fn recording_server(response: String) -> (std::net::SocketAddr, Arc<std::sync::Mutex<Vec<String>>>) {
-        use tokio::io::AsyncWriteExt;
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -372,7 +457,8 @@ mod tests {
             other.port()
         );
         let (start, start_requests) = recording_server(redirect).await;
-        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll))
+            .expect("no proxy, so the client must build");
         *client.origin_headers.write().await = Some(OriginHeaders {
             host: "127.0.0.1".to_owned(),
             headers: vec![("Authorization".to_owned(), "Basic b3JpZ2luOmNyZWQ=".to_owned())],

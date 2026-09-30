@@ -18,6 +18,7 @@ use self::navigation::page_fetch;
 use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
+use crate::net::egress::Egress;
 use crate::net::ssrf::validate_url;
 use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext, Watch};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
@@ -228,11 +229,9 @@ async fn acquire_pooled_page(
     config: &CrawlConfig,
     pool: &BrowserPool,
 ) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>), CrawlError> {
+    let proxy = crate::proxy::chrome_proxy_for(config)?;
     if config.browser.session_affinity {
-        let session_key = crate::browser_session_pool::SessionKey::from_url(
-            url,
-            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-        )?;
+        let session_key = session_key(url, proxy.as_ref())?;
         let session_pool = config
             .browser_session_pool
             .as_deref()
@@ -243,7 +242,21 @@ async fn acquire_pooled_page(
         }
     }
 
-    Ok(pool.acquire_page().await?.into_parts())
+    Ok(pool
+        .acquire_page_through(proxy.as_ref(), Some(&config.ssrf))
+        .await?
+        .into_parts())
+}
+
+/// The session-affinity key of a page for `url` opened through `proxy`.
+///
+/// ~keep Keyed on the proxy the page's browser context uses, so a parked page is never handed
+/// ~keep to a crawl with a different proxy.
+fn session_key(
+    url: &str,
+    proxy: Option<&crate::proxy::ChromeProxy>,
+) -> Result<crate::browser_session_pool::SessionKey, CrawlError> {
+    crate::browser_session_pool::SessionKey::from_url(url, proxy.map(|p| p.server.as_str()))
 }
 
 /// Put a pooled page under its browser's SSRF check.
@@ -274,10 +287,8 @@ async fn release_pooled_page(
 ) {
     if config.browser.session_affinity
         && reusable
-        && let Ok(session_key) = crate::browser_session_pool::SessionKey::from_url(
-            url,
-            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-        )
+        && let Ok(proxy) = crate::proxy::chrome_proxy_for(config)
+        && let Ok(session_key) = session_key(url, proxy.as_ref())
         && let Some(session_pool) = config.browser_session_pool.as_deref()
     {
         tracing::debug!("parking a pooled browser page for session reuse");
@@ -318,11 +329,12 @@ async fn one_shot_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let (browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
-        Ok(Ok(launched)) => launched,
-        Ok(Err(error)) => return Err(error),
-        Err(_) => return Err(overall_deadline_error(overall_timeout)),
-    };
+    let (browser, mut handler, data_dir, egress) =
+        match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
+            Ok(Ok(launched)) => launched,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => return Err(overall_deadline_error(overall_timeout)),
+        };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
     let mut session = OneShotSession {
@@ -331,6 +343,7 @@ async fn one_shot_fetch(
         open_tab: None,
         handler_handle: Some(handler_handle),
         data_dir,
+        egress,
         shutdown_timeout: config.browser.shutdown_timeout,
     };
 
@@ -339,7 +352,9 @@ async fn one_shot_fetch(
         let (page, watch) = session.open_watched_page(config).await?;
         let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot).await;
         watch.close().await;
-        result
+        let mut result = result?;
+        crate::net::egress::add_refused(&mut result.refused, session.egress_refused().await);
+        Ok(result)
     })
     .await;
 
@@ -371,12 +386,16 @@ struct OneShotSession {
     open_tab: Option<TargetId>,
     handler_handle: Option<JoinHandle<()>>,
     data_dir: Option<UserDataDir>,
+    /// The SSRF proxy a `browser_profile` Chrome was launched through. It stops after the
+    /// browser, so a late connection meets a refusal, never a closed port.
+    egress: Option<crate::net::egress::Egress>,
     shutdown_timeout: Duration,
 }
 
 impl OneShotSession {
     /// Start the browser's SSRF check, open this fetch's tab, recording it for teardown, and
-    /// hand back a handle to it with its watch.
+    /// hand back a handle to it with its watch. With `browser.endpoint`, the tab opens in a
+    /// browser context made with the crawl's proxy.
     async fn open_watched_page(&mut self, config: &CrawlConfig) -> Result<(chromiumoxide::Page, Watch), CrawlError> {
         let browser = self.browser.as_ref().expect("browser is taken only by Drop");
         let firewall = BrowserFirewall::start(
@@ -386,10 +405,33 @@ impl OneShotSession {
         )
         .await?;
         let firewall = self.firewall.insert(firewall);
-        let page = firewall.handle().new_page().await?;
+        // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
+        // ~keep that flag, so there the page's own browser context is made with the proxy. Under
+        // ~keep `deny_private` the context goes through the SSRF proxy, which leaves through it.
+        let proxy = if config.browser.endpoint.is_some() || config.ssrf.deny_private {
+            crate::proxy::chrome_proxy_for(config)?
+        } else {
+            None
+        };
+        let sockets = crate::net::egress::socket_policy(
+            &config.ssrf,
+            config.browser.endpoint.as_deref(),
+            &std::sync::Once::new(),
+        );
+        let page = firewall.handle().new_page(proxy.as_ref(), sockets).await?;
         self.open_tab = Some(page.target_id().clone());
         let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
         Ok((page, watch))
+    }
+
+    /// Every `host:port` the SSRF proxies of this session refused. The session has one page,
+    /// so each is that page's.
+    async fn egress_refused(&self) -> Vec<String> {
+        let mut refused = self.egress.as_ref().map(Egress::refused).unwrap_or_default();
+        if let Some(ref firewall) = self.firewall {
+            refused.extend(firewall.handle().egress_refused().await);
+        }
+        refused
     }
 }
 
@@ -408,6 +450,7 @@ impl Drop for OneShotSession {
         };
         let firewall = self.firewall.take();
         let data_dir = self.data_dir.take();
+        let egress = self.egress.take();
         let shutdown_timeout = self.shutdown_timeout;
 
         match tokio::runtime::Handle::try_current() {
@@ -424,6 +467,7 @@ impl Drop for OneShotSession {
                         Some(browser) => release_browser(browser, handler_handle, cleanup, shutdown_timeout).await,
                         None => handler_handle.abort(),
                     }
+                    drop(egress);
                     drop(data_dir);
                 });
             }

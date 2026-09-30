@@ -233,6 +233,7 @@ async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
 pub struct HttpClient {
     client: tokio::sync::OnceCell<Client>,
     proxy_url: Option<String>,
+    proxy: Option<reqwest::Proxy>,
     /// SSRF policy applied to the initial URL and every redirect hop.
     pub ssrf: Arc<dyn SsrfValidator>,
     /// Whether `file://` URLs may be fetched. Off unless the embedder opts in.
@@ -255,26 +256,46 @@ impl HttpClient {
     }
 
     pub fn with_cookie_jar(cookie_jar: Arc<CookieJar>) -> Self {
-        Self::with_options(cookie_jar, None)
+        Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
-    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Self {
+    /// Build a client that sends every request through `proxy_url`, if given.
+    ///
+    /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used, rather than
+    /// building a client that silently connects directly.
+    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Result<Self, NetError> {
         Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
     /// Build a client with an explicit SSRF policy.
     ///
     /// `crawlberg` uses this to inject the crawl's configured policy — including its
-    /// allowlist — in place of the deny-list-only default.
+    /// allowlist, in place of the deny-list-only default. Fails with
+    /// [`NetError::InvalidProxy`] when the proxy cannot be used.
     pub fn with_ssrf(
         cookie_jar: Arc<CookieJar>,
         proxy_url: Option<&str>,
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
+    ) -> Result<Self, NetError> {
+        let proxy = match proxy_url {
+            Some(url) => Some((url.to_string(), crate::net::proxy::reqwest_proxy(url)?)),
+            None => None,
+        };
+        Ok(Self::build(cookie_jar, proxy, ssrf, allow_file_access))
+    }
+
+    fn build(
+        cookie_jar: Arc<CookieJar>,
+        proxy: Option<(String, reqwest::Proxy)>,
+        ssrf: Arc<dyn SsrfValidator>,
+        allow_file_access: bool,
     ) -> Self {
+        let (proxy_url, proxy) = proxy.unzip();
         HttpClient {
             client: tokio::sync::OnceCell::new(),
-            proxy_url: proxy_url.map(|s| s.to_string()),
+            proxy_url,
+            proxy,
             ssrf,
             allow_file_access,
             cookie_jar,
@@ -297,13 +318,9 @@ impl HttpClient {
                     .timeout(Duration::from_secs(30))
                     .danger_accept_invalid_certs(false);
 
-                let proxy = self
-                    .proxy_url
-                    .as_deref()
-                    .and_then(|proxy| reqwest::Proxy::all(proxy).ok());
-                let proxied = proxy.is_some();
-                if let Some(p) = proxy {
-                    builder = builder.proxy(p);
+                let proxied = self.proxy.is_some();
+                if let Some(ref proxy) = self.proxy {
+                    builder = builder.proxy(proxy.clone());
                 }
                 builder = with_policy_resolver(builder, proxied, &self.ssrf);
 
@@ -575,6 +592,10 @@ pub enum NetError {
     /// Refused by the SSRF policy, as opposed to failing in transport.
     #[error("SSRF policy denied the request: {0}")]
     SsrfDenied(String),
+
+    /// The configured proxy cannot be used, so no client was built.
+    #[error("invalid proxy: {0}")]
+    InvalidProxy(#[from] crate::net::proxy::ProxyError),
 }
 
 #[cfg(test)]
@@ -659,6 +680,7 @@ mod tests {
 
     fn client_with(validator: Arc<RecordingValidator>) -> HttpClient {
         HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, validator, false)
+            .expect("no proxy, so the client must build")
     }
 
     #[tokio::test]
@@ -815,7 +837,8 @@ mod tests {
         let jar = Arc::new(CookieJar::new());
         let url: Url = base.parse().expect("valid URL");
         jar.set_cookie("session=abc", &url);
-        let client = HttpClient::with_ssrf(jar, None, Arc::new(RecordingValidator::default()), false);
+        let client = HttpClient::with_ssrf(jar, None, Arc::new(RecordingValidator::default()), false)
+            .expect("no proxy, so the client must build");
         client
             .set_extra_headers(HashMap::from([
                 ("x-custom".to_string(), "yes".to_string()),
@@ -842,7 +865,8 @@ mod tests {
         .await;
         let jar = Arc::new(CookieJar::new());
         let url: Url = base.parse().expect("valid URL");
-        let client = HttpClient::with_ssrf(jar.clone(), None, Arc::new(RecordingValidator::default()), false);
+        let client = HttpClient::with_ssrf(jar.clone(), None, Arc::new(RecordingValidator::default()), false)
+            .expect("no proxy, so the client must build");
         client.fetch(&url).await.expect("fetch must succeed");
 
         assert_eq!(jar.get_cookie_header(&url), "got=1");
@@ -1058,6 +1082,60 @@ mod tests {
         assert_eq!(client.active_requests(), 0);
     }
 
+    fn proxied_client(proxy: &str) -> Result<HttpClient, NetError> {
+        HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(proxy),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+    }
+
+    #[test]
+    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
+        for proxy in crate::net::proxy::credential_urls::URLS {
+            let Err(err) = proxied_client(proxy) else {
+                panic!("{proxy} must refuse the client, not build one that connects directly");
+            };
+            assert!(matches!(err, NetError::InvalidProxy(_)), "{proxy}: got {err:?}");
+            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err.to_string());
+        }
+    }
+
+    #[test]
+    fn a_socks5_or_other_unsupported_proxy_scheme_refuses_the_client() {
+        for (proxy, scheme) in [("socks5://proxy.test:1080", "socks5"), ("ftp://proxy.test:21", "ftp")] {
+            let Err(err) = proxied_client(proxy) else {
+                panic!("{proxy} must refuse the client");
+            };
+            assert!(
+                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref s)) if s == scheme),
+                "{proxy}: got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_http_proxy_carries_the_request() {
+        let (proxy, requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nvia-proxy"]).await;
+        let client = proxied_client(&proxy).expect("an http proxy must build");
+
+        let response = client
+            .fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy answers, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        let requests = requests.lock().expect("lock");
+        assert!(
+            requests
+                .first()
+                .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
+            "the proxy must receive the absolute-form request, got {requests:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_rebinding_host_never_reaches_the_address_the_policy_denies() {
         use crate::net::resolver::tests::{RebindingPolicy, denied_server};
@@ -1066,7 +1144,8 @@ mod tests {
         let (port, seen) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
         let policy = Arc::new(RebindingPolicy::default());
-        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false);
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
+            .expect("no proxy, so the client must build");
 
         let err = client
             .fetch(&format!("http://localhost:{port}/").parse::<Url>().expect("valid URL"))
@@ -1110,7 +1189,8 @@ mod tests {
         );
         let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
         let policy = Arc::new(RebindingPolicy::default());
-        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false);
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
+            .expect("no proxy, so the client must build");
 
         client
             .fetch(&start.parse::<Url>().expect("valid URL"))
@@ -1139,7 +1219,8 @@ mod tests {
         let policy = Arc::new(RebindingPolicy::default());
         // ~keep A proxy named by host: a client that asked the policy for it would be refused.
         let proxy = proxy.replacen("127.0.0.1", "localhost", 1);
-        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone(), false);
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone(), false)
+            .expect("an http proxy must build");
 
         client
             .fetch(&"http://example.invalid/".parse::<Url>().expect("valid URL"))

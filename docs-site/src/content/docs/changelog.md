@@ -12,6 +12,20 @@ title: "Changelog"
   such as a challenge page, needs a higher limit. In `crawlberg-browser`, `NativeBrowserConfig`
   gains `max_redirects` and `RenderedPage` gains `redirects`, so a struct literal of either needs
   the new field; `NativeBrowserConfig::default()` sets no limit. (#117, #193, #115)
+- **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
+  `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
+  supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
+  through such a proxy failed at connect time. The same holds for `browser.proxy` with the native
+  backend. Chrome speaks SOCKS, so with the Chrome backend `browser.proxy` still takes `socks4://`
+  and `socks5://`. Chrome has no `socks5h` scheme. Use an `http` or `https` proxy everywhere else.
+- **With the Chrome backend, the config check refuses a crawl-wide proxy with credentials.** A
+  Chrome render uses `proxy` when `browser.proxy` is not set, and Chrome cannot use a proxy with a
+  username or password. Such a config now fails `CrawlConfig::validate` instead of every browser
+  render. The HTTP client still takes the proxy. To keep it, set `browser.proxy` to a proxy that
+  needs no credentials, use the native backend, or set `browser.mode` to `never`. A build without
+  the Chrome backend is not affected.
+- **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the browser
+  cannot use, such as `gopher://`, now fails the config check instead of the render. (#249)
 
 - **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
   of such a page returned the rendered HTML with status 200. It now returns the same error that
@@ -173,6 +187,58 @@ title: "Changelog"
 
 ### Fixed
 
+- **Chrome's WebSocket, WebTransport and WebRTC traffic, and a second DNS answer, reached addresses
+  the SSRF policy refuses.** The request check sees only HTTP requests, so a WebSocket opened a
+  connection to a denied address, WebTransport and WebRTC sent UDP datagrams to one, and Chrome
+  could resolve a checked host name again to a different address. With `deny_private` on, Chrome
+  now sends every connection through a small proxy inside crawlberg. The proxy resolves each host
+  once, checks the addresses against the SSRF policy, and connects only to an address that passed,
+  so Chrome never resolves a name itself. This covers scrape, crawl, `interact`, pooled browsers,
+  a `browser_profile` session and a `browser.endpoint` Chrome on this machine. A refused
+  connection is listed as `host:port` in the result's refused URLs for a one-shot scrape and for
+  `interact`; in a browser pool it is logged with its host and port. With an upstream proxy, the
+  proxy sends a host name to the upstream unresolved and checks only address literals, as the
+  HTTP client does, so the upstream resolves the name. Chrome's requests reach an `http` or
+  `https` upstream as they did before. A `browser.endpoint` Chrome on another machine cannot use
+  the proxy: its HTTP requests are still checked, and crawlberg logs one warning that its sockets
+  are not. With `deny_private` on, a launched Chrome sends WebRTC UDP only through a proxy, which
+  stops it; a pooled Chrome always does, because one pool serves crawls with either setting.
+  (#165, #178, #452)
+- **The native browser backend could ignore its proxy and connect directly.** A proxy URL that
+  did not parse, or one whose scheme the HTTP client cannot speak, such as `ftp://`, was dropped
+  without an error, and every request of the render then went direct. A caller who relied on the
+  proxy for egress control got neither the proxy nor a failure. The backend now checks the proxy
+  URL when it builds its clients and fails the render with a configuration error that names the
+  reason. The error never contains the URL, so credentials in it cannot leak. The same check
+  covers page-initiated fetches and dynamic module imports, whose errors printed the proxy URL,
+  credentials included. (#237)
+- **A proxy address without a scheme works everywhere the HTTP client takes it.** An address
+  such as `127.0.0.1:3128`, `localhost:3128` or `user:pass@proxy:3128` is read as an `http://`
+  proxy, exactly as the HTTP client reads it. The config check refused it for `proxy` (#420),
+  the native backend refused it in `browser.proxy` once a username or password was set (#421),
+  and the stealth mode ignored it and connected directly.
+- **Chrome renders ignored the proxy and connected directly.** With the Chrome backend, a render
+  launched Chrome without the proxy, so a caller who relied on `browser.proxy` or `proxy` for
+  egress control got direct connections with no error. Only the interact path passed it. Every
+  Chrome launch now takes the proxy, read the same way as the HTTP client reads it. A shared
+  browser pool, or a Chrome reached through `browser.endpoint`, opens each page in a browser
+  context made with that crawl's proxy, so crawls with different proxies share one Chrome and
+  each goes through its own proxy. Requests to a loopback address go through the proxy too;
+  Chrome sends them direct by default. (#434)
+- **A proxy flag in `chrome_args` replaced the configured proxy on a launched Chrome.** With
+  `browser.proxy` or `proxy` set, a `--proxy-server` in `browser.chrome_args` sent a one-shot
+  render or an interact session through the caller's proxy, and a `--proxy-bypass-list` sent
+  loopback requests direct. `--no-proxy-server`, `--proxy-pac-url` and `--proxy-auto-detect` did
+  the same, because Chrome reads them before `--proxy-server`. A pooled or connected Chrome used
+  the configured proxy. Every Chrome now uses the configured proxy. Crawlberg drops each of these
+  flags with a warning that names the flag but not its value, and loopback requests still go
+  through the proxy.
+- **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
+  launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
+  proxy with `username` and `password` made no connection and failed without saying why. The
+  Chrome backend now refuses a proxy with credentials, with an error that says so and does not
+  show them. Chrome gets the address as the HTTP client reads it, so `127.0.0.1:3128` and
+  `http:proxy:3128` now work. (#435)
 - **An `interact` action reported success while a request it sent was refused.** A paused
   request counted toward its page only once the check had matched it to the page. For a frame the
   check does not know yet, that match reads the frame tree of every live page, and it can take

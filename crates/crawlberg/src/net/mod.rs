@@ -7,6 +7,8 @@ pub(crate) mod browser_policy;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cookie;
 pub(crate) mod credentials;
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) mod egress;
 pub(crate) mod origin;
 pub mod redact;
 // ~keep `reqwest::dns::Resolve` only exists under reqwest's hyper backend; wasm32 has no

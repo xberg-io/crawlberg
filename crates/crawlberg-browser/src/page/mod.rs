@@ -94,27 +94,18 @@ impl Page {
         // ~keep Playwright expects the main frame id to equal target id; diverging detaches the frame.
         let frame_id = id.clone();
         #[cfg(feature = "stealth")]
-        let stealth_client = if context.stealth {
-            // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
-            // ~keep Share the plain client's SSRF policy: the stealth path is an
-            // alternate transport, not an alternate policy.
-            let stealth = StealthHttpClient::with_ssrf(
-                context.cookie_jar.clone(),
-                context.proxy_url.as_deref(),
-                http_client.ssrf.clone(),
-            );
-            // ~keep The scoped headers are set on the context's client before any page exists,
-            // ~keep so they are already there to copy; the stealth client must scope them the same way.
-            if let (Ok(source), Ok(mut target)) = (
+        let stealth_client = context.stealth_client.clone();
+        // ~keep The scoped headers are set on the context's client before any page exists,
+        // ~keep so they are already there to copy; the stealth client must scope them the same way.
+        #[cfg(feature = "stealth")]
+        if let Some(stealth) = &stealth_client
+            && let (Ok(source), Ok(mut target)) = (
                 http_client.origin_headers.try_read(),
                 stealth.origin_headers.try_write(),
-            ) {
-                target.clone_from(&source);
-            }
-            Some(Arc::new(stealth))
-        } else {
-            None
-        };
+            )
+        {
+            target.clone_from(&source);
+        }
 
         Page {
             id,
@@ -562,11 +553,16 @@ pub enum PageError {
 
     #[error("Too many redirects (limit {0})")]
     TooManyRedirects(usize),
+
+    /// The render configuration cannot be used, so nothing was fetched.
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 }
 
 impl From<NetError> for PageError {
     fn from(e: NetError) -> Self {
         match e {
+            NetError::InvalidProxy(reason) => PageError::InvalidConfig(reason.to_string()),
             // ~keep Both variants print "Network error: "; keep one.
             NetError::Network(message) => PageError::NetworkError(message),
             other => PageError::NetworkError(other.to_string()),
