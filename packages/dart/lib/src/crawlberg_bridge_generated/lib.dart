@@ -1047,7 +1047,9 @@ class CrawlConfig {
 
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
   /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-  /// than raised as `CrawlError`. Default `false` preserves the historical
+  /// than raised as `CrawlError`. A WAF block reports the status of the refused
+  /// response when it is a 4xx or 5xx, and 403 when the block page came with a
+  /// 2xx status. Default `false` preserves the historical
   /// throw-on-error contract for direct fetches. Independently of this flag,
   /// 404s reached at the end of a redirect chain are *always* surfaced softly —
   /// the user opted into redirect-following, so receiving a 404 there is part of
@@ -1081,8 +1083,17 @@ class CrawlConfig {
   /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
   /// `path`. Defaults to `false`, matching path only: a pattern anchored with `$` (e.g.
   /// `/feed/?$`) changes meaning once the query joins the matched text, so this must stay
-  /// opt-in rather than silently changing what an existing config matches.
+  /// opt-in rather than silently changing what an existing config matches. Has no effect
+  /// when [`Self::path_patterns_match_url`] is `true`.
   final bool pathPatternsMatchQuery;
+
+  /// Whether `include_paths`/`exclude_paths` match against the full URL,
+  /// `scheme://host[:port]/path?query`, so a pattern can scope by host. Defaults to `false`.
+  /// When `true` it takes precedence over [`Self::path_patterns_match_query`]: the query is
+  /// part of the full URL whatever that flag says. The matched text never contains a
+  /// `user:password@`, a fragment or a default port, and the host is in punycode
+  /// (`bücher.de` is matched as `xn--bcher-kva.de`).
+  final bool pathPatternsMatchUrl;
 
   /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
   /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
@@ -1291,6 +1302,7 @@ class CrawlConfig {
     required this.includePaths,
     required this.excludePaths,
     required this.pathPatternsMatchQuery,
+    required this.pathPatternsMatchUrl,
     required this.dedupIncludeQuery,
     required this.stripTrackingParams,
     required this.trackingParams,
@@ -1349,6 +1361,7 @@ class CrawlConfig {
       includePaths.hashCode ^
       excludePaths.hashCode ^
       pathPatternsMatchQuery.hashCode ^
+      pathPatternsMatchUrl.hashCode ^
       dedupIncludeQuery.hashCode ^
       stripTrackingParams.hashCode ^
       trackingParams.hashCode ^
@@ -1409,6 +1422,7 @@ class CrawlConfig {
           includePaths == other.includePaths &&
           excludePaths == other.excludePaths &&
           pathPatternsMatchQuery == other.pathPatternsMatchQuery &&
+          pathPatternsMatchUrl == other.pathPatternsMatchUrl &&
           dedupIncludeQuery == other.dedupIncludeQuery &&
           stripTrackingParams == other.stripTrackingParams &&
           trackingParams == other.trackingParams &&

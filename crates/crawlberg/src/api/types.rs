@@ -47,10 +47,10 @@ pub struct CrawlRequest {
     #[serde(default)]
     #[schema(example = 100)]
     pub max_pages: Option<usize>,
-    /// URL patterns to include (regex).
+    /// URL patterns to include (regex). A pattern with look-around or a backreference is refused.
     #[serde(default)]
     pub include_paths: Option<Vec<String>>,
-    /// URL patterns to exclude (regex).
+    /// URL patterns to exclude (regex). A pattern with look-around or a backreference is refused.
     #[serde(default)]
     pub exclude_paths: Option<Vec<String>>,
     /// Whether to extract only the main content.

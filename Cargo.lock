@@ -1191,10 +1191,12 @@ dependencies = [
  "chromiumoxide",
  "chrono",
  "crawlberg-browser",
+ "crawlberg-robots",
  "criterion 0.8.2",
  "dashmap 6.2.1",
  "dirs",
  "encoding_rs 0.8.42",
+ "fancy-regex",
  "fast-socks5",
  "flate2",
  "futures",
@@ -1210,6 +1212,7 @@ dependencies = [
  "icu_normalizer",
  "idna",
  "ipnet",
+ "libc",
  "liter-llm",
  "memchr",
  "minijinja",
@@ -1221,8 +1224,10 @@ dependencies = [
  "proptest",
  "quick-xml 0.42.0",
  "regex",
+ "regex-syntax",
  "reqwest",
  "rmcp",
+ "rustix 1.1.5",
  "rustls",
  "rustls-platform-verifier",
  "schemars",
@@ -1230,6 +1235,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2",
+ "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -1261,6 +1267,7 @@ version = "1.8.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "crawlberg-robots",
  "cssparser",
  "deno_core",
  "deno_error",
@@ -1393,6 +1400,10 @@ dependencies = [
  "serde_json",
  "tokio",
 ]
+
+[[package]]
+name = "crawlberg-robots"
+version = "1.8.0"
 
 [[package]]
 name = "crawlberg-swift"
@@ -2186,6 +2197,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

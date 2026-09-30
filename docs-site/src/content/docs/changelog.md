@@ -61,11 +61,19 @@ title: "Changelog"
   pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
   without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
   (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
-  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
-  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
-  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
-  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
-  `--enable-features` values with commas. (#79, #80)
+  `--user-data-dir` in any form, `--headless=new` included. `BrowserPool::new` still accepts the
+  config: the refusal comes when the pool launches Chrome, as an error from `warm` and
+  `acquire_page` that names `BrowserPoolConfig.chrome_args`. Write each flag once, as `--flag` or
+  `--flag=value` with a lowercase name, and join several `--enable-features` values with commas.
+  (#79, #80)
+
+- **`BrowserProfile::chrome_args()` is removed.** It returned a single `--user-data-dir=<path>`
+  flag meant for a caller's `chrome_args` list, and `chrome_args` now refuses `--user-data-dir` in
+  any form, so the method had no valid return value left. Nothing in crawlberg ever called it: a
+  profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
+  already set the launch's `--user-data-dir` directly. Code that called
+  `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
+  `CrawlConfig.browser_profile` and let crawlberg apply it. (#254)
 
 - **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
   constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
@@ -129,6 +137,27 @@ title: "Changelog"
   `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
   `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
 
+- **`CrawlConfig` gained `path_patterns_match_url`, which older versions reject.** The field is
+  always serialised, and `CrawlConfig` already carries `#[serde(deny_unknown_fields)]`, so **a config
+  serialised by this version is rejected by every older crawlberg**, even when the value is
+  `false`. The break is one-directional: an older config still loads here, because the field
+  defaults to `false`.
+
+  What this affects:
+
+  - A config serialised on one crawlberg and read by another. Upgrade the readers before, or
+    with, the writers.
+  - Any binding that round-trips a config through JSON across the FFI boundary
+    (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
+    can be at different versions.
+
+- **`metadata.og_url`, `og_image`, `og_video`, `og_audio` and `twitter_image` are now absolute
+  `http` or `https` URLs, or absent.** Each field was the meta tag's `content` as the page wrote
+  it, so `<meta property="og:image" content="/img/hero.png">` gave `/img/hero.png`, and a
+  `javascript:` or `file:` address came back unchanged. Each field now resolves against the page's
+  base URL, as the canonical URL does, and is absent when the result is not an `http` or `https`
+  address. If your code joins a relative address to the page URL, remove that step. (#312)
+
 ### Added
 
 - **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
@@ -143,6 +172,11 @@ title: "Changelog"
   `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
   warning give the number of flags, not their values, because a flag value can carry a
   credential. (#79, #80)
+
+- `CrawlConfig.path_patterns_match_url` matches `include_paths`/`exclude_paths` against the full
+  URL, `scheme://host[:port]/path?query`, so a pattern can scope by host. The matched text leaves
+  out any userinfo and the fragment, and the host is in punycode. It defaults to `false` and takes
+  precedence over `path_patterns_match_query`. (#78)
 
 ### Fixed
 
@@ -198,6 +232,13 @@ title: "Changelog"
   Chrome backend now refuses a proxy with credentials, with an error that says so and does not
   show them. Chrome gets the address as the HTTP client reads it, so `127.0.0.1:3128` and
   `http:proxy:3128` now work. (#435)
+- **An `interact` action reported success while a request it sent was refused.** A paused
+  request counted toward its page only once the check had matched it to the page. For a frame the
+  check does not know yet, that match reads the frame tree of every live page, and it can take
+  longer than the 25 ms grace after an action. The action then ended with nothing in flight and
+  reported success, and the refusal was charged to no action at all. A result's
+  `ssrf_refused_urls` could miss such a request for the same reason. The request itself was always
+  refused. A paused request now counts from the moment the check receives the pause. (#192)
 
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
   a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
@@ -268,6 +309,120 @@ title: "Changelog"
   as a warning, then one warning reports the count, so a page cannot flood the log. This applies
   to both browser backends, for scrape, crawl and `interact`.
 
+- **Feeds, hreflang alternates, canonical links and icons reported `file:` and `blob:` addresses.**
+  They still used the older check from #307, which drops only `data:`, `javascript:` and
+  `vbscript:` addresses, so a `file:///etc/passwd` feed, hreflang or canonical link, or a `file:` or
+  `blob:` icon, was still reported, though the crawler can never fetch it. Feeds, hreflang
+  alternates and canonical links now use the same rule as the links list, images and asset
+  discovery: only `http` and `https` addresses are reported. Icons use that rule too, but keep
+  #307's exception for an inline `data:` address: a `data:` icon is a real, usable icon that needs
+  no fetch, unlike a `file:` or `blob:` address, so it still comes back. (#472)
+
+- **The links list, images and asset discovery reported `file:` and `blob:` addresses.** A
+  `file:///etc/passwd` link, a `<img src="file:///x.png">`, or a stylesheet or script with a
+  `blob:` address was reported as a normal link, image or asset, though the crawler can never
+  fetch any of them: it fetches only `http` and `https`. A `file:` link also raised an SSRF
+  warning during a crawl. All three now report only `http` and `https` addresses. The links list
+  already dropped `mailto:`, `tel:` and the inline `data:`, `javascript:` and `vbscript:` schemes;
+  images and asset discovery now drop `mailto:` and `tel:` too. (#275, #341)
+
+- **Images, feeds, hreflang alternates, icons and canonical links reported an address that does
+  not resolve.** An address the URL parser cannot read, such as `http://[bad/x`, or a relative
+  address under a `<base href>` that cannot take one, such as `blob:https://example.com/b`, was
+  reported as the page wrote it. It is now dropped, as the links list already dropped it. (#472)
+
+- **The Open Graph and Twitter card address fields reported any address.**
+  `<meta property="og:url" content="file:///etc/passwd">` gave `file:///etc/passwd`, and a
+  `javascript:` address came back unchanged. `og_url`, `og_image`, `og_video`, `og_audio` and
+  `twitter_image` now use the same rule as the links list: the address resolves against the page's
+  base URL and is kept only when it is `http` or `https`. A whitespace-only address is absent, and
+  a tag whose address is dropped does not clear an address that another tag set. (#312, #472)
+
+- **`map()` reported sitemap entries of any scheme.** A sitemap `<loc>` of `file:///etc/passwd`,
+  `mailto:`, `ftp:` or any other scheme came back as a page. `map()` now reports only `http` and
+  `https` entries, and skips a robots.txt `Sitemap:` line or a sitemap-index child with another
+  scheme instead of trying to fetch it. (#565)
+
+- **The browser crate's default SSRF policy left the reason out of a connect-time refusal.** When
+  `crawlberg-browser` is used directly, its check of a URL names the reason it refuses an
+  address, such as `loopback`. A host name or address refused when the connection resolves it
+  gave the same decision with no reason. That refusal now ends with the reason too, so
+  `::ffff:127.0.0.1` gives the reason `loopback` at both checks. (#532)
+- **The full and CLI Docker images, and the Elixir NIF builder, failed before compiling.** Their
+  build rewrote the workspace `members` list with a pattern that expects a one-line array, and the
+  root `Cargo.toml` writes it on several lines, so cargo could not load the copied manifest. The
+  full and CLI images now replace the whole array and copy `crates/crawlberg-browser`, which the
+  core crate names as a path dependency. The NIF builder no longer rewrites the root manifest: the
+  NIF crate is its own workspace, so it builds from its own manifest. (#553)
+
+- **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
+  A page refused by a custom retry policy, or by an antibot strategy that asks for browser
+  escalation, came back as an error when no escalation tier was left. It now comes back as the
+  same soft page as a WAF block: the refused status for a 4xx or 5xx, and 403 for a 2xx. A tier
+  left to escalate to still runs first. (#549)
+
+- **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
+  with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
+  now reports the status of the response it refused. A block page served with a 2xx status still
+  reports 403, because a 2xx soft error reads as success. A 429 or 503 soft page has no markdown
+  or response metadata, like a 403 or 404 page. (#518)
+
+- **A robots.txt that opens with a UTF-8 byte-order mark lost its first group.** The mark stayed
+  attached to the first `User-agent` line, that directive did not match, and the whole group,
+  rules included, was dropped, so every path was allowed. A leading byte-order mark is now
+  skipped once, as RFC 9309 asks. (#516)
+
+- **The sitemap walk and the well-known `/sitemap.xml` fallback gave no URLs for a gzip sitemap
+  served with the wrong content type.** A robots.txt `Sitemap:` directive, a sitemap-index child,
+  and the `/sitemap.xml` fallback each decided whether to inflate a body by its content type, so a
+  gzip sitemap served as `application/octet-stream`, or recognised only by its gzip header bytes,
+  yielded no URLs there, while `map()`'s direct fetch read the same file. All three now inflate a
+  body that starts with the gzip header, whatever its content type says, the way the direct fetch
+  already did. (#534)
+
+- **The browser fallback read robots.txt with its own parser, which dropped the first group after
+  a UTF-8 byte-order mark.** A file that opened with the mark and disallowed `/private` let the
+  browser open `/private`. The browser fallback now uses the crawl engine's robots.txt parser,
+  which moves into the new `crawlberg-robots` crate; `crawlberg::robots` re-exports it unchanged.
+  That parser already skips a leading byte-order mark (#516). The browser fallback now decides
+  these cases the way the crawl engine does (#540):
+  - The longest matching rule wins. Before, any matching `Allow` beat a longer `Disallow`.
+  - A `*` inside a pattern, such as `Disallow: /*.pdf$`, matches any text. Before, only a
+    trailing `*` did, and an inner one matched nothing.
+  - A group with several `User-agent` lines applies to each of them. Before, only the last
+    `User-agent` line of the group counted.
+  - A `User-agent` token applies only when it is a prefix of the crawler's user agent. Before,
+    a token that contained the user agent, or that the user agent contained anywhere, also
+    matched.
+  - A trailing `# comment` on a rule line is ignored. Before, it became part of the pattern.
+  - When a group names the crawler, only the groups that name it apply. Before, the
+    `User-agent: *` rules applied as well.
+  - A rule before the first `User-agent` line joins the first group. Before, the browser
+    fallback ignored it.
+  - An unknown directive between two `User-agent` lines joins them into one group. Before,
+    only the second `User-agent` line counted.
+
+- **When a robots.txt had two groups for the crawler, the crawl engine obeyed only the last
+  one.** A file with `User-agent: crawlberg` / `Disallow: /a` and, further down, a second
+  `User-agent: crawlberg` group with `Disallow: /c` let the crawler fetch `/a`. The parser now
+  combines every group that names the crawler into one, as RFC 9309 section 2.2.1 says, and
+  does the same for several `User-agent: *` groups. When two combined groups set a
+  `Crawl-delay`, the later one wins. When only an earlier group sets one, that value applies.
+  The browser fallback uses the same parser (#540).
+
+- **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
+  fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
+  directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose
+  Tokio runtime stopped before its teardown ran. Each such directory is now removed when its owner
+  is dropped. First crawlberg stops each process of the Chrome it launched that still uses the
+  directory as its profile, and waits up to five seconds for them to exit, because Chrome's helper
+  processes outlive the browser and keep writing into it. On Linux 5.3 and later the wait lasts
+  until the last thread of each killed process has exited, because a thread still finishing a
+  write made the removal fail with "directory not empty". This also works when a launcher script
+  runs Chrome as its child, and a shell that only names the directory is left running. This work
+  runs on a background thread, so it does not stall other tasks or hold the browser pool's lock.
+  A saved `browser_profile` is never removed; only the temporary copy of it is. (#415)
+
 - **`map()` did not follow a meta refresh.** A page that forwards with a
   `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
   followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
@@ -276,6 +431,16 @@ title: "Changelog"
   the seed host. The links come from the page it lands on. A chain that reaches the redirect
   limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
   the crawl does, instead of failing the whole `map()`. (#502)
+
+- **`map()` requested pages that robots.txt or the path filters refuse.** Its direct fetch
+  checked each request against the SSRF policy only, so a seed, an HTTP redirect or a refresh to a
+  path robots.txt disallows was requested and its links returned, while the crawl refuses the same
+  page without requesting it. Each request of the direct fetch now passes the crawl's own checks
+  first: `exclude_paths`, `include_paths` for a redirect or refresh hop, and, with
+  `respect_robots_txt` on, the robots.txt of the URL's own origin, which fails closed when that
+  file is unreachable. A refused URL is never requested, and `map()` returns the crawl's forbidden
+  error with the reason, which the REST API answers with a 403. The sitemaps that `map()` reads
+  are not checked this way. (#512)
 
 - **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
   refused as a WAF block ended the attempt with an error that did not keep the response status, so
@@ -696,8 +861,7 @@ title: "Changelog"
   links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
   type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
   list, are checked on the address after it resolves against the base, so an address that resolves
-  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
-  unchanged: they still report the `content` without resolving or checking it. (#291)
+  to a script scheme is skipped too. (#291)
 
 - **Link extraction could disagree with the markdown about the same tag.** Link extraction read
   every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
@@ -852,6 +1016,22 @@ title: "Changelog"
   fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
   redirects; the HTML link branch now does too, matching the crawl engine. (#360)
 
+- **One look-around pattern refused the whole configuration.** `include_paths` and `exclude_paths`
+  compiled on an engine without look-around or backreferences, so a single `(?!...)` pattern made
+  `create_engine` reject every pattern in the list. A pattern that engine accepts still compiles
+  there, with the same meaning. A pattern compiles with `fancy-regex` only when the `regex` crate's
+  first error is an unsupported look-around or a numbered backreference, so look-around and
+  numbered backreferences such as `\1` work. A pattern whose first error is anything else, such as
+  `a{2,1}`, still refuses the configuration and names the pattern. When a look-around comes before
+  a malformed part in the same pattern, the look-around is the first error and the pattern still
+  goes to `fancy-regex` (#283).
+  A look-around or backreference pattern is evaluated only on a matched text (the path by default)
+  of up to 2048 bytes, and gives up after 100,000 backtracks. A URL whose text is longer, or that
+  hits that limit, stays out of the crawl: an exclude pattern counts as a match, an include pattern
+  as no match, and one warning per crawl names the pattern. The seed is exempt from the include
+  check. The REST API refuses a look-around or backreference pattern in `includePaths` or
+  `excludePaths` with a 400. (#78)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
@@ -915,22 +1095,6 @@ Four changes can affect an existing setup:
   returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
   body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
   as the documents it is meant to admit. (#95)
-
-- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
-  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
-  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
-  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
-  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
-  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
-  addresses of `<graphic>`. Character references in an address are decoded first, so
-  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
-  `fit_content` can now drop a line of relative links that it kept before, the same way it
-  already treated absolute links. (#63)
-- **The markdown front matter showed the base address as written.** A page with
-  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
-  the same address that relative links resolve against. (#94)
-
 
 - `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
   to `false`. The head values remain available on `PageMetadata`, which is populated independently
@@ -1185,6 +1349,20 @@ Four changes can affect an existing setup:
   tag checked the repository out at a tag that the Swift checksum job force-moves in the same
   second, and died in `actions/checkout`. It now creates the tag through the API, with no working
   tree and no tag fetch. (#71)
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
 
 ### Changed
 

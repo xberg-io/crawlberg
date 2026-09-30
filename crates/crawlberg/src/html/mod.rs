@@ -22,15 +22,6 @@ use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Token
 use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
-/// Resolve `src` against `base_url`, keeping it as written when it does not parse. An empty
-/// `src` stays empty.
-pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
-    if src.is_empty() {
-        return String::new();
-    }
-    crate::net::userinfo::resolve(base_url, src).map_or_else(|| src.to_owned(), String::from)
-}
-
 /// Parse an HTML document with every tag name in lowercase.
 ///
 /// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
@@ -89,16 +80,6 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
-/// URL schemes whose address carries its content inline, as data or script, instead of naming a
-/// resource to fetch. The links list, the images list, asset discovery, and the feed, canonical and
-/// hreflang links skip these addresses. Favicons skip only the script schemes.
-pub(crate) const INLINE_SCHEMES: [&str; 3] = ["data", "javascript", "vbscript"];
-
-/// Whether `address`, cleaned by [`clean_url`] or resolved, has one of the [`INLINE_SCHEMES`].
-pub(crate) fn has_inline_scheme(address: &str) -> bool {
-    INLINE_SCHEMES.iter().any(|scheme| has_scheme(address, scheme))
-}
-
 /// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
 /// lower case, without the colon). An address that does not parse has no scheme.
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
@@ -106,10 +87,23 @@ pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
 }
 
 /// Whether `url` is a scheme the crawler can fetch. `http_fetch` builds on a `reqwest::Client`,
-/// which speaks only `http` and `https`; every other scheme, including the [`INLINE_SCHEMES`]
-/// above, `mailto:`, `tel:`, `file:` and `blob:`, names something the client can never retrieve.
+/// which speaks only `http` and `https`; every other scheme, including the inline `data:`,
+/// `javascript:` and `vbscript:` schemes, `mailto:`, `tel:`, `file:` and `blob:`, names something
+/// the client can never retrieve.
 pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
+}
+
+/// `address` resolved against `base_url`, without userinfo, when the result is a URL the crawler
+/// can fetch. `None` when the address does not resolve at all (it does not parse, or the base
+/// cannot take a relative address) or resolves to any scheme [`is_fetchable_scheme`] rejects.
+///
+/// ~keep Every address crawlberg reports from a page goes through here: the links list, images,
+/// ~keep assets, feeds, hreflang alternates, the canonical link, and the Open Graph and Twitter
+/// ~keep address fields. Icons apply the same rule in their own check, which also keeps an
+/// ~keep inline `data:` icon: it needs no fetch.
+pub(crate) fn fetchable_address(address: &str, base_url: &Url) -> Option<Url> {
+    crate::net::userinfo::resolve(base_url, address).filter(is_fetchable_scheme)
 }
 
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
@@ -330,11 +324,47 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_url_loses_its_userinfo() {
+    fn a_fetchable_address_loses_its_userinfo() {
         let base = Url::parse("https://example.com/").expect("test URL must parse");
         assert_eq!(
-            resolve_url("http://user:s3cret@example.com/i.png", &base),
-            "http://example.com/i.png"
+            fetchable_address("http://user:s3cret@example.com/i.png", &base).map(String::from),
+            Some("http://example.com/i.png".to_owned())
+        );
+    }
+
+    #[test]
+    fn only_an_address_that_resolves_to_http_or_https_is_fetchable() {
+        let base = Url::parse("https://example.com/dir/page.html").expect("test URL must parse");
+        let kept = [
+            ("i.png", "https://example.com/dir/i.png"),
+            ("//cdn.example.com/i.png", "https://cdn.example.com/i.png"),
+            ("HTTP://example.com/i.png", "http://example.com/i.png"),
+        ];
+        for (address, expected) in kept {
+            assert_eq!(
+                fetchable_address(address, &base).map(String::from).as_deref(),
+                Some(expected),
+                "for {address:?}"
+            );
+        }
+        let dropped = [
+            "file:///etc/passwd",
+            "blob:https://example.com/x",
+            "ftp://example.com/x",
+            "mailto:a@example.com",
+            "data:image/png;base64,AA",
+            "file://[bad/x",
+            "http://[bad/x",
+            "data://[a",
+        ];
+        for address in dropped {
+            assert_eq!(fetchable_address(address, &base), None, "for {address:?}");
+        }
+        let blob_base = Url::parse("blob:https://example.com/b").expect("test URL must parse");
+        assert_eq!(
+            fetchable_address("i.png", &blob_base),
+            None,
+            "a relative address under a base that cannot take one does not resolve"
         );
     }
 }

@@ -16,11 +16,12 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crawlberg/ crates/crawlberg/
+COPY crates/crawlberg-robots/ crates/crawlberg-robots/
 COPY crates/crawlberg-cli/ crates/crawlberg-cli/
 COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 
-RUN perl -0777 -i -pe 's/members = \[.*?\]/members = ["crates\/crawlberg", "crates\/crawlberg-cli", "crates\/crawlberg-bindings-common", "crates\/crawlberg-browser"]/s' Cargo.toml
+RUN perl -0777 -i -pe 's/members = \[.*?\]/members = ["crates\/crawlberg", "crates\/crawlberg-cli", "crates\/crawlberg-bindings-common", "crates\/crawlberg-browser", "crates\/crawlberg-robots"]/s' Cargo.toml
 
 RUN . "$HOME/.cargo/env" && \
     cargo build --release --package crawlberg-cli --features "api,mcp" && \
