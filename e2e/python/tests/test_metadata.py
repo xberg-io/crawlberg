@@ -92,6 +92,21 @@ async def test_metadata_keywords_author() -> None:
 
 
 @pytest.mark.asyncio
+async def test_metadata_og_twitter_addresses() -> None:
+    """Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch."""
+    engine = create_engine(None)
+    url = os.environ["MOCK_SERVER_URL"] + "/fixtures/metadata_og_twitter_addresses"
+
+    result = await scrape(engine, url)
+    assert result.status_code == 200
+    assert result.metadata.og_image == "https://example.com/dir/og.png"
+    assert result.metadata.twitter_image == "https://example.com/img/tw.png"
+    assert not result.metadata.og_url
+    assert not result.metadata.og_video
+    assert not result.metadata.og_audio
+
+
+@pytest.mark.asyncio
 async def test_metadata_og_video_audio() -> None:
     """Extracts og:video, og:audio, and og:locale:alternate metadata."""
     engine = create_engine(None)

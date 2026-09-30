@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{get_attr, get_url_attr, has_rel, has_scheme, has_unfetchable_scheme, mime_essence, resolve_url};
+use super::{fetchable_address, get_attr, get_url_attr, has_rel, is_fetchable_scheme, mime_essence};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
 /// document's base URL. A link with a blank `href`, or one whose address the crawler cannot
@@ -28,10 +28,9 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
             let Some(href) = get_url_attr(tag, "href") else {
                 continue;
             };
-            let href = resolve_url(&href, base_url);
-            if has_unfetchable_scheme(&href) {
+            let Some(href) = fetchable_address(&href, base_url) else {
                 continue;
-            }
+            };
             let link_type = mime_essence(tag).unwrap_or_default();
             let title = get_attr(tag, "title").map(Cow::into_owned);
 
@@ -44,7 +43,7 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
 
             if let Some(ft) = feed_type {
                 feeds.push(FeedInfo {
-                    url: href,
+                    url: href.into(),
                     title,
                     feed_type: ft,
                 });
@@ -76,13 +75,12 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangE
             let Some(href) = get_url_attr(tag, "href") else {
                 continue;
             };
-            let url = resolve_url(&href, base_url);
-            if has_unfetchable_scheme(&url) {
+            let Some(url) = fetchable_address(&href, base_url) else {
                 continue;
-            }
+            };
             entries.push(HreflangEntry {
                 lang: lang.to_owned(),
-                url,
+                url: url.into(),
             });
         }
     }
@@ -111,14 +109,15 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
             let Some(raw_href) = get_url_attr(tag, "href") else {
                 continue;
             };
-            let url = resolve_url(&raw_href, base_url);
-            if has_unfetchable_scheme(&url) && !has_scheme(&url, "data") {
+            let Some(url) = crate::net::userinfo::resolve(base_url, &raw_href)
+                .filter(|url| is_fetchable_scheme(url) || url.scheme() == "data")
+            else {
                 continue;
-            }
+            };
             let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
             let mime_type = get_attr(tag, "type").map(Cow::into_owned);
             favicons.push(FaviconInfo {
-                url,
+                url: url.into(),
                 rel: rel.into_owned(),
                 sizes,
                 mime_type,
@@ -264,6 +263,37 @@ mod tests {
             "a file: or blob: icon must be dropped, the crawler can never fetch it, but a data: \
              icon is a real, usable icon and must be kept, got {favicons:?}"
         );
+    }
+
+    #[test]
+    fn skips_a_feed_hreflang_or_icon_address_that_does_not_resolve() {
+        let head = |href: &str| {
+            format!(
+                r#"<link rel="alternate" type="application/rss+xml" href="{href}">
+                   <link rel="alternate" hreflang="de" href="{href}"><link rel="icon" href="{href}">"#
+            )
+        };
+        let https = Url::parse("https://example.com/").unwrap();
+        let blob = Url::parse("blob:https://example.com/b").unwrap();
+        let cases = [
+            ("file://[bad/x", &https),
+            ("http://[bad/x", &https),
+            ("data://[a", &https),
+            ("feed.xml", &blob),
+        ];
+        for (href, base) in cases {
+            let page = head(href);
+            let dom = parse(&page);
+            assert!(extract_feeds(&dom, base).is_empty(), "feed for {href:?} under {base}");
+            assert!(
+                extract_hreflangs(&dom, base).is_empty(),
+                "hreflang for {href:?} under {base}"
+            );
+            assert!(
+                extract_favicons(&dom, base).is_empty(),
+                "icon for {href:?} under {base}"
+            );
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::types::{LinkInfo, LinkType};
 use super::raw_text::MaskedHtml;
 use super::real_tags::{RealTags, StartTag};
 use super::selectors::SEL_A_HREF;
-use super::{get_attr, get_url_attr, has_link_qualifier, is_fetchable_scheme};
+use super::{fetchable_address, get_attr, get_url_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -81,17 +81,14 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
 
             // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
             // per the WHATWG URL spec, so no special-casing is needed here.
-            let Some(resolved_url) = crate::net::userinfo::resolve(base_url, href) else {
-                continue;
-            };
             // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
             // ~keep Only `http` and `https` are kept: the crawler can fetch neither `mailto:`,
             // ~keep `tel:` nor the inline schemes, and no more than these two can name a `file:`,
             // ~keep `blob:` or other address the crawler cannot reach either.
-            if !is_fetchable_scheme(&resolved_url) {
+            let Some(resolved_url) = fetchable_address(href, base_url) else {
                 continue;
-            }
+            };
 
             let link_type = classify_link(href, base_url);
             let rel = get_attr(tag, "rel").map(Cow::into_owned);

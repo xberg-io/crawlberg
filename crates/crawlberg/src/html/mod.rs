@@ -22,15 +22,6 @@ use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Token
 use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
-/// Resolve `src` against `base_url`, keeping it as written when it does not parse. An empty
-/// `src` stays empty.
-pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
-    if src.is_empty() {
-        return String::new();
-    }
-    crate::net::userinfo::resolve(base_url, src).map_or_else(|| src.to_owned(), String::from)
-}
-
 /// Parse an HTML document with every tag name in lowercase.
 ///
 /// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
@@ -103,14 +94,15 @@ pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
 
-/// Whether `address` parses as an absolute URL whose scheme [`is_fetchable_scheme`] rejects. The
-/// links list, image discovery, asset discovery, the feed, hreflang and canonical links report
-/// only addresses the crawler can act on, so they all skip these. Favicons skip these too, except
-/// an inline `data:` icon, kept as a deliberate exception: it is a real, usable icon that needs no
-/// fetch, unlike a `file:` or `blob:` address. An address that does not parse has no scheme and is
-/// not judged here: the call sites that reach this keep the raw, unresolved href instead.
-pub(crate) fn has_unfetchable_scheme(address: &str) -> bool {
-    Url::parse(address).is_ok_and(|url| !is_fetchable_scheme(&url))
+/// `address` resolved against `base_url`, without userinfo, when the result is a URL the crawler
+/// can fetch. `None` when the address does not resolve at all (it does not parse, or the base
+/// cannot take a relative address) or resolves to any scheme [`is_fetchable_scheme`] rejects.
+///
+/// ~keep Every address crawlberg reports from a page goes through here: the links list, images,
+/// ~keep assets, feeds, hreflang alternates, the canonical link, and the Open Graph and Twitter
+/// ~keep address fields. Icons alone also keep an inline `data:` icon, which needs no fetch.
+pub(crate) fn fetchable_address(address: &str, base_url: &Url) -> Option<Url> {
+    crate::net::userinfo::resolve(base_url, address).filter(is_fetchable_scheme)
 }
 
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
@@ -331,11 +323,47 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_url_loses_its_userinfo() {
+    fn a_fetchable_address_loses_its_userinfo() {
         let base = Url::parse("https://example.com/").expect("test URL must parse");
         assert_eq!(
-            resolve_url("http://user:s3cret@example.com/i.png", &base),
-            "http://example.com/i.png"
+            fetchable_address("http://user:s3cret@example.com/i.png", &base).map(String::from),
+            Some("http://example.com/i.png".to_owned())
+        );
+    }
+
+    #[test]
+    fn only_an_address_that_resolves_to_http_or_https_is_fetchable() {
+        let base = Url::parse("https://example.com/dir/page.html").expect("test URL must parse");
+        let kept = [
+            ("i.png", "https://example.com/dir/i.png"),
+            ("//cdn.example.com/i.png", "https://cdn.example.com/i.png"),
+            ("HTTP://example.com/i.png", "http://example.com/i.png"),
+        ];
+        for (address, expected) in kept {
+            assert_eq!(
+                fetchable_address(address, &base).map(String::from).as_deref(),
+                Some(expected),
+                "for {address:?}"
+            );
+        }
+        let dropped = [
+            "file:///etc/passwd",
+            "blob:https://example.com/x",
+            "ftp://example.com/x",
+            "mailto:a@example.com",
+            "data:image/png;base64,AA",
+            "file://[bad/x",
+            "http://[bad/x",
+            "data://[a",
+        ];
+        for address in dropped {
+            assert_eq!(fetchable_address(address, &base), None, "for {address:?}");
+        }
+        let blob_base = Url::parse("blob:https://example.com/b").expect("test URL must parse");
+        assert_eq!(
+            fetchable_address("i.png", &blob_base),
+            None,
+            "a relative address under a base that cannot take one does not resolve"
         );
     }
 }

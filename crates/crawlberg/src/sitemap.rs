@@ -27,6 +27,7 @@ use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesRef, Event};
 use url::Url;
 
+use crate::html::is_fetchable_scheme;
 use crate::http::http_fetch_sitemap;
 use crate::map::MapFilter;
 use crate::normalize::resolve_redirect;
@@ -432,7 +433,8 @@ fn has_sitemap_shape(xml: &str) -> bool {
 /// ~keep is returned in the parser's normalized form, so a relative `<loc>` becomes absolute and
 /// ~keep two spellings of one address become one entry. An address the walk already returned,
 /// ~keep from this document or an earlier one, is skipped before it counts toward `limit`. A
-/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself.
+/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself or
+/// ~keep one whose scheme is not `http` or `https`: map reports only addresses a crawl can fetch.
 pub(crate) fn collect_urlset_entries(
     document_url: &str,
     xml_body: &str,
@@ -450,7 +452,7 @@ pub(crate) fn collect_urlset_entries(
             log_unparseable_loc(document_url, document.is_some(), entry.url.len(), "urlset entry");
             continue;
         };
-        if names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
+        if !is_fetchable_scheme(&resolved) || names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
             continue;
         }
         entry.url = resolved.into();
@@ -525,8 +527,9 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
 }
 
 /// Resolve one child `<loc>` of a sitemap index against the index's own URL, without its
-/// fragment. `None` when `child_url` cannot be resolved against `sitemap_url` at all, which the
-/// caller treats the same as a child it could not fetch. `sitemap_url_parses` says whether
+/// fragment. `None` when `child_url` cannot be resolved against `sitemap_url` at all, or resolves
+/// to a scheme other than `http` or `https`, which the caller treats the same as a child it could
+/// not fetch. `sitemap_url_parses` says whether
 /// `sitemap_url` parsed, which decides how the refusal is logged.
 ///
 /// ~keep `sitemap_url` is the URL that served the index after redirects, so a relative child
@@ -544,6 +547,9 @@ fn resolve_child_sitemap_url(sitemap_url_parses: bool, sitemap_url: &str, child_
         log_unparseable_loc(sitemap_url, sitemap_url_parses, child_url.len(), "sitemap-index child");
         return None;
     };
+    if !is_fetchable_scheme(&resolved) {
+        return None;
+    }
     resolved.set_fragment(None);
     Some(resolved.into())
 }
@@ -856,6 +862,23 @@ mod tests {
         assert!(
             decompress_gzip(b"<urlset><url><loc>/a</loc></url></urlset>").is_err(),
             "a body without the gzip magic must not inflate, whatever its content type or URL"
+        );
+    }
+
+    #[test]
+    fn a_sitemap_index_child_the_crawler_cannot_fetch_is_skipped() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        for child in [
+            "file:///etc/sitemap.xml",
+            "ftp://example.com/sitemap.xml",
+            "blob:https://example.com/x",
+        ] {
+            let resolved = resolve_child_sitemap_url(true, sitemap_url, child);
+            assert!(resolved.is_none(), "for {child}, got {resolved:?}");
+        }
+        assert_eq!(
+            resolve_child_sitemap_url(true, sitemap_url, "child.xml").as_deref(),
+            Some("https://example.com/child.xml")
         );
     }
 

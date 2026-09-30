@@ -78,6 +78,20 @@ RSpec.describe 'metadata' do
   end
 
 
+  it 'metadata_og_twitter_addresses: Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch' do
+    engine = Crawlberg.create_engine(nil)
+    url = "#{ENV.fetch('MOCK_SERVER_URL')}/fixtures/metadata_og_twitter_addresses"
+    result = Crawlberg.scrape(engine, url)
+    expect(result.status_code).to eq(200)
+    expect(result.metadata.og_image.to_s).to eq('https://example.com/dir/og.png')
+    expect(result.metadata.twitter_image.to_s).to eq('https://example.com/img/tw.png')
+    expect(result.metadata.og_url.nil? || result.metadata.og_url.empty?).to be(true)
+    expect(result.metadata.og_video.nil? || result.metadata.og_video.empty?).to be(true)
+    expect(result.metadata.og_audio.nil? || result.metadata.og_audio.empty?).to be(true)
+
+  end
+
+
   it 'metadata_og_video_audio: Extracts og:video, og:audio, and og:locale:alternate metadata' do
     engine = Crawlberg.create_engine(nil)
     url = "#{ENV.fetch('MOCK_SERVER_URL')}/fixtures/metadata_og_video_audio"

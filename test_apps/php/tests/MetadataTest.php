@@ -95,6 +95,21 @@ final class MetadataTest extends TestCase
         $this->assertEquals('ltr', $result->getMetadata()->htmlDir ?? null);
     }
 
+    /** Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch */
+    public function test_metadata_og_twitter_addresses(): void
+    {
+        $engine = Crawlberg::createEngine(null);
+        $url = getenv('MOCK_SERVER_URL') . '/fixtures/metadata_og_twitter_addresses';
+        $result = Crawlberg::scrape($engine, $url);
+
+        $this->assertEquals(200, $result->statusCode);
+        $this->assertEquals('https://example.com/dir/og.png', $result->getMetadata()->ogImage ?? null);
+        $this->assertEquals('https://example.com/img/tw.png', $result->getMetadata()->twitterImage ?? null);
+        $this->assertEmpty($result->getMetadata()->ogUrl ?? null);
+        $this->assertEmpty($result->getMetadata()->ogVideo ?? null);
+        $this->assertEmpty($result->getMetadata()->ogAudio ?? null);
+    }
+
     /** Extracts og:video, og:audio, and og:locale:alternate metadata */
     public function test_metadata_og_video_audio(): void
     {

@@ -123,6 +123,23 @@ public class MetadataTest {
 
 
     @Test
+    void testMetadataOgTwitterAddresses() throws Exception {
+        // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+        var engine = Crawlberg.createEngine(null);
+        String url = System.getProperty("mockServerUrl", System.getenv("MOCK_SERVER_URL")) + "/fixtures/metadata_og_twitter_addresses";
+        var result = Crawlberg.scrape(engine, url);
+        assertEquals(200, result.statusCode());
+        assertEquals("https://example.com/dir/og.png", java.util.Optional.ofNullable(result.metadata().ogImage()).map(java.util.Objects::toString).orElse(""));
+        assertEquals("https://example.com/img/tw.png", java.util.Optional.ofNullable(result.metadata().twitterImage()).map(java.util.Objects::toString).orElse(""));
+        assertTrue(java.util.Optional.ofNullable(result.metadata().ogUrl()).isEmpty(), "expected empty value");
+        assertTrue(java.util.Optional.ofNullable(result.metadata().ogVideo()).isEmpty(), "expected empty value");
+        assertTrue(java.util.Optional.ofNullable(result.metadata().ogAudio()).isEmpty(), "expected empty value");
+
+
+    }
+
+
+    @Test
     void testMetadataOgVideoAudio() throws Exception {
         // Extracts og:video, og:audio, and og:locale:alternate metadata
         var engine = Crawlberg.createEngine(null);

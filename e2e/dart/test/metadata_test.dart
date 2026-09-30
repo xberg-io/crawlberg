@@ -229,6 +229,27 @@ void main() {
   );
 
   test(
+    'Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch',
+    () async {
+      final engine = await CrawlbergBridge.createEngine();
+      final url = _fixtureUrl("metadata_og_twitter_addresses");
+      final result = await CrawlbergBridge.scrape(engine, url);
+      expect(result.statusCode, equals(200));
+      expect(
+        result.metadata.ogImage.toString(),
+        equals('https://example.com/dir/og.png'.toString()),
+      );
+      expect(
+        result.metadata.twitterImage.toString(),
+        equals('https://example.com/img/tw.png'.toString()),
+      );
+      expect((result.metadata.ogUrl?.toString() ?? ''), isEmpty);
+      expect((result.metadata.ogVideo?.toString() ?? ''), isEmpty);
+      expect((result.metadata.ogAudio?.toString() ?? ''), isEmpty);
+    },
+  );
+
+  test(
     'Extracts og:video, og:audio, and og:locale:alternate metadata',
     () async {
       final engine = await CrawlbergBridge.createEngine();

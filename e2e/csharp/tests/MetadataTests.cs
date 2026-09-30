@@ -119,6 +119,22 @@ namespace Crawlberg
         }
 
         [Fact]
+        public async Task Test_MetadataOgTwitterAddresses()
+        {
+            // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+            var engine = CrawlbergConverter.CreateEngine(null);
+            var url = Environment.GetEnvironmentVariable("MOCK_SERVER_URL") + "/fixtures/metadata_og_twitter_addresses";
+            var result = await CrawlbergConverter.ScrapeAsync(engine, url);
+            Assert.True(result.StatusCode == 200);
+            Assert.Equal("https://example.com/dir/og.png", result.Metadata.OgImage);
+            Assert.Equal("https://example.com/img/tw.png", result.Metadata.TwitterImage);
+            Assert.True(string.IsNullOrEmpty(result.Metadata.OgUrl?.ToString()));
+            Assert.True(string.IsNullOrEmpty(result.Metadata.OgVideo?.ToString()));
+            Assert.True(string.IsNullOrEmpty(result.Metadata.OgAudio?.ToString()));
+
+        }
+
+        [Fact]
         public async Task Test_MetadataOgVideoAudio()
         {
             // Extracts og:video, og:audio, and og:locale:alternate metadata

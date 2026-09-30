@@ -169,6 +169,21 @@ describe("metadata", () => {
 
 	}, 30000);
 
+	it("metadata_og_twitter_addresses: Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch", async () => {
+		const engineConfig = WasmCrawlConfig.default();
+		engineConfig.ssrf = (() => { const _u0 = WasmSsrfPolicy.default(); _u0.denyPrivate = false; return _u0; })();
+		const engine = createEngine(engineConfig);
+		const url = `${process.env.MOCK_SERVER_URL}/fixtures/metadata_og_twitter_addresses`;
+		const result = await scrape(engine, url);
+    expect(Number(result.statusCode)).toBe(200);
+    expect((result.metadata.ogImage ?? "")).toBe("https://example.com/dir/og.png");
+    expect((result.metadata.twitterImage ?? "")).toBe("https://example.com/img/tw.png");
+    expect((result.metadata.ogUrl ?? "").length).toBe(0);
+    expect((result.metadata.ogVideo ?? "").length).toBe(0);
+    expect((result.metadata.ogAudio ?? "").length).toBe(0);
+
+	}, 30000);
+
 	it("metadata_og_video_audio: Extracts og:video, og:audio, and og:locale:alternate metadata", async () => {
 		const engineConfig = WasmCrawlConfig.default();
 		engineConfig.ssrf = (() => { const _u0 = WasmSsrfPolicy.default(); _u0.denyPrivate = false; return _u0; })();

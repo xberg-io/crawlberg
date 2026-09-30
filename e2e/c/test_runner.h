@@ -425,6 +425,7 @@ void test_metadata_favicons(void);
 void test_metadata_headings(void);
 void test_metadata_hreflang(void);
 void test_metadata_keywords_author(void);
+void test_metadata_og_twitter_addresses(void);
 void test_metadata_og_video_audio(void);
 void test_metadata_response_headers(void);
 void test_metadata_word_count(void);

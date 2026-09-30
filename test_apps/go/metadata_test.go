@@ -229,6 +229,45 @@ func Test_MetadataKeywordsAuthor(t *testing.T) {
 	}
 }
 
+func Test_MetadataOgTwitterAddresses(t *testing.T) {
+	// Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+	engine, createErr := pkg.CreateEngine(nil)
+	if createErr != nil {
+		t.Fatalf("create handle failed: %v", createErr)
+	}
+	url := os.Getenv("MOCK_SERVER_URL") + "/fixtures/metadata_og_twitter_addresses"
+	result, err := pkg.Scrape(engine, url)
+	if err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+	var metadataOgImage string
+	if result.Metadata.OgImage != nil {
+		metadataOgImage = string(*result.Metadata.OgImage)
+	}
+	var metadataTwitterImage string
+	if result.Metadata.TwitterImage != nil {
+		metadataTwitterImage = string(*result.Metadata.TwitterImage)
+	}
+	if result.StatusCode != 200 {
+		t.Errorf("equals mismatch: got %v", result.StatusCode)
+	}
+	if string(metadataOgImage) != `https://example.com/dir/og.png` {
+		t.Errorf("equals mismatch: got %v", metadataOgImage)
+	}
+	if string(metadataTwitterImage) != `https://example.com/img/tw.png` {
+		t.Errorf("equals mismatch: got %v", metadataTwitterImage)
+	}
+	if result.Metadata.OgURL != nil {
+		t.Errorf("expected empty value, got %v", result.Metadata.OgURL)
+	}
+	if result.Metadata.OgVideo != nil {
+		t.Errorf("expected empty value, got %v", result.Metadata.OgVideo)
+	}
+	if result.Metadata.OgAudio != nil {
+		t.Errorf("expected empty value, got %v", result.Metadata.OgAudio)
+	}
+}
+
 func Test_MetadataOgVideoAudio(t *testing.T) {
 	// Extracts og:video, og:audio, and og:locale:alternate metadata
 	engine, createErr := pkg.CreateEngine(nil)

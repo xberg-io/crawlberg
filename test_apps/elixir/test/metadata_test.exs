@@ -74,6 +74,20 @@ defmodule E2e.MetadataTest do
     end
   end
 
+  describe "metadata_og_twitter_addresses" do
+    test "metadata_og_twitter_addresses" do
+      {:ok, engine} = Crawlberg.create_engine(nil)
+      url = (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/metadata_og_twitter_addresses"
+      {:ok, result} = Crawlberg.scrape(engine, url)
+      assert result.status_code == 200
+      assert result.metadata.og_image == "https://example.com/dir/og.png"
+      assert result.metadata.twitter_image == "https://example.com/img/tw.png"
+      assert result.metadata.og_url in [nil, "", [], %{}]
+      assert result.metadata.og_video in [nil, "", [], %{}]
+      assert result.metadata.og_audio in [nil, "", [], %{}]
+    end
+  end
+
   describe "metadata_og_video_audio" do
     test "metadata_og_video_audio" do
       {:ok, engine} = Crawlberg.create_engine(nil)

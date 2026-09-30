@@ -102,6 +102,20 @@ class MetadataTest {
     }
 
     @Test
+    fun testMetadataOgTwitterAddresses(): Unit = runBlocking {
+        // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+        val engine = Crawlberg.createEngine(null)
+        val url = (System.getProperty("mockServerUrl", System.getenv("MOCK_SERVER_URL") ?: "") ?: "") + "/fixtures/metadata_og_twitter_addresses"
+        val result = Crawlberg.scrape(engine, url)
+        assertEquals(200, result.statusCode)
+        assertEquals("https://example.com/dir/og.png", result.metadata.ogImage.orEmpty())
+        assertEquals("https://example.com/img/tw.png", result.metadata.twitterImage.orEmpty())
+        assertTrue(result.metadata.ogUrl == null, "expected empty value")
+        assertTrue(result.metadata.ogVideo == null, "expected empty value")
+        assertTrue(result.metadata.ogAudio == null, "expected empty value")
+    }
+
+    @Test
     fun testMetadataOgVideoAudio(): Unit = runBlocking {
         // Extracts og:video, og:audio, and og:locale:alternate metadata
         val engine = Crawlberg.createEngine(null)

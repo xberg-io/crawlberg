@@ -11,9 +11,8 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{get_url_attr, has_rel, is_fetchable_scheme};
+use crate::html::{fetchable_address, get_url_attr, has_rel};
 use crate::http::http_fetch;
-use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
 /// A reference to an asset discovered in an HTML page.
@@ -34,8 +33,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && has_rel(tag, "stylesheet")
                 && let Some(href) = get_url_attr(tag, "href")
-                && let Some(url) = resolve(base_url, &href)
-                && is_fetchable_scheme(&url)
+                && let Some(url) = fetchable_address(&href, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -50,8 +48,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Some(url) = resolve(base_url, &src)
-                && is_fetchable_scheme(&url)
+                && let Some(url) = fetchable_address(&src, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -66,8 +63,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Some(url) = resolve(base_url, &src)
-                && is_fetchable_scheme(&url)
+                && let Some(url) = fetchable_address(&src, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),

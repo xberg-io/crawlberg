@@ -280,6 +280,51 @@ fn test_metadata_keywords_author() {
 }
 
 #[test]
+fn test_metadata_og_twitter_addresses() {
+    common::runtime().block_on(async {
+        // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+        let engine = create_engine(None).expect("handle creation should succeed");
+        let url = std::env::var("MOCK_SERVER_METADATA_OG_TWITTER_ADDRESSES").unwrap_or_else(|_| {
+            let _ = common::mock_server_url();
+            std::env::var("MOCK_SERVER_METADATA_OG_TWITTER_ADDRESSES").unwrap_or_else(|_| {
+                format!(
+                    "{}/fixtures/{}",
+                    common::mock_server_url(),
+                    "metadata_og_twitter_addresses"
+                )
+            })
+        });
+        let result = scrape(&engine, &url).await.expect("call failed");
+        let _metadata_og_image = result
+            .metadata
+            .og_image
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let _metadata_twitter_image = result
+            .metadata
+            .twitter_image
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        assert_eq!(result.status_code, 200, "equals assertion failed");
+        assert_eq!(
+            _metadata_og_image.to_string(),
+            r#"https://example.com/dir/og.png"#,
+            "equals assertion failed"
+        );
+        assert_eq!(
+            _metadata_twitter_image.to_string(),
+            r#"https://example.com/img/tw.png"#,
+            "equals assertion failed"
+        );
+        assert!(result.metadata.og_url.is_none(), "expected og.url to be absent");
+        assert!(result.metadata.og_video.is_none(), "expected og.video to be absent");
+        assert!(result.metadata.og_audio.is_none(), "expected og.audio to be absent");
+    });
+}
+
+#[test]
 fn test_metadata_og_video_audio() {
     common::runtime().block_on(async {
         // Extracts og:video, og:audio, and og:locale:alternate metadata

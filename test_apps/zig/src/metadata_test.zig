@@ -189,6 +189,37 @@ test "metadata_keywords_author" {
     try testing.expectEqualStrings("ltr", result.object.get("metadata").?.object.get("html_dir").?.string);
 }
 
+test "metadata_og_twitter_addresses" {
+    // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+    allow_private_network();
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const url = if (std.c.getenv("MOCK_SERVER_METADATA_OG_TWITTER_ADDRESSES")) |_pf| try std.fmt.allocPrint(allocator, "{s}", .{std.mem.span(_pf)}) else try std.fmt.allocPrint(allocator, "{s}/fixtures/metadata_og_twitter_addresses", .{if (std.c.getenv("MOCK_SERVER_URL")) |v| std.mem.span(v) else "http://localhost:8080"});
+    defer allocator.free(url);
+    const _result_json = try crawlberg.scrape("{}", url);
+    defer std.heap.c_allocator.free(_result_json);
+    var _parsed = try std.json.parseFromSlice(std.json.Value, allocator, _result_json, .{});
+    defer _parsed.deinit();
+    const result = &_parsed.value;
+    try testing.expectEqual(@as(i64, 200), result.object.get("status_code").?.integer);
+    try testing.expectEqualStrings("https://example.com/dir/og.png", result.object.get("metadata").?.object.get("og_image").?.string);
+    try testing.expectEqualStrings("https://example.com/img/tw.png", result.object.get("metadata").?.object.get("twitter_image").?.string);
+    {
+        const _iv = result.object.get("metadata").?.object.get("og_url").?;
+        try testing.expect(_iv == .null or (_iv == .string and _iv.string.len == 0));
+    }
+    {
+        const _iv = result.object.get("metadata").?.object.get("og_video").?;
+        try testing.expect(_iv == .null or (_iv == .string and _iv.string.len == 0));
+    }
+    {
+        const _iv = result.object.get("metadata").?.object.get("og_audio").?;
+        try testing.expect(_iv == .null or (_iv == .string and _iv.string.len == 0));
+    }
+}
+
 test "metadata_og_video_audio" {
     // Extracts og:video, og:audio, and og:locale:alternate metadata
     allow_private_network();

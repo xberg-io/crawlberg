@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{attr_eq, clean_url, get_attr, get_url_attr, has_unfetchable_scheme, is_fetchable_scheme, resolve_url};
+use super::{attr_eq, clean_url, fetchable_address, get_attr, get_url_attr};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -39,8 +39,8 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
 }
 
 /// Collect `<img src>` images, skipping blank sources and addresses the crawler cannot fetch
-/// (inline `data:` and script sources, `mailto:`, `tel:`, `file:`, `blob:`, and any other
-/// non-`http`/`https` scheme).
+/// (inline `data:` and script sources, `mailto:`, `tel:`, `file:`, `blob:`, any other
+/// non-`http`/`https` scheme, and an address that does not resolve at all).
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -53,12 +53,11 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(src) = get_url_attr(tag, "src") else {
             continue;
         };
-        let resolved = crate::net::userinfo::resolve(base_url, &src);
-        if resolved.as_ref().is_some_and(|u| !is_fetchable_scheme(u)) {
+        let Some(url) = fetchable_address(&src, base_url) else {
             continue;
-        }
+        };
         images.push(ImageInfo {
-            url: resolved.map_or_else(|| src.into_owned(), String::from),
+            url: url.into(),
             alt: get_attr(tag, "alt").map(Cow::into_owned),
             width: get_attr(tag, "width").and_then(|w| w.parse::<u32>().ok()),
             height: get_attr(tag, "height").and_then(|h| h.parse::<u32>().ok()),
@@ -85,12 +84,11 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         else {
             continue;
         };
-        let url = resolve_url(&raw_url, base_url);
-        if has_unfetchable_scheme(&url) {
+        let Some(url) = fetchable_address(&raw_url, base_url) else {
             continue;
-        }
+        };
         images.push(ImageInfo {
-            url,
+            url: url.into(),
             alt: None,
             width: None,
             height: None,
@@ -123,12 +121,11 @@ fn collect_meta_images(
         let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
-        let url = resolve_url(&content, base_url);
-        if has_unfetchable_scheme(&url) {
+        let Some(url) = fetchable_address(&content, base_url) else {
             continue;
-        }
+        };
         images.push(ImageInfo {
-            url,
+            url: url.into(),
             alt: None,
             width: None,
             height: None,
@@ -239,8 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn unresolvable_src_falls_back_to_the_raw_value() {
-        assert_eq!(extract(r#"<img src="http://[bad">"#), vec![flat("http://[bad", "img")]);
+    fn an_unresolvable_src_is_skipped() {
+        assert_eq!(extract(r#"<img src="http://[bad">"#), Vec::<Flat>::new());
     }
 
     #[test]
@@ -298,6 +295,31 @@ mod tests {
                 flat("https://example.com/dir/tw.png", "twitter:image"),
             ]
         );
+    }
+
+    #[test]
+    fn an_address_that_does_not_resolve_is_skipped_at_every_site() {
+        for bad in ["file://[bad/x", "http://[bad/x", "ftp://[bad/x"] {
+            let html = format!(
+                r#"<img src="{bad}"><source srcset="{bad} 1x"><meta property="og:image" content="{bad}">
+                   <meta name="twitter:image" content="{bad}"><img src="i.png">"#
+            );
+            assert_eq!(
+                extract(&html),
+                [flat("https://example.com/dir/i.png", "img")],
+                "for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_relative_address_under_a_base_that_cannot_take_one_is_skipped_at_every_site() {
+        let html = r#"<img src="i.png"><source srcset="s.png 1x"><meta property="og:image" content="og.png">
+                      <meta name="twitter:image" content="tw.png"><img src="https://example.com/abs.png">"#;
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let base_url = Url::parse("blob:https://example.com/b").expect("valid base URL");
+        let urls: Vec<String> = extract_images(&dom, &base_url).into_iter().map(|i| i.url).collect();
+        assert_eq!(urls, ["https://example.com/abs.png"]);
     }
 
     #[test]

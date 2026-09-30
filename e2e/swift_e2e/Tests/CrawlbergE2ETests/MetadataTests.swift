@@ -88,6 +88,19 @@ final class MetadataTests: XCTestCase {
         XCTAssertEqual((result.metadata().htmlDir()?.toString() ?? ""), "ltr")
     }
 
+    func testMetadataOgTwitterAddresses() async throws {
+        // Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch
+        let engineObj = try createEngine(config: nil)
+        let url = AlefE2EMockServer.baseURL + "/fixtures/metadata_og_twitter_addresses"
+        let result = try await Crawlberg.scrape(engine: engineObj, url: url)
+        XCTAssertEqual(result.statusCode(), 200)
+        XCTAssertEqual((result.metadata().ogImage()?.toString() ?? ""), "https://example.com/dir/og.png")
+        XCTAssertEqual((result.metadata().twitterImage()?.toString() ?? ""), "https://example.com/img/tw.png")
+        XCTAssertNil(result.metadata().ogUrl(), "expected nil value")
+        XCTAssertNil(result.metadata().ogVideo(), "expected nil value")
+        XCTAssertNil(result.metadata().ogAudio(), "expected nil value")
+    }
+
     func testMetadataOgVideoAudio() async throws {
         // Extracts og:video, og:audio, and og:locale:alternate metadata
         let engineObj = try createEngine(config: nil)

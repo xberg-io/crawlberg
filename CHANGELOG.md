@@ -106,6 +106,13 @@ All notable changes to crawlberg are documented here.
     (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
     can be at different versions.
 
+- **`metadata.og_url`, `og_image`, `og_video`, `og_audio` and `twitter_image` are now absolute
+  `http` or `https` URLs, or absent.** Each field was the meta tag's `content` as the page wrote
+  it, so `<meta property="og:image" content="/img/hero.png">` gave `/img/hero.png`, and a
+  `javascript:` or `file:` address came back unchanged. Each field now resolves against the page's
+  base URL, as the canonical URL does, and is absent when the result is not an `http` or `https`
+  address. If your code joins a relative address to the page URL, remove that step. (#312)
+
 ### Added
 
 - **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
@@ -141,9 +148,26 @@ All notable changes to crawlberg are documented here.
   `file:///etc/passwd` link, a `<img src="file:///x.png">`, or a stylesheet or script with a
   `blob:` address was reported as a normal link, image or asset, though the crawler can never
   fetch any of them: it fetches only `http` and `https`. A `file:` link also raised an SSRF
-  warning during a crawl. All three now report only `http` and `https` addresses, the same as
-  they already did for `mailto:`, `tel:` and the inline `data:`, `javascript:` and `vbscript:`
-  schemes. (#275, #341)
+  warning during a crawl. All three now report only `http` and `https` addresses. The links list
+  already dropped `mailto:`, `tel:` and the inline `data:`, `javascript:` and `vbscript:` schemes;
+  images and asset discovery now drop `mailto:` and `tel:` too. (#275, #341)
+
+- **Images, feeds, hreflang alternates, icons and canonical links reported an address that does
+  not resolve.** An address the URL parser cannot read, such as `http://[bad/x`, or a relative
+  address under a `<base href>` that cannot take one, such as `blob:https://example.com/b`, was
+  reported as the page wrote it. It is now dropped, as the links list already dropped it. (#472)
+
+- **The Open Graph and Twitter card address fields reported any address.**
+  `<meta property="og:url" content="file:///etc/passwd">` gave `file:///etc/passwd`, and a
+  `javascript:` address came back unchanged. `og_url`, `og_image`, `og_video`, `og_audio` and
+  `twitter_image` now use the same rule as the links list: the address resolves against the page's
+  base URL and is kept only when it is `http` or `https`. A whitespace-only address is absent, and
+  a tag whose address is dropped does not clear an address that another tag set. (#312, #472)
+
+- **`map()` reported sitemap entries of any scheme.** A sitemap `<loc>` of `file:///etc/passwd`,
+  `mailto:`, `ftp:` or any other scheme came back as a page. `map()` now reports only `http` and
+  `https` entries, and skips a robots.txt `Sitemap:` line or a sitemap-index child with another
+  scheme instead of trying to fetch it.
 
 - **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
   A page refused by a custom retry policy, or by an antibot strategy that asks for browser
@@ -651,8 +675,7 @@ All notable changes to crawlberg are documented here.
   links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
   type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
   list, are checked on the address after it resolves against the base, so an address that resolves
-  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
-  unchanged: they still report the `content` without resolving or checking it. (#291)
+  to a script scheme is skipped too. (#291)
 
 - **Link extraction could disagree with the markdown about the same tag.** Link extraction read
   every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl

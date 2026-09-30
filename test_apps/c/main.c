@@ -205,6 +205,19 @@ int main(void) {
     printf(" PASSED\n");
     passed++;
   }
+  printf("  Running test_metadata_og_twitter_addresses...");
+  alef_current_test_status = ALEF_TEST_PASSED;
+  test_metadata_og_twitter_addresses();
+  if (alef_current_test_status == ALEF_TEST_FAILED) {
+    printf(" FAILED\n");
+    failed++;
+  } else if (alef_current_test_status == ALEF_TEST_SKIPPED) {
+    printf(" SKIPPED\n");
+    skipped++;
+  } else {
+    printf(" PASSED\n");
+    passed++;
+  }
   printf("  Running test_metadata_og_video_audio...");
   alef_current_test_status = ALEF_TEST_PASSED;
   test_metadata_og_video_audio();
