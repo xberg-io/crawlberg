@@ -600,7 +600,7 @@ mod tests {
             .no_sandbox()
             .new_headless_mode()
             .user_data_dir(dir);
-        let launched = match crate::browser_pool::apply_default_args(builder).build() {
+        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
             Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
             Err(error) => Err(error),
         };
