@@ -128,6 +128,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The browser crate's default SSRF policy left the reason out of a connect-time refusal.** When
+  `crawlberg-browser` is used directly, its check of a URL names the reason it refuses an
+  address, such as `loopback`. A host name or address refused when the connection resolves it
+  gave the same decision with no reason. That refusal now ends with the reason too, so
+  `::ffff:127.0.0.1` gives the reason `loopback` at both checks. (#532)
+
 - **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
   A page refused by a custom retry policy, or by an antibot strategy that asks for browser
   escalation, came back as an error when no escalation tier was left. It now comes back as the
