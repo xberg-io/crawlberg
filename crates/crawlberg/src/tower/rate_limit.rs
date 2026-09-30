@@ -100,6 +100,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     landed: None,
                     sent_user_agent: None,
+                    soft_error: false,
                 })
             })
         }

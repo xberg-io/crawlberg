@@ -67,6 +67,19 @@ fn crawl_config_debug_hides_every_secret_field() {
 }
 
 #[test]
+fn crawl_config_debug_shows_the_url_filter_target() {
+    let config = CrawlConfig {
+        path_patterns_match_url: true,
+        ..CrawlConfig::default()
+    };
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains("path_patterns_match_url: true"),
+        "the full-URL filter setting must be visible: {compact}"
+    );
+}
+
+#[test]
 fn browser_config_debug_prints_only_the_endpoint_origin() {
     let config = secret_browser_config();
     assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
