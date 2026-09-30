@@ -616,12 +616,12 @@ fn build_interact_launch_builder(
         .user_data_dir(user_data_dir)
         .disable_default_args();
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
-    builder = crate::browser_pool::apply_proxy(builder, proxy, &browser.chrome_args);
     crate::browser_pool::apply_launch_overrides(
         builder,
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -653,26 +653,37 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
         let proxy = test_proxy("http://127.0.0.1:9");
-        let builder = build_interact_launch_builder(
-            std::path::Path::new("/tmp/interact-test-profile"),
-            Some(&proxy),
-            &crate::types::BrowserConfig {
-                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
                 ..Default::default()
-            },
-        )
-        .expect("no binary is named, so there is nothing to check");
-        let debug = format!("{builder:?}");
-        assert!(
-            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
-            "the caller's proxy-server flag is missing: {debug}"
-        );
-        assert!(
-            !debug.contains("proxy-server=http://127.0.0.1:9"),
-            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
-        );
+            };
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
+                build_interact_launch_builder(
+                    std::path::Path::new("/tmp/interact-test-profile"),
+                    Some(&proxy),
+                    &browser,
+                )
+            });
+            let debug = format!("{:?}", built.expect("no binary is named, so there is nothing to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+        }
     }
 
     #[test]
@@ -819,5 +830,80 @@ mod tests {
             launch_or_connect(&config).await
         })
         .await;
+    }
+
+    /// A Scrape action returns the HTML of the document it checked for Chrome's error page. The
+    /// test starts on Chrome's error page for a refused connection and navigates to a page of the
+    /// site right after the Scrape's HTML read, so the error page's HTML must not be returned as
+    /// the site page's. Launches a real Chrome and skips when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn a_scrape_returns_the_html_of_the_document_it_checked_for_the_error_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let test_name = "a_scrape_returns_the_html_of_the_document_it_checked_for_the_error_page";
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/two"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("<html><body><p>doc/two</p></body></html>", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        let refused = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a local port must bind");
+            format!(
+                "http://127.0.0.1:{}/gone",
+                listener.local_addr().expect("its address").port()
+            )
+        };
+        let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
+        let builder = ChromeBrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(dir);
+        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
+            Ok(config) => Browser::launch(config).await.map_err(|e| e.to_string()),
+            Err(error) => Err(error),
+        };
+        let (mut browser, mut handler) = match launched {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping {test_name}: no usable Chrome: {error}");
+                return;
+            }
+        };
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let page = browser.new_page("about:blank").await.expect("page");
+        // ~keep The refused connection fails the navigation; the error page it commits is the point.
+        let _ = page.goto(refused.as_str()).await;
+        let start = committed_document(&page).await.expect("the committed document");
+        let scraped = crate::chrome_frame::NAVIGATE_AFTER_CONTENT
+            .scope(
+                std::cell::Cell::new(Some(format!("{}/two", site.uri()))),
+                execute_action(&page, &PageAction::Scrape),
+            )
+            .await;
+        let _ = browser.close().await;
+        let _ = browser.wait().await;
+
+        assert!(
+            start.unreachable_url.is_some(),
+            "{test_name}: the page must start on Chrome's error page: {}",
+            start.url
+        );
+        let data = scraped
+            .expect("the Scrape must succeed on the site page")
+            .data
+            .expect("the Scrape must return data");
+        let html = data["html"].as_str().unwrap_or_default();
+        assert!(
+            html.contains("doc/two"),
+            "{test_name}: the Scrape checked /two, so its HTML must be /two's, not the error page's: {html}"
+        );
     }
 }

@@ -137,30 +137,6 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder, chrome_args:
 /// ~keep `--proxy-server` and for a browser context's `proxyServer`.
 pub(crate) const NO_LOOPBACK_BYPASS: &str = "<-loopback>";
 
-/// Route `builder`'s Chrome through `proxy`, when there is one. Every launch path calls this,
-/// so the flags are written once. A flag whose switch one of the caller's `chrome_args` also
-/// names is left out: the caller's flag replaces it, as in [`apply_default_args`].
-pub(crate) fn apply_proxy(
-    mut builder: BrowserConfigBuilder,
-    proxy: Option<&crate::proxy::ChromeProxy>,
-    chrome_args: &[String],
-) -> BrowserConfigBuilder {
-    let Some(proxy) = proxy else {
-        return builder;
-    };
-    // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
-    // ~keep `----proxy-server=...` and the proxy was silently never applied.
-    for (switch, value) in [
-        ("proxy-server", proxy.server.as_str()),
-        ("proxy-bypass-list", NO_LOOPBACK_BYPASS),
-    ] {
-        if !caller_sets_switch(chrome_args, switch) {
-            builder = builder.arg(format!("{switch}={value}"));
-        }
-    }
-    builder
-}
-
 /// Whether one of the caller's `chrome_args` names the Chrome switch `name`, byte-exact.
 ///
 /// ~keep Exact comparison is sound because `check_chrome_args` refuses a name with an
@@ -171,8 +147,14 @@ pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
         .any(|arg| crate::types::chrome_switch_name(arg) == name)
 }
 
-/// Point `builder` at the caller's Chrome binary, if one is named, and add the caller's
-/// extra flags. [`apply_default_args`] has already left out any default they replace.
+/// Point `builder` at the caller's Chrome binary, if one is named, add the caller's extra
+/// flags, and route the launched Chrome through `proxy`, when there is one.
+/// [`apply_default_args`] has already left out any default they replace.
+///
+/// The configured proxy wins over the caller's flags, as it does on a pooled or connected
+/// page, whose browser context is made with it: a caller `--proxy-server` or
+/// `--proxy-bypass-list` is dropped with a warning that names the switch but not its value,
+/// and loopback requests always go through the proxy.
 ///
 /// A named binary that is missing or not executable is an error naming the path, never a
 /// fallback to chromiumoxide's own detection. `chrome_args` that `CrawlConfig::validate` would
@@ -184,6 +166,7 @@ pub(crate) fn apply_launch_overrides(
     section: &str,
     chrome_path: Option<&std::path::Path>,
     chrome_args: &[String],
+    proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
     crate::types::check_chrome_args(section, chrome_args).map_err(CrawlError::browser_error)?;
     if let Some(path) = chrome_path {
@@ -191,10 +174,28 @@ pub(crate) fn apply_launch_overrides(
         builder = builder.chrome_executable(path);
     }
     for arg in chrome_args {
+        let switch = crate::types::chrome_switch_name(arg);
+        if proxy.is_some() && PROXY_SWITCHES.contains(&switch) {
+            tracing::warn!(
+                flag = %format!("--{switch}"),
+                "{section}.chrome_args sets a proxy switch that the configured proxy replaces; the flag is dropped"
+            );
+            continue;
+        }
         builder = builder.arg(chrome_arg_key(arg.as_str()));
+    }
+    if let Some(proxy) = proxy {
+        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+        // ~keep `----proxy-server=...` and the proxy was silently never applied.
+        builder = builder
+            .arg(format!("proxy-server={}", proxy.server))
+            .arg(format!("proxy-bypass-list={NO_LOOPBACK_BYPASS}"));
     }
     Ok(builder)
 }
+
+/// The Chrome switches the configured proxy sets on a launch.
+const PROXY_SWITCHES: [&str; 2] = ["proxy-server", "proxy-bypass-list"];
 
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
 /// `browser_endpoint` connect branch).
@@ -221,6 +222,7 @@ fn build_pool_launch_builder(
         "BrowserPoolConfig",
         config.chrome_path.as_deref(),
         &config.chrome_args,
+        None,
     )
 }
 
