@@ -721,6 +721,35 @@ mod tests {
         }
     }
 
+    /// An MCP caller cannot choose an `include_paths`/`exclude_paths` pattern: no tool declares
+    /// one, and the tool parameters refuse unknown fields. A look-around pattern reaches an MCP
+    /// crawl only from the server's own config.
+    #[test]
+    fn no_tool_accepts_a_path_pattern_from_the_caller() {
+        let tools = CrawlbergMcp::new().tool_router.list_all();
+        for tool in &tools {
+            let properties = tool.input_schema.get("properties").and_then(|p| p.as_object());
+            for key in properties.into_iter().flat_map(|p| p.keys()) {
+                assert!(
+                    !key.to_ascii_lowercase().contains("path") && !key.to_ascii_lowercase().contains("pattern"),
+                    "tool `{}` must not take a path pattern from the caller, found `{key}`",
+                    tool.name
+                );
+            }
+        }
+        for field in ["include_paths", "exclude_paths", "includePaths", "excludePaths"] {
+            let args = serde_json::json!({ "url": "https://example.com", field: ["^/(?!private/)"] });
+            assert!(
+                serde_json::from_value::<crate::mcp::params::CrawlParams>(args.clone()).is_err(),
+                "crawl must refuse {field}"
+            );
+            assert!(
+                serde_json::from_value::<crate::mcp::params::MapParams>(args).is_err(),
+                "map must refuse {field}"
+            );
+        }
+    }
+
     /// The advertised `outputSchema` for each tool must not drift from the
     /// `structuredContent` the tool actually emits: every serialized field must
     /// be a declared schema property, and every required property must appear in
@@ -982,5 +1011,36 @@ mod tests {
             !output.to_string().contains("MCP-PW-55"),
             "the output must not carry the password: {output}"
         );
+    }
+
+    #[tokio::test]
+    async fn map_of_a_seed_robots_txt_disallows_is_a_forbidden_tool_error() {
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/robots.txt"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_raw("User-agent: *\nDisallow: /private\n", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+        let server = CrawlbergMcp::with_config(CrawlConfig::builder().allow_private_networks(true).build());
+
+        let result = server
+            .map(Parameters(super::super::params::MapParams {
+                url: format!("{}/private", mock.uri()),
+                limit: None,
+                search: None,
+                respect_robots_txt: Some(true),
+            }))
+            .await
+            .expect("a refusal is a tool error, not a protocol error");
+
+        assert_eq!(result.is_error, Some(true), "the refusal must be a tool error");
+        let text = result
+            .content
+            .iter()
+            .find_map(|block| block.as_text().map(|content| content.text.clone()))
+            .unwrap_or_default();
+        assert_eq!(text, "forbidden: robots.txt disallows /private");
     }
 }

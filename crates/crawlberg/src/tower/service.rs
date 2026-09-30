@@ -138,6 +138,7 @@ async fn read_redirect_response(
         headers,
         landed: None,
         sent_user_agent: Some(sent_user_agent),
+        soft_error: false,
     }
 }
 
@@ -272,6 +273,7 @@ async fn do_fetch(
         headers,
         landed: None,
         sent_user_agent: Some(sent_user_agent),
+        soft_error: false,
     })
 }
 

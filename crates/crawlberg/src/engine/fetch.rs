@@ -88,6 +88,28 @@ impl Drop for PendingWafBlock {
     }
 }
 
+/// Whether `status` is one a `soft_http_errors` page can report: a 4xx or a 5xx.
+fn is_soft_error_status(status: u16) -> bool {
+    (400..600).contains(&status)
+}
+
+/// The status a `soft_http_errors` page reports for `err`, or `None` when `err` is not reported softly.
+///
+/// ~keep A WAF or soft block reports the status of the response it refused, which the fetch path
+/// keeps as the error's source. A block page served with a 2xx reports 403: a 2xx soft error reads
+/// as success. A plain 403 carries 403, and a forbidden error with no response status reports 403.
+fn soft_error_status(err: &CrawlError) -> Option<u16> {
+    match err {
+        CrawlError::NotFound { .. } => Some(404),
+        CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. } => Some(
+            crate::http::error_status(err)
+                .filter(|status| is_soft_error_status(*status))
+                .unwrap_or(403),
+        ),
+        _ => None,
+    }
+}
+
 impl DispatchPlan {
     fn from_config(config: &CrawlConfig) -> Self {
         let dispatch = config.dispatch.as_ref();
@@ -290,6 +312,7 @@ impl CrawlEngine {
                     headers: bypass_resp.headers,
                     landed: None,
                     sent_user_agent: None,
+                    soft_error: false,
                 },
                 false,
             ));
@@ -439,7 +462,7 @@ impl CrawlEngine {
                 }
                 Self::record_waf_refusal(&reason);
                 state.report_dispatch(url, plan);
-                LoopStep::Done(Err(Self::escalation_reason_to_error(&reason, url)))
+                self.refuse(Self::escalation_reason_to_error(&reason, url, resp.status))
             }
         }
     }
@@ -484,7 +507,7 @@ impl CrawlEngine {
                     return Some(LoopStep::Restart);
                 }
                 state.report_dispatch(url, plan);
-                Some(LoopStep::Done(Err(Self::escalation_reason_to_error(&reason, url))))
+                Some(self.refuse(Self::escalation_reason_to_error(&reason, url, response.status)))
             }
         }
     }
@@ -497,13 +520,8 @@ impl CrawlEngine {
         plan: &DispatchPlan,
         state: &mut AttemptState,
     ) -> LoopStep {
-        if self.config.soft_http_errors {
-            if matches!(err, CrawlError::NotFound { .. }) {
-                return LoopStep::Done(Ok((Self::synthesise_status(404), false)));
-            }
-            if matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }) {
-                return LoopStep::Done(Ok((Self::synthesise_status(403), false)));
-            }
+        if let Some(step) = self.soft_page(&err) {
+            return step;
         }
 
         state.last_err = Some(err.clone());
@@ -552,6 +570,17 @@ impl CrawlEngine {
         }
     }
 
+    /// The soft error page `soft_http_errors` ends the fetch with in place of `err`, if any.
+    fn soft_page(&self, err: &CrawlError) -> Option<LoopStep> {
+        let status = soft_error_status(err).filter(|_| self.config.soft_http_errors)?;
+        Some(LoopStep::Done(Ok((Self::synthesise_status(status), false))))
+    }
+
+    /// End the fetch refusing a response with `err`, or with its soft error page.
+    fn refuse(&self, err: CrawlError) -> LoopStep {
+        self.soft_page(&err).unwrap_or(LoopStep::Done(Err(err)))
+    }
+
     /// Count one tier transition on `backend_escalations_total`.
     fn record_escalation(from_tier: Tier, to_tier: Tier, reason: &EscalationReason) {
         crate::telemetry::metrics::registry().backend_escalations_total.add(
@@ -562,5 +591,53 @@ impl CrawlEngine {
                 KeyValue::new("reason", escalation_reason_label(reason)),
             ],
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn soft_error_status_reports_403_for_a_waf_block_without_a_response_status() {
+        let blocked = CrawlError::waf_blocked("cloudflare", "waf/blocked: cloudflare");
+        assert_eq!(soft_error_status(&blocked), Some(403));
+    }
+
+    #[test]
+    fn soft_error_status_reports_not_found_and_forbidden_and_no_other_error() {
+        assert_eq!(
+            soft_error_status(&CrawlError::not_found("https://example.com/x")),
+            Some(404)
+        );
+        assert_eq!(soft_error_status(&CrawlError::forbidden("forbidden")), Some(403));
+        assert_eq!(soft_error_status(&CrawlError::rate_limited("rate_limited")), None);
+        assert_eq!(soft_error_status(&CrawlError::other("boom")), None);
+    }
+
+    #[test]
+    fn a_refusal_reports_the_status_of_the_response_it_refused() {
+        let url = "https://example.com/x";
+        let blocked = EscalationReason::WafBlocked { vendor: "acme".into() };
+        for (status, soft) in [
+            (200_u16, Some(403_u16)),
+            (418, Some(418)),
+            (429, Some(429)),
+            (503, Some(503)),
+        ] {
+            for reason in [
+                &blocked,
+                &EscalationReason::SoftBlock,
+                &EscalationReason::AntibotEscalate,
+            ] {
+                let refusal = CrawlEngine::escalation_reason_to_error(reason, url, status);
+                assert_eq!(crate::http::error_status(&refusal), Some(status), "{refusal:?}");
+                assert_eq!(soft_error_status(&refusal), soft, "{refusal:?}");
+            }
+        }
+        for reason in [EscalationReason::RenderNeeded, EscalationReason::OriginUnreliable] {
+            let refusal = CrawlEngine::escalation_reason_to_error(&reason, url, 200);
+            assert_eq!(soft_error_status(&refusal), None, "{refusal:?}");
+        }
     }
 }
