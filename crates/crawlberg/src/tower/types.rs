@@ -80,6 +80,7 @@ mod tests {
             ]),
             landed: None,
             sent_user_agent: None,
+            soft_error: false,
         };
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
@@ -148,6 +149,9 @@ pub struct CrawlResponse {
     /// header directive matching) must read this instead of recomputing the engine's default,
     /// or they judge a page against an agent a rotating crawl never sent (crawlberg#423).
     pub sent_user_agent: Option<String>,
+    /// Whether `soft_http_errors` built this response in place of an error. Only the engine's
+    /// soft error path sets it, so a scrape can tell its page from a real response with the same status.
+    pub soft_error: bool,
 }
 
 impl std::fmt::Debug for CrawlResponse {
@@ -162,6 +166,7 @@ impl std::fmt::Debug for CrawlResponse {
             headers,
             landed,
             sent_user_agent,
+            soft_error,
         } = self;
         f.debug_struct("CrawlResponse")
             .field("status", status)
@@ -171,6 +176,7 @@ impl std::fmt::Debug for CrawlResponse {
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
             .field("landed", landed)
             .field("sent_user_agent", sent_user_agent)
+            .field("soft_error", soft_error)
             .finish()
     }
 }

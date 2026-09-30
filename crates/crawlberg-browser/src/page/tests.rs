@@ -1030,6 +1030,51 @@ async fn robots_txt_allow_permits_the_navigation() {
     assert_eq!(page.title, "allowed");
 }
 
+/// A robots.txt that opens with a UTF-8 byte-order mark still blocks what it disallows
+/// (crawlberg#540): the mark stayed on the first line, so its group was dropped.
+#[tokio::test(flavor = "current_thread")]
+async fn robots_txt_with_a_leading_byte_order_mark_still_blocks_the_navigation() {
+    let base = serve(routes(&[
+        (
+            "/",
+            "text/html",
+            "<html><head><title>open</title></head><body></body></html>",
+        ),
+        (
+            "/private",
+            "text/html",
+            "<html><head><title>secret</title></head><body></body></html>",
+        ),
+        (
+            "/robots.txt",
+            "text/plain",
+            "\u{feff}User-agent: *\r\nDisallow: /private\r\n",
+        ),
+    ]))
+    .await;
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext {
+        obey_robots: true,
+        ..context
+    };
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    // ~keep Positive twin: the file is read and a path it does not name stays open.
+    page.navigate(&base).await.expect("/ is not disallowed");
+    assert_eq!(page.title, "open");
+
+    let private = format!("{}/private", base.trim_end_matches('/'));
+    let error = page
+        .navigate(&private)
+        .await
+        .expect_err("the leading byte-order mark must not hide the Disallow rule");
+    assert!(
+        matches!(error, PageError::NetworkError(ref message) if message.contains("Blocked by robots.txt")),
+        "expected a robots.txt block, got {error:?}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn navigation_resets_the_network_events_of_the_previous_page() {
     let base = serve(routes(&[

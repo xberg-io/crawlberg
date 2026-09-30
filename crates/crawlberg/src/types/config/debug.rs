@@ -28,6 +28,7 @@ impl std::fmt::Debug for CrawlConfig {
             include_paths,
             exclude_paths,
             path_patterns_match_query,
+            path_patterns_match_url,
             dedup_include_query,
             strip_tracking_params,
             tracking_params,
@@ -91,6 +92,7 @@ impl std::fmt::Debug for CrawlConfig {
         debug.field("include_paths", include_paths);
         debug.field("exclude_paths", exclude_paths);
         debug.field("path_patterns_match_query", path_patterns_match_query);
+        debug.field("path_patterns_match_url", path_patterns_match_url);
         debug.field("dedup_include_query", dedup_include_query);
         debug.field("strip_tracking_params", strip_tracking_params);
         debug.field("tracking_params", tracking_params);

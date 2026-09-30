@@ -187,6 +187,39 @@ async fn redirect_target_satisfying_include_paths_is_requested() {
     assert_eq!(result.pages.len(), 1, "the redirect target is the crawl's one page");
 }
 
+/// A page found by following a link redirects to a target that fails `include_paths`. That
+/// hop is judged by the spawned fetch's own redirect policy, not by the seed's, so the
+/// include list must reach the spawned task too.
+#[tokio::test]
+async fn redirect_from_a_discovered_page_to_a_target_failing_include_paths_is_never_requested() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/docs/",
+        r#"<html><body><a href="/docs/moved">moved</a></body></html>"#,
+    )
+    .await;
+    mount_redirect(&mock, "/docs/moved", "/other.html").await;
+    mount_html(&mock, "/other.html", "<html><body>other</body></html>").await;
+
+    let config = base_config()
+        .max_depth(2)
+        .include_paths(vec!["^/(?=docs/)".to_owned()])
+        .build();
+    let result = crawl_seed(config, &format!("{}/docs/", mock.uri())).await;
+
+    let log = request_log(&mock).await;
+    assert!(
+        log.iter().any(|entry| entry == "/docs/moved"),
+        "the discovered page must be requested, or the redirect is never reached: {log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry == "/other.html"),
+        "a redirect target failing include_paths must never be requested, got {log:?}"
+    );
+    assert_eq!(result.pages.len(), 1, "only the seed yields a page");
+}
+
 // ---------------------------------------------------------------------------------------
 // #65: dedup key including the query string
 // ---------------------------------------------------------------------------------------
