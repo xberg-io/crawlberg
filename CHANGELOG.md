@@ -92,6 +92,20 @@ All notable changes to crawlberg are documented here.
   `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
   `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
 
+- **`CrawlConfig` gained `path_patterns_match_url`, which older versions reject.** The field is
+  always serialised, and `CrawlConfig` already carries `#[serde(deny_unknown_fields)]`, so **a config
+  serialised by this version is rejected by every older crawlberg**, even when the value is
+  `false`. The break is one-directional: an older config still loads here, because the field
+  defaults to `false`.
+
+  What this affects:
+
+  - A config serialised on one crawlberg and read by another. Upgrade the readers before, or
+    with, the writers.
+  - Any binding that round-trips a config through JSON across the FFI boundary
+    (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
+    can be at different versions.
+
 ### Added
 
 - **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
@@ -107,6 +121,11 @@ All notable changes to crawlberg are documented here.
   warning give the number of flags, not their values, because a flag value can carry a
   credential. (#79, #80)
 
+- `CrawlConfig.path_patterns_match_url` matches `include_paths`/`exclude_paths` against the full
+  URL, `scheme://host[:port]/path?query`, so a pattern can scope by host. The matched text leaves
+  out any userinfo and the fragment, and the host is in punycode. It defaults to `false` and takes
+  precedence over `path_patterns_match_query`. (#78)
+
 ### Fixed
 
 - **A stalled module script cost 10 seconds for every module script after it.** The native browser
@@ -117,6 +136,17 @@ All notable changes to crawlberg are documented here.
   costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
   after the next module script runs. (#486)
 
+- **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
+  with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
+  now reports the status of the response it refused. A block page served with a 2xx status still
+  reports 403, because a 2xx soft error reads as success. A 429 or 503 soft page has no markdown
+  or response metadata, like a 403 or 404 page. (#518)
+
+- **A robots.txt that opens with a UTF-8 byte-order mark lost its first group.** The mark stayed
+  attached to the first `User-agent` line, that directive did not match, and the whole group,
+  rules included, was dropped, so every path was allowed. A leading byte-order mark is now
+  skipped once, as RFC 9309 asks. (#516)
+
 - **The sitemap walk and the well-known `/sitemap.xml` fallback gave no URLs for a gzip sitemap
   served with the wrong content type.** A robots.txt `Sitemap:` directive, a sitemap-index child,
   and the `/sitemap.xml` fallback each decided whether to inflate a body by its content type, so a
@@ -124,6 +154,36 @@ All notable changes to crawlberg are documented here.
   yielded no URLs there, while `map()`'s direct fetch read the same file. All three now inflate a
   body that starts with the gzip header, whatever its content type says, the way the direct fetch
   already did. (#534)
+
+- **The browser fallback read robots.txt with its own parser, which dropped the first group after
+  a UTF-8 byte-order mark.** A file that opened with the mark and disallowed `/private` let the
+  browser open `/private`. The browser fallback now uses the crawl engine's robots.txt parser,
+  which moves into the new `crawlberg-robots` crate; `crawlberg::robots` re-exports it unchanged.
+  That parser already skips a leading byte-order mark (#516). The browser fallback now decides
+  these cases the way the crawl engine does (#540):
+  - The longest matching rule wins. Before, any matching `Allow` beat a longer `Disallow`.
+  - A `*` inside a pattern, such as `Disallow: /*.pdf$`, matches any text. Before, only a
+    trailing `*` did, and an inner one matched nothing.
+  - A group with several `User-agent` lines applies to each of them. Before, only the last
+    `User-agent` line of the group counted.
+  - A `User-agent` token applies only when it is a prefix of the crawler's user agent. Before,
+    a token that contained the user agent, or that the user agent contained anywhere, also
+    matched.
+  - A trailing `# comment` on a rule line is ignored. Before, it became part of the pattern.
+  - When a group names the crawler, only the groups that name it apply. Before, the
+    `User-agent: *` rules applied as well.
+  - A rule before the first `User-agent` line joins the first group. Before, the browser
+    fallback ignored it.
+  - An unknown directive between two `User-agent` lines joins them into one group. Before,
+    only the second `User-agent` line counted.
+
+- **When a robots.txt had two groups for the crawler, the crawl engine obeyed only the last
+  one.** A file with `User-agent: crawlberg` / `Disallow: /a` and, further down, a second
+  `User-agent: crawlberg` group with `Disallow: /c` let the crawler fetch `/a`. The parser now
+  combines every group that names the crawler into one, as RFC 9309 section 2.2.1 says, and
+  does the same for several `User-agent: *` groups. When two combined groups set a
+  `Crawl-delay`, the later one wins. When only an earlier group sets one, that value applies.
+  The browser fallback uses the same parser (#540).
 
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
@@ -721,6 +781,22 @@ All notable changes to crawlberg are documented here.
   page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
   fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
   redirects; the HTML link branch now does too, matching the crawl engine. (#360)
+
+- **One look-around pattern refused the whole configuration.** `include_paths` and `exclude_paths`
+  compiled on an engine without look-around or backreferences, so a single `(?!...)` pattern made
+  `create_engine` reject every pattern in the list. A pattern that engine accepts still compiles
+  there, with the same meaning. A pattern compiles with `fancy-regex` only when the `regex` crate's
+  first error is an unsupported look-around or a numbered backreference, so look-around and
+  numbered backreferences such as `\1` work. A pattern whose first error is anything else, such as
+  `a{2,1}`, still refuses the configuration and names the pattern. When a look-around comes before
+  a malformed part in the same pattern, the look-around is the first error and the pattern still
+  goes to `fancy-regex` (#283).
+  A look-around or backreference pattern is evaluated only on a matched text (the path by default)
+  of up to 2048 bytes, and gives up after 100,000 backtracks. A URL whose text is longer, or that
+  hits that limit, stays out of the crawl: an exclude pattern counts as a match, an include pattern
+  as no match, and one warning per crawl names the pattern. The seed is exempt from the include
+  check. The REST API refuses a look-around or backreference pattern in `includePaths` or
+  `excludePaths` with a 400. (#78)
 
 ## [1.8.0] - 2026-09-27
 

@@ -6,12 +6,12 @@ use std::time::Instant;
 
 use url::Url;
 
+use crate::helpers::PathPattern;
 use crate::html::{
     HtmlExtraction, PageScan, detect_charset, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
 use crate::types::*;
-use regex::Regex;
 
 use crate::helpers::RobotsOutcome;
 use crate::scrape::RobotsDirectives;
@@ -36,8 +36,8 @@ pub(super) struct LoopContext<'a> {
     /// ~keep `regex::Regex::clone` allocates a fresh, cold cache pool per copy, so holding
     /// these as slices and rebuilding an `Arc` per spawn rebuilt every pattern's cache
     /// once per fetch.
-    pub(super) exclude_regexes: Arc<[Regex]>,
-    pub(super) include_regexes: Arc<[Regex]>,
+    pub(super) exclude_regexes: Arc<[PathPattern]>,
+    pub(super) include_regexes: Arc<[PathPattern]>,
     pub(super) robots: &'a RobotsOutcome,
     pub(super) base_host: &'a str,
     pub(super) base_host_suffix: &'a str,

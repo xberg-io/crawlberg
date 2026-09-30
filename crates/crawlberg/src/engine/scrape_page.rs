@@ -87,7 +87,7 @@ impl CrawlEngine {
             };
 
             let status = outcome.final_response.status;
-            if matches!(status, 404 | 403) && outcome.final_response.body.is_empty() && self.config.soft_http_errors {
+            if outcome.final_response.soft_error {
                 return Ok(self.bodyless_status_result(status, outcome.final_url));
             }
             if outcome.final_response.status == 404
@@ -175,6 +175,7 @@ impl CrawlEngine {
             landed_url: None,
             // ~keep The native browser backend never reads `config.user_agents`.
             sent_user_agent: None,
+            soft_error: false,
         };
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
@@ -311,6 +312,7 @@ impl CrawlEngine {
             headers: resp.headers,
             landed_url: None,
             sent_user_agent: forced_user_agent.map(str::to_owned),
+            soft_error: false,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

@@ -67,9 +67,11 @@ blake3 = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
+crawlberg-robots = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
+fancy-regex = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }
@@ -88,6 +90,7 @@ opentelemetry-semantic-conventions = { workspace = true }
 percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
+regex-syntax = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
