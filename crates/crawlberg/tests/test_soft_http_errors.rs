@@ -12,8 +12,19 @@
 //!    response metadata.
 //! 8. `soft_http_errors` changes only the responses it turns into soft error pages: an empty 400,
 //!    418 or 501 comes back as the same full page with the flag on and off.
+//! 9. A response refused by a custom retry policy or by an antibot strategy, with no escalation
+//!    tier left, is the same soft error page as a WAF block, and a tier left still wins.
 
-use crawlberg::{BrowserMode, CrawlConfig, CrawlError, CrawlEvent, ScrapeResult, crawl_stream, create_engine, scrape};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use async_trait::async_trait;
+use crawlberg::http::HttpResponse;
+use crawlberg::{
+    AntibotError, AntibotStrategy, AttemptOutcome, BrowserMode, BypassProvider, BypassResponse, CrawlConfig,
+    CrawlError, CrawlEvent, Decision, DispatchProfile, EscalationReason, EscalationStrategy, RetryDirective,
+    RetryPolicy, ScrapeResult, WafSignal, crawl_stream, create_engine, scrape,
+};
 use futures::StreamExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -382,4 +393,310 @@ async fn crawl_reports_a_waf_block_with_its_status_when_soft_errors_enabled() {
         Some(2),
         "the crawl counts the seed and the 429 block, not the 503 block, got pages {pages:?}"
     );
+}
+
+/// A retry policy that refuses every successful response whose URL ends with `suffix`, for `reason`.
+#[derive(Debug)]
+struct RefuseSuccess {
+    reason: EscalationReason,
+    suffix: &'static str,
+}
+
+#[async_trait]
+impl RetryPolicy for RefuseSuccess {
+    async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
+        if outcome.error.is_none() && outcome.url.ends_with(self.suffix) {
+            RetryDirective::Escalate {
+                reason: self.reason.clone(),
+            }
+        } else {
+            RetryDirective::Stop
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "refuse_success"
+    }
+}
+
+/// An antibot strategy that asks for browser escalation on every response.
+#[derive(Debug)]
+struct EscalateEveryResponse;
+
+#[async_trait]
+impl AntibotStrategy for EscalateEveryResponse {
+    async fn pre_request(&self, _url: &str) -> Result<(), AntibotError> {
+        Ok(())
+    }
+
+    async fn post_response(&self, _response: &HttpResponse, _waf: Option<&WafSignal>) -> Decision {
+        Decision::EscalateBrowser
+    }
+}
+
+/// A bypass provider that counts its calls and answers every one with `status`.
+#[derive(Debug)]
+struct CountingBypass {
+    status: u16,
+    calls: AtomicU32,
+}
+
+impl CountingBypass {
+    fn new(status: u16) -> Arc<Self> {
+        Arc::new(Self {
+            status,
+            calls: AtomicU32::new(0),
+        })
+    }
+}
+
+#[async_trait]
+impl BypassProvider for CountingBypass {
+    async fn fetch(&self, _url: &str) -> Result<BypassResponse, CrawlError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let body = "<html><body>bypass page</body></html>".to_owned();
+        Ok(BypassResponse {
+            status: self.status,
+            content_type: "text/html".to_owned(),
+            body_bytes: body.clone().into_bytes(),
+            body,
+            headers: std::collections::HashMap::new(),
+            final_url: String::new(),
+            cost_usd: None,
+            vendor_request_id: None,
+        })
+    }
+
+    fn vendor_name(&self) -> &'static str {
+        "counting"
+    }
+}
+
+/// Serves a plain 200 page at `/page` and returns the server.
+async fn serve_plain_page() -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/page"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html><body>hello</body></html>"),
+        )
+        .mount(&mock)
+        .await;
+    mock
+}
+
+/// Scrapes `url` with `dispatch` in force and the given `soft_http_errors` flag.
+async fn scrape_with(url: &str, dispatch: DispatchProfile, soft_http_errors: bool) -> Result<ScrapeResult, CrawlError> {
+    let handle = engine_with_config(CrawlConfig {
+        soft_http_errors,
+        dispatch: Some(dispatch),
+        ..allow_private_config()
+    });
+    scrape(&handle, url).await
+}
+
+/// A custom retry policy that refuses a 200 page with no escalation tier left gives the soft error
+/// page the default policy's WAF refusal gives: 403 for a refused 2xx. A refusal whose error the
+/// soft rule does not cover stays an error, and with the flag off every refusal stays an error.
+#[tokio::test]
+async fn custom_policy_refusal_is_a_soft_page_when_soft_errors_enabled() {
+    let mock = serve_plain_page().await;
+    let url = format!("{}/page", mock.uri());
+    let refusing = |reason: EscalationReason| DispatchProfile {
+        retry_policy: Some(Arc::new(RefuseSuccess {
+            reason,
+            suffix: "/page",
+        })),
+        strategy: EscalationStrategy::None,
+        ..DispatchProfile::default()
+    };
+    for reason in [
+        EscalationReason::WafBlocked { vendor: "acme".into() },
+        EscalationReason::SoftBlock,
+    ] {
+        let page = scrape_with(&url, refusing(reason.clone()), true)
+            .await
+            .unwrap_or_else(|err| panic!("{reason:?}: expected a soft error page, got Err: {err:?}"));
+        assert_eq!(page.status_code, 403, "{reason:?}: a refused 2xx must report 403");
+        assert_soft_page_shape(&page);
+
+        let refused = scrape_with(&url, refusing(reason.clone()), false).await;
+        let unchanged = match reason {
+            EscalationReason::SoftBlock => matches!(refused, Err(CrawlError::Forbidden { .. })),
+            _ => matches!(refused, Err(CrawlError::WafBlocked { .. })),
+        };
+        assert!(
+            unchanged,
+            "{reason:?}: with the flag off the refusal must stay the same error, got {refused:?}"
+        );
+    }
+
+    for reason in [EscalationReason::RenderNeeded, EscalationReason::OriginUnreliable] {
+        let refused = scrape_with(&url, refusing(reason.clone()), true).await;
+        let unchanged = match reason {
+            EscalationReason::RenderNeeded => matches!(refused, Err(CrawlError::Unsupported { .. })),
+            _ => matches!(refused, Err(CrawlError::ServerError { .. })),
+        };
+        assert!(
+            unchanged,
+            "{reason:?}: a refusal the soft rule does not cover must stay an error, got {refused:?}"
+        );
+    }
+}
+
+/// An antibot strategy that asks for browser escalation with no escalation tier left gives the
+/// same soft error page, and the same error as before with the flag off.
+#[tokio::test]
+async fn antibot_escalation_without_a_tier_is_a_soft_page_when_soft_errors_enabled() {
+    let mock = serve_plain_page().await;
+    let url = format!("{}/page", mock.uri());
+    let escalating = || DispatchProfile {
+        antibot_strategy: Some(Arc::new(EscalateEveryResponse)),
+        strategy: EscalationStrategy::None,
+        ..DispatchProfile::default()
+    };
+
+    let page = scrape_with(&url, escalating(), true)
+        .await
+        .unwrap_or_else(|err| panic!("expected a soft error page, got Err: {err:?}"));
+    assert_eq!(page.status_code, 403, "a refused 2xx must report 403");
+    assert_soft_page_shape(&page);
+
+    let refused = scrape_with(&url, escalating(), false).await;
+    assert!(
+        matches!(&refused, Err(CrawlError::WafBlocked { vendor, .. }) if vendor == "antibot"),
+        "with the flag off the refusal must stay an antibot WAF block, got {refused:?}"
+    );
+}
+
+/// A tier left to escalate to wins over a soft error page. The refusal at the last tier then
+/// reports the refused response's status: its own 4xx or 5xx, and 403 for a 2xx. This holds for
+/// a custom policy's WAF or soft block (`None` is the antibot strategy's refusal).
+#[tokio::test]
+async fn refusal_escalates_first_and_the_last_refusal_keeps_its_status() {
+    let mock = serve_plain_page().await;
+    let url = format!("{}/page", mock.uri());
+    let refusers = [
+        Some(EscalationReason::WafBlocked { vendor: "acme".into() }),
+        Some(EscalationReason::SoftBlock),
+        None,
+    ];
+
+    for (bypass_status, soft_status) in [(200_u16, 403_u16), (418, 418), (429, 429), (503, 503)] {
+        for refuser in &refusers {
+            let antibot = refuser.is_none();
+            let bypass = CountingBypass::new(bypass_status);
+            let dispatch = DispatchProfile {
+                retry_policy: refuser.clone().map(|reason| {
+                    Arc::new(RefuseSuccess {
+                        reason,
+                        suffix: "/page",
+                    }) as _
+                }),
+                antibot_strategy: antibot.then(|| Arc::new(EscalateEveryResponse) as _),
+                strategy: EscalationStrategy::BypassOnly,
+                bypass: Some(bypass.clone()),
+                ..DispatchProfile::default()
+            };
+            let page = scrape_with(&url, dispatch, true).await.unwrap_or_else(|err| {
+                panic!("bypass {bypass_status} refuser={refuser:?}: expected a soft error page, got Err: {err:?}")
+            });
+            assert_eq!(
+                bypass.calls.load(Ordering::SeqCst),
+                1,
+                "bypass {bypass_status} refuser={refuser:?}: the refusal must escalate to the bypass tier first"
+            );
+            assert_eq!(
+                page.status_code, soft_status,
+                "bypass {bypass_status} refuser={refuser:?}: the soft page must report the refused status"
+            );
+            assert_soft_page_shape(&page);
+        }
+    }
+}
+
+/// A crawl reports a linked page a custom retry policy refuses as a page with status 403.
+#[tokio::test]
+async fn crawl_reports_a_custom_policy_refusal_as_a_soft_page() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/html")
+                .set_body_string(r#"<html><body><a href="/refused">a</a></body></html>"#),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/refused"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html><body>challenge</body></html>"),
+        )
+        .mount(&mock)
+        .await;
+
+    for soft_http_errors in [false, true] {
+        let handle = engine_with_config(CrawlConfig {
+            soft_http_errors,
+            dispatch: Some(DispatchProfile {
+                retry_policy: Some(Arc::new(RefuseSuccess {
+                    reason: EscalationReason::WafBlocked { vendor: "acme".into() },
+                    suffix: "/refused",
+                })),
+                strategy: EscalationStrategy::None,
+                ..DispatchProfile::default()
+            }),
+            ..allow_private_config()
+        });
+        let mut pages = Vec::new();
+        let mut errors = Vec::new();
+        let mut stream = crawl_stream(&handle, &format!("{}/", mock.uri()))
+            .await
+            .expect("crawl must start");
+        while let Some(event) = stream.next().await {
+            match event.expect("a crawl event must not be a transport error") {
+                CrawlEvent::Page { result } => pages.push((result.url.clone(), result.status_code)),
+                CrawlEvent::Error { url, error } => errors.push((url, error)),
+                CrawlEvent::Complete { .. } => {}
+            }
+        }
+
+        assert!(
+            pages
+                .iter()
+                .any(|(url, status)| !url.ends_with("/refused") && *status == 200),
+            "soft={soft_http_errors}: the seed must be a 200 page, got {pages:?}"
+        );
+        let refused_pages: Vec<u16> = pages
+            .iter()
+            .filter(|(url, _)| url.ends_with("/refused"))
+            .map(|(_, status)| *status)
+            .collect();
+        let refused_errors = errors.iter().filter(|(url, _)| url.ends_with("/refused")).count();
+        if soft_http_errors {
+            assert_eq!(
+                refused_pages,
+                vec![403],
+                "the refused page must be one 403 page, got {pages:?}"
+            );
+            assert_eq!(
+                refused_errors, 0,
+                "the refused page must not be an error, got {errors:?}"
+            );
+        } else {
+            assert!(
+                refused_pages.is_empty(),
+                "with the flag off the refusal is not a page, got {pages:?}"
+            );
+            assert_eq!(
+                refused_errors, 1,
+                "with the flag off the refusal is one error event, got {errors:?}"
+            );
+        }
+    }
 }

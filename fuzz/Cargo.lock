@@ -443,6 +443,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "chrono",
+ "crawlberg-robots",
  "dashmap",
  "encoding_rs",
  "fancy-regex",
@@ -486,6 +487,10 @@ dependencies = [
  "crawlberg",
  "libfuzzer-sys",
 ]
+
+[[package]]
+name = "crawlberg-robots"
+version = "1.8.0"
 
 [[package]]
 name = "crc32fast"
