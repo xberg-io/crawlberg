@@ -167,6 +167,12 @@ All notable changes to crawlberg are documented here.
   context made with that crawl's proxy, so crawls with different proxies share one Chrome and
   each goes through its own proxy. Requests to a loopback address go through the proxy too;
   Chrome sends them direct by default. (#434)
+- **A proxy flag in `chrome_args` replaced the configured proxy on a launched Chrome.** With
+  `browser.proxy` or `proxy` set, a `--proxy-server` in `browser.chrome_args` sent a one-shot
+  render or an interact session through the caller's proxy, and a `--proxy-bypass-list` sent
+  loopback requests direct. A pooled or connected Chrome used the configured proxy. Every Chrome
+  now uses the configured proxy. Crawlberg drops the flag with a warning that names the flag but
+  not its value, and loopback requests still go through the proxy.
 - **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
   launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
   proxy with `username` and `password` made no connection and failed without saying why. The

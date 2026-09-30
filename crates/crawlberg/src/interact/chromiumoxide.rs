@@ -574,12 +574,12 @@ fn build_interact_launch_builder(
         .user_data_dir(user_data_dir)
         .disable_default_args();
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
-    builder = crate::browser_pool::apply_proxy(builder, proxy, &browser.chrome_args);
     crate::browser_pool::apply_launch_overrides(
         builder,
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -611,26 +611,37 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
         let proxy = test_proxy("http://127.0.0.1:9");
-        let builder = build_interact_launch_builder(
-            std::path::Path::new("/tmp/interact-test-profile"),
-            Some(&proxy),
-            &crate::types::BrowserConfig {
-                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
                 ..Default::default()
-            },
-        )
-        .expect("no binary is named, so there is nothing to check");
-        let debug = format!("{builder:?}");
-        assert!(
-            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
-            "the caller's proxy-server flag is missing: {debug}"
-        );
-        assert!(
-            !debug.contains("proxy-server=http://127.0.0.1:9"),
-            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
-        );
+            };
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
+                build_interact_launch_builder(
+                    std::path::Path::new("/tmp/interact-test-profile"),
+                    Some(&proxy),
+                    &browser,
+                )
+            });
+            let debug = format!("{:?}", built.expect("no binary is named, so there is nothing to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+        }
     }
 
     #[test]
