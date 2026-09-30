@@ -229,10 +229,12 @@ impl SsrfValidator for DefaultSsrfValidator {
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         let addresses = system_lookup(host).await?;
         if self.deny_private
-            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
+            && let Some((ip, reason)) = addresses
+                .iter()
+                .find_map(|ip| denial_reason(*ip).map(|reason| (ip, reason)))
         {
             return Err(format!(
-                "{host} resolves to the private/internal address {ip}, which is not allowed"
+                "{host} resolves to the private/internal address {ip}, which is not allowed: {reason}"
             ));
         }
         Ok(addresses)
@@ -409,6 +411,24 @@ mod tests {
             assert!(
                 message.ends_with(&format!(": {reason}")),
                 "{target} must be refused as {reason}, got {message:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_names_the_denial_reason_at_connect_time() {
+        // ~keep An IP literal resolves to itself without a DNS query, so the message is exact.
+        let validator = DefaultSsrfValidator::with_deny_private(true);
+        for (host, reason) in [
+            ("::ffff:127.0.0.1", "loopback"),
+            ("127.0.0.1", "loopback"),
+            ("10.0.0.5", "private_network"),
+            ("fd12::1", "unique_local"),
+        ] {
+            let message = validator.resolve(host).await.expect_err("a denied address");
+            assert_eq!(
+                message,
+                format!("{host} resolves to the private/internal address {host}, which is not allowed: {reason}")
             );
         }
     }

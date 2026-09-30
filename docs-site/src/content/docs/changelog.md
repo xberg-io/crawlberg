@@ -128,6 +128,11 @@ title: "Changelog"
 
 ### Fixed
 
+- **The browser crate's default SSRF policy left the reason out of a connect-time refusal.** When
+  `crawlberg-browser` is used directly, its check of a URL names the reason it refuses an
+  address, such as `loopback`. A host name or address refused when the connection resolves it
+  gave the same decision with no reason. That refusal now ends with the reason too, so
+  `::ffff:127.0.0.1` gives the reason `loopback` at both checks. (#532)
 - **The full and CLI Docker images, and the Elixir NIF builder, failed before compiling.** Their
   build rewrote the workspace `members` list with a pattern that expects a one-line array, and the
   root `Cargo.toml` writes it on several lines, so cargo could not load the copied manifest. The

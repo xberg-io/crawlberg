@@ -128,7 +128,8 @@ mod tests {
     async fn browser_connect_time_resolution_checks_the_embedded_ipv4_address() {
         // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
         // check exactly as an AAAA answer carrying that address would. The bridge is what a crawl
-        // uses; the fallback governs direct use of the browser crate and names no reason.
+        // uses; the fallback governs direct use of the browser crate and appends the reason to its
+        // message, as its URL check does.
         let bridge = validator_for(&SsrfPolicy::default());
         let fallback = crawlberg_browser::adapter::DefaultSsrfValidator::from_env();
         let mut mismatches = Vec::new();
@@ -138,9 +139,15 @@ mod tests {
             if actual != wanted {
                 mismatches.push(format!("{literal}: bridge expected {wanted:?}, got {actual:?}"));
             }
-            let refused = fallback.resolve(literal).await.is_err();
-            if refused != expected.is_some() {
-                mismatches.push(format!("{literal}: fallback refused={refused}, expected {expected:?}"));
+            let reason = fallback.resolve(literal).await.err().map(|message| {
+                // ~keep The reason is the message suffix after the last ": ", and no reason holds one.
+                match message.rsplit_once(": ") {
+                    Some((_, reason)) => reason.to_owned(),
+                    None => message,
+                }
+            });
+            if reason.as_deref() != expected {
+                mismatches.push(format!("{literal}: fallback expected {expected:?}, got {reason:?}"));
             }
         }
         assert!(
