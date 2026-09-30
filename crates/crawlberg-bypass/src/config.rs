@@ -335,7 +335,7 @@ mod tests {
         const SECRET: &str = "sk-live-9f8e7d6c5b4a";
         let config = ProviderConfig {
             vendor_name: "querykey".into(),
-            endpoint: format!("https://api.vendor.example:8443/v1/{SECRET}?key={SECRET}"),
+            endpoint: format!("https://{SECRET}.vendor.example:8443/v1/{SECRET}?key={SECRET}"),
             method: HttpMethod::Post,
             auth: AuthScheme::BasicUsername {
                 username: SECRET.into(),
@@ -362,7 +362,7 @@ mod tests {
                 "the placeholder is missing: {rendered}"
             );
             assert!(
-                rendered.contains("https://api.vendor.example:8443"),
+                rendered.contains("https://***.vendor.example:8443"),
                 "the endpoint origin must stay visible: {rendered}"
             );
             assert!(

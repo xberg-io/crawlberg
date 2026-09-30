@@ -68,6 +68,10 @@ pub fn redact_url_credentials(input: &str) -> String {
 /// is no more secret than the host it belongs to. `url::Url::port` reports `None` for a
 /// scheme's default port, so `wss://host:443` prints as `wss://host`.
 ///
+/// A host label can carry a secret too, as in a per-account `sk-live-abc.api.example.com`.
+/// A domain name keeps only its last two labels and prints the placeholder for each label to
+/// their left, so that host prints as `***.***.example.com`. An IP literal prints as it is.
+///
 /// Fails **closed**: returns the placeholder when `input` does not parse as an absolute URL
 /// or carries no host, so an endpoint the parser rejects is never echoed.
 #[must_use]
@@ -75,15 +79,26 @@ pub fn redact_url_to_origin(input: &str) -> String {
     let Ok(url) = url::Url::parse(input) else {
         return REDACTED_PLACEHOLDER.to_owned();
     };
-    let Some(host) = url.host() else {
-        return REDACTED_PLACEHOLDER.to_owned();
+    let host = match url.host() {
+        None => return REDACTED_PLACEHOLDER.to_owned(),
+        Some(url::Host::Domain(domain)) => redact_host_labels(domain),
+        // ~keep An IP literal is formatted through `url::Host`, not `host_str`, so an IPv6
+        // ~keep literal keeps its brackets and the `:port` suffix below stays unambiguous.
+        Some(ip) => ip.to_string(),
     };
-    // ~keep `host` is formatted through `url::Host`, not `host_str`, so an IPv6 literal keeps
-    // ~keep its brackets and the `:port` suffix below stays unambiguous.
     match url.port() {
         Some(port) => format!("{}://{host}:{port}", url.scheme()),
         None => format!("{}://{host}", url.scheme()),
     }
+}
+
+/// `domain` with the placeholder in place of each label left of its last two.
+fn redact_host_labels(domain: &str) -> String {
+    let labels: Vec<&str> = domain.split('.').collect();
+    let hidden = labels.len().saturating_sub(2);
+    let mut kept: Vec<&str> = vec![REDACTED_PLACEHOLDER; hidden];
+    kept.extend_from_slice(&labels[hidden..]);
+    kept.join(".")
 }
 
 /// `Debug` text for a caller's script or template: the placeholder and the length, never
@@ -218,6 +233,21 @@ mod tests {
             redact_url_to_origin("ws://[::1]:9222/devtools/browser/42"),
             "ws://[::1]:9222"
         );
+    }
+
+    #[test]
+    fn redact_url_to_origin_hides_every_host_label_left_of_the_last_two() {
+        assert_eq!(
+            redact_url_to_origin("https://sk-live-9f8e7d6c5b4a.api.example.com:8443/v1"),
+            "https://***.***.example.com:8443"
+        );
+        assert_eq!(
+            redact_url_to_origin("https://api.example.com"),
+            "https://***.example.com"
+        );
+        assert_eq!(redact_url_to_origin("https://example.com/v1"), "https://example.com");
+        assert_eq!(redact_url_to_origin("ws://localhost:9222"), "ws://localhost:9222");
+        assert_eq!(redact_url_to_origin("ws://10.1.2.3:9222/x"), "ws://10.1.2.3:9222");
     }
 
     #[test]

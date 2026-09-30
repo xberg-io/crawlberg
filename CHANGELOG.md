@@ -104,6 +104,11 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A secret in an endpoint host label printed in debug output.** A browser endpoint, a bypass
+  provider endpoint or a browser session proxy prints as its origin, and a per-account host such
+  as `sk-live-abc.api.example.com` printed in full. The host now keeps its last two labels and
+  prints `***` for each label to their left: `***.***.example.com`. An IP address prints as
+  before. (#175)
 - **The Chrome backend's record of a main-frame response printed its `Set-Cookie`.** The SSRF
   interception keeps the headers of each main-frame response, and its debug output printed every
   value. It now prints `***` for each credential header on the shared list, as the other response
