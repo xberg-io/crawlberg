@@ -170,9 +170,11 @@ All notable changes to crawlberg are documented here.
 - **A proxy flag in `chrome_args` replaced the configured proxy on a launched Chrome.** With
   `browser.proxy` or `proxy` set, a `--proxy-server` in `browser.chrome_args` sent a one-shot
   render or an interact session through the caller's proxy, and a `--proxy-bypass-list` sent
-  loopback requests direct. A pooled or connected Chrome used the configured proxy. Every Chrome
-  now uses the configured proxy. Crawlberg drops the flag with a warning that names the flag but
-  not its value, and loopback requests still go through the proxy.
+  loopback requests direct. `--no-proxy-server`, `--proxy-pac-url` and `--proxy-auto-detect` did
+  the same, because Chrome reads them before `--proxy-server`. A pooled or connected Chrome used
+  the configured proxy. Every Chrome now uses the configured proxy. Crawlberg drops each of these
+  flags with a warning that names the flag but not its value, and loopback requests still go
+  through the proxy.
 - **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
   launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
   proxy with `username` and `password` made no connection and failed without saying why. The

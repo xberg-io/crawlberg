@@ -616,6 +616,9 @@ mod tests {
         for (caller_flag, caller_value) in [
             ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
             ("--proxy-bypass-list=*.internal", "*.internal"),
+            ("--proxy-pac-url=http://127.0.0.1:7/p.pac", "127.0.0.1:7/p.pac"),
+            ("--no-proxy-server", "no-proxy-server"),
+            ("--proxy-auto-detect", "proxy-auto-detect"),
         ] {
             let browser = crate::types::BrowserConfig {
                 chrome_args: vec![caller_flag.to_owned()],
@@ -640,7 +643,10 @@ mod tests {
                 "{caller_flag}: the caller's flag must be dropped: {debug}"
             );
             let switch = caller_flag.split('=').next().expect("a switch name");
-            crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+            // ~keep A switch with no value has no secret to hide; its name is what the warning prints.
+            if caller_flag.contains('=') {
+                crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+            }
         }
     }
 
