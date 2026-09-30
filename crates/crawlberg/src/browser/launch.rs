@@ -81,8 +81,9 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &dest_path)?;
         } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &dest_path)
-                .map_err(|e| CrawlError::other(format!("failed to copy profile file: {e}")))?;
+            std::fs::copy(entry.path(), &dest_path).map_err(|e| {
+                CrawlError::other(format!("failed to copy profile file {}: {e}", entry.path().display()))
+            })?;
         }
     }
     Ok(())
@@ -277,6 +278,42 @@ mod user_data_dir_tests {
         assert!(
             crate::browser_pool::tests::wait_for_removal(&scratch),
             "the scratch copy must be removed when it is dropped"
+        );
+    }
+
+    /// The error of a profile copy that fails names the file it could not copy.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_profile_copy_names_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let name = unique_profile_name("copy-error");
+        let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+        profile.create().expect("profile directory must be creatable");
+        let _guard = ProfileGuard(profile.clone());
+        let unreadable = profile.user_data_dir.join("unreadable-marker");
+        std::fs::write(&unreadable, b"x").expect("marker file must be writable");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))
+            .expect("permissions must be settable");
+        if std::fs::read(&unreadable).is_ok() {
+            // ~keep Root reads a mode 000 file, so the copy cannot fail here.
+            return;
+        }
+
+        let config = CrawlConfig {
+            browser_profile: Some(name),
+            save_browser_profile: false,
+            ..CrawlConfig::default()
+        };
+        let error = resolve_user_data_dir(&config)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        let _ = std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600));
+
+        assert!(
+            error.contains("unreadable-marker") && error.contains("failed to copy profile file"),
+            "the copy error must name the file: {error:?}"
         );
     }
 
@@ -543,7 +580,8 @@ mod tests {
             .expect("a launched Chrome must have a profile directory");
         let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
         drop(super::super::OneShotSession {
-            browser: Some(browser),
+            browser: Some(std::sync::Arc::new(browser)),
+            firewall: None,
             open_tab: None,
             handler_handle: Some(handler_handle),
             data_dir,
@@ -585,7 +623,8 @@ mod tests {
                 .expect("a launched Chrome must have a profile directory");
             let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
             drop(super::super::OneShotSession {
-                browser: Some(browser),
+                browser: Some(std::sync::Arc::new(browser)),
+                firewall: None,
                 open_tab: None,
                 handler_handle: Some(handler_handle),
                 data_dir,

@@ -117,6 +117,11 @@ pub(crate) async fn scrape_from_crawl_response(
         screenshot_base64: None,
         downloaded_document,
         browser: None,
+        ssrf_refused_urls: resp
+            .landed
+            .as_ref()
+            .map(|landed| landed.refused.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -442,7 +447,7 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         }
@@ -502,7 +507,7 @@ mod tests {
             body: String::from_utf8_lossy(&body_bytes).into_owned(),
             body_bytes,
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         }

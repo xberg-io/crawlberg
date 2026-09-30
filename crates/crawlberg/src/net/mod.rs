@@ -21,6 +21,11 @@ pub use credentials::CredentialScope;
 pub use redact::redact_url_credentials;
 pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 
+/// How many refusals of one browser page or session are logged one by one. The rest are
+/// counted, and one warning reports the count when the page or session ends.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) const LOGGED_REFUSALS: usize = 5;
+
 /// Parse `url` and confirm its scheme is one of `schemes`.
 ///
 /// A URL scheme is case-insensitive (RFC 3986 §3.1); the `url` crate lower-cases the scheme

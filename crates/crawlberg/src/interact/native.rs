@@ -25,7 +25,8 @@ pub(super) async fn run(
         "the native browser backend is selected; it runs no Chrome process",
     );
 
-    let native_config = build_native_config(config)?;
+    let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+    let native_config = build_native_config(config, ssrf)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -61,10 +62,17 @@ pub(super) async fn run(
         }
     })?;
 
-    Ok(map_result(native_result))
+    let refused = crate::net::browser_policy::take_refused(&refused);
+    Ok(InteractionResult {
+        ssrf_refused_urls: refused,
+        ..map_result(native_result)
+    })
 }
 
-fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, CrawlError> {
+fn build_native_config(
+    config: &CrawlConfig,
+    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
+) -> Result<NativeBrowserConfig, CrawlError> {
     let wait_until = match config.browser.wait {
         BrowserWait::NetworkIdle => NativeBrowserWait::NetworkIdle,
         BrowserWait::Selector => NativeBrowserWait::Selector,
@@ -85,7 +93,7 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
+        ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
     })
@@ -165,6 +173,7 @@ fn map_result(result: NativeInteractionResult) -> InteractionResult {
         final_url: result.final_url,
         screenshot: result.screenshot,
         screenshot_base64,
+        ssrf_refused_urls: Vec::new(),
     }
 }
 
@@ -414,7 +423,8 @@ mod credential_scope_tests {
             ..CrawlConfig::default()
         };
 
-        let native = build_native_config(&config).expect("an admitted config must build");
+        let (ssrf, _) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+        let native = build_native_config(&config, ssrf).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),

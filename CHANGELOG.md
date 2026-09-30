@@ -6,6 +6,36 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
+  of such a page returned the rendered HTML with status 200. It now returns the same error that
+  HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
+  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
+  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
+  mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
+  that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
+  response headers of the document the page shows, so a WAF block is found from the headers of a
+  403 page as well as from its body. (#143)
+
+- **The native browser backend reports an empty body for a 204, 205 or 304.** It reported an
+  empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
+  your code reads the body of such a page, expect an empty string. (#121)
+
+- **`interact` on the Chromiumoxide backend now follows at most `max_redirects` redirects.** The
+  default is 10. It followed every redirect a chain offered. For a longer chain, `interact`
+  returns the URL of the redirect at the limit, empty HTML, and a failed result for each action.
+  If an `interact` call must follow a longer chain, raise `max_redirects`. (#116)
+
+- **A Chromiumoxide browser fetch or `interact` session fails when Chrome reports no main
+  frame.** The redirect limit counts only the redirects of the page's main frame, so crawlberg
+  must know that frame. If Chrome reports no main frame, or the read of it fails, the call
+  returns a browser error that says the redirect limit cannot be applied. (#90)
+
+- **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
+  field is left out when it is empty, so an older crawlberg still reads a result with no refused
+  request. A scrape or page result that lists one is rejected by an older reader, because both
+  types refuse unknown fields.
+
 - **`BrowserConfig` gained two fields and rejects unknown ones.** `chrome_path` and `chrome_args`
   are always serialised, and `BrowserConfig` rejects unknown fields, so **a browser configuration
   serialised by this version is rejected by every older crawlberg**, even when both are unset.
@@ -134,6 +164,75 @@ All notable changes to crawlberg are documented here.
   precedence over `path_patterns_match_query`. (#78)
 
 ### Fixed
+
+- **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
+  a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
+  then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
+  fetch at once with the status, final URL and empty body that HTTP mode reports. The native
+  backend already returned at once, but it reported an empty HTML skeleton as the body; it now
+  reports an empty body too. (#121)
+
+  A 304 Chrome asked for itself is unaffected: when Chrome revalidates a page it holds in its
+  cache, the page still renders from that cache with status 200. Only a 304 that no cache entry
+  can satisfy is reported as an empty 304, which is what it carries.
+
+- **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
+  chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
+  refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
+  redirect response at the limit, with the same redirect count, status and final URL that HTTP
+  mode reports, and the next hop is never requested. Only the redirects of the requested page
+  count, and this applies to the Chromiumoxide backend. (#90)
+
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
+- **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
+  `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
+  returns at once. When the navigation ends on a response without a document, `interact` reports
+  the URL that answered, empty HTML, and a failed result for each action that names the status.
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
+  on the native backend `interact` still follows every redirect a chain offers, up to the
+  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
+  stopped checking requests against the SSRF policy when the page finished loading, so a script
+  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
+  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
+  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
+  or iframe keeps the page. (#143)
+- **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
+  and stopped when the navigation finished. In `interact`, a click, a form submission, a script
+  `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
+  crawl, a popup the page opened, and a request it sent during the extra wait or while it was
+  screenshotted, did too. Each browser now has one check for every page it serves, and each
+  request is judged by the policy of the page it belongs to: the page, its frames, and the
+  popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
+  is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
+  alone. A launched browser no longer opens a tab of its own. On a pooled browser, on a
+  `browser.endpoint` Chrome, and on a one-shot browser without a profile, every page crawlberg
+  opens lives in a browser context of its own, so it shares no cookies or storage with the
+  browser's other pages; on a `browser.endpoint` Chrome the page starts with the browser's cookies.
+  When a fetch or a session ends, that context is disposed: the page, its popups and every request
+  of theirs Chrome still holds go with it, so nothing they sent reaches the network after. The
+  check is turned off only when it stops, once every page it opened is gone; a request Chrome
+  pauses after that is not checked. A session with a `browser_profile` runs on a Chrome launched
+  for it alone, so its page uses the profile's own storage, cookies and localStorage included, and
+  the check stays on until that Chrome is closed. In `interact`, a main-frame navigation refused
+  before the actions fails the session with the SSRF policy error, as it fails a scrape. This
+  applies to the Chromiumoxide backend. (#153, #165, #168, #281, #506)
+- **An `interact` action whose request the SSRF check refused was reported as successful.** The
+  action now fails with the SSRF policy error that names the refused URL. A refused request counts
+  for the action that was running when the check received it from Chrome, so on a busy host it can
+  count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
+  image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
+  in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of
+  the whole session, the extra wait included. The first five refusals of a page are each logged
+  as a warning, then one warning reports the count, so a page cannot flood the log. This applies
+  to both browser backends, for scrape, crawl and `interact`.
 
 - **Feeds, hreflang alternates, canonical links and icons reported `file:` and `blob:` addresses.**
   They still used the older check from #307, which drops only `data:`, `javascript:` and

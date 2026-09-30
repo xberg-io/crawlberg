@@ -282,7 +282,7 @@ impl CrawlEngine {
         if self.request_will_use_browser() {
             let pool = self.config.browser_pool.as_deref();
             #[cfg(feature = "browser-native")]
-            let http_resp = crate::browser::browser_fetch(
+            let page = crate::browser::browser_fetch(
                 url,
                 &self.config,
                 None,
@@ -292,8 +292,8 @@ impl CrawlEngine {
             )
             .await?;
             #[cfg(not(feature = "browser-native"))]
-            let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
-            let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+            let page = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
+            let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
             return Ok((crawl_resp, true));
         }
 
@@ -310,7 +310,7 @@ impl CrawlEngine {
                     body: bypass_resp.body,
                     body_bytes: bypass_resp.body_bytes,
                     headers: bypass_resp.headers,
-                    landed_url: None,
+                    landed: None,
                     sent_user_agent: None,
                     soft_error: false,
                 },

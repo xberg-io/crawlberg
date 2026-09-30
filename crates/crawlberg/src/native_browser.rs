@@ -21,7 +21,7 @@ pub(crate) async fn native_browser_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -51,7 +51,7 @@ async fn native_browser_fetch_inner(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -72,7 +72,8 @@ async fn native_browser_fetch_inner(
         );
     }
 
-    let native_config = build_native_config(config, prior_cookies)?;
+    let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+    let native_config = build_native_config(config, prior_cookies, ssrf)?;
 
     let timeout = config.browser.timeout;
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
@@ -91,12 +92,20 @@ async fn native_browser_fetch_inner(
         tokio::time::sleep(extra).await;
     }
 
-    let content_type = rendered
-        .headers
-        .get("content-type")
-        .cloned()
-        .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_owned());
-    let body_bytes = rendered.html.as_bytes().to_vec();
+    let status = rendered.status.unwrap_or(DEFAULT_RENDERED_STATUS);
+    // ~keep The native backend parses even an empty body into a skeleton document. A status
+    // ~keep that carries no document reports the empty body and the real content type, as the
+    // ~keep HTTP fetch does.
+    let no_document = crate::http::NO_DOCUMENT_STATUSES.contains(&status);
+    let content_type = rendered.headers.get("content-type").cloned().unwrap_or_else(|| {
+        if no_document {
+            String::new()
+        } else {
+            DEFAULT_CONTENT_TYPE.to_owned()
+        }
+    });
+    let body = if no_document { String::new() } else { rendered.html };
+    let body_bytes = body.as_bytes().to_vec();
 
     let extras = BrowserExtras {
         eval_result: rendered.eval_result,
@@ -108,10 +117,11 @@ async fn native_browser_fetch_inner(
         cookies: rendered.cookies.into_iter().map(cookie_info_from_native).collect(),
     };
 
-    Ok(HttpResponse {
-        status: rendered.status.unwrap_or(DEFAULT_RENDERED_STATUS),
+    let refused = crate::net::browser_policy::take_refused(&refused);
+    let response = HttpResponse {
+        status,
         content_type,
-        body: rendered.html,
+        body,
         body_bytes,
         headers: rendered.headers.into_iter().map(|(k, v)| (k, vec![v])).collect(),
         browser_extras: Some(extras),
@@ -124,7 +134,8 @@ async fn native_browser_fetch_inner(
         // ~keep crate and is out of scope here; `browser::browser_fetch` warns the caller
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
-    })
+    };
+    Ok((response, refused))
 }
 
 /// Content type assumed when the render reports none.
@@ -180,6 +191,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 fn build_native_config(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
+    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
 ) -> Result<crawlberg_browser::adapter::NativeBrowserConfig, CrawlError> {
     Ok(crawlberg_browser::adapter::NativeBrowserConfig {
         user_agent: config.user_agent.clone(),
@@ -195,7 +207,7 @@ fn build_native_config(
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
+        ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
     })
@@ -249,6 +261,10 @@ mod tests {
         }
     }
 
+    fn test_validator(config: &CrawlConfig) -> std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator> {
+        crate::net::browser_policy::recording_validator_for(&config.ssrf).0
+    }
+
     #[test]
     fn a_bearer_token_and_the_custom_headers_are_scoped_to_the_seed_host() {
         let custom_headers = std::collections::HashMap::from([("x-custom".to_owned(), "value".to_owned())]);
@@ -259,7 +275,8 @@ mod tests {
             custom_headers,
         );
 
-        let native = build_native_config(&config, None).expect("an admitted config must build");
+        let native =
+            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),
@@ -289,7 +306,7 @@ mod tests {
             std::collections::HashMap::new(),
         );
 
-        let scoped = build_native_config(&config, None)
+        let scoped = build_native_config(&config, None, test_validator(&config))
             .expect("an admitted config must build")
             .origin_headers
             .expect("the header must be scoped to the seed host");
@@ -304,7 +321,8 @@ mod tests {
             ..CrawlConfig::default()
         };
 
-        let native = build_native_config(&config, None).expect("an admitted config must build");
+        let native =
+            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
         assert_eq!(native.origin_headers, None);
     }
 

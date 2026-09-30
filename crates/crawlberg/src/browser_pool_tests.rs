@@ -1354,6 +1354,50 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
     );
 }
 
+/// A launched browser opens no tab of its own, so nothing loads before crawlberg asks.
+#[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+async fn a_launched_browser_opens_no_startup_tab() {
+    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-startup-tab-test-{}", std::process::id()));
+    let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
+        .expect("the default pool config names no binary to check")
+        .build()
+    {
+        Ok(config) => Browser::launch(config).await,
+        Err(error) => {
+            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let (mut browser, mut handler) = match launched {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let pages: Vec<String> = browser
+        .fetch_targets()
+        .await
+        .expect("the targets must be listed")
+        .into_iter()
+        .filter(|target| target.r#type == "page")
+        .map(|target| target.url)
+        .collect();
+    let _ = close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
+    handler_task.abort();
+    let _ = std::fs::remove_dir_all(&user_data_dir);
+    assert!(
+        pages.is_empty(),
+        "the browser must open no tab of its own, got {pages:?}"
+    );
+}
+
 #[test]
 fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
     // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an

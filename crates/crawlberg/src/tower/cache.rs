@@ -121,7 +121,7 @@ fn response_from_cache(cached: CachedPage, sent_user_agent: Option<String>) -> C
         body: cached.body,
         body_bytes,
         headers,
-        landed_url: None,
+        landed: None,
         sent_user_agent,
         soft_error: false,
     }
@@ -308,7 +308,7 @@ mod tests {
                     body: "ok".into(),
                     body_bytes: vec![],
                     headers: HashMap::new(),
-                    landed_url: None,
+                    landed: None,
                     sent_user_agent: None,
                     soft_error: false,
                 })
@@ -398,7 +398,7 @@ mod tests {
                     body: "fresh from origin".into(),
                     body_bytes: b"fresh from origin".to_vec(),
                     headers,
-                    landed_url: None,
+                    landed: None,
                     sent_user_agent,
                     soft_error: false,
                 })

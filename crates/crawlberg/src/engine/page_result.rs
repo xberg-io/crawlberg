@@ -84,6 +84,7 @@ impl CrawlEngine {
             redirect_count: fetch.redirect_count,
             noindex_detected: fetch.robots.noindex,
             nofollow_detected: fetch.robots.nofollow,
+            ssrf_refused_urls: fetch.ssrf_refused_urls,
         };
 
         let page = match self.content_filter.filter(page).await? {

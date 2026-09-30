@@ -91,6 +91,8 @@ pub(super) struct FetchResult {
     pub(super) final_url: String,
     /// Redirect hops taken to reach `final_url` from `entry.url`.
     pub(super) redirect_count: usize,
+    /// The URLs the browser's SSRF check refused for requests the page sent.
+    pub(super) ssrf_refused_urls: Vec<String>,
 }
 
 /// What a spawned frontier fetch produced.

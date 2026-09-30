@@ -2,10 +2,10 @@
 //!
 //! ~keep This module is feature-gated behind `#[cfg(feature = "browser-chromiumoxide")]` at
 //! ~keep the module level in `lib.rs` (the narrower flag -- `browser` implies it, see the
-//! ~keep `~keep` there). One method compiled under this module, `PooledPage::into_parts`, is
-//! ~keep only called from code gated on the wider `browser` feature, so it carries its own
-//! ~keep `#[cfg(feature = "browser")]` inline with a `~keep` explaining why; that is the one
-//! ~keep sanctioned in-file feature gate, not a precedent for adding more.
+//! ~keep `~keep` there). Two methods compiled under this module, `PooledPage::into_parts` and
+//! ~keep `BrowserPool::firewall`, are only called from code gated on the wider `browser`
+//! ~keep feature, so each carries its own `#[cfg(feature = "browser")]` inline; those are the
+//! ~keep sanctioned in-file feature gates, not a precedent for adding more.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +20,7 @@ use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -69,6 +70,9 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
         "--force-color-profile=srgb",
         "--metrics-recording-only",
         "--no-first-run",
+        // ~keep No startup tab: Chrome's new-tab page fetches remote content that belongs to no
+        // ~keep watched page, so the SSRF check refuses it. Pages are created on demand.
+        "--no-startup-window",
         "--password-store=basic",
         "--lang=en_US",
     ];
@@ -621,7 +625,10 @@ pub(crate) struct ExternalTabCleanup {
 }
 
 struct BrowserState {
-    browser: Browser,
+    browser: Arc<Browser>,
+    /// The SSRF check every page of this browser runs under. It holds the other reference
+    /// to `browser` until it is stopped.
+    firewall: BrowserFirewall,
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
@@ -640,6 +647,24 @@ enum BrowserCloseOutcome {
     Exited,
     /// `shutdown_timeout` expired, so the process was force-killed via [`Browser::kill`].
     Killed,
+}
+
+impl BrowserState {
+    /// Stop the SSRF check, then close the browser, or disconnect from one crawlberg does not
+    /// own, bounded by the handler shutdown timeout.
+    async fn close(self) {
+        self.firewall.stop().await;
+        let cleanup = ExternalTabCleanup {
+            pending_closes: Some(self.pending_closes),
+            ..ExternalTabCleanup::default()
+        };
+        // ~keep The stopped firewall held the only other reference, so this is the browser itself.
+        match Arc::into_inner(self.browser) {
+            Some(browser) => release_browser(browser, self.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await,
+            None => self.handler_handle.abort(),
+        }
+        drop(self.user_data_dir);
+    }
 }
 
 /// Stop the task running the CDP handler loop of a browser that has just been closed.
@@ -900,13 +925,19 @@ impl BrowserPool {
 
         let mut guard = self.state.lock().await;
         if let Some(bs) = guard.take() {
-            let cleanup = ExternalTabCleanup {
-                pending_closes: Some(bs.pending_closes),
-                ..ExternalTabCleanup::default()
-            };
-            release_browser(bs.browser, bs.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(bs.user_data_dir);
+            bs.close().await;
         }
+    }
+
+    /// The SSRF check of the running browser, which a page of this pool must be watched by.
+    #[cfg(feature = "browser")]
+    pub(crate) async fn firewall(&self) -> Result<crate::ssrf_intercept::FirewallHandle, CrawlError> {
+        self.state
+            .lock()
+            .await
+            .as_ref()
+            .map(|bs| bs.firewall.handle())
+            .ok_or_else(|| CrawlError::browser_error("browser pool has no running browser"))
     }
 
     /// Try to create a new page from the current browser. Takes the mutex
@@ -920,6 +951,7 @@ impl BrowserPool {
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
+                old.firewall.stop().await;
                 old.handler_handle.abort();
             }
             let bs = self.launch_browser().await?;
@@ -928,10 +960,9 @@ impl BrowserPool {
         }
 
         let bs = guard.as_ref().expect("browser state was just set above");
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page())
             .await
-            .map_err(|_| CrawlError::browser_error("timeout opening page"))?
-            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))?;
+            .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         Ok((page, Arc::clone(&bs.pending_closes)))
     }
 
@@ -949,12 +980,7 @@ impl BrowserPool {
 
         self.healthy.store(false, Ordering::Release);
         if let Some(old) = guard.take() {
-            let cleanup = ExternalTabCleanup {
-                pending_closes: Some(old.pending_closes),
-                ..ExternalTabCleanup::default()
-            };
-            release_browser(old.browser, old.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(old.user_data_dir);
+            old.close().await;
         }
 
         let bs = self.launch_browser().await?;
@@ -987,9 +1013,35 @@ impl BrowserPool {
         };
 
         let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let browser = Arc::new(browser);
+        let firewall = match BrowserFirewall::start(
+            Arc::clone(&browser),
+            BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+            PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
+        )
+        .await
+        {
+            Ok(firewall) => firewall,
+            Err(error) => {
+                match Arc::into_inner(browser) {
+                    Some(browser) => {
+                        release_browser(
+                            browser,
+                            handler_handle,
+                            ExternalTabCleanup::default(),
+                            HANDLER_SHUTDOWN_TIMEOUT,
+                        )
+                        .await;
+                    }
+                    None => handler_handle.abort(),
+                }
+                return Err(error);
+            }
+        };
 
         Ok(BrowserState {
             browser,
+            firewall,
             handler_handle,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),

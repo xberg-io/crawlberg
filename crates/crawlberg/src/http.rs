@@ -35,6 +35,14 @@ pub(crate) use status::{HttpStatus, error_status};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
+/// Statuses that carry no document. A browser commits nothing for them, so a browser fetch
+/// reports them with an empty body, as the HTTP fetch does.
+///
+/// ~keep Gated on the browser features, unlike `REDIRECT_STATUSES`: only the browser backends
+/// ~keep read it, while the HTTP path reads `REDIRECT_STATUSES` on every build.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) const NO_DOCUMENT_STATUSES: [u16; 3] = [204, 205, 304];
+
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
 ///
@@ -630,6 +638,52 @@ async fn unfollowed_redirect_response(
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let headers_map = build_headers_map(&head.headers);
     head.into_response(body, body_bytes, headers_map)
+}
+
+/// The error for a rendered 403: a WAF block when its headers or body fingerprint, a plain
+/// forbidden otherwise, each carrying the status as the fetch path's `challenge_status_error` does.
+#[cfg(any(feature = "browser", feature = "browser-native"))]
+fn forbidden_body_error(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> CrawlError {
+    match waf::waf_vendor_from_body(status, body, headers_map) {
+        Some(vendor) => {
+            let message = format!("waf/blocked detected: {vendor}");
+            waf::waf_block(status, vendor, message)
+        }
+        None => CrawlError::forbidden_with_source("forbidden", status::HttpStatus(status)),
+    }
+}
+
+/// Apply HTTP mode's status handling to a page a browser rendered. A status the HTTP fetch
+/// raises as an error raises the same error here. Where HTTP mode reports the status as a
+/// page instead (a 404 or 403 under `soft_http_errors`, or a 404 at the end of a redirect),
+/// the page keeps its status and loses its body, as the HTTP fetch reports it.
+#[cfg(any(feature = "browser", feature = "browser-native"))]
+pub(crate) fn rendered_status_outcome(
+    mut response: HttpResponse,
+    redirected: bool,
+    config: &CrawlConfig,
+) -> Result<HttpResponse, CrawlError> {
+    let status = response.status;
+    let error = if status == 403 {
+        Some(forbidden_body_error(status, &response.body, &response.headers))
+    } else {
+        status_error(status, &response.final_url)
+    };
+    let Some(error) = error else {
+        return Ok(response);
+    };
+    let reported_as_page = match status {
+        404 => config.soft_http_errors || redirected,
+        403 => config.soft_http_errors,
+        _ => false,
+    };
+    if !reported_as_page {
+        return Err(error);
+    }
+    response.content_type.clear();
+    response.body.clear();
+    response.body_bytes.clear();
+    Ok(response)
 }
 
 /// Shortfall below the declared `content-length` that is read as a truncated transfer
@@ -1308,6 +1362,47 @@ mod tests {
             status::error_status(&refused),
             Some(200),
             "a block refused from a 2xx must carry its status: {refused:?}"
+        );
+    }
+
+    /// A 403 page a browser rendered raises the error the HTTP fetch raises for it, with the
+    /// same status attached, so a custom retry policy reads 403 whichever tier fetched the page.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    #[test]
+    fn a_rendered_403_carries_its_status_as_the_http_fetch_does() {
+        let rendered = |headers: &[(&str, &str)]| HttpResponse {
+            status: 403,
+            content_type: "text/html".to_owned(),
+            body: "<p>nope</p>".to_owned(),
+            body_bytes: b"<p>nope</p>".to_vec(),
+            headers: headers
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), vec![(*value).to_owned()]))
+                .collect(),
+            browser_extras: None,
+            final_url: "https://example.com/page".to_owned(),
+            screenshot: None,
+        };
+        let config = CrawlConfig::default();
+
+        let plain = rendered_status_outcome(rendered(&[]), false, &config)
+            .err()
+            .expect("a rendered 403 must fail");
+        assert!(matches!(&plain, CrawlError::Forbidden { .. }), "{plain:?}");
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain rendered 403 must carry its status: {plain:?}"
+        );
+
+        let blocked = rendered_status_outcome(rendered(&[("x-datadome", "protected")]), false, &config)
+            .err()
+            .expect("a fingerprinted rendered 403 must fail");
+        assert!(matches!(&blocked, CrawlError::WafBlocked { .. }), "{blocked:?}");
+        assert_eq!(
+            status::error_status(&blocked),
+            Some(403),
+            "a fingerprinted rendered 403 must carry its status: {blocked:?}"
         );
     }
 

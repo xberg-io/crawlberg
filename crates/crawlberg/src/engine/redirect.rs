@@ -455,7 +455,10 @@ pub(crate) async fn follow_redirects(
 
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
-        let hop_engine = engine.clone_for_url(&chain.current_url);
+        let mut hop_engine = engine.clone_for_url(&chain.current_url);
+        // ~keep The browser tier follows redirects inside Chrome, so it gets the hops this
+        // ~keep chain has left rather than the whole limit.
+        hop_engine.config.max_redirects = max_redirects.saturating_sub(chain.redirect_count);
         let (resp, hop_browser_used) = match hop_engine
             .fetch_response(&chain.current_url, forced_user_agent.as_deref())
             .await
@@ -477,9 +480,9 @@ pub(crate) async fn follow_redirects(
         // ~keep The browser tier follows redirects itself, so the chain learns of the hop only
         // ~keep after the request went out. Its landed URL still passes the SSRF check and the
         // ~keep policy a 3xx target does before its content is used, and a refusal discards it.
-        if let Some((landed, landed_key)) = landed_redirect(&resp, &chain) {
+        if let Some((landed, landed_key, hops)) = landed_redirect(&resp, &chain) {
             chain
-                .advance_to(landed, landed_key, HashMap::new(), &engine.config.ssrf)
+                .advance_to(landed, landed_key, hops, HashMap::new(), &engine.config.ssrf)
                 .await?;
             if let Some(policy) = policy.as_deref_mut()
                 && let Some(refusal) = policy.admits(&chain.current_url, true).await?
@@ -502,7 +505,7 @@ pub(crate) async fn follow_redirects(
         };
 
         chain
-            .advance_to(target, target_key, resp.headers, &engine.config.ssrf)
+            .advance_to(target, target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
     }
 }
@@ -535,7 +538,8 @@ impl RedirectChain {
         (!self.seen.contains(&key)).then_some(key)
     }
 
-    /// Move the chain to `target`, recording `headers` as the hop it is leaving.
+    /// Move the chain to `target`, `hops` redirects on, recording `headers` as the hop it is
+    /// leaving.
     ///
     /// ~keep `target` is a parsed URL, so every target reaches the SSRF check: a string that
     /// ~keep fails to parse cannot be passed here at all.
@@ -548,6 +552,7 @@ impl RedirectChain {
         &mut self,
         target: Url,
         target_key: String,
+        hops: usize,
         headers: HashMap<String, Vec<String>>,
         ssrf: &SsrfPolicy,
     ) -> Result<(), CrawlError> {
@@ -556,7 +561,7 @@ impl RedirectChain {
         }
         self.intermediate_headers.push((url_host(&self.current_url), headers));
         self.seen.insert(target_key);
-        self.redirect_count += 1;
+        self.redirect_count += hops;
         self.current_url = target.into();
         Ok(())
     }
@@ -586,18 +591,22 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         body: String::new(),
         body_bytes: Vec::new(),
         headers: HashMap::new(),
-        landed_url: None,
+        landed: None,
         sent_user_agent: None,
         soft_error: false,
     }
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
-/// the one requested, paired with the cycle key it will occupy.
-fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(Url, String)> {
-    let landed = resp.landed_url.as_deref()?;
-    let parsed = Url::parse(landed).ok().filter(is_fetchable_scheme)?;
-    chain.unseen_key(landed).map(|key| (parsed, key))
+/// the one requested, with the cycle key it will occupy and the HTTP redirects taken to it.
+///
+/// ~keep A navigation the page starts itself (script or meta refresh) is not an HTTP
+/// ~keep redirect of the requested page, so neither it nor any redirect it follows adds hops,
+/// ~keep but its landing still passes the policy checks before its content is used.
+fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(Url, String, usize)> {
+    let landed = resp.landed.as_ref()?;
+    let parsed = Url::parse(&landed.url).ok().filter(is_fetchable_scheme)?;
+    chain.unseen_key(&landed.url).map(|key| (parsed, key, landed.redirects))
 }
 
 /// The parts of a fetched response the redirect sources read.
@@ -839,7 +848,7 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: map,
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         }
@@ -908,8 +917,12 @@ mod tests {
         let chain = chain_at("https://example.com/start", &[]);
         let landed_on = |url: &str| {
             let mut resp = response(200, &[], "");
-            resp.landed_url = Some(url.to_owned());
-            landed_redirect(&resp, &chain).map(|(target, _)| target)
+            resp.landed = Some(Box::new(crate::tower::Landing {
+                url: url.to_owned(),
+                redirects: 0,
+                refused: Vec::new(),
+            }));
+            landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };
         for url in [
             "about:blank",
@@ -1250,7 +1263,11 @@ mod tests {
             let meta =
                 format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target_url}"></head></html>"#);
             let mut landed = response(200, &[], "");
-            landed.landed_url = Some(target_url.to_owned());
+            landed.landed = Some(Box::new(crate::tower::Landing {
+                url: target_url.to_owned(),
+                redirects: 1,
+                refused: Vec::new(),
+            }));
             let sources = [
                 ("Location", response(302, &[("location", target_url)], "")),
                 ("Refresh header", response(200, &[("refresh", refresh.as_str())], "")),
@@ -1260,15 +1277,15 @@ mod tests {
 
             for (source, resp) in sources {
                 let mut chain = chain_at(PAGE_URL, &[]);
-                let found = if resp.landed_url.is_some() {
-                    landed_redirect(&resp, &chain)
+                let found = if resp.landed.is_some() {
+                    landed_redirect(&resp, &chain).map(|(target, key, _)| (target, key))
                 } else {
                     next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
                 };
                 let (target, target_key) = found.unwrap_or_else(|| panic!("the {source} must yield a target"));
 
                 let result = chain
-                    .advance_to(target, target_key, HashMap::new(), &SsrfPolicy::default())
+                    .advance_to(target, target_key, 1, HashMap::new(), &SsrfPolicy::default())
                     .await;
 
                 if permitted {
