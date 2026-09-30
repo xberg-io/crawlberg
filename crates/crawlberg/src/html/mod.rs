@@ -100,7 +100,8 @@ pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
 ///
 /// ~keep Every address crawlberg reports from a page goes through here: the links list, images,
 /// ~keep assets, feeds, hreflang alternates, the canonical link, and the Open Graph and Twitter
-/// ~keep address fields. Icons alone also keep an inline `data:` icon, which needs no fetch.
+/// ~keep address fields. Icons apply the same rule in their own check, which also keeps an
+/// ~keep inline `data:` icon: it needs no fetch.
 pub(crate) fn fetchable_address(address: &str, base_url: &Url) -> Option<Url> {
     crate::net::userinfo::resolve(base_url, address).filter(is_fetchable_scheme)
 }
