@@ -164,14 +164,12 @@ All notable changes to crawlberg are documented here.
     trailing `*` did, and an inner one matched nothing.
   - A group with several `User-agent` lines applies to each of them. Before, only the last
     `User-agent` line of the group counted.
-  - A `User-agent` token applies only when it is a prefix of the crawler's user agent. Before,
-    a token that contained the user agent, or that the user agent contained anywhere, also
+  - A `User-agent` token applies only when its product token equals the crawler's. Before, a
+    token that contained the user agent, or that the user agent contained anywhere, also
     matched.
   - A trailing `# comment` on a rule line is ignored. Before, it became part of the pattern.
   - When a group names the crawler, only the groups that name it apply. Before, the
     `User-agent: *` rules applied as well.
-  - A rule before the first `User-agent` line joins the first group. Before, the browser
-    fallback ignored it.
   - An unknown directive between two `User-agent` lines joins them into one group. Before,
     only the second `User-agent` line counted.
 
@@ -182,6 +180,18 @@ All notable changes to crawlberg are documented here.
   does the same for several `User-agent: *` groups. When two combined groups set a
   `Crawl-delay`, the later one wins. When only an earlier group sets one, that value applies.
   The browser fallback uses the same parser (#540).
+
+- **The robots.txt parser misread three cases.** The browser fallback uses the same parser.
+  - A `$` anchor after a `*` failed when the path repeated the suffix, so `Disallow: /*.pdf$`
+    let the crawler fetch `/a.pdf.pdf`. A `*` now tries every length of text, the way Google's
+    parser does (#550).
+  - A `User-agent` token bound every crawler whose user agent started with it, so
+    `User-agent: crawl` applied to `crawlberg`. Now both sides are cut to their product token,
+    the leading run of letters, `-` and `_`, and the two must be equal, so
+    `User-agent: crawlberg/2.0` applies to `crawlberg/1.8.0`. An `X-Robots-Tag` header or a
+    robots `<meta>` tag that names a crawler follows the same rule (#551).
+  - A rule or `Crawl-delay` before the first `User-agent` line joined the first group. It now
+    belongs to no group and is ignored (#552).
 
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`

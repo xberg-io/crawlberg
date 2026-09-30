@@ -56,6 +56,9 @@ impl RobotsParseState {
     /// `key` is already lower-cased and `value` already trimmed.
     fn apply_directive(&mut self, key: &str, value: &str) {
         match key {
+            // ~keep RFC 9309 section 2.1: a rule belongs to the group whose `User-agent` lines come
+            // before it. A rule before the first `User-agent` line is in no group (crawlberg#552).
+            "allow" | "disallow" | "crawl-delay" | "request-rate" if self.current_agents.is_empty() => {}
             "sitemap" if !value.is_empty() => {
                 self.sitemaps.push(value.to_owned());
             }
@@ -113,16 +116,25 @@ impl RobotsParseState {
 
 /// Whether a robots product token addresses the crawler running as `ua_lower`.
 ///
-/// ~keep RFC 9309 §2.2.1 matches in one direction only: the token must prefix our user-agent
-/// (so `crawlberg` matches the default `crawlberg/1.2.1`). Accepting the reverse let UA
-/// `crawlberg` claim rules written for a different, more specific bot such as `crawlberg-news`.
-/// Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule decides which
-/// crawler a named directive binds, wherever that name appears.
+/// ~keep RFC 9309 §2.2.1 compares product tokens, the way Google's parser does: each side is cut
+/// to its leading run of letters, `-` and `_`, and the two runs must be equal. So `crawlberg/2.0`
+/// binds the default `crawlberg/1.2.1`, while `crawl` and `crawlberg-news` name other crawlers
+/// (crawlberg#551). Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule
+/// decides which crawler a named directive binds, wherever that name appears.
 ///
 /// Hidden from the docs: it is public only so the `crawlberg` crate can call it.
 #[doc(hidden)]
 pub fn product_token_addresses_us(token_lower: &str, ua_lower: &str) -> bool {
-    !token_lower.is_empty() && ua_lower != "*" && ua_lower.starts_with(token_lower)
+    let token = product_token(token_lower);
+    !token.is_empty() && token.eq_ignore_ascii_case(product_token(ua_lower))
+}
+
+/// The product token at the start of `agent`: its leading run of ASCII letters, `-` and `_`.
+fn product_token(agent: &str) -> &str {
+    let end = agent
+        .find(|c: char| !(c.is_ascii_alphabetic() || c == '-' || c == '_'))
+        .unwrap_or(agent.len());
+    &agent[..end]
 }
 
 /// Combine every block written for `ua_lower` specifically, and every `*` block.
@@ -212,38 +224,35 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
 
 /// Check whether a URL path matches a robots.txt rule pattern.
 ///
-/// Supports `*` wildcards and `$` end-of-string anchors.
+/// Supports `*` wildcards and a `$` end-of-string anchor as the last character.
+///
+/// ~keep The matcher of Google's robotstxt: `ends` holds, in ascending order, every length of path
+/// that the rule read so far can match. A `*` therefore never commits to its first fit, which let
+/// `/*.pdf$` stop at the first `.pdf` of `/a.pdf.pdf` (crawlberg#550).
 fn robots_path_matches(path: &str, rule: &str) -> bool {
-    let (rule_body, exact_end) = if let Some(stripped) = rule.strip_suffix('$') {
-        (stripped, true)
-    } else {
-        (rule, false)
-    };
-
-    if !rule_body.contains('*') {
-        if exact_end {
-            return path == rule_body;
+    let path = path.as_bytes();
+    let rule = rule.as_bytes();
+    let mut ends: Vec<usize> = vec![0];
+    for (i, &byte) in rule.iter().enumerate() {
+        if byte == b'$' && i + 1 == rule.len() {
+            return ends.last() == Some(&path.len());
         }
-        return path.starts_with(rule_body);
-    }
-
-    let parts: Vec<&str> = rule_body.split('*').collect();
-    let mut remaining = path;
-    for (i, segment) in parts.iter().enumerate() {
-        if segment.is_empty() {
-            continue;
-        }
-        match remaining.find(segment) {
-            Some(pos) => {
-                if i == 0 && pos != 0 {
-                    return false;
-                }
-                remaining = &remaining[pos + segment.len()..];
+        if byte == b'*' {
+            let shortest = ends[0];
+            ends.clear();
+            ends.extend(shortest..=path.len());
+        } else {
+            ends.retain_mut(|end| {
+                let matched = path.get(*end) == Some(&byte);
+                *end += 1;
+                matched
+            });
+            if ends.is_empty() {
+                return false;
             }
-            None => return false,
         }
     }
-    if exact_end { remaining.is_empty() } else { true }
+    true
 }
 
 /// Determine whether the given path is allowed by the robots.txt rules.
@@ -466,7 +475,64 @@ mod tests {
     }
 
     #[test]
-    fn a_group_token_that_prefixes_our_versioned_user_agent_matches() {
+    fn a_group_token_that_is_only_a_prefix_of_our_product_token_does_not_match() {
+        // ~keep Regression for crawlberg#551: `crawl` prefixes `crawlberg/1.8.0`, but it names
+        // another crawler, so its group must not bind us.
+        let body = "User-agent: crawl\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            is_path_allowed("/x", &rules),
+            "`crawl` is not our product token `crawlberg`, got disallow: {:?}",
+            rules.disallow
+        );
+    }
+
+    #[test]
+    fn a_group_token_with_a_version_matches_our_product_token() {
+        let body = "User-agent: *\nDisallow: /private\n\nUser-agent: crawlberg/2.0\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            !is_path_allowed("/x", &rules) && !rules.is_wildcard_block,
+            "`crawlberg/2.0` names the product token `crawlberg`, so its group applies, got \
+             disallow: {:?}",
+            rules.disallow
+        );
+    }
+
+    #[test]
+    fn a_rule_before_the_first_user_agent_line_is_ignored() {
+        // ~keep Regression for crawlberg#552: a rule outside every group joined the first group.
+        let body = "Disallow: /x\nCrawl-delay: 9\nUser-agent: *\nDisallow: /y\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/y".to_string()],
+            "a rule before any User-agent line belongs to no group"
+        );
+        assert_eq!(
+            rules.crawl_delay, None,
+            "a Crawl-delay before any User-agent line belongs to no group"
+        );
+    }
+
+    #[test]
+    fn an_unknown_directive_between_user_agent_lines_keeps_one_group() {
+        // ~keep Google's parser ignores an unknown line, so both User-agent lines head one group.
+        let body = "User-agent: crawlberg\nFoo: bar\nUser-agent: other\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert!(
+            !is_path_allowed("/x", &rules),
+            "the group names crawlberg, so its Disallow applies, got disallow: {:?}",
+            rules.disallow
+        );
+    }
+
+    #[test]
+    fn a_group_token_equal_to_our_product_token_matches_a_versioned_user_agent() {
         let body = "User-agent: *\nDisallow: /private\n\nUser-agent: crawlberg\nDisallow: /only-us\n";
         let rules = parse_robots_txt(body, "crawlberg/1.2.1");
 
@@ -648,6 +714,24 @@ mod tests {
         assert!(
             is_path_allowed("/files/report.txt", &robots),
             "/*.pdf$ must not match a path that does not contain .pdf at all"
+        );
+    }
+
+    #[test]
+    fn a_dollar_anchor_matches_a_path_that_repeats_the_suffix() {
+        // ~keep Regression for crawlberg#550: the `*` took the first `.pdf`, so the anchor saw
+        // `.pdf` left over and let `/a.pdf.pdf` through.
+        assert!(
+            !is_path_allowed("/a.pdf.pdf", &rules(&[], &["/*.pdf$"], true)),
+            "/a.pdf.pdf ends in .pdf, so /*.pdf$ must disallow it"
+        );
+        assert!(
+            !is_path_allowed("/abab", &rules(&[], &["/a*b$"], true)),
+            "/abab ends in b, so /a*b$ must disallow it"
+        );
+        assert!(
+            is_path_allowed("/abax", &rules(&[], &["/a*b$"], true)),
+            "/abax does not end in b, so /a*b$ must not match it"
         );
     }
 }

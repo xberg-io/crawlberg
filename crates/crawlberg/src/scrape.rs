@@ -610,6 +610,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_scopes_an_x_robots_tag_by_product_token_not_by_prefix() {
+        // ~keep Regression for crawlberg#551: `crawl` prefixes `crawlberg` but names another
+        // crawler, and `crawlberg/2.0` names ours.
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["crawl: noindex".to_owned(), "crawlberg/2.0: nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(!result.noindex_detected, "`crawl: noindex` binds another crawler");
+        assert!(result.nofollow_detected, "`crawlberg/2.0: nofollow` binds this crawler");
+    }
+
+    #[tokio::test]
     async fn scrape_reads_directives_from_a_header_beside_one_scoped_to_another_crawler() {
         let mut resp = response("text/html", "<html><body>plain</body></html>");
         resp.headers.insert(

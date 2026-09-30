@@ -549,6 +549,20 @@ mod tests {
     }
 
     #[test]
+    fn a_meta_tag_binds_by_product_token_not_by_prefix() {
+        // ~keep Regression for crawlberg#551: `crawl` prefixes `crawlberg` but names another
+        // crawler, and `crawlberg/2.0` names ours.
+        assert_eq!(
+            robots_contents(
+                r#"<meta name="crawl" content="noindex"><meta name="crawlberg/2.0" content="nofollow">"#,
+                "crawlberg/1.0",
+            ),
+            vec!["nofollow".to_owned()],
+            "only the tag whose product token is `crawlberg` binds this crawler"
+        );
+    }
+
+    #[test]
     fn a_non_robots_meta_tag_is_not_read_as_a_directive() {
         assert!(robots_contents(r#"<meta name="description" content="hi">"#, "crawlberg/1.0").is_empty());
     }
