@@ -15,10 +15,16 @@ mod streaming;
 pub use antibot::{AntibotStrategy, Decision};
 pub use builder::{CrawlConfigBuilder, DispatchProfileBuilder};
 pub use bypass::{BypassProvider, BypassResponse, DynBypassProvider};
+#[cfg(all(test, feature = "browser-chromiumoxide"))]
+pub(crate) use config::executable_temp_file;
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) use config::warn_ignored_launch_options;
 pub use config::{
     AuthConfig, BrowserBackend, BrowserConfig, BrowserMode, BrowserWait, ContentConfig, ContentFilterKind, CrawlConfig,
     CrawlStrategyKind, DocumentContentEncoding, ExtractionMeta, ProxyConfig,
 };
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) use config::{check_chrome_args, check_chrome_executable, chrome_switch_name};
 #[cfg(not(target_arch = "wasm32"))]
 pub use discovery::CrawlEvent;
 pub use discovery::{

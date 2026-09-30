@@ -1,6 +1,6 @@
 //! Detection heuristics for identifying pages that need JavaScript rendering.
 //!
-//! These are pure functions operating on HTML strings — no browser or network
+//! These are pure functions operating on a parsed document, with no browser or network
 //! access required. Always compiled regardless of feature flags.
 
 use std::sync::LazyLock;
@@ -24,28 +24,28 @@ static NOSCRIPT_WARNING: LazyLock<Regex> = LazyLock::new(|| {
 /// Detect whether a page's HTML content suggests it needs JavaScript rendering
 /// to produce meaningful content.
 ///
+/// `dom` is the page as extraction parsed it, with its raw-text markup masked (see
+/// [`crate::html::mask_raw_text_markup`]), so markup written inside script or title text is
+/// not read as an element.
+///
 /// Returns `true` when the page appears to be a client-side rendered SPA shell
 /// with no substantial server-rendered content.
-pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
+pub(crate) fn detect_js_render_needed(dom: &tl::VDom<'_>, word_count: usize) -> bool {
     if word_count >= MIN_CONTENT_WORD_COUNT {
         return false;
     }
 
-    let parsed_html = crate::html::mask_raw_text_markup(body);
-    let Ok(dom) = crate::html::parse_html(&parsed_html) else {
-        return false;
-    };
     let parser = dom.parser();
 
-    if has_empty_spa_mount(&dom) {
+    if has_empty_spa_mount(dom) {
         return true;
     }
 
-    if has_noscript_js_warning(&dom, parser) {
+    if has_noscript_js_warning(dom, parser) {
         return true;
     }
 
-    if word_count < SPARSE_CONTENT_WORD_COUNT && has_script_tags(&dom) {
+    if word_count < SPARSE_CONTENT_WORD_COUNT && has_script_tags(dom) {
         return true;
     }
 
@@ -93,7 +93,12 @@ fn has_script_tags(dom: &tl::VDom<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    /// Whether `html`, parsed as extraction parses it, looks like it needs a browser.
+    fn detect_js_render_needed(html: &str, word_count: usize) -> bool {
+        let page = crate::html::mask_raw_text_markup(html);
+        let dom = crate::html::parse_html(&page.text).expect("valid HTML");
+        super::detect_js_render_needed(&dom, word_count)
+    }
 
     #[test]
     fn react_shell_detected() {

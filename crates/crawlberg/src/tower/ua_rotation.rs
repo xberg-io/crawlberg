@@ -1,22 +1,27 @@
-//! User-Agent rotation layer for the Tower service stack.
+//! Round-robin User-Agent rotation, and its Tower layer on native targets.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::task::{Context, Poll};
 
+#[cfg(not(target_arch = "wasm32"))]
 use tower::{Layer, Service};
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::types::{CrawlRequest, CrawlResponse};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::CrawlError;
 
-/// Tower layer that rotates User-Agent headers across requests.
+/// The round-robin agent picker every target shares. On native it is also the Tower layer
+/// that sets a rotating User-Agent header on each request.
 #[derive(Clone)]
-pub struct UaRotationLayer {
+pub struct UaRotation {
     user_agents: Arc<Vec<String>>,
     index: Arc<AtomicUsize>,
 }
 
-impl UaRotationLayer {
+impl UaRotation {
     pub fn new(user_agents: Vec<String>) -> Self {
         Self {
             user_agents: Arc::new(user_agents),
@@ -40,7 +45,8 @@ impl UaRotationLayer {
     }
 }
 
-impl<S: Clone> Layer<S> for UaRotationLayer {
+#[cfg(not(target_arch = "wasm32"))]
+impl<S: Clone> Layer<S> for UaRotation {
     type Service = UaRotationService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -52,12 +58,14 @@ impl<S: Clone> Layer<S> for UaRotationLayer {
 }
 
 /// Tower service that injects a rotating User-Agent header into each request.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct UaRotationService<S> {
     inner: S,
-    rotation: UaRotationLayer,
+    rotation: UaRotation,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<S> Service<CrawlRequest> for UaRotationService<S>
 where
     S: Service<CrawlRequest, Response = CrawlResponse, Error = CrawlError> + Clone + Send + 'static,
@@ -85,7 +93,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use tower::Service;
@@ -110,6 +118,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     landed: None,
                     sent_user_agent: None,
+                    soft_error: false,
                 })
             })
         }
@@ -117,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ua_rotation_injects_header() {
-        let layer = UaRotationLayer::new(vec!["Bot/1.0".into(), "Bot/2.0".into()]);
+        let layer = UaRotation::new(vec!["Bot/1.0".into(), "Bot/2.0".into()]);
         let mut svc = layer.layer(EchoService);
 
         let resp1 = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
@@ -132,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_ua_list_passes_through() {
-        let layer = UaRotationLayer::new(vec![]);
+        let layer = UaRotation::new(vec![]);
         let mut svc = layer.layer(EchoService);
         let resp = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
         assert_eq!(resp.body, "");

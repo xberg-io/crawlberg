@@ -1905,6 +1905,8 @@ const _: fn() = || {
         let _: Option<String> = BrowserConfig.robots_user_agent;
         let _: bool = BrowserConfig.capture_network_events;
         let _: bool = BrowserConfig.session_affinity;
+        let _: Option<String> = BrowserConfig.chrome_path;
+        let _: Vec<String> = BrowserConfig.chrome_args;
     }
     {
         let BrowserExtras = None::<crate::BrowserExtras>.unwrap();
@@ -1964,6 +1966,7 @@ const _: fn() = || {
         let _: Vec<String> = CrawlConfig.include_paths;
         let _: Vec<String> = CrawlConfig.exclude_paths;
         let _: bool = CrawlConfig.path_patterns_match_query;
+        let _: bool = CrawlConfig.path_patterns_match_url;
         let _: bool = CrawlConfig.dedup_include_query;
         let _: bool = CrawlConfig.strip_tracking_params;
         let _: Vec<String> = CrawlConfig.tracking_params;
@@ -2640,6 +2643,8 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_robotsUserAgent = <Option<String>>::sse_decode(deserializer);
         let mut var_captureNetworkEvents = <bool>::sse_decode(deserializer);
         let mut var_sessionAffinity = <bool>::sse_decode(deserializer);
+        let mut var_chromePath = <Option<String>>::sse_decode(deserializer);
+        let mut var_chromeArgs = <Vec<String>>::sse_decode(deserializer);
         return crate::BrowserConfig {
             mode: var_mode,
             backend: var_backend,
@@ -2656,6 +2661,8 @@ impl SseDecode for crate::BrowserConfig {
             robots_user_agent: var_robotsUserAgent,
             capture_network_events: var_captureNetworkEvents,
             session_affinity: var_sessionAffinity,
+            chrome_path: var_chromePath,
+            chrome_args: var_chromeArgs,
         };
     }
 }
@@ -2807,6 +2814,7 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_includePaths = <Vec<String>>::sse_decode(deserializer);
         let mut var_excludePaths = <Vec<String>>::sse_decode(deserializer);
         let mut var_pathPatternsMatchQuery = <bool>::sse_decode(deserializer);
+        let mut var_pathPatternsMatchUrl = <bool>::sse_decode(deserializer);
         let mut var_dedupIncludeQuery = <bool>::sse_decode(deserializer);
         let mut var_stripTrackingParams = <bool>::sse_decode(deserializer);
         let mut var_trackingParams = <Vec<String>>::sse_decode(deserializer);
@@ -2862,6 +2870,7 @@ impl SseDecode for crate::CrawlConfig {
             include_paths: var_includePaths,
             exclude_paths: var_excludePaths,
             path_patterns_match_query: var_pathPatternsMatchQuery,
+            path_patterns_match_url: var_pathPatternsMatchUrl,
             dedup_include_query: var_dedupIncludeQuery,
             strip_tracking_params: var_stripTrackingParams,
             tracking_params: var_trackingParams,
@@ -4634,6 +4643,8 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.robots_user_agent.into_into_dart().into_dart(),
             self.0.capture_network_events.into_into_dart().into_dart(),
             self.0.session_affinity.into_into_dart().into_dart(),
+            self.0.chrome_path.into_into_dart().into_dart(),
+            self.0.chrome_args.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4809,6 +4820,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.include_paths.into_into_dart().into_dart(),
             self.0.exclude_paths.into_into_dart().into_dart(),
             self.0.path_patterns_match_query.into_into_dart().into_dart(),
+            self.0.path_patterns_match_url.into_into_dart().into_dart(),
             self.0.dedup_include_query.into_into_dart().into_dart(),
             self.0.strip_tracking_params.into_into_dart().into_dart(),
             self.0.tracking_params.into_into_dart().into_dart(),
@@ -5839,6 +5851,8 @@ impl SseEncode for crate::BrowserConfig {
         <Option<String>>::sse_encode(self.robots_user_agent, serializer);
         <bool>::sse_encode(self.capture_network_events, serializer);
         <bool>::sse_encode(self.session_affinity, serializer);
+        <Option<String>>::sse_encode(self.chrome_path, serializer);
+        <Vec<String>>::sse_encode(self.chrome_args, serializer);
     }
 }
 
@@ -5966,6 +5980,7 @@ impl SseEncode for crate::CrawlConfig {
         <Vec<String>>::sse_encode(self.include_paths, serializer);
         <Vec<String>>::sse_encode(self.exclude_paths, serializer);
         <bool>::sse_encode(self.path_patterns_match_query, serializer);
+        <bool>::sse_encode(self.path_patterns_match_url, serializer);
         <bool>::sse_encode(self.dedup_include_query, serializer);
         <bool>::sse_encode(self.strip_tracking_params, serializer);
         <Vec<String>>::sse_encode(self.tracking_params, serializer);

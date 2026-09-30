@@ -46,7 +46,7 @@ env:
   # hand-maintained lists that had silently diverged (the check omitted
   # crawlberg-browser, so all_exist could report true while browser was unpublished
   # and publish-crates was skipped outright).
-  CRATES_TO_PUBLISH: "crawlberg-browser crawlberg crawlberg-bypass crawlberg-bindings-common crawlberg-cli"
+  CRATES_TO_PUBLISH: "crawlberg-robots crawlberg-browser crawlberg crawlberg-bypass crawlberg-bindings-common crawlberg-cli"
 
 concurrency:
   group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.ref || github.event.inputs.tag)) || github.ref || github.run_id }}

@@ -86,9 +86,6 @@ const REDIRECT_STATUS_MAX: u16 = 400;
 /// chunked body, so only a clearly truncated transfer is reported.
 const CONTENT_LENGTH_SHORTFALL_TOLERANCE: usize = 100;
 
-/// Largest 2xx body still treated as a possible WAF challenge page rather than real content.
-const WAF_CHALLENGE_MAX_BODY_LEN: usize = 5000;
-
 /// Whether a status is a redirect that `do_fetch` returns to the caller unclassified.
 fn is_redirect_status(status: u16) -> bool {
     (REDIRECT_STATUS_MIN..REDIRECT_STATUS_MAX).contains(&status)
@@ -119,15 +116,6 @@ fn collect_headers(resp: &reqwest::Response) -> HashMap<String, Vec<String>> {
     headers
 }
 
-/// Read the lowercase `server` header, or an empty string when absent.
-fn server_header(headers: &HashMap<String, Vec<String>>) -> String {
-    headers
-        .get("server")
-        .and_then(|v| v.first())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default()
-}
-
 /// Build the `CrawlResponse` for a 3xx without classifying it; a failed body read yields an
 /// empty body rather than an error, because the caller only needs the status and headers.
 async fn read_redirect_response(
@@ -150,6 +138,7 @@ async fn read_redirect_response(
         headers,
         landed: None,
         sent_user_agent: Some(sent_user_agent),
+        soft_error: false,
     }
 }
 
@@ -202,25 +191,6 @@ fn content_length_shortfall_error(
     None
 }
 
-/// Classify a short 2xx body as a WAF challenge page when it carries a vendor fingerprint.
-///
-/// ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
-#[cfg(not(target_arch = "wasm32"))]
-fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<String>>) -> Option<CrawlError> {
-    if status != 200 || body.len() >= WAF_CHALLENGE_MAX_BODY_LEN {
-        return None;
-    }
-    let server = server_header(headers);
-    if !crate::http::is_waf_blocked(&server, body, headers) {
-        return None;
-    }
-    let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-    Some(CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-        vendor,
-    })
-}
-
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.
 ///
 /// Returns the raw response — including any 3xx — without following redirects.
@@ -263,9 +233,8 @@ async fn do_fetch(
 
     // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
     // a second copy: the two copies had already drifted. The one that stood here classified
-    // every response as if it were a 403 (`is_waf_blocked`/`detect_waf_vendor` hardcode that
-    // status) and showed the classifier only the `server` header, so a 403 identified by any
-    // other header came back as vendor "unknown".
+    // every response as if it were a 403 and showed the classifier only the `server` header, so
+    // a 403 identified by any other header came back as vendor "unknown".
     if crate::http::is_challenge_status(status) {
         return Err(crate::http::challenge_status_error(
             status,
@@ -290,8 +259,10 @@ async fn do_fetch(
 
     let body = String::from_utf8_lossy(&body_vec).into_owned();
 
+    // ~keep The same 2xx decision `http::fetch_one_hop` makes, so the engine's crawl and the plain
+    // fetch refuse exactly the same responses (crawlberg#231).
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(error) = waf_error_for_success(status, &body, &headers) {
+    if let Some(error) = crate::http::waf_2xx_error(status, &body_vec, &body, &headers) {
         return Err(error);
     }
 
@@ -303,6 +274,7 @@ async fn do_fetch(
         headers,
         landed: None,
         sent_user_agent: Some(sent_user_agent),
+        soft_error: false,
     })
 }
 

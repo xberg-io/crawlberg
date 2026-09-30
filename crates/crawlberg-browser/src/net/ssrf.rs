@@ -30,7 +30,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -38,6 +38,8 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -67,6 +69,7 @@ const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
     "link_local",
     "unspecified",
     "multicast",
+    "private_network",
     "private_network",
     "loopback",
     "unspecified",
@@ -226,10 +229,12 @@ impl SsrfValidator for DefaultSsrfValidator {
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         let addresses = system_lookup(host).await?;
         if self.deny_private
-            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
+            && let Some((ip, reason)) = addresses
+                .iter()
+                .find_map(|ip| denial_reason(*ip).map(|reason| (ip, reason)))
         {
             return Err(format!(
-                "{host} resolves to the private/internal address {ip}, which is not allowed"
+                "{host} resolves to the private/internal address {ip}, which is not allowed: {reason}"
             ));
         }
         Ok(addresses)
@@ -351,6 +356,11 @@ mod tests {
             // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
             // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
             "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
+            // The reserved range 240.0.0.0/4, which holds the broadcast address
+            // 255.255.255.255, plain and Teredo-embedded (5fe:fdfc inverts to 250.1.2.3).
+            "http://240.0.0.1/",
+            "http://255.255.255.255/",
+            "http://[2001:0:4136:e378:8000:63bf:5fe:fdfc]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -376,6 +386,10 @@ mod tests {
             "http://[64:ff9b:1:0:8:808:a00:0]/",
             "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
             "http://[2001:db8::1]/",
+            // Boundary: the last address below 224.0.0.0/4, plain and 6to4-embedded, stays
+            // permitted; only 224.0.0.0/4 and above (multicast, then 240.0.0.0/4) are denied.
+            "http://223.255.255.1/",
+            "http://[2002:dfff:ff01::]/",
         ] {
             validate(permitted, true)
                 .await
@@ -397,6 +411,24 @@ mod tests {
             assert!(
                 message.ends_with(&format!(": {reason}")),
                 "{target} must be refused as {reason}, got {message:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_names_the_denial_reason_at_connect_time() {
+        // ~keep An IP literal resolves to itself without a DNS query, so the message is exact.
+        let validator = DefaultSsrfValidator::with_deny_private(true);
+        for (host, reason) in [
+            ("::ffff:127.0.0.1", "loopback"),
+            ("127.0.0.1", "loopback"),
+            ("10.0.0.5", "private_network"),
+            ("fd12::1", "unique_local"),
+        ] {
+            let message = validator.resolve(host).await.expect_err("a denied address");
+            assert_eq!(
+                message,
+                format!("{host} resolves to the private/internal address {host}, which is not allowed: {reason}")
             );
         }
     }

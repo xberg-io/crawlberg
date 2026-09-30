@@ -10,6 +10,9 @@
 //! reimplementing the check.
 #![allow(dead_code, clippy::print_stderr)]
 
+#[cfg(all(feature = "api", feature = "mcp"))]
+pub mod mcp;
+
 /// Whether an error message indicates the runner has no usable Chrome, rather
 /// than a genuine regression in the code under test. Three message variants are
 /// known:
@@ -34,4 +37,51 @@ pub fn is_missing_chrome_message(message: &str) -> bool {
 /// in CI logs instead.
 pub fn announce_chrome_skip(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name} because no usable Chrome was found: {reason}");
+}
+
+/// Say that `test_name` did not run on this machine, and why.
+pub fn announce_skip(test_name: &str, reason: &str) {
+    eprintln!("skipping {test_name}: {reason}");
+}
+
+/// Launch a Chrome that stands for another program's browser, reached through `browser.endpoint`,
+/// with the cookie `owner=1` set for `seed` in its own context. Its handler runs until it closes.
+/// `None`, announced, without Chrome.
+#[cfg(feature = "browser")]
+pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> Option<chromiumoxide::Browser> {
+    use chromiumoxide::cdp::browser_protocol::network::CookieParam;
+    use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
+    use tokio_stream::StreamExt;
+
+    let config = match chromiumoxide::browser::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+        .build()
+    {
+        Ok(config) => config,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error);
+            return None;
+        }
+    };
+    let (browser, mut handler) = match chromiumoxide::Browser::launch(config).await {
+        Ok(pair) => pair,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error.to_string());
+            return None;
+        }
+    };
+    tokio::spawn(async move { while handler.next().await.is_some() {} });
+    browser
+        .execute(SetCookiesParams {
+            cookies: vec![CookieParam {
+                url: Some(seed.to_owned()),
+                ..CookieParam::new("owner", "1")
+            }],
+            browser_context_id: None,
+        })
+        .await
+        .expect("the browser's own cookie must be set");
+    Some(browser)
 }

@@ -11,9 +11,8 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{INLINE_SCHEMES, effective_base_url, get_url_attr, has_rel};
+use crate::html::{fetchable_address, get_url_attr, has_rel};
 use crate::http::http_fetch;
-use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
 /// A reference to an asset discovered in an HTML page.
@@ -23,10 +22,10 @@ pub(crate) struct AssetRef {
     html_tag: String,
 }
 
-/// Discover downloadable assets from a parsed HTML document, resolved against its base URL.
-pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRef> {
+/// Discover downloadable assets from a parsed HTML document, resolved against `base_url`, the
+/// document's base URL from [`crate::html::effective_base_url`].
+pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
     let parser = dom.parser();
-    let base_url = &effective_base_url(dom, document_url);
     let mut assets = Vec::new();
 
     if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
@@ -34,8 +33,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && has_rel(tag, "stylesheet")
                 && let Some(href) = get_url_attr(tag, "href")
-                && let Some(url) = resolve(base_url, &href)
-                && !INLINE_SCHEMES.contains(&url.scheme())
+                && let Some(url) = fetchable_address(&href, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -50,8 +48,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Some(url) = resolve(base_url, &src)
-                && !INLINE_SCHEMES.contains(&url.scheme())
+                && let Some(url) = fetchable_address(&src, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -66,8 +63,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Some(url) = resolve(base_url, &src)
-                && !INLINE_SCHEMES.contains(&url.scheme())
+                && let Some(url) = fetchable_address(&src, base_url)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -181,11 +177,13 @@ pub(crate) async fn download_assets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::html::effective_base_url;
 
     fn discovered(html: &str, document_url: &str) -> Vec<String> {
-        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let page = crate::html::mask_raw_text_markup(html);
+        let dom = crate::html::parse_html(&page.text).expect("valid HTML");
         let document_url = Url::parse(document_url).expect("valid URL");
-        discover_assets(&dom, &document_url)
+        discover_assets(&dom, &effective_base_url(page.base_href.as_deref(), &document_url))
             .into_iter()
             .map(|a| a.url)
             .collect()
@@ -248,6 +246,31 @@ mod tests {
                 "https://example.com/page"
             ),
             ["https://example.com/s.css", "https://example.com/j.js"]
+        );
+    }
+
+    #[test]
+    fn file_and_blob_addresses_are_skipped_at_every_site() {
+        assert_eq!(
+            discovered(
+                concat!(
+                    r#"<link rel="stylesheet" href="file:///etc/passwd">"#,
+                    r#"<link rel="stylesheet" href="blob:https://example.com/x">"#,
+                    r#"<link rel="stylesheet" href="s.css">"#,
+                    r#"<script src="file:///etc/passwd"></script>"#,
+                    r#"<script src="blob:https://example.com/x"></script>"#,
+                    r#"<script src="j.js"></script>"#,
+                    r#"<img src="file:///etc/passwd">"#,
+                    r#"<img src="blob:https://example.com/x">"#,
+                    r#"<img src="i.png">"#,
+                ),
+                "https://example.com/page"
+            ),
+            [
+                "https://example.com/s.css",
+                "https://example.com/j.js",
+                "https://example.com/i.png"
+            ]
         );
     }
 

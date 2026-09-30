@@ -67,6 +67,19 @@ fn crawl_config_debug_hides_every_secret_field() {
 }
 
 #[test]
+fn crawl_config_debug_shows_the_url_filter_target() {
+    let config = CrawlConfig {
+        path_patterns_match_url: true,
+        ..CrawlConfig::default()
+    };
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains("path_patterns_match_url: true"),
+        "the full-URL filter setting must be visible: {compact}"
+    );
+}
+
+#[test]
 fn browser_config_debug_prints_only_the_endpoint_origin() {
     let config = secret_browser_config();
     assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
@@ -142,6 +155,64 @@ fn browser_pool_config_debug_prints_only_the_endpoint_origin() {
     assert!(
         compact.contains(r#"browser_endpoint: Some("ws://***.chrome.internal:9222")"#),
         "only the origin may print, with each host label left of the last two hidden: {compact}"
+    );
+}
+
+/// A flag without a credential, and a `--proxy-server` flag whose value carries one.
+fn secret_chrome_args() -> Vec<String> {
+    vec![
+        "--lang=fr".into(),
+        format!("--proxy-server=http://user:{SECRET}@proxy.internal:8080"),
+    ]
+}
+
+#[test]
+fn browser_config_debug_shows_the_chrome_binary_and_only_the_number_of_flags() {
+    let config = BrowserConfig {
+        chrome_path: Some("/opt/chrome/chrome".into()),
+        chrome_args: secret_chrome_args(),
+        ..BrowserConfig::default()
+    };
+    assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains(r#"chrome_path: Some("/opt/chrome/chrome")"#)
+            && compact.contains("chrome_args: 2 flags")
+            && !compact.contains("--lang=fr"),
+        "the Chrome binary must print, and the flags only as a count: {compact}"
+    );
+}
+
+#[test]
+fn crawl_config_debug_shows_only_the_number_of_chrome_flags() {
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            chrome_args: secret_chrome_args(),
+            ..BrowserConfig::default()
+        },
+        ..CrawlConfig::default()
+    };
+    assert_hidden("CrawlConfig", format!("{config:?}"), format!("{config:#?}"));
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains("chrome_args: 2 flags") && !compact.contains("--lang=fr"),
+        "the Chrome flags must print only as a count: {compact}"
+    );
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+#[test]
+fn browser_pool_config_debug_shows_the_chrome_binary_and_flags() {
+    let config = crawlberg::browser_pool::BrowserPoolConfig {
+        chrome_path: Some("/opt/chrome/chrome".into()),
+        chrome_args: vec!["--lang=fr".into()],
+        ..Default::default()
+    };
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains(r#"chrome_path: Some("/opt/chrome/chrome")"#)
+            && compact.contains(r#"chrome_args: ["--lang=fr"]"#),
+        "the Chrome binary and flags must print: {compact}"
     );
 }
 

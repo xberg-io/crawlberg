@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use crawlberg_robots::{RobotsRules, is_path_allowed, parse_robots_txt};
+
+/// The robots.txt rules of each origin this context has read, parsed by the workspace's one
+/// robots.txt parser.
 pub struct RobotsCache {
     cache: RwLock<HashMap<String, RobotsRules>>,
-}
-
-#[derive(Debug, Clone)]
-struct RobotsRules {
-    disallowed: Vec<String>,
-    allowed: Vec<String>,
 }
 
 impl RobotsCache {
@@ -25,109 +23,13 @@ impl RobotsCache {
 
     pub fn is_allowed(&self, domain: &str, path: &str) -> bool {
         let cache = self.cache.read().unwrap();
-        let rules = match cache.get(domain) {
-            Some(r) => r,
-            None => return true,
-        };
-
-        for pattern in &rules.allowed {
-            if path_matches(path, pattern) {
-                return true;
-            }
-        }
-
-        for pattern in &rules.disallowed {
-            if path_matches(path, pattern) {
-                return false;
-            }
-        }
-
-        true
+        cache.get(domain).is_none_or(|rules| is_path_allowed(path, rules))
     }
 }
 
 impl Default for RobotsCache {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn parse_robots_txt(body: &str, our_agent: &str) -> RobotsRules {
-    let our_agent_lower = our_agent.to_lowercase();
-    let mut disallowed = Vec::new();
-    let mut allowed = Vec::new();
-    let mut in_matching_section = false;
-    let mut found_specific = false;
-
-    for line in body.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if let Some((key, value)) = line.split_once(':') {
-            let key = key.trim().to_lowercase();
-            let value = value.trim();
-
-            match key.as_str() {
-                "user-agent" => {
-                    let agent = value.to_lowercase();
-                    in_matching_section =
-                        agent == "*" || our_agent_lower.contains(&agent) || agent.contains(&our_agent_lower);
-                    if agent != "*" && in_matching_section {
-                        found_specific = true;
-                    }
-                }
-                "disallow" if in_matching_section && !value.is_empty() => {
-                    disallowed.push(value.to_string());
-                }
-                "allow" if in_matching_section && !value.is_empty() => {
-                    allowed.push(value.to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if !found_specific {
-        disallowed.clear();
-        allowed.clear();
-        in_matching_section = false;
-
-        for line in body.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_lowercase();
-                let value = value.trim();
-                match key.as_str() {
-                    "user-agent" => {
-                        in_matching_section = value.trim() == "*";
-                    }
-                    "disallow" if in_matching_section && !value.is_empty() => {
-                        disallowed.push(value.to_string());
-                    }
-                    "allow" if in_matching_section && !value.is_empty() => {
-                        allowed.push(value.to_string());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    RobotsRules { disallowed, allowed }
-}
-
-fn path_matches(path: &str, pattern: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        path.starts_with(prefix)
-    } else if let Some(exact) = pattern.strip_suffix('$') {
-        path == exact
-    } else {
-        path.starts_with(pattern)
     }
 }
 

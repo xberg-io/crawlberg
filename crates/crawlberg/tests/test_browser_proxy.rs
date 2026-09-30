@@ -589,3 +589,159 @@ async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_conte
         &accepted,
     );
 }
+
+/// Launch a Chrome for `browser.endpoint` with `flags`, or `None` when no usable Chrome exists.
+async fn launch_endpoint_chrome(
+    name: &str,
+    profile: &std::path::Path,
+    flags: &[String],
+) -> Option<(chromiumoxide::Browser, tokio::task::JoinHandle<()>)> {
+    use futures::StreamExt as _;
+    let mut builder = chromiumoxide::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(profile);
+    for flag in flags {
+        builder = builder.arg(flag.trim_start_matches("--"));
+    }
+    let launched = match builder.build() {
+        Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+    match launched {
+        Ok((chrome, mut handler)) => Some((
+            chrome,
+            tokio::spawn(async move { while handler.next().await.is_some() {} }),
+        )),
+        Err(reason) => {
+            announce_chrome_skip(name, &reason);
+            None
+        }
+    }
+}
+
+/// A Chrome proxy switch in `chrome_args` (`--proxy-server`, `--proxy-bypass-list`,
+/// `--no-proxy-server`, `--proxy-pac-url` or `--proxy-auto-detect`) never replaces the configured
+/// proxy: every entry point sends a remote page and a loopback page through it.
+#[tokio::test]
+async fn a_caller_proxy_flag_never_replaces_the_configured_proxy() {
+    let name = "a_caller_proxy_flag_never_replaces_the_configured_proxy";
+    let (configured, seen) = spawn_named_proxy("served-by-the-configured-proxy").await;
+    let (caller, _) = spawn_named_proxy("served-by-the-caller-proxy").await;
+    let (direct, _) = spawn_named_proxy("served-direct").await;
+    let loopback = format!("http://{direct}/loopback");
+    for flag in [
+        format!("--proxy-server=http://{caller}"),
+        "--proxy-bypass-list=*.internal".to_owned(),
+        "--no-proxy-server".to_owned(),
+        format!("--proxy-pac-url=data:,function FindProxyForURL(u,h){{return \"PROXY {caller}\";}}"),
+        "--proxy-auto-detect".to_owned(),
+    ] {
+        for target in [TARGET, loopback.as_str()] {
+            for entry in [
+                "one-shot launch",
+                "interact launch",
+                "pool",
+                "endpoint render",
+                "endpoint interact",
+            ] {
+                let label = format!("{entry}, {flag}, {target}");
+                let mut config = render_config(proxy_at(configured.clone(), None, None));
+                config.browser.chrome_args = vec![flag.clone()];
+                config.browser.session_affinity = false;
+                config
+                    .ssrf
+                    .allowlist
+                    .push(HostMatcher::cidr("127.0.0.1/32").expect("a valid CIDR"));
+                let pool = (entry == "pool").then(|| {
+                    BrowserPool::new(BrowserPoolConfig {
+                        chrome_args: vec![flag.clone()],
+                        ..BrowserPoolConfig::default()
+                    })
+                });
+                config.browser_pool = pool.clone();
+                let profile = tempfile::tempdir().expect("a temp profile directory");
+                let mut endpoint = None;
+                if entry.starts_with("endpoint") {
+                    let Some((chrome, handler)) =
+                        launch_endpoint_chrome(name, profile.path(), std::slice::from_ref(&flag)).await
+                    else {
+                        return;
+                    };
+                    config.browser.endpoint = Some(chrome.websocket_address().clone());
+                    endpoint = Some((chrome, handler));
+                }
+                let engine = create_engine(Some(config)).expect("engine must build");
+                let outcome = tokio::time::timeout(Duration::from_secs(60), async {
+                    if entry.contains("interact") {
+                        interact(&engine, target, vec![PageAction::Scrape])
+                            .await
+                            .map(|result| result.final_html)
+                    } else {
+                        scrape(&engine, target).await.map(|result| result.html)
+                    }
+                })
+                .await
+                .expect("the session must finish within 60s");
+                if let Some(pool) = pool {
+                    pool.shutdown().await;
+                }
+                if let Some((mut chrome, handler)) = endpoint {
+                    let _ = chrome.close().await;
+                    handler.abort();
+                }
+                let html = match outcome {
+                    Ok(html) => html,
+                    Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+                        announce_chrome_skip(name, &message);
+                        return;
+                    }
+                    Err(error) => panic!("{label}: the session must succeed through the proxy: {error:?}"),
+                };
+                assert!(
+                    html.contains("served-by-the-configured-proxy"),
+                    "{label}: the configured proxy must serve the page, got {html}; it saw {:?}",
+                    seen.lock().expect("record")
+                );
+            }
+        }
+    }
+}
+
+/// A launched Chrome, for a one-shot render and for an interact session, sends its pages
+/// through the proxy, and the SSRF check still refuses their requests to a denied address.
+#[tokio::test]
+async fn the_ssrf_check_refuses_a_request_from_a_launched_page_behind_the_proxy() {
+    let name = "the_ssrf_check_refuses_a_request_from_a_launched_page_behind_the_proxy";
+    for entry in ["one-shot launch", "interact launch"] {
+        let label = format!("{name} ({entry})");
+        let (denied, accepted) = denied_listener().await;
+        let (address, seen) = spawn_proxy_with_image(denied.clone()).await;
+        let mut config = render_config(proxy_at(address, None, None));
+        config.browser.session_affinity = false;
+        config.browser.extra_wait = Some(Duration::from_millis(500));
+        let (html, refused) = if entry == "one-shot launch" {
+            let Some(result) = render(&label, config, &seen).await else {
+                return;
+            };
+            (result.html, result.ssrf_refused_urls)
+        } else {
+            let engine = create_engine(Some(config)).expect("engine must build");
+            match tokio::time::timeout(
+                Duration::from_secs(60),
+                interact(&engine, TARGET, vec![PageAction::Scrape]),
+            )
+            .await
+            .expect("the interact session must finish within 60s")
+            {
+                Ok(result) => (result.final_html, result.ssrf_refused_urls),
+                Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+                    announce_chrome_skip(&label, &message);
+                    return;
+                }
+                Err(error) => panic!("{label}: the interact session must succeed through the proxy: {error:?}"),
+            }
+        };
+        assert_refused_in_the_proxy_context(&label, &html, &refused, &denied, &seen, &accepted);
+    }
+}

@@ -7,7 +7,7 @@ pub(super) fn validate_url(url: &str) -> Result<(), rmcp::ErrorData> {
     if url.is_empty() {
         return Err(rmcp::ErrorData::invalid_params("url is required", None));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !crate::net::has_http_scheme(url) {
         return Err(rmcp::ErrorData::invalid_params(
             "url must start with http:// or https://",
             None,
@@ -41,4 +41,25 @@ pub(super) fn structured_success(structured: serde_json::Value, text: String) ->
 pub(super) fn to_structured<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, rmcp::ErrorData> {
     serde_json::to_value(value)
         .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to serialize structured content: {e}"), None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_url;
+
+    #[test]
+    fn accepts_an_upper_case_scheme() {
+        assert!(validate_url("HTTP://example.com/").is_ok());
+        assert!(validate_url("Https://example.com/").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_url() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_http_scheme() {
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
 }

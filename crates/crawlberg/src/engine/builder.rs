@@ -247,8 +247,7 @@ impl CrawlEngineBuilder {
 
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
         let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
-        #[cfg(not(target_arch = "wasm32"))]
-        let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());
+        let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
         let native_browser_executor = if let Some(executor) = self.native_executor {
@@ -282,7 +281,6 @@ impl CrawlEngineBuilder {
             page_budget: self
                 .page_budget
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
-            #[cfg(not(target_arch = "wasm32"))]
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
             robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
