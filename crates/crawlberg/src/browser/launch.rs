@@ -127,10 +127,21 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     Ok(())
 }
 
+/// A browser [`launch_or_connect`] launched or connected to, with what the session keeps
+/// until it is gone.
+pub(super) type Launched = (
+    Browser,
+    Handler,
+    Option<std::path::PathBuf>,
+    Option<crate::net::egress::Egress>,
+);
+
 /// Launch a new managed browser or connect to an external CDP endpoint.
-pub(super) async fn launch_or_connect(
-    config: &CrawlConfig,
-) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
+///
+/// A launch with `browser_profile` opens its page in the browser's own context, which has no
+/// proxy of its own, so under `deny_private` Chrome is launched through the SSRF proxy, handed
+/// back for the session to keep until the browser is gone.
+pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         crate::types::warn_ignored_launch_options(
             &config.browser,
@@ -144,17 +155,27 @@ pub(super) async fn launch_or_connect(
             );
         }
         let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
-        Ok((browser, handler, None))
+        Ok((browser, handler, None, None))
     } else {
-        let proxy = crate::proxy::chrome_proxy_for(config)?;
+        let mut proxy = crate::proxy::chrome_proxy_for(config)?;
+        let egress = match config.browser_profile {
+            Some(_) => crate::net::egress::Egress::start(&config.ssrf, proxy.as_ref()).await?,
+            None => None,
+        };
+        if let Some(ref egress) = egress {
+            proxy = Some(egress.chrome_proxy());
+        }
         let user_data = resolve_user_data_dir(config)?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::disable_non_proxied_udp(&user_data.path)?;
+        }
 
         let browser_config = build_one_shot_launch_builder(&user_data.path, &config.browser, proxy.as_ref())?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over())),
+            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over(), egress)),
             // ~keep `user_data`'s `Drop` removes the directory on this path and on cancellation.
             Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
         }
@@ -181,12 +202,12 @@ fn build_one_shot_launch_builder(
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
-    builder = crate::browser_pool::apply_proxy(builder, proxy, &browser.chrome_args);
     crate::browser_pool::apply_launch_overrides(
         builder,
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -423,36 +444,61 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_proxy_flag_replaces_the_one_the_configured_proxy_sets() {
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
         let proxy = crate::proxy::chrome_proxy(&crate::types::ProxyConfig {
             url: "http://127.0.0.1:9".into(),
             ..Default::default()
         })
         .expect("an http proxy is a Chrome proxy");
-        for (caller_flag, replaced) in [
-            ("--proxy-server=http://127.0.0.1:7", "proxy-server=http://127.0.0.1:9"),
-            ("--proxy-bypass-list=*.internal", "proxy-bypass-list=<-loopback>"),
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
         ] {
             let browser = crate::types::BrowserConfig {
                 chrome_args: vec![caller_flag.to_owned()],
                 ..Default::default()
             };
-            let debug = format!(
-                "{:?}",
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
                 build_one_shot_launch_builder(
                     std::path::Path::new("/tmp/browser-rs-test-profile"),
                     &browser,
-                    Some(&proxy)
+                    Some(&proxy),
                 )
+            });
+            let debug = format!("{:?}", built.expect("the config names no binary to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+        }
+    }
+
+    #[test]
+    fn a_caller_proxy_flag_reaches_chrome_when_no_proxy_is_configured() {
+        let browser = crate::types::BrowserConfig {
+            chrome_args: vec![
+                "--proxy-server=http://127.0.0.1:7".to_owned(),
+                "--proxy-bypass-list=*.internal".to_owned(),
+            ],
+            ..Default::default()
+        };
+        let debug = format!(
+            "{:?}",
+            build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), &browser, None)
                 .expect("the config names no binary to check")
-            );
+        );
+        for flag in ["proxy-server=http://127.0.0.1:7", "proxy-bypass-list=*.internal"] {
             assert!(
-                debug.contains(&format!("key: \"{}\"", &caller_flag[2..])),
-                "{caller_flag}: the caller's flag is missing: {debug}"
-            );
-            assert!(
-                !debug.contains(replaced),
-                "{caller_flag}: the configured proxy's {replaced} must not sit beside it: {debug}"
+                debug.contains(&format!("key: \"{flag}\"")),
+                "without a configured proxy the caller's {flag} must reach Chrome: {debug}"
             );
         }
     }

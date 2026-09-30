@@ -22,7 +22,7 @@ default = ["native-runtime"]
 # ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
-browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "native-runtime"]
+browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:bytes", "dep:fast-socks5", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:rustls-platform-verifier", "dep:tokio-rustls", "dep:tokio-socks", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 # ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
 # ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
@@ -67,12 +67,17 @@ blake3 = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
+bytes = { version = "1", optional = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
+fast-socks5 = { version = "1.0.0", default-features = false, optional = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1", default-features = false, features = ["client", "http1", "server"], optional = true }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
 html-to-markdown-rs = { workspace = true }
 html5ever = { workspace = true }
 icu_casemap = { workspace = true }
@@ -89,6 +94,7 @@ percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true }
@@ -98,6 +104,10 @@ thiserror = { workspace = true }
 tl = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 tokio-stream = { workspace = true }
+# ~keep The TLS stack and certificate check reqwest's default-tls uses, for the browser's SSRF
+# ~keep proxy to reach an https upstream.
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12", "aws-lc-rs"], optional = true }
+tokio-socks = { version = "0.5", optional = true }
 toml = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, optional = true }

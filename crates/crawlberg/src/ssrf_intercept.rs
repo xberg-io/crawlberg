@@ -241,6 +241,9 @@ pub(crate) struct FirewallHandle {
     /// check has stopped.
     browser: Weak<Browser>,
     context: PageContext,
+    /// The SSRF proxies this browser's pages go through, one per policy and upstream proxy.
+    /// They stop with the check.
+    egress: Arc<tokio::sync::Mutex<Vec<crate::net::egress::Egress>>>,
 }
 
 /// A page under the check. [`Watch::close`] or [`Watch::park`] ends it; dropping it closes
@@ -468,6 +471,7 @@ impl BrowserFirewall {
             commands,
             browser: Arc::downgrade(&browser),
             context,
+            egress: Arc::default(),
         };
         let listener = tokio::spawn(serve(
             browser,
@@ -605,6 +609,35 @@ fn cookie_param(cookie: Cookie) -> CookieParam {
 }
 
 impl FirewallHandle {
+    /// The SSRF proxy for `policy` leaving through `upstream`, started on first use, or none
+    /// when `deny_private` is off.
+    async fn egress_proxy(
+        &self,
+        upstream: Option<&crate::proxy::ChromeProxy>,
+        policy: &crate::net::ssrf::SsrfPolicy,
+    ) -> Result<Option<crate::proxy::ChromeProxy>, CrawlError> {
+        let mut running = self.egress.lock().await;
+        if let Some(egress) = running.iter().find(|egress| egress.serves(policy, upstream)) {
+            return Ok(Some(egress.chrome_proxy()));
+        }
+        let Some(egress) = crate::net::egress::Egress::start(policy, upstream).await? else {
+            return Ok(None);
+        };
+        let proxy = egress.chrome_proxy();
+        running.push(egress);
+        Ok(Some(proxy))
+    }
+
+    /// Every `host:port` this browser's SSRF proxies refused, in the order of each proxy.
+    pub(crate) async fn egress_refused(&self) -> Vec<String> {
+        self.egress
+            .lock()
+            .await
+            .iter()
+            .flat_map(crate::net::egress::Egress::refused)
+            .collect()
+    }
+
     /// Open a blank page for [`Self::watch`], in a browser context of its own or in the
     /// browser's, as the check's [`PageContext`] says. A context of its own starts with the
     /// browser's cookies when the check copies them. The page goes, with its popups, when its
@@ -614,15 +647,22 @@ impl FirewallHandle {
     /// ~keep without stopping (a crashed process) leaves no context in a `browser.endpoint` Chrome.
     ///
     /// With `proxy`, the page's own browser context is made with it, so its requests go through
-    /// it. The browser's own context has no proxy of its own: a `PageContext::Shared` page uses
-    /// the proxy the browser was launched with.
+    /// it. With `sockets` under `deny_private` the context goes through the SSRF proxy instead,
+    /// which leaves through `proxy`. The browser's own context has no proxy of its own: a
+    /// `PageContext::Shared` page uses the proxy the browser was launched with.
     pub(crate) async fn new_page(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
+        sockets: Option<&crate::net::ssrf::SsrfPolicy>,
     ) -> Result<chromiumoxide::Page, CrawlError> {
         let stopped = || CrawlError::browser_error("request interception stopped");
         let browser = self.browser.upgrade().ok_or_else(stopped)?;
         let failed = |e: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {e}"));
+        let egress = match (&self.context, sockets) {
+            (PageContext::Isolated | PageContext::Copied, Some(policy)) => self.egress_proxy(proxy, policy).await?,
+            _ => None,
+        };
+        let proxy = egress.as_ref().or(proxy);
         let context = match self.context {
             PageContext::Shared => None,
             PageContext::Isolated | PageContext::Copied => Some(
@@ -2007,7 +2047,7 @@ mod race_tests {
             .expect("the listener must start");
         let page = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let watch = firewall
@@ -2226,7 +2266,7 @@ mod race_tests {
         .expect("the listener must start");
         let page = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let watch = firewall
@@ -2317,7 +2357,7 @@ mod race_tests {
                 "{test_name} ({context:?}): the stop must wait for the held refusal"
             );
             let stopping = tokio::spawn(stopping);
-            let late = handle.new_page(None).await;
+            let late = handle.new_page(None, None).await;
             let opened_while_stopping = !stopping.is_finished();
             let watched = match &late {
                 Ok(late) => handle.watch(late, &config(), 0).await.map(drop),
@@ -2370,7 +2410,7 @@ mod race_tests {
         .expect("the listener must start");
         let page = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let closed = page.clone();
@@ -2474,12 +2514,12 @@ mod race_tests {
         let before = context_count(&browser).await;
         let keepalive = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let page = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let with_page = context_count(&browser).await;
@@ -2544,7 +2584,7 @@ mod race_tests {
         let handle = firewall.handle();
         firewall.stop().await;
         let before = context_count(&browser).await;
-        let opened = handle.new_page(None).await;
+        let opened = handle.new_page(None, None).await;
         let after = context_count(&browser).await;
         let error = opened.err().map(|error| error.to_string()).unwrap_or_default();
         close(browser).await;
@@ -2584,7 +2624,7 @@ mod race_tests {
         let in_browser = cookie_names(&browser, None).await;
         let next = firewall
             .handle()
-            .new_page(None)
+            .new_page(None, None)
             .await
             .expect("the check must open a page");
         let next_watch = firewall
@@ -2744,7 +2784,7 @@ mod race_tests {
             let before = contexts(&browser).await;
             let page = firewall
                 .handle()
-                .new_page(None)
+                .new_page(None, None)
                 .await
                 .expect("the check must open a page");
             let context = contexts(&browser)
@@ -2938,6 +2978,52 @@ mod race_tests {
             refused,
             [denied],
             "{test_name}: the request being judged must be listed"
+        );
+    }
+
+    /// Pages under one SSRF policy share one SSRF proxy; a page under another allowlist gets its own.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pages_under_one_policy_share_one_ssrf_proxy() {
+        let test_name = "pages_under_one_policy_share_one_ssrf_proxy";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let firewall = BrowserFirewall::start_with(
+            Arc::clone(&browser),
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays::default(),
+        )
+        .await
+        .expect("the listener must start");
+        let policy = config().ssrf;
+        let other = crate::types::CrawlConfig::builder().build().ssrf;
+        let handle = firewall.handle();
+        let first = handle
+            .new_page(None, Some(&policy))
+            .await
+            .expect("the check must open a page");
+        let second = handle
+            .new_page(None, Some(&policy))
+            .await
+            .expect("the check must open a page");
+        let shared = handle.egress.lock().await.len();
+        let third = handle
+            .new_page(None, Some(&other))
+            .await
+            .expect("the check must open a page");
+        let separate = handle.egress.lock().await.len();
+        drop((first, second, third));
+        firewall.stop().await;
+        close(browser).await;
+        assert!(policy.deny_private, "{test_name}: the test needs deny_private on");
+        assert_eq!(
+            shared, 1,
+            "{test_name}: two pages under one policy must share one SSRF proxy, got {shared}"
+        );
+        assert_eq!(
+            separate, 2,
+            "{test_name}: a page under another allowlist must get its own SSRF proxy, got {separate}"
         );
     }
 }

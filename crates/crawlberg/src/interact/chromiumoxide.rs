@@ -138,12 +138,19 @@ async fn run_with_browser(
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
     // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
-    // ~keep that flag, so there the page's own browser context is made with the proxy.
-    let proxy = match config.browser.endpoint {
-        Some(_) => crate::proxy::chrome_proxy_for(config)?,
-        None => None,
+    // ~keep that flag, so there the page's own browser context is made with the proxy. Under
+    // ~keep `deny_private` the context goes through the SSRF proxy, which leaves through it.
+    let proxy = if config.browser.endpoint.is_some() || config.ssrf.deny_private {
+        crate::proxy::chrome_proxy_for(config)?
+    } else {
+        None
     };
-    let page = firewall.handle().new_page(proxy.as_ref()).await?;
+    let sockets = crate::net::egress::socket_policy(
+        &config.ssrf,
+        config.browser.endpoint.as_deref(),
+        &std::sync::Once::new(),
+    );
+    let page = firewall.handle().new_page(proxy.as_ref(), sockets).await?;
 
     // ~keep The SSRF check holds for the whole session, not just the first navigation: the
     // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
@@ -159,7 +166,10 @@ async fn run_with_browser(
             }
             .await;
             watch.close().await;
-            result
+            // ~keep The session has one page, so each socket its SSRF proxy refused is that page's.
+            let mut result = result?;
+            crate::net::egress::add_refused(&mut result.ssrf_refused_urls, firewall.handle().egress_refused().await);
+            Ok(result)
         }
         Err(error) => {
             let _ = page.close().await;
@@ -544,6 +554,9 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         ));
 
         let proxy = crate::proxy::chrome_proxy_for(config)?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::disable_non_proxied_udp(&user_data_dir)?;
+        }
         let browser_config = build_interact_launch_builder(&user_data_dir, proxy.as_ref(), &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -574,12 +587,12 @@ fn build_interact_launch_builder(
         .user_data_dir(user_data_dir)
         .disable_default_args();
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
-    builder = crate::browser_pool::apply_proxy(builder, proxy, &browser.chrome_args);
     crate::browser_pool::apply_launch_overrides(
         builder,
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -611,26 +624,37 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
         let proxy = test_proxy("http://127.0.0.1:9");
-        let builder = build_interact_launch_builder(
-            std::path::Path::new("/tmp/interact-test-profile"),
-            Some(&proxy),
-            &crate::types::BrowserConfig {
-                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
                 ..Default::default()
-            },
-        )
-        .expect("no binary is named, so there is nothing to check");
-        let debug = format!("{builder:?}");
-        assert!(
-            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
-            "the caller's proxy-server flag is missing: {debug}"
-        );
-        assert!(
-            !debug.contains("proxy-server=http://127.0.0.1:9"),
-            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
-        );
+            };
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
+                build_interact_launch_builder(
+                    std::path::Path::new("/tmp/interact-test-profile"),
+                    Some(&proxy),
+                    &browser,
+                )
+            });
+            let debug = format!("{:?}", built.expect("no binary is named, so there is nothing to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+        }
     }
 
     #[test]
