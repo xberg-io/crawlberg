@@ -182,9 +182,12 @@ title: "Changelog"
   `localhost`, and the native browser then sent that cookie to the other host, after a 302 or a
   meta refresh. It also stored a Secure cookie that a page set over plain http. The native
   browser now ignores a cookie whose `Domain` does not match the host that set it, and a Secure
-  cookie set over http, as a browser does.
+  cookie set over http.
+  It also ignores a cookie whose `Domain` is a public suffix, such as `co.uk`, `github.io` or
+  `localhost`, unless the host that set it has that exact name.
   A cookie set without a `Domain` attribute now goes back to the host that set it only, not to
-  that host's subdomains.
+  that host's subdomains. In `crawlberg-browser`, `NativeCookie` gains `host_only`, so a struct
+  literal of it needs the new field.
 
 - **A native scrape through a meta refresh listed only the last page's refused addresses.**
   `ssrf_refused_urls` now lists the addresses the SSRF policy refused on every page of the chain.

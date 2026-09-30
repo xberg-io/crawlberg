@@ -996,6 +996,49 @@ async fn native_scrape_sends_a_host_only_cookie_to_its_own_host_only_across_a_me
     );
 }
 
+/// A cookie that `a.localhost` sets for `Domain=localhost` does not reach `b.localhost` after a
+/// meta refresh, because `localhost` is a public suffix (RFC 6265bis section 5.7 step 9).
+#[tokio::test]
+async fn native_scrape_refuses_a_public_suffix_domain_cookie_across_a_meta_refresh() {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://b.localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+                    "text/html",
+                )
+                .append_header("set-cookie", "own=1; Path=/")
+                .append_header("set-cookie", "lh=1; Path=/; Domain=localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://a.localhost:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert!(
+        sent.is_empty(),
+        "a cookie that a.localhost set for Domain=localhost must not reach b.localhost, sent {sent:?}"
+    );
+}
+
 /// A native scrape through a meta refresh lists the addresses the SSRF policy refused on every
 /// hop: the refresh page's script and the landing page's `fetch()`.
 #[tokio::test]

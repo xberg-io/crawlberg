@@ -130,6 +130,7 @@ percent-encoding = "2"
 png = "0.18"
 precomputed-hash = "0.1"
 proptest = "1"
+psl = "2"
 pyo3 = { version = "0.29", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 quick-xml = "0.42"

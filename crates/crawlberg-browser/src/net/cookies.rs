@@ -383,14 +383,26 @@ impl CookieAttributes {
     /// Whether a page at `url` may set a cookie with these attributes. A `Domain` value must
     /// domain-match the request host, so a host cannot set a cookie for another host (RFC 6265
     /// section 5.3 step 6), and an IP address matches no other name. A `Secure` cookie must come
-    /// over https (the RFC 6265bis storage model).
-    fn may_be_set_by(&self, url: &Url) -> bool {
+    /// over https (the RFC 6265bis storage model). A `Domain` value that is a public suffix
+    /// (`co.uk`, `github.io`, `localhost`) is refused, unless it equals the request host, which
+    /// makes the cookie host-only (RFC 6265bis section 5.7 step 9).
+    fn may_be_set_by(&mut self, url: &Url) -> bool {
         if self.secure && url.scheme() != "https" {
             return false;
         }
         let Some(value) = self.domain_attribute.as_deref() else {
             return true;
         };
+        if psl::suffix(self.domain.as_bytes()).is_some_and(|suffix| suffix.as_bytes() == self.domain.as_bytes()) {
+            if !url
+                .host_str()
+                .is_some_and(|host| host.eq_ignore_ascii_case(&self.domain))
+            {
+                return false;
+            }
+            self.domain_attribute = None;
+            return true;
+        }
         cookie_store::CookieDomain::try_from(value).is_ok_and(|domain| domain.matches(url))
     }
 
@@ -766,6 +778,48 @@ mod tests {
             "host=1"
         );
         assert!(jar.snapshot()[0].6, "the snapshot keeps the host-only flag");
+    }
+
+    #[test]
+    fn a_domain_attribute_that_is_a_public_suffix_is_ignored() {
+        let jar = CookieJar::new();
+        for (cookie, from, victim) in [
+            (
+                "psl=1; Path=/; Domain=co.uk",
+                "http://www.example.co.uk/",
+                "http://victim.co.uk/",
+            ),
+            (
+                "gh=1; Path=/; Domain=github.io",
+                "http://evil.github.io/",
+                "http://victim.github.io/",
+            ),
+            ("tld=1; Path=/; Domain=com", "http://evil.com/", "http://victim.com/"),
+            (
+                "lh=1; Path=/; Domain=localhost",
+                "http://a.localhost/",
+                "http://b.localhost/",
+            ),
+        ] {
+            jar.set_cookie(cookie, &Url::parse(from).unwrap());
+            jar.set_cookie_from_js(cookie, &Url::parse(from).unwrap());
+            assert_eq!(
+                jar.get_cookie_header(&Url::parse(victim).unwrap()),
+                "",
+                "{cookie} from {from}"
+            );
+        }
+        assert_eq!(jar.snapshot().len(), 0);
+    }
+
+    #[test]
+    fn a_public_suffix_domain_equal_to_the_request_host_makes_the_cookie_host_only() {
+        let jar = CookieJar::new();
+        let url = Url::parse("http://localhost/").unwrap();
+        jar.set_cookie("own=1; Path=/; Domain=localhost", &url);
+        assert_eq!(jar.get_cookie_header(&url), "own=1");
+        assert_eq!(jar.get_cookie_header(&Url::parse("http://b.localhost/").unwrap()), "");
+        assert!(jar.snapshot()[0].6, "the cookie is host-only");
     }
 
     #[test]

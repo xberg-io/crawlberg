@@ -24,6 +24,7 @@ html5ever = { workspace = true }
 ipnet = { workspace = true }
 png = { workspace = true }
 precomputed-hash = { workspace = true }
+psl = { workspace = true }
 reqwest = { workspace = true }
 selectors = { workspace = true }
 serde = { workspace = true }
