@@ -29,9 +29,9 @@ pub(crate) use client::build_client;
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use status::error_status;
 pub(crate) use status::status_error;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use status::{HttpStatus, error_status};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 

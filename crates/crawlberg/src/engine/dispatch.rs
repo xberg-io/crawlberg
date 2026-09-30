@@ -228,26 +228,37 @@ impl CrawlEngine {
     /// Convert an [`crate::types::EscalationReason`] from a terminal success-path
     /// `Escalate` directive into the most specific available [`CrawlError`].
     ///
-    /// Called when the policy signals `Escalate` on a 2xx response (soft-block /
-    /// WAF interstitial) but no higher tier is available or the budget is exhausted.
-    /// Returning an error prevents the challenge-page body from reaching callers.
+    /// Called when a retry policy or an antibot strategy refuses a response the fetch
+    /// accepted (a soft block or a WAF interstitial, served with any status) but no
+    /// higher tier is available or the budget is exhausted. Returning an error prevents
+    /// the challenge-page body from reaching callers. `status` is the status of the
+    /// refused response; a WAF or soft block carries it as the error's source, as the
+    /// fetch path's own WAF refusals do, so a `soft_http_errors` page can report it.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn escalation_reason_to_error(reason: &crate::types::EscalationReason, url: &str) -> CrawlError {
+    pub(super) fn escalation_reason_to_error(
+        reason: &crate::types::EscalationReason,
+        url: &str,
+        status: u16,
+    ) -> CrawlError {
         use crate::types::EscalationReason;
+        let source = crate::http::HttpStatus(status);
         match reason {
-            EscalationReason::WafBlocked { vendor } => {
-                CrawlError::waf_blocked(vendor.clone(), format!("waf/blocked: {vendor} detected at {url}"))
-            }
-            EscalationReason::SoftBlock => CrawlError::forbidden(format!("soft_block: {url}")),
+            EscalationReason::WafBlocked { vendor } => CrawlError::waf_blocked_with_source(
+                vendor.clone(),
+                format!("waf/blocked: {vendor} detected at {url}"),
+                source,
+            ),
+            EscalationReason::SoftBlock => CrawlError::forbidden_with_source(format!("soft_block: {url}"), source),
             EscalationReason::RenderNeeded => {
                 CrawlError::unsupported(format!("js_render_needed but no browser tier available: {url}"))
             }
             EscalationReason::OriginUnreliable => {
                 CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
-            EscalationReason::AntibotEscalate => CrawlError::waf_blocked(
+            EscalationReason::AntibotEscalate => CrawlError::waf_blocked_with_source(
                 ANTIBOT_VENDOR,
                 format!("antibot strategy forced browser escalation at {url}"),
+                source,
             ),
         }
     }
