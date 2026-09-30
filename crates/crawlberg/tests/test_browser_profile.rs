@@ -337,7 +337,7 @@ async fn scrape_with_profile(
 }
 
 /// A cookie a page sets under a saved profile reaches the next scrape with that profile: the
-/// page runs in a browser context of its own, and the profile's cookies are copied in and back.
+/// page runs in the browser's own context, whose storage is the profile's.
 #[tokio::test]
 async fn a_saved_profile_keeps_the_cookies_a_page_set() {
     let test_name = "a_saved_profile_keeps_the_cookies_a_page_set";
