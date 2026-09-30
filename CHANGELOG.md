@@ -133,6 +133,12 @@ All notable changes to crawlberg are documented here.
   address, such as `loopback`. A host name or address refused when the connection resolves it
   gave the same decision with no reason. That refusal now ends with the reason too, so
   `::ffff:127.0.0.1` gives the reason `loopback` at both checks. (#532)
+- **The full and CLI Docker images, and the Elixir NIF builder, failed before compiling.** Their
+  build rewrote the workspace `members` list with a pattern that expects a one-line array, and the
+  root `Cargo.toml` writes it on several lines, so cargo could not load the copied manifest. The
+  full and CLI images now replace the whole array and copy `crates/crawlberg-browser`, which the
+  core crate names as a path dependency. The NIF builder no longer rewrites the root manifest: the
+  NIF crate is its own workspace, so it builds from its own manifest. (#553)
 
 - **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
   A page refused by a custom retry policy, or by an antibot strategy that asks for browser
@@ -876,22 +882,6 @@ Four changes can affect an existing setup:
   body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
   as the documents it is meant to admit. (#95)
 
-- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
-  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
-  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
-  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
-  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
-  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
-  addresses of `<graphic>`. Character references in an address are decoded first, so
-  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
-  `fit_content` can now drop a line of relative links that it kept before, the same way it
-  already treated absolute links. (#63)
-- **The markdown front matter showed the base address as written.** A page with
-  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
-  the same address that relative links resolve against. (#94)
-
-
 - `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
   to `false`. The head values remain available on `PageMetadata`, which is populated independently
   of the converter. (#64)
@@ -1145,6 +1135,20 @@ Four changes can affect an existing setup:
   tag checked the repository out at a tag that the Swift checksum job force-moves in the same
   second, and died in `actions/checkout`. It now creates the tag through the API, with no working
   tree and no tag fetch. (#71)
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
 
 ### Changed
 
