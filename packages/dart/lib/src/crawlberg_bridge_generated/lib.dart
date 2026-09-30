@@ -1048,8 +1048,8 @@ class CrawlConfig {
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
   /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
   /// than raised as `CrawlError`. A WAF block reports the status of the refused
-  /// response (403, 429 or 503), and 403 when the block page came with a 2xx
-  /// status. Default `false` preserves the historical
+  /// response when it is a 4xx or 5xx, and 403 when the block page came with a
+  /// 2xx status. Default `false` preserves the historical
   /// throw-on-error contract for direct fetches. Independently of this flag,
   /// 404s reached at the end of a redirect chain are *always* surfaced softly —
   /// the user opted into redirect-following, so receiving a 404 there is part of
@@ -1659,6 +1659,10 @@ class CrawlPageResult {
   /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
   final bool nofollowDetected;
 
+  /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+  /// their credentials, each listed once. The page is kept; only the refused requests failed.
+  final List<String> ssrfRefusedUrls;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1685,6 +1689,7 @@ class CrawlPageResult {
     required this.redirectCount,
     required this.noindexDetected,
     required this.nofollowDetected,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -1713,7 +1718,8 @@ class CrawlPageResult {
       finalUrl.hashCode ^
       redirectCount.hashCode ^
       noindexDetected.hashCode ^
-      nofollowDetected.hashCode;
+      nofollowDetected.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1744,7 +1750,8 @@ class CrawlPageResult {
           finalUrl == other.finalUrl &&
           redirectCount == other.redirectCount &&
           noindexDetected == other.noindexDetected &&
-          nofollowDetected == other.nofollowDetected;
+          nofollowDetected == other.nofollowDetected &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// The result of a multi-page crawl operation.
@@ -2253,11 +2260,16 @@ class InteractionResult {
   /// callers that never request a screenshot do not pay the encoding cost.
   final String? screenshotBase64;
 
+  /// URLs of the requests the page sent during the session that the SSRF policy refused,
+  /// including during the extra wait, without their credentials, each listed once.
+  final List<String> ssrfRefusedUrls;
+
   const InteractionResult({
     required this.actionResults,
     required this.finalHtml,
     required this.finalUrl,
     this.screenshotBase64,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -2265,7 +2277,8 @@ class InteractionResult {
       actionResults.hashCode ^
       finalHtml.hashCode ^
       finalUrl.hashCode ^
-      screenshotBase64.hashCode;
+      screenshotBase64.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2275,7 +2288,8 @@ class InteractionResult {
           actionResults == other.actionResults &&
           finalHtml == other.finalHtml &&
           finalUrl == other.finalUrl &&
-          screenshotBase64 == other.screenshotBase64;
+          screenshotBase64 == other.screenshotBase64 &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// A JSON-LD structured data entry found on a page.
@@ -2959,6 +2973,10 @@ class ScrapeResult {
   /// populated when `BrowserBackend::Native` was used for this request.
   final BrowserExtras? browser;
 
+  /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+  /// their credentials, each listed once. The page is kept; only the refused requests failed.
+  final List<String> ssrfRefusedUrls;
+
   const ScrapeResult({
     required this.statusCode,
     required this.finalUrl,
@@ -2989,6 +3007,7 @@ class ScrapeResult {
     this.screenshotBase64,
     this.downloadedDocument,
     this.browser,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -3021,7 +3040,8 @@ class ScrapeResult {
       extractionMeta.hashCode ^
       screenshotBase64.hashCode ^
       downloadedDocument.hashCode ^
-      browser.hashCode;
+      browser.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3056,7 +3076,8 @@ class ScrapeResult {
           extractionMeta == other.extractionMeta &&
           screenshotBase64 == other.screenshotBase64 &&
           downloadedDocument == other.downloadedDocument &&
-          browser == other.browser;
+          browser == other.browser &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// Direction for a scroll action.

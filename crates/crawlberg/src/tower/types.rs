@@ -78,7 +78,7 @@ mod tests {
                 ("proxy-authorization".to_owned(), vec![format!("Basic {SECRET}")]),
                 ("server".to_owned(), vec!["nginx".to_owned()]),
             ]),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         };
@@ -132,12 +132,14 @@ pub struct CrawlResponse {
     pub body: String,
     pub body_bytes: Vec<u8>,
     pub headers: HashMap<String, Vec<String>>,
-    /// The URL the content came from, when the fetcher followed redirects itself (the
+    /// Where the content came from, when the fetcher followed redirects itself (the
     /// browser tier). `None` when the response belongs to the requested URL.
     ///
-    /// ~keep Read only by the native redirect chain; wasm has no browser tier to set it.
+    /// ~keep Read by the native redirect chain and by the page results; wasm has no browser
+    /// ~keep tier to set it. Boxed because only the browser tier sets it, so the other tiers'
+    /// ~keep responses do not carry its size.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub landed_url: Option<String>,
+    pub landed: Option<Box<Landing>>,
     /// The `User-Agent` header value this response's request actually sent, when known.
     ///
     /// ~keep Only the native HTTP tier (`tower::service::do_fetch`) sets this, because it is
@@ -162,7 +164,7 @@ impl std::fmt::Debug for CrawlResponse {
             body,
             body_bytes,
             headers,
-            landed_url,
+            landed,
             sent_user_agent,
             soft_error,
         } = self;
@@ -172,9 +174,21 @@ impl std::fmt::Debug for CrawlResponse {
             .field("body", body)
             .field("body_bytes", body_bytes)
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
-            .field("landed_url", landed_url)
+            .field("landed", landed)
             .field("sent_user_agent", sent_user_agent)
             .field("soft_error", soft_error)
             .finish()
     }
+}
+
+/// The URL a self-redirecting fetcher landed on, and the HTTP redirects it followed.
+///
+/// ~keep Only the browser tier builds one, so without the `browser` feature nothing does.
+#[derive(Debug, Clone)]
+#[cfg_attr(any(target_arch = "wasm32", not(feature = "browser")), allow(dead_code))]
+pub struct Landing {
+    pub url: String,
+    pub redirects: usize,
+    /// The URLs the browser's SSRF check refused for requests the page sent, credential-redacted.
+    pub refused: Vec<String>,
 }

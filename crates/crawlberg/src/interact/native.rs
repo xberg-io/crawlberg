@@ -25,7 +25,8 @@ pub(super) async fn run(
         "the native browser backend is selected; it runs no Chrome process",
     );
 
-    let native_config = build_native_config(config)?;
+    let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+    let native_config = build_native_config(config, ssrf)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -61,10 +62,17 @@ pub(super) async fn run(
         }
     })?;
 
-    Ok(map_result(native_result))
+    let refused = crate::net::browser_policy::take_refused(&refused);
+    Ok(InteractionResult {
+        ssrf_refused_urls: refused,
+        ..map_result(native_result)
+    })
 }
 
-fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, CrawlError> {
+fn build_native_config(
+    config: &CrawlConfig,
+    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
+) -> Result<NativeBrowserConfig, CrawlError> {
     let wait_until = match config.browser.wait {
         BrowserWait::NetworkIdle => NativeBrowserWait::NetworkIdle,
         BrowserWait::Selector => NativeBrowserWait::Selector,
@@ -85,7 +93,7 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
+        ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
     })
@@ -165,6 +173,7 @@ fn map_result(result: NativeInteractionResult) -> InteractionResult {
         final_url: result.final_url,
         screenshot: result.screenshot,
         screenshot_base64,
+        ssrf_refused_urls: Vec::new(),
     }
 }
 
@@ -248,13 +257,10 @@ mod proxy_credential_tests {
     }
 
     #[test]
-    fn credential_free_proxy_url_is_passed_through_unchanged() {
+    fn credential_free_proxy_url_is_returned_as_parsed() {
         let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", None, None))
             .expect("credential-free proxy must resolve");
-        assert_eq!(
-            resolved, "http://proxy.test:8080",
-            "URL must be passed through verbatim when there are no credentials to embed"
-        );
+        assert_eq!(resolved, "http://proxy.test:8080/");
     }
 
     #[test]
@@ -267,22 +273,13 @@ mod proxy_credential_tests {
     }
 
     #[test]
-    fn scheme_less_url_error_does_not_print_the_username_as_the_scheme() {
-        // ~keep `alice` sits where a scheme would be read from by a naive `url::Url::parse` on a
-        // scheme-less string; the regression this guards is that misread leaking into the
-        // "does not support embedded credentials" error.
-        let result = apply_proxy_credentials(&proxy("alice:s3cr3t@proxy.test:8080", Some("alice"), Some("s3cr3t")));
-        let error = result
-            .expect_err("a scheme-less proxy URL must be rejected")
-            .to_string();
-        assert!(
-            !error.contains("alice"),
-            "error must not name the embedded username, got: {error}"
-        );
-        assert!(
-            !error.contains("s3cr3t"),
-            "error must not leak the embedded password, got: {error}"
-        );
+    fn scheme_less_url_reads_the_username_as_a_username() {
+        // ~keep `alice` sits where a naive `url::Url::parse` reads a scheme from. The address is
+        // ~keep read as reqwest reads it, so `alice` stays the user name and never becomes a
+        // ~keep scheme that an error could print.
+        let resolved = apply_proxy_credentials(&proxy("alice:s3cr3t@proxy.test:8080", Some("alice"), Some("s3cr3t")))
+            .expect("reqwest takes this address as an HTTP proxy, so it must resolve");
+        assert_eq!(resolved, "http://alice:s3cr3t@proxy.test:8080/");
     }
 
     /// Minimal percent-decoder sufficient for the ASCII userinfo characters this module encodes.
@@ -414,7 +411,8 @@ mod credential_scope_tests {
             ..CrawlConfig::default()
         };
 
-        let native = build_native_config(&config).expect("an admitted config must build");
+        let (ssrf, _) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+        let native = build_native_config(&config, ssrf).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),

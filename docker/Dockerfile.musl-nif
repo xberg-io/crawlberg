@@ -24,11 +24,10 @@ COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 COPY packages/elixir/native/crawlberg_nif/ packages/elixir/native/crawlberg_nif/
 
-RUN sed -i 's|members = \[.*\]|members = ["crates/crawlberg", "crates/crawlberg-bindings-common", "crates/crawlberg-browser", "crates/crawlberg-robots", "packages/elixir/native/crawlberg_nif"]|' Cargo.toml
-
+# The NIF crate is its own workspace, with its own Cargo.lock, so the root members list stays as is.
 RUN . "$HOME/.cargo/env" && \
-    cargo build --release --package crawlberg_nif && \
-    cp target/release/libcrawlberg_nif.so /build/libcrawlberg_nif.so && \
+    cargo build --release --manifest-path packages/elixir/native/crawlberg_nif/Cargo.toml && \
+    cp packages/elixir/native/crawlberg_nif/target/release/libcrawlberg_nif.so /build/libcrawlberg_nif.so && \
     strip /build/libcrawlberg_nif.so
 
 RUN file /build/libcrawlberg_nif.so && \

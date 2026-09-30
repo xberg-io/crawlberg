@@ -302,6 +302,39 @@ async fn configured_bearer_auth_and_custom_headers_go_to_seed_host_requests_only
     assert_scoped_headers(&seed, &other, &format!("Bearer {BEARER}")).await;
 }
 
+/// A page from a caller-supplied browser pool is checked by the pool's firewall, and gets the
+/// same seed-host headers as a page from a browser the fetch launches.
+#[tokio::test]
+async fn a_pooled_page_sends_the_bearer_and_custom_headers_to_the_seed_host_only() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    mount_seed_and_third_party(&seed, &other).await;
+    let base = bearer_config();
+    let pool = crawlberg::BrowserPool::new(crawlberg::BrowserPoolConfig::default());
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            session_affinity: false,
+            ..base.browser.clone()
+        },
+        browser_pool: Some(std::sync::Arc::clone(&pool)),
+        ..base
+    };
+
+    let outcome = scrape_in_browser_with(
+        "a_pooled_page_sends_the_bearer_and_custom_headers_to_the_seed_host_only",
+        config,
+        &format!("{}/", seed.uri()),
+    )
+    .await;
+    pool.shutdown().await;
+    let Some(outcome) = outcome else {
+        return;
+    };
+    outcome.expect("scrape must succeed");
+
+    assert_scoped_headers(&seed, &other, &format!("Bearer {BEARER}")).await;
+}
+
 #[cfg(feature = "interact")]
 #[tokio::test]
 async fn configured_bearer_auth_and_custom_headers_in_an_interaction_go_to_seed_host_requests_only() {

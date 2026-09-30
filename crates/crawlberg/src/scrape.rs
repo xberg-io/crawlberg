@@ -117,6 +117,11 @@ pub(crate) async fn scrape_from_crawl_response(
         screenshot_base64: None,
         downloaded_document,
         browser: None,
+        ssrf_refused_urls: resp
+            .landed
+            .as_ref()
+            .map(|landed| landed.refused.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -442,7 +447,7 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         }
@@ -502,7 +507,7 @@ mod tests {
             body: String::from_utf8_lossy(&body_bytes).into_owned(),
             body_bytes,
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: false,
         }
@@ -1182,12 +1187,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_feeds_with_an_inline_address() {
+    async fn scrape_skips_feeds_with_an_unfetchable_address() {
         let result = scrape_head(
             "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"JavaScript:alert(1)\">\
              <link rel=\"alternate\" type=\"application/atom+xml\" href=\"VBScript:msgbox(1)\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"java&#9;script:x\">\
              <link rel=\"alternate\" type=\"application/feed+json\" href=\"DATA:application/json,{}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"file:///etc/passwd\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"blob:https://example.com/x\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">",
         )
         .await;
@@ -1195,11 +1202,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_hreflangs_with_an_inline_address() {
+    async fn scrape_skips_hreflangs_with_an_unfetchable_address() {
         let result = scrape_head(
             "<link rel=\"alternate\" hreflang=\"de\" href=\"javascript:alert(1)\">\
              <link rel=\"alternate\" hreflang=\"fr\" href=\"VBSCRIPT:x\">\
              <link rel=\"alternate\" hreflang=\"es\" href=\"data:text/html,x\">\
+             <link rel=\"alternate\" hreflang=\"pt\" href=\"file:///etc/passwd\">\
+             <link rel=\"alternate\" hreflang=\"it\" href=\"blob:https://example.com/x\">\
              <link rel=\"alternate\" hreflang=\"en\" href=\"en.html\">",
         )
         .await;
@@ -1214,19 +1223,29 @@ mod tests {
              <link rel=\"shortcut icon\" href=\"VBScript:msgbox(1)\">\
              <link rel=\"apple-touch-icon\" href=\"JAVASCRIPT:x\">\
              <link rel=\"icon\" href=\"data:image/png;base64,iVBORw0KGgo=\">\
+             <link rel=\"icon\" href=\"file:///etc/passwd\">\
+             <link rel=\"icon\" href=\"blob:https://example.com/x\">\
              <link rel=\"icon\" href=\"fav.ico\">",
         )
         .await;
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
         assert_eq!(
             urls(favicons, |f| &f.url),
-            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"]
+            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"],
+            "a data: icon is a real, usable icon and stays; a file: or blob: icon names \
+             something the crawler can never fetch and is dropped"
         );
     }
 
     #[tokio::test]
-    async fn scrape_reports_no_canonical_url_for_an_inline_address() {
-        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+    async fn scrape_reports_no_canonical_url_for_an_unfetchable_address() {
+        for href in [
+            "javascript:alert(1)",
+            "VBScript:msgbox(1)",
+            "Data:text/html,x",
+            "file:///etc/passwd",
+            "blob:https://example.com/x",
+        ] {
             let result = scrape_head(&format!("<link rel=\"canonical\" href=\"{href}\">")).await;
             assert_eq!(result.metadata.canonical_url, None, "for {href}");
         }
@@ -1527,20 +1546,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_keeps_a_data_image_address_the_url_parser_cannot_read_at_every_image_site() {
+    async fn scrape_skips_a_data_image_address_the_url_parser_cannot_read_at_every_image_site() {
         let resp = response(
             "text/html",
-            "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\"></head><body>\
-             <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture></body></html>",
+            "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\">\
+             <meta name=\"twitter:image\" content=\"data://[c\"></head><body>\
+             <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture>\
+             <img src=\"ok.png\"></body></html>",
         );
         let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
-        assert_eq!(
-            urls(&result.images, |i| &i.url),
-            ["data://[a", "data://[b", "DATA://h:99999"]
-        );
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/ok.png"]);
     }
 
     #[tokio::test]
@@ -1601,5 +1619,112 @@ mod tests {
             error.to_string().contains("invalid URL"),
             "expected an invalid-URL error, got: {error}"
         );
+    }
+
+    type MetaAddressGetter = fn(&ScrapeResult) -> Option<&str>;
+
+    const META_ADDRESS_FIELDS: [(&str, &str, MetaAddressGetter); 5] = [
+        ("property", "og:url", |r| r.metadata.og_url.as_deref()),
+        ("property", "og:video", |r| r.metadata.og_video.as_deref()),
+        ("property", "og:audio", |r| r.metadata.og_audio.as_deref()),
+        ("property", "og:image", |r| r.metadata.og_image.as_deref()),
+        ("name", "twitter:image", |r| r.metadata.twitter_image.as_deref()),
+    ];
+
+    #[tokio::test]
+    async fn scrape_skips_og_and_twitter_addresses_the_crawler_cannot_fetch() {
+        for (attr, name, get) in META_ADDRESS_FIELDS {
+            for address in [
+                "javascript:alert(1)",
+                "JavaScript:alert(1)",
+                "VBScript:msgbox(1)",
+                "Data:text/html,x",
+                "DATA:text/html,x",
+                "file:///etc/passwd",
+                "FILE:///etc/passwd",
+                "blob:https://example.com/x",
+                "ftp://example.com/x",
+                "mailto:a@example.com",
+                "tel:+15550100",
+                "file://[bad/x",
+                "http://[bad/x",
+            ] {
+                let result = scrape_head(&format!(r#"<meta {attr}="{name}" content="{address}">"#)).await;
+                assert_eq!(get(&result), None, "for {name} with {address}");
+            }
+            let result = scrape_head(&format!(r#"<meta {attr}="{name}" content="x.png">"#)).await;
+            assert_eq!(
+                get(&result),
+                Some("https://example.com/x.png"),
+                "for {name} against the page base"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_treats_a_whitespace_only_og_or_twitter_address_as_absent() {
+        let result = scrape_head(
+            "<meta property=\"og:url\" content=\"  \">\
+             <meta property=\"og:video\" content=\"\t\n\">\
+             <meta property=\"og:audio\" content=\" \">\
+             <meta property=\"og:image\" content=\" \">\
+             <meta name=\"twitter:image\" content=\" \">",
+        )
+        .await;
+        for (_, name, get) in META_ADDRESS_FIELDS {
+            assert_eq!(get(&result), None, "for {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_a_valid_og_or_twitter_address_when_another_tag_cannot_be_fetched() {
+        let result = scrape_head(
+            "<meta property=\"og:url\" content=\"javascript:alert(1)\">\
+             <meta property=\"og:url\" content=\"page.html\">\
+             <meta property=\"og:video\" content=\"video.mp4\">\
+             <meta property=\"og:video\" content=\"file:///etc/passwd\">",
+        )
+        .await;
+        assert_eq!(
+            result.metadata.og_url.as_deref(),
+            Some("https://example.com/page.html"),
+            "an address the crawler cannot fetch does not clear a valid one seen before or after it"
+        );
+        assert_eq!(
+            result.metadata.og_video.as_deref(),
+            Some("https://example.com/video.mp4")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_og_and_twitter_addresses_against_the_base_href() {
+        let result = scrape_head(
+            "<base href=\"/dir/\">\
+             <meta property=\"og:url\" content=\"x.png\">\
+             <meta property=\"og:video\" content=\"x.png\">\
+             <meta property=\"og:audio\" content=\"x.png\">\
+             <meta property=\"og:image\" content=\"x.png\">\
+             <meta name=\"twitter:image\" content=\"x.png\">",
+        )
+        .await;
+        for (_, name, get) in META_ADDRESS_FIELDS {
+            assert_eq!(get(&result), Some("https://example.com/dir/x.png"), "for {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_a_relative_og_or_twitter_address_under_a_base_that_cannot_take_one() {
+        let result = scrape_head(
+            "<base href=\"blob:https://example.com/b\">\
+             <meta property=\"og:url\" content=\"x.png\">\
+             <meta property=\"og:video\" content=\"x.png\">\
+             <meta property=\"og:audio\" content=\"x.png\">\
+             <meta property=\"og:image\" content=\"x.png\">\
+             <meta name=\"twitter:image\" content=\"x.png\">",
+        )
+        .await;
+        for (_, name, get) in META_ADDRESS_FIELDS {
+            assert_eq!(get(&result), None, "for {name}");
+        }
     }
 }

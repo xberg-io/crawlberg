@@ -113,7 +113,7 @@ impl CrawlEngine {
                         body: bypass_resp.body,
                         body_bytes: bypass_resp.body_bytes,
                         headers: bypass_resp.headers,
-                        landed_url: None,
+                        landed: None,
                         // ~keep A custom bypass provider is a user plugin outside the rotation
                         // layer; it does not report which agent it sent, if any.
                         sent_user_agent: None,
@@ -145,7 +145,7 @@ impl CrawlEngine {
                     }
                     let pool = self.config.browser_pool.as_deref();
                     #[cfg(feature = "browser-native")]
-                    let http_resp = crate::browser::browser_fetch(
+                    let page = crate::browser::browser_fetch(
                         url,
                         &self.config,
                         None,
@@ -155,8 +155,8 @@ impl CrawlEngine {
                     )
                     .await?;
                     #[cfg(not(feature = "browser-native"))]
-                    let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
-                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+                    let page = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
+                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
                     Ok((crawl_resp, true))
                 }
                 #[cfg(not(feature = "browser"))]
@@ -165,12 +165,13 @@ impl CrawlEngine {
         }
     }
 
-    /// Convert an `HttpResponse` (from the browser path) into the `CrawlResponse`
-    /// shape expected by the extraction pipeline.
+    /// Convert a page from the browser path into the `CrawlResponse` shape expected by
+    /// the extraction pipeline.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
     pub(super) fn browser_http_to_crawl(
-        r: crate::http::HttpResponse,
+        page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
+        let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
         // ~keep so a screenshot captured upstream in `page_fetch` cannot survive this conversion.
@@ -197,7 +198,11 @@ impl CrawlEngine {
                 // ~keep so `ETag`, `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF
                 // ~keep classifier however faithfully the backend had reported them (crawlberg#148).
                 headers: r.headers,
-                landed_url: Some(r.final_url),
+                landed: Some(Box::new(crate::tower::Landing {
+                    url: r.final_url,
+                    redirects: page.redirects,
+                    refused: page.refused,
+                })),
                 // ~keep The browser tier never reads `config.user_agents`; it always sends the
                 // single configured agent, so callers fall back to the configured default.
                 sent_user_agent: None,
@@ -219,7 +224,7 @@ impl CrawlEngine {
             body: String::new(),
             body_bytes: Vec::new(),
             headers: std::collections::HashMap::new(),
-            landed_url: None,
+            landed: None,
             sent_user_agent: None,
             soft_error: true,
         }
@@ -228,26 +233,37 @@ impl CrawlEngine {
     /// Convert an [`crate::types::EscalationReason`] from a terminal success-path
     /// `Escalate` directive into the most specific available [`CrawlError`].
     ///
-    /// Called when the policy signals `Escalate` on a 2xx response (soft-block /
-    /// WAF interstitial) but no higher tier is available or the budget is exhausted.
-    /// Returning an error prevents the challenge-page body from reaching callers.
+    /// Called when a retry policy or an antibot strategy refuses a response the fetch
+    /// accepted (a soft block or a WAF interstitial, served with any status) but no
+    /// higher tier is available or the budget is exhausted. Returning an error prevents
+    /// the challenge-page body from reaching callers. `status` is the status of the
+    /// refused response; a WAF or soft block carries it as the error's source, as the
+    /// fetch path's own WAF refusals do, so a `soft_http_errors` page can report it.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn escalation_reason_to_error(reason: &crate::types::EscalationReason, url: &str) -> CrawlError {
+    pub(super) fn escalation_reason_to_error(
+        reason: &crate::types::EscalationReason,
+        url: &str,
+        status: u16,
+    ) -> CrawlError {
         use crate::types::EscalationReason;
+        let source = crate::http::HttpStatus(status);
         match reason {
-            EscalationReason::WafBlocked { vendor } => {
-                CrawlError::waf_blocked(vendor.clone(), format!("waf/blocked: {vendor} detected at {url}"))
-            }
-            EscalationReason::SoftBlock => CrawlError::forbidden(format!("soft_block: {url}")),
+            EscalationReason::WafBlocked { vendor } => CrawlError::waf_blocked_with_source(
+                vendor.clone(),
+                format!("waf/blocked: {vendor} detected at {url}"),
+                source,
+            ),
+            EscalationReason::SoftBlock => CrawlError::forbidden_with_source(format!("soft_block: {url}"), source),
             EscalationReason::RenderNeeded => {
                 CrawlError::unsupported(format!("js_render_needed but no browser tier available: {url}"))
             }
             EscalationReason::OriginUnreliable => {
                 CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
-            EscalationReason::AntibotEscalate => CrawlError::waf_blocked(
+            EscalationReason::AntibotEscalate => CrawlError::waf_blocked_with_source(
                 ANTIBOT_VENDOR,
                 format!("antibot strategy forced browser escalation at {url}"),
+                source,
             ),
         }
     }
@@ -393,7 +409,12 @@ mod tests {
             screenshot: None,
         };
 
-        let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(response);
+        let page = crate::browser::BrowserPage {
+            response,
+            redirects: 0,
+            refused: vec!["http://127.0.0.1/secret".to_owned()],
+        };
+        let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
         let etag = crawl.headers.get("etag").expect("a browser fetch must report its ETag");
         assert_eq!(etag.as_slice(), ["\"v1\""]);
@@ -403,5 +424,10 @@ mod tests {
             .expect("a browser fetch must report its X-Robots-Tag");
         assert_eq!(robots.as_slice(), ["noindex"]);
         assert_eq!(crawl.status, 304, "the status must survive the conversion too");
+        assert_eq!(
+            crawl.landed.map(|landed| landed.refused),
+            Some(vec!["http://127.0.0.1/secret".to_owned()]),
+            "the refused requests must survive the conversion"
+        );
     }
 }

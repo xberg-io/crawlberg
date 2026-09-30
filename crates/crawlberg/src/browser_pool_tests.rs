@@ -1354,6 +1354,50 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
     );
 }
 
+/// A launched browser opens no tab of its own, so nothing loads before crawlberg asks.
+#[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+async fn a_launched_browser_opens_no_startup_tab() {
+    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-startup-tab-test-{}", std::process::id()));
+    let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
+        .expect("the default pool config names no binary to check")
+        .build()
+    {
+        Ok(config) => Browser::launch(config).await,
+        Err(error) => {
+            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let (mut browser, mut handler) = match launched {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let pages: Vec<String> = browser
+        .fetch_targets()
+        .await
+        .expect("the targets must be listed")
+        .into_iter()
+        .filter(|target| target.r#type == "page")
+        .map(|target| target.url)
+        .collect();
+    let _ = close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
+    handler_task.abort();
+    let _ = std::fs::remove_dir_all(&user_data_dir);
+    assert!(
+        pages.is_empty(),
+        "the browser must open no tab of its own, got {pages:?}"
+    );
+}
+
 #[test]
 fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
     // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an
@@ -1658,4 +1702,58 @@ async fn pool_connect_error_prints_only_the_endpoint_origin() {
         msg.contains("127.0.0.1"),
         "host must still appear in the error, got: {msg}"
     );
+}
+
+fn preferences(dir: &std::path::Path) -> serde_json::Value {
+    let bytes = std::fs::read(dir.join("Default").join("Preferences")).expect("the preference file must exist");
+    serde_json::from_slice(&bytes).expect("the preference file must be JSON")
+}
+
+#[test]
+fn the_webrtc_preference_is_written_into_a_new_profile() {
+    let dir = tempfile::tempdir().expect("a temp profile directory");
+    disable_non_proxied_udp(dir.path()).expect("the preference must be written");
+    assert_eq!(
+        preferences(dir.path()),
+        serde_json::json!({ "webrtc": { "ip_handling_policy": "disable_non_proxied_udp" } })
+    );
+}
+
+#[test]
+fn the_webrtc_preference_keeps_what_a_profile_already_holds() {
+    let dir = tempfile::tempdir().expect("a temp profile directory");
+    std::fs::create_dir_all(dir.path().join("Default")).expect("the profile directory must be made");
+    std::fs::write(
+        dir.path().join("Default").join("Preferences"),
+        r#"{"profile":{"name":"kept"},"webrtc":{"multiple_routes_enabled":false,"ip_handling_policy":"default"}}"#,
+    )
+    .expect("the preference file must be written");
+    disable_non_proxied_udp(dir.path()).expect("the preference must be merged");
+    assert_eq!(
+        preferences(dir.path()),
+        serde_json::json!({
+            "profile": { "name": "kept" },
+            "webrtc": { "multiple_routes_enabled": false, "ip_handling_policy": "disable_non_proxied_udp" }
+        })
+    );
+}
+
+#[test]
+fn a_preference_file_that_is_not_a_json_object_is_refused_and_left_alone() {
+    for content in ["{\"webrtc\": ", "[1]", "{\"webrtc\": 1}"] {
+        let dir = tempfile::tempdir().expect("a temp profile directory");
+        let path = dir.path().join("Default").join("Preferences");
+        std::fs::create_dir_all(dir.path().join("Default")).expect("the profile directory must be made");
+        std::fs::write(&path, content).expect("the preference file must be written");
+        let error = disable_non_proxied_udp(dir.path()).expect_err("a broken preference file must be refused");
+        assert!(
+            error.to_string().contains("WebRTC preference"),
+            "the error must name the WebRTC preference for {content:?}, got: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the file must still be there"),
+            content,
+            "a refused preference file must be left as it was"
+        );
+    }
 }
