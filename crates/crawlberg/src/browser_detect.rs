@@ -1,12 +1,11 @@
 //! Detection heuristics for identifying pages that need JavaScript rendering.
 //!
-//! These are pure functions operating on HTML strings — no browser or network
+//! These are pure functions operating on a parsed document, with no browser or network
 //! access required. Always compiled regardless of feature flags.
 
 use std::sync::LazyLock;
 
 use regex::Regex;
-use tl::ParserOptions;
 
 /// Minimum word count to consider a page as having substantial content.
 const MIN_CONTENT_WORD_COUNT: usize = 50;
@@ -25,28 +24,28 @@ static NOSCRIPT_WARNING: LazyLock<Regex> = LazyLock::new(|| {
 /// Detect whether a page's HTML content suggests it needs JavaScript rendering
 /// to produce meaningful content.
 ///
+/// `dom` is the page as extraction parsed it, with its raw-text markup masked (see
+/// [`crate::html::mask_raw_text_markup`]), so markup written inside script or title text is
+/// not read as an element.
+///
 /// Returns `true` when the page appears to be a client-side rendered SPA shell
 /// with no substantial server-rendered content.
-pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
+pub(crate) fn detect_js_render_needed(dom: &tl::VDom<'_>, word_count: usize) -> bool {
     if word_count >= MIN_CONTENT_WORD_COUNT {
         return false;
     }
 
-    let parsed_html = crate::html::mask_raw_text_markup(body);
-    let Ok(dom) = tl::parse(&parsed_html, ParserOptions::default()) else {
-        return false;
-    };
     let parser = dom.parser();
 
-    if has_empty_spa_mount(&dom) {
+    if has_empty_spa_mount(dom) {
         return true;
     }
 
-    if has_noscript_js_warning(&dom, parser) {
+    if has_noscript_js_warning(dom, parser) {
         return true;
     }
 
-    if word_count < SPARSE_CONTENT_WORD_COUNT && has_script_tags(&dom) {
+    if word_count < SPARSE_CONTENT_WORD_COUNT && has_script_tags(dom) {
         return true;
     }
 
@@ -94,7 +93,12 @@ fn has_script_tags(dom: &tl::VDom<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    /// Whether `html`, parsed as extraction parses it, looks like it needs a browser.
+    fn detect_js_render_needed(html: &str, word_count: usize) -> bool {
+        let page = crate::html::mask_raw_text_markup(html);
+        let dom = crate::html::parse_html(&page.text).expect("valid HTML");
+        super::detect_js_render_needed(&dom, word_count)
+    }
 
     #[test]
     fn react_shell_detected() {
@@ -156,5 +160,34 @@ mod tests {
             <noscript><strong>Please enable JavaScript to continue.</strong></noscript>
             <script src="/app.js"></script></body></html>"#;
         assert!(detect_js_render_needed(html, 0));
+    }
+
+    // ~keep The word count sits between SPARSE_CONTENT_WORD_COUNT and MIN_CONTENT_WORD_COUNT in
+    // ~keep the next two tests, so neither the early return nor the sparse-content-with-scripts
+    // ~keep rule decides them: only the SPA-mount and noscript-warning checks can, and both read
+    // ~keep the parsed document. Without the raw-text masking `tl` reads the markup written inside
+    // ~keep the script and title text and both pages are reported as needing a browser.
+    #[test]
+    fn should_not_report_js_render_needed_when_the_spa_mount_only_appears_in_script_text() {
+        let html = r#"<html><body>
+            <p>This server-rendered article has real prose in it, enough words that the
+            sparse-content rule cannot decide the page on its own.</p>
+            <script>var shell = '<div id="root"></div>';</script>
+            </body></html>"#;
+        assert!(
+            !detect_js_render_needed(html, 30),
+            "an SPA mount div written inside script text is not an element a browser sees"
+        );
+    }
+
+    #[test]
+    fn should_not_report_js_render_needed_when_the_noscript_warning_only_appears_in_title_text() {
+        let html = r#"<html><head><title>Docs <noscript>You need JavaScript</noscript></title></head>
+            <body><p>This server-rendered article has real prose in it, enough words that the
+            sparse-content rule cannot decide the page on its own.</p></body></html>"#;
+        assert!(
+            !detect_js_render_needed(html, 30),
+            "a noscript warning written inside title text is not an element a browser sees"
+        );
     }
 }

@@ -151,8 +151,16 @@ async fn crawl_never_records_raw_credentials_into_a_span() {
         !url_full_values.is_empty(),
         "expected at least one 'url.full' span field to be recorded, got {recorded:?}"
     );
+    // ~keep The engine takes the userinfo off the seed when it admits it, so the recorded
+    // ~keep URL is the page address with no userinfo at all, not a redacted one.
     assert!(
-        url_full_values.iter().any(|v| v.contains("***:***@")),
-        "expected a redacted 'url.full' value (***:***@) among {url_full_values:?}"
+        url_full_values.iter().any(|v| v.contains(&authority)),
+        "expected a 'url.full' value naming the crawled host among {url_full_values:?}"
+    );
+    assert!(
+        url_full_values
+            .iter()
+            .all(|v| !v.contains("user:") && !v.contains("***")),
+        "no 'url.full' value may carry userinfo, redacted or not: {url_full_values:?}"
     );
 }
