@@ -193,7 +193,7 @@ let engine = CrawlEngineBuilder::new()
     .build()?;
 ```
 
-When both static `proxy` and an injected provider are set, the provider takes precedence for HTTP fetches. Browser-level proxies (`CrawlConfig::browser::proxy`) still read the static value; provider rotation applies only to the reqwest HTTP path.
+When both static `proxy` and an injected provider are set, the provider takes precedence. A native browser render asks the provider once for the page's host, and the page and every request it makes go through that proxy with its credentials. If `browser.proxy` is set, renders use it instead of the provider. The Chrome backend cannot render through a provider: a Chrome render with a provider and no `browser.proxy` fails. Use the native backend, or set `browser.proxy`.
 
 ### Robots and compliance
 

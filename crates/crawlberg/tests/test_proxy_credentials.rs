@@ -111,11 +111,22 @@ fn native_config(proxy: ProxyConfig) -> CrawlConfig {
 /// Render the page through `proxy` and check the three things a proxy password needs: the
 /// render ran through the proxy, the proxy got the password, and no recorded field shows it.
 async fn assert_render_hides(mock: &MockServer, proxy: ProxyConfig, user: &str, password: &str, hidden: &[&str]) {
-    let _ = observed();
     let engine = CrawlEngine::builder()
         .config(native_config(proxy))
         .build()
         .expect("a native proxy with credentials is a valid config");
+    assert_engine_render_hides(mock, engine, user, password, hidden).await;
+}
+
+/// [`assert_render_hides`] for an `engine` already set up with its proxy.
+async fn assert_engine_render_hides(
+    mock: &MockServer,
+    engine: CrawlEngine,
+    user: &str,
+    password: &str,
+    hidden: &[&str],
+) {
+    let _ = observed();
     take();
     let result = engine.scrape(&mock.uri()).await;
     let lines = take();
@@ -177,6 +188,26 @@ async fn a_native_render_never_logs_a_proxy_password_from_the_url() {
         password: None,
     };
     assert_render_hides(&mock, proxy, "operator", password, &[password]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn a_native_render_never_logs_the_password_of_a_proxy_the_provider_picked() {
+    let mock = site().await;
+    let password = "IMPL248-PROVIDER-PW-3m9";
+    let proxy = ProxyConfig {
+        url: mock.uri(),
+        username: Some("operator".into()),
+        password: Some(password.into()),
+    };
+    let mut config = native_config(proxy.clone());
+    config.proxy = None;
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .with_proxy_provider(Arc::new(OneProxy(proxy)))
+        .build()
+        .expect("a proxy provider with the native backend is a valid config");
+    assert_engine_render_hides(&mock, engine, "operator", password, &[password]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

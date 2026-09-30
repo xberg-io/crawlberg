@@ -1,17 +1,19 @@
 //! Proxy provider trait + baseline impl.
 //!
 //! Substrate-level extension point for per-host proxy rotation. The engine
-//! calls [`ProxyProvider::next_proxy`] once for each HTTP request, so
-//! implementations can rotate by host, by counter, or by external
-//! state. Returning `None` short-circuits to a direct connection.
+//! calls [`ProxyProvider::next_proxy`] once for each HTTP request and each
+//! native browser render, so implementations can rotate by host, by counter,
+//! or by external state. Returning `None` short-circuits to a direct connection.
 //!
 //! Crawlberg ships [`StaticProxyProvider`] — a fixed-pool round-robin
 //! rotator. Cloud impls (e.g. `BrightDataProxyProvider`) plug in via
 //! [`crate::CrawlEngineBuilder::with_proxy_provider`].
 //!
-//! Browser-backend proxies (`config.browser.proxy`) still come from the static
-//! `ProxyConfig` value on `CrawlConfig`; the provider only routes the reqwest
-//! HTTP path. Mixing both is supported.
+//! A native browser render asks the provider once, for the page's host, and
+//! sends the page and every request it makes through that proxy.
+//! `config.browser.proxy`, when set, wins over the provider for renders. The
+//! Chrome backend cannot render through a provider and fails the render
+//! unless `config.browser.proxy` is set.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -93,8 +95,18 @@ const CHROME_SCHEMES: [&str; 4] = ["http", "https", "socks4", "socks5"];
 
 /// The proxy a Chrome browser uses, read by [`chrome_proxy`]: `browser.proxy`, else the
 /// crawl-wide `proxy`.
+///
+/// ~keep With a `proxy_provider` and no `browser.proxy` this is an error, not the crawl-wide
+/// ~keep proxy: the provider picks per request and routes the HTTP fetches, and Chrome can take
+/// ~keep neither a per-page pick with credentials nor a pick that a parked page keeps.
 #[cfg(feature = "browser-chromiumoxide")]
 pub(crate) fn chrome_proxy_for(config: &crate::types::CrawlConfig) -> Result<Option<ChromeProxy>, CrawlError> {
+    if config.browser.proxy.is_none() && config.proxy_provider.is_some() {
+        return Err(CrawlError::invalid_config(
+            "the Chrome backend cannot render through a proxy provider; \
+             use the native backend, or set browser.proxy",
+        ));
+    }
     config
         .browser
         .proxy
@@ -102,6 +114,46 @@ pub(crate) fn chrome_proxy_for(config: &crate::types::CrawlConfig) -> Result<Opt
         .or(config.proxy.as_ref())
         .map(chrome_proxy)
         .transpose()
+}
+
+/// The proxy a native render of a page on `host` goes through: `browser.proxy`, else the
+/// proxy the `proxy_provider` picks for `host` (as for an HTTP fetch of the page), else the
+/// crawl-wide `proxy`.
+#[cfg(feature = "browser-native")]
+pub(crate) fn native_render_proxy(
+    config: &crate::types::CrawlConfig,
+    host: &str,
+) -> Result<Option<AdmittedProxy>, CrawlError> {
+    if let Some(proxy) = &config.browser.proxy {
+        return admit_proxy(proxy).map(Some);
+    }
+    if let Some(provider) = &config.proxy_provider {
+        return Ok(pick_proxy(provider.as_ref(), host));
+    }
+    config.proxy.as_ref().map(admit_proxy).transpose()
+}
+
+/// Asks `provider` once for the proxy of a request to `host`, and checks that proxy.
+///
+/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list), so
+/// ~keep it is not logged. A refused proxy also goes direct, which bypasses whatever egress
+/// ~keep control the proxy enforces, so it is logged at ERROR. The proxy URL is not logged: a
+/// ~keep URL the check refuses can hold a password it cannot redact, and the target host
+/// ~keep already names the request that went direct. The check's own error never shows it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn pick_proxy(provider: &dyn ProxyProvider, host: &str) -> Option<AdmittedProxy> {
+    let proxy = provider.next_proxy(host)?;
+    match admit_proxy(&proxy) {
+        Ok(admitted) => Some(admitted),
+        Err(error) => {
+            tracing::error!(
+                target_host = %host,
+                %error,
+                "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
+            );
+            None
+        }
+    }
 }
 
 /// A proxy as Chrome takes it.
@@ -292,8 +344,8 @@ pub(crate) fn redacted_proxy_address(proxy: &ProxyConfig) -> String {
 /// Resolves a [`ProxyConfig`] for an outbound HTTP request.
 ///
 /// Implementations must be cheap (called once for each request, redirect hops
-/// included) and thread-safe. Returning `None` routes the
-/// request directly without a proxy.
+/// included, and once for each native browser render) and thread-safe.
+/// Returning `None` routes the request directly without a proxy.
 pub trait ProxyProvider: std::fmt::Debug + Send + Sync + 'static {
     /// Pick a proxy for the given target host. `host` is the URL host string
     /// (no scheme, no port) — implementations may key on it for sticky
@@ -574,6 +626,29 @@ mod tests {
             assert!(err.contains("username or password"), "{err}");
             assert!(!err.contains("s3cr3t") && !err.contains("operator"), "{err}");
         }
+    }
+
+    #[cfg(feature = "browser-chromiumoxide")]
+    #[test]
+    fn a_chrome_render_with_a_proxy_provider_is_refused_unless_browser_proxy_is_set() {
+        let provider: std::sync::Arc<dyn ProxyProvider> =
+            std::sync::Arc::new(StaticProxyProvider::new(vec![proxy("http://picked:3")]));
+        let mut config = crate::types::CrawlConfig {
+            proxy: Some(proxy("http://crawl-proxy:1")),
+            proxy_provider: Some(provider),
+            ..crate::types::CrawlConfig::default()
+        };
+        let err = chrome_proxy_for(&config)
+            .expect_err("Chrome must not render around the provider")
+            .to_string();
+        assert!(err.contains("proxy provider") && err.contains("browser.proxy"), "{err}");
+
+        config.browser.proxy = Some(proxy("http://browser-proxy:2"));
+        let chosen = chrome_proxy_for(&config).expect("browser.proxy is Chrome's own proxy");
+        assert_eq!(
+            chosen.map(|proxy| proxy.server).as_deref(),
+            Some("http://browser-proxy:2")
+        );
     }
 
     fn admitted(proxy: &ProxyConfig) -> (url::Url, Option<(String, String)>) {

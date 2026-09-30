@@ -22,7 +22,7 @@ pub(super) async fn run(
     }
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-    let native_config = build_native_config(config, ssrf)?;
+    let native_config = build_native_config(config, url, ssrf)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -67,6 +67,7 @@ pub(super) async fn run(
 
 fn build_native_config(
     config: &CrawlConfig,
+    url: &str,
     ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
 ) -> Result<NativeBrowserConfig, CrawlError> {
     let wait_until = match config.browser.wait {
@@ -82,7 +83,7 @@ fn build_native_config(
         extra_headers: std::collections::HashMap::new(),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
-        proxy: crate::native_browser::native_proxy(config)?,
+        proxy: crate::native_browser::native_proxy(config, url)?,
         prior_cookies: Vec::<NativeCookie>::new(),
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
@@ -274,7 +275,7 @@ mod credential_scope_tests {
         };
 
         let (ssrf, _) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-        let native = build_native_config(&config, ssrf).expect("an admitted config must build");
+        let native = build_native_config(&config, "http://example.com/", ssrf).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),

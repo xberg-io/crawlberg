@@ -167,35 +167,11 @@ pub(crate) fn request_client(
 ) -> Result<reqwest::Client, CrawlError> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(provider) = &config.proxy_provider {
-        let proxy = pick_proxy(provider.as_ref(), url);
+        let proxy = crate::proxy::pick_proxy(provider.as_ref(), url.host_str().unwrap_or(""));
         return provider_clients(config, provider).client(config, proxy.as_ref());
     }
     let _ = (config, url);
     Ok(client.clone())
-}
-
-/// Asks `provider` once for the proxy of a request to `url`, and checks that proxy.
-///
-/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list), so
-/// ~keep it is not logged. A refused proxy also goes direct, which bypasses whatever egress
-/// ~keep control the proxy enforces, so it is logged at ERROR. The proxy URL is not logged: a
-/// ~keep URL the check refuses can hold a password it cannot redact, and the target host
-/// ~keep already names the request that went direct. The check's own error never shows it.
-#[cfg(not(target_arch = "wasm32"))]
-fn pick_proxy(provider: &dyn crate::ProxyProvider, url: &url::Url) -> Option<crate::proxy::AdmittedProxy> {
-    let host = url.host_str().unwrap_or("");
-    let proxy = provider.next_proxy(host)?;
-    match crate::proxy::admit_proxy(&proxy) {
-        Ok(admitted) => Some(admitted),
-        Err(error) => {
-            tracing::error!(
-                target_host = %host,
-                %error,
-                "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
-            );
-            None
-        }
-    }
 }
 
 /// The clients of one `proxy_provider` config: one for each proxy it picked, and one for
@@ -608,6 +584,28 @@ mod tests {
         let clients = provider_clients(&config, config.proxy_provider.as_ref().expect("provider set"));
         let cached = clients.clients.lock().expect("lock").len();
         assert_eq!(cached, 1, "the direct client of the provider must be cached once");
+    }
+
+    #[test]
+    fn a_request_asks_the_provider_for_the_host_of_its_url() {
+        #[derive(Debug, Default)]
+        struct Hosts(std::sync::Mutex<Vec<String>>);
+        impl crate::ProxyProvider for Hosts {
+            fn next_proxy(&self, host: &str) -> Option<ProxyConfig> {
+                self.0.lock().expect("hosts lock").push(host.to_owned());
+                None
+            }
+        }
+        let provider = std::sync::Arc::new(Hosts::default());
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_279),
+            proxy_provider: Some(provider.clone()),
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+        let url = url::Url::parse("http://page.example.com:8080/a").expect("test URL must parse");
+        let _client = request_client(&client, &config, &url).expect("client must build");
+        assert_eq!(*provider.0.lock().expect("hosts lock"), ["page.example.com"]);
     }
 
     #[test]

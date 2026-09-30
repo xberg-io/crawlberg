@@ -212,14 +212,15 @@ impl CrawlEngineBuilder {
         self
     }
 
-    /// Inject a [`crate::ProxyProvider`] for per-request proxy rotation on the
-    /// reqwest HTTP path. Stored on the resolved [`CrawlConfig`] as
-    /// `proxy_provider`; takes precedence over the static
-    /// `CrawlConfig::proxy` value when both are set.
+    /// Inject a [`crate::ProxyProvider`] for per-request proxy rotation. Stored
+    /// on the resolved [`CrawlConfig`] as `proxy_provider`; takes precedence
+    /// over the static `CrawlConfig::proxy` value when both are set.
     ///
-    /// Browser-backend proxies (`CrawlConfig::browser::proxy`) still read the
-    /// static `ProxyConfig` value — provider rotation only applies to the HTTP
-    /// fetcher.
+    /// A native browser render asks the provider once for the page's host and
+    /// sends the page and all of its requests through that proxy.
+    /// `CrawlConfig::browser::proxy`, when set, wins over the provider for
+    /// renders. The Chrome backend cannot render through a provider, so a
+    /// Chrome render with a provider and no `browser.proxy` fails.
     pub fn with_proxy_provider(mut self, provider: Arc<dyn crate::ProxyProvider>) -> Self {
         self.proxy_provider = Some(provider);
         self

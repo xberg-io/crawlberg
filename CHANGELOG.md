@@ -29,6 +29,15 @@ All notable changes to crawlberg are documented here.
   `Proxy-Authorization`. The provider is asked once for each request, redirect hops included,
   so a rotating provider no longer sends one proxy's credentials to another, and a refused proxy
   logs one ERROR line for each request. Each provider proxy has its own connection pool.
+- **A native browser render goes through the proxy that a `ProxyProvider` picks.** Before, a
+  render ignored the provider and connected directly. Now the render asks the provider once for
+  the page's host, and the page load and every request the page makes go through that proxy with
+  its credentials. If the provider returns no proxy, the render goes direct, as an HTTP fetch
+  does. `browser.proxy`, if set, still wins over the provider for renders. (#248)
+- **A Chrome render with a `ProxyProvider` fails instead of going direct.** The Chrome backend
+  cannot render through a provider, so a Chrome render with a provider and no `browser.proxy`
+  now fails with an error that names the fix: use the native backend, or set `browser.proxy`.
+  HTTP fetches with the provider are not affected. (#248)
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
   `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
   user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address

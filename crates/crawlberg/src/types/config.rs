@@ -333,9 +333,12 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub browser_pool: Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
-    /// Optional [`crate::ProxyProvider`] for per-request proxy rotation on the
-    /// reqwest HTTP path. Takes precedence over the static [`ProxyConfig`] in
-    /// `proxy` when set. Not serializable — Rust callers inject at runtime.
+    /// Optional [`crate::ProxyProvider`] for per-request proxy rotation. Takes
+    /// precedence over the static [`ProxyConfig`] in `proxy` when set. A native
+    /// browser render goes through the proxy it picks for the page, unless
+    /// `browser.proxy` is set. The Chrome backend refuses to render with a
+    /// provider unless `browser.proxy` is set. Not serializable — Rust callers
+    /// inject at runtime.
     #[serde(skip)]
     pub proxy_provider: Option<std::sync::Arc<dyn crate::ProxyProvider>>,
     /// Shared browser session pool for session affinity (not serializable).
