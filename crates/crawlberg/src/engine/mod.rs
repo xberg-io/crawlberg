@@ -189,7 +189,7 @@ impl CrawlEngine {
     #[tracing::instrument(name = "crawl.engine.map", skip_all, fields(url.full = %seed))]
     async fn map_seed(&self, seed: &SeedUrl) -> Result<MapResult, CrawlError> {
         self.config.validate()?;
-        crate::map::map(seed, &self.config).await
+        crate::map::map(self, seed).await
     }
 }
 

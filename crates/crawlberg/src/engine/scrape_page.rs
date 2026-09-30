@@ -299,6 +299,7 @@ impl CrawlEngine {
             &client,
             crate::http::RefreshRedirects::Ignore,
             crate::http::Fetched::Page,
+            &mut crate::http::AdmitEvery,
         )
         .await?
         .response;

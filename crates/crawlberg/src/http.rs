@@ -206,6 +206,23 @@ pub(crate) enum RefreshRedirects {
     Ignore,
 }
 
+/// A check every request of a fetch passes before it goes out: the URL the fetch starts from, then
+/// each redirect or refresh hop, after the SSRF policy admits it.
+pub(crate) trait HopPolicy {
+    /// `Err` refuses `url`, which is then never requested, and ends the fetch with that error.
+    /// `is_redirect_hop` is `false` for the URL the fetch starts from and `true` for each hop.
+    async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError>;
+}
+
+/// A fetch with no check beyond the SSRF policy.
+pub(crate) struct AdmitEvery;
+
+impl HopPolicy for AdmitEvery {
+    async fn admit(&mut self, _url: &url::Url, _is_redirect_hop: bool) -> Result<(), CrawlError> {
+        Ok(())
+    }
+}
+
 /// Perform a single HTTP GET request with the given configuration.
 ///
 /// Handles user-agent, authentication, custom headers, error status codes,
@@ -255,7 +272,16 @@ pub(crate) async fn http_fetch_with(
     client: &reqwest::Client,
     refresh: RefreshRedirects,
 ) -> Result<FetchedPage, CrawlError> {
-    fetch_as(url, config, extra_headers, client, refresh, Fetched::Page).await
+    fetch_as(
+        url,
+        config,
+        extra_headers,
+        client,
+        refresh,
+        Fetched::Page,
+        &mut AdmitEvery,
+    )
+    .await
 }
 
 /// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
@@ -272,6 +298,7 @@ pub(crate) async fn http_fetch_robots_txt(
         client,
         RefreshRedirects::Ignore,
         Fetched::RobotsTxt,
+        &mut AdmitEvery,
     )
     .await
     .map(|page| page.response)
@@ -291,11 +318,13 @@ pub(crate) async fn http_fetch_sitemap(
         client,
         RefreshRedirects::Ignore,
         Fetched::Sitemap,
+        &mut AdmitEvery,
     )
     .await
     .map(|page| page.response)
 }
 
+/// `policy` admits each request before it goes out: the start URL, then every hop.
 async fn fetch_as(
     url: &str,
     config: &CrawlConfig,
@@ -303,6 +332,7 @@ async fn fetch_as(
     client: &reqwest::Client,
     refresh: RefreshRedirects,
     fetched: Fetched,
+    policy: &mut impl HopPolicy,
 ) -> Result<FetchedPage, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
@@ -322,6 +352,7 @@ async fn fetch_as(
     let mut redirects_followed: usize = 0;
 
     loop {
+        policy.admit(&current_url, redirects_followed > 0).await?;
         let hop_left = redirects_followed < config.max_redirects;
         let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
         let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {

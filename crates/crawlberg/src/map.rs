@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use crate::helpers::PathPattern;
 use url::Url;
 
+use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
 use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
@@ -24,11 +25,18 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 ///
 /// Applies `exclude_paths`, `map_search`, and `map_limit` filters to the result.
 ///
+/// The direct fetch requests each URL only as the crawl would: `exclude_paths`, `include_paths`
+/// on a redirect or refresh hop, and robots.txt for the URL's own origin when
+/// `respect_robots_txt` is on judge the URL first, and a refused URL fails the map with the
+/// crawl's forbidden error and the reason. The sitemap files map reads are not judged: the URLs
+/// they list are returned, not requested, and pass `exclude_paths` as every returned URL does.
+///
 /// `map_limit` bounds both the returned length and the work performed: it is
 /// threaded into the sitemap fetch loop so a large sitemap-index tree is not
 /// fully materialized before truncation. Peak memory is bounded to roughly the
 /// limit plus a single child sitemap.
-pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
+pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<MapResult, CrawlError> {
+    let config = &engine.config;
     let url = seed.as_str();
     let parsed_url = seed.url().clone();
     let client = build_client(config)?;
@@ -51,6 +59,15 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
     // ~keep one is mapped from the page it lands on (#502). The mapped URL is often a sitemap
     // ~keep itself, so a body that reads as one is read whatever its URLs say; any other body gets
     // ~keep the page decision.
+    // ~keep Every request of the direct fetch passes the crawl's own per-URL policy first
+    // ~keep (#512). wasm has no such policy: its crawl judges only the page it was given.
+    #[cfg(not(target_arch = "wasm32"))]
+    let include_paths = crate::helpers::compile_regexes(&config.include_paths)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut policy =
+        crate::engine::redirect::RedirectPolicy::new(engine, &client, &filter.exclude_paths, &include_paths);
+    #[cfg(target_arch = "wasm32")]
+    let mut policy = crate::http::AdmitEvery;
     let page = fetch_with_retry(
         url,
         config,
@@ -58,6 +75,7 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
         &client,
         RefreshRedirects::Follow,
         Fetched::Sitemap,
+        &mut policy,
     )
     .await?;
     let urls = urls_from_direct_response(&parsed_url, &page.response, page.page_scan, config, &context).await;
@@ -74,12 +92,11 @@ async fn sitemap_urls_from_robots(
     client: &reqwest::Client,
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
-    // ~keep `map()` deliberately stays fail-open where the crawl path now fails closed.
-    // It reads robots.txt only to discover `Sitemap:` directives -- it never calls
-    // `is_path_allowed`, so there is no access decision to fail closed on -- and
-    // `MapResult` is `{ urls }` with no `error` or `was_skipped` field, so a fail-closed
-    // result would be an empty list with no way to say why. Both `AllowAll` and
-    // `DisallowAll` therefore mean "no sitemap hints", falling through to /sitemap.xml.
+    // ~keep The sitemap discovery stays fail-open where the crawl fails closed. It reads
+    // robots.txt only to discover `Sitemap:` directives, so there is no access decision here to
+    // fail closed on: the direct fetch makes that decision for every URL it requests. Both
+    // `AllowAll` and `DisallowAll` therefore mean "no sitemap hints", falling through to
+    // /sitemap.xml.
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
     let (crate::helpers::RobotsOutcome::Rules(rules), Some(robots_url)) =
@@ -310,7 +327,11 @@ mod tests {
 
     /// Map an already-clean test URL, as the engine does after admission.
     async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-        super::map(&crate::engine::SeedUrl::for_test(url), config).await
+        let engine = crate::CrawlEngine::builder()
+            .config(config.clone())
+            .build()
+            .expect("the engine builds");
+        super::map(&engine, &crate::engine::SeedUrl::for_test(url)).await
     }
 
     /// A `CrawlConfig` that allows fetching the wiremock server on `127.0.0.1`
@@ -1302,6 +1323,341 @@ mod tests {
         let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
 
         assert_eq!(urls, vec![format!("{base}/dir/x.html")]);
+    }
+
+    /// How a page sends the fetch on to the next address.
+    #[derive(Clone, Copy, Debug)]
+    enum Forward {
+        Http301,
+        MetaRefresh,
+        RefreshHeader,
+    }
+
+    const EVERY_FORWARD: [Forward; 3] = [Forward::Http301, Forward::MetaRefresh, Forward::RefreshHeader];
+
+    /// Serve `route` as a page that sends the fetch on to `target` by `forward`.
+    async fn mount_forward(mock: &MockServer, route: &str, target: &str, forward: Forward) {
+        match forward {
+            Forward::Http301 => mount_redirect(mock, route, target).await,
+            Forward::MetaRefresh => {
+                mount_body(mock, route, "text/html", meta_refresh_page(&format!("0; url={target}"))).await;
+            }
+            Forward::RefreshHeader => {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_string("<html><body></body></html>")
+                            .append_header("content-type", "text/html")
+                            .append_header("refresh", format!("0; url={target}").as_str()),
+                    )
+                    .mount(mock)
+                    .await;
+            }
+        }
+    }
+
+    const DISALLOW_PRIVATE: &str = "User-agent: *\nDisallow: /private\n";
+
+    /// What a refusal by the path filters says.
+    const EXCLUDED: &str = "is excluded by include_paths or exclude_paths";
+
+    /// [`local_test_config`] with robots.txt honoured.
+    fn robots_config() -> CrawlConfig {
+        CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        }
+    }
+
+    /// Assert that `result` is the crawl's forbidden error and its message contains `reason`.
+    fn assert_refused(result: &Result<MapResult, CrawlError>, reason: &str, case: &str) {
+        match result {
+            Err(error) => {
+                assert!(
+                    matches!(error, CrawlError::Forbidden { .. }),
+                    "{case}: a refusal must be the crawl's forbidden error, got {error:?}"
+                );
+                assert!(
+                    error.to_string().contains(reason),
+                    "{case}: the refusal must say {reason:?}, got {error}"
+                );
+            }
+            Ok(result) => panic!("{case}: map must refuse, got {result:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn map_does_not_request_a_seed_that_robots_txt_disallows() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/robots.txt", "text/plain", DISALLOW_PRIVATE.to_owned()).await;
+        mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+
+        let result = map(&format!("{base}/private"), &robots_config()).await;
+
+        assert_refused(&result, "robots.txt disallows /private", "a disallowed seed");
+        assert_eq!(request_count(&mock, "/private").await, 0, "the seed is never requested");
+    }
+
+    #[tokio::test]
+    async fn map_does_not_follow_a_forward_to_a_path_that_robots_txt_disallows() {
+        for forward in EVERY_FORWARD {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            mount_body(&mock, "/robots.txt", "text/plain", DISALLOW_PRIVATE.to_owned()).await;
+            mount_forward(&mock, "/s", "/private", forward).await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+
+            let result = map(&format!("{base}/s"), &robots_config()).await;
+
+            assert_refused(&result, "robots.txt disallows /private", &format!("{forward:?}"));
+            assert_eq!(request_count(&mock, "/s").await, 1, "{forward:?}: the seed is fetched");
+            assert_eq!(
+                request_count(&mock, "/private").await,
+                0,
+                "{forward:?}: the disallowed hop is never requested"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_judges_a_forward_to_another_origin_by_that_origins_robots_txt() {
+        for forward in EVERY_FORWARD {
+            let seed = MockServer::start().await;
+            let other = MockServer::start().await;
+            mount_body(
+                &seed,
+                "/robots.txt",
+                "text/plain",
+                "User-agent: *\nDisallow:\n".to_owned(),
+            )
+            .await;
+            mount_body(&other, "/robots.txt", "text/plain", DISALLOW_PRIVATE.to_owned()).await;
+            mount_forward(&seed, "/s", &format!("{}/private", other.uri()), forward).await;
+            mount_body(&other, "/private", "text/html", page_linking_to("/from-private")).await;
+
+            let result = map(&format!("{}/s", seed.uri()), &robots_config()).await;
+
+            assert_refused(&result, "robots.txt disallows /private", &format!("{forward:?}"));
+            assert_eq!(
+                request_count(&other, "/private").await,
+                0,
+                "{forward:?}: a hop the other origin's robots.txt disallows is never requested"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_follows_a_forward_that_robots_txt_allows() {
+        // ~keep GUARD: honouring robots.txt must not stop a chain it allows.
+        for forward in EVERY_FORWARD {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            mount_body(&mock, "/robots.txt", "text/plain", DISALLOW_PRIVATE.to_owned()).await;
+            mount_forward(&mock, "/s", "/open", forward).await;
+            mount_body(&mock, "/open", "text/html", page_linking_to("/from-open")).await;
+
+            let urls = map_urls(&format!("{base}/s"), &robots_config()).await;
+
+            assert_eq!(urls, vec![format!("{base}/from-open")], "{forward:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn map_does_not_request_a_seed_when_robots_txt_is_unreachable() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock)
+            .await;
+        mount_body(&mock, "/s", "text/html", page_linking_to("/from-s")).await;
+
+        let result = map(&format!("{base}/s"), &robots_config()).await;
+
+        assert_refused(&result, "robots_unreachable", "an unreachable robots.txt");
+        assert_eq!(request_count(&mock, "/s").await, 0, "the seed is never requested");
+    }
+
+    #[tokio::test]
+    async fn map_does_not_follow_a_forward_to_an_excluded_path() {
+        for forward in EVERY_FORWARD {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            mount_forward(&mock, "/s", "/private", forward).await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+            let config = CrawlConfig {
+                exclude_paths: vec!["^/private".to_owned()],
+                ..local_test_config()
+            };
+
+            let result = map(&format!("{base}/s"), &config).await;
+
+            assert_refused(&result, EXCLUDED, &format!("{forward:?}"));
+            assert_eq!(
+                request_count(&mock, "/private").await,
+                0,
+                "{forward:?}: the excluded hop is never requested"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_names_an_excluded_hop_without_its_credentials() {
+        let mock = MockServer::start().await;
+        let target = mock.uri().replace("http://", "http://user:hunter2@");
+        mount_redirect(&mock, "/s", &format!("{target}/private")).await;
+        let config = CrawlConfig {
+            exclude_paths: vec!["^/private".to_owned()],
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{}/s", mock.uri()), &config).await;
+
+        assert_refused(&result, EXCLUDED, "an excluded hop with credentials");
+        let message = result.expect_err("refused").to_string();
+        assert!(
+            !message.contains("hunter2"),
+            "the refusal must not carry the credential: {message}"
+        );
+        assert!(
+            message.contains("/private"),
+            "the refusal must name the address: {message}"
+        );
+    }
+
+    /// The `user-agent` header of each request `mock` received for `route`.
+    async fn agents_sent(mock: &MockServer, route: &str) -> Vec<String> {
+        mock.received_requests()
+            .await
+            .expect("wiremock records requests")
+            .iter()
+            .filter(|request| request.url.path() == route)
+            .map(|request| {
+                request
+                    .headers
+                    .get("user-agent")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn map_judges_robots_txt_for_the_agent_its_fetch_sends() {
+        // ~keep A `user-agent` custom header is the agent that goes out, so its group applies.
+        for with_header in [true, false] {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            let robots = "User-agent: Custom\nDisallow: /private\n\nUser-agent: *\nDisallow:\n";
+            mount_body(&mock, "/robots.txt", "text/plain", robots.to_owned()).await;
+            mount_redirect(&mock, "/s", "/private").await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+            let mut config = robots_config();
+            if with_header {
+                config.custom_headers =
+                    std::collections::HashMap::from([("user-agent".to_owned(), "Custom".to_owned())]);
+            }
+
+            let result = map(&format!("{base}/s"), &config).await;
+
+            if with_header {
+                assert_refused(&result, "robots.txt disallows /private", "a custom agent header");
+                assert_eq!(agents_sent(&mock, "/s").await, vec!["Custom".to_owned()]);
+                assert_eq!(request_count(&mock, "/private").await, 0, "the hop is never requested");
+            } else {
+                assert!(result.is_ok(), "the default agent's group allows the hop: {result:?}");
+                assert_eq!(request_count(&mock, "/private").await, 1, "the hop is requested");
+            }
+        }
+
+        // ~keep The rotation list is the crawl's alone: map sends the default agent, so the
+        // ~keep group of a rotated agent must not refuse it.
+        let mock = MockServer::start().await;
+        let robots = "User-agent: Rotated\nDisallow: /\n\nUser-agent: *\nDisallow: /private\n";
+        mount_body(&mock, "/robots.txt", "text/plain", robots.to_owned()).await;
+        mount_body(&mock, "/open", "text/html", page_linking_to("/from-open")).await;
+        let config = CrawlConfig {
+            user_agents: vec!["Rotated".to_owned()],
+            ..robots_config()
+        };
+
+        let result = map(&format!("{}/open", mock.uri()), &config).await;
+
+        assert!(
+            result.is_ok(),
+            "the rotated agent's group must not judge map's fetch: {result:?}"
+        );
+        let agents = agents_sent(&mock, "/open").await;
+        assert!(
+            !agents.is_empty() && agents.iter().all(|agent| agent != "Rotated"),
+            "map sends the default agent, got {agents:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_applies_a_full_url_exclude_pattern_to_a_forward() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/s", "/private").await;
+        mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^http://127\.0\.0\.1:\d+/private$".to_owned()],
+            path_patterns_match_url: true,
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{base}/s"), &config).await;
+
+        assert_refused(&result, EXCLUDED, "a full-URL exclude pattern");
+        assert_eq!(request_count(&mock, "/private").await, 0, "the hop is never requested");
+    }
+
+    #[tokio::test]
+    async fn map_does_not_request_an_excluded_seed() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+        let config = CrawlConfig {
+            exclude_paths: vec!["^/private".to_owned()],
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{base}/private"), &config).await;
+
+        assert_refused(&result, EXCLUDED, "an excluded seed");
+        assert_eq!(request_count(&mock, "/private").await, 0, "the seed is never requested");
+    }
+
+    #[tokio::test]
+    async fn map_applies_include_paths_to_a_forward_but_not_to_the_seed() {
+        for forward in EVERY_FORWARD {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            mount_forward(&mock, "/s", "/private", forward).await;
+            mount_forward(&mock, "/t", "/docs/page", forward).await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+            mount_body(&mock, "/docs/page", "text/html", page_linking_to("/from-docs")).await;
+            let config = CrawlConfig {
+                include_paths: vec!["^/docs".to_owned()],
+                ..local_test_config()
+            };
+
+            let result = map(&format!("{base}/s"), &config).await;
+            assert_refused(&result, EXCLUDED, &format!("{forward:?}"));
+            assert_eq!(
+                request_count(&mock, "/private").await,
+                0,
+                "{forward:?}: a hop outside include_paths is never requested"
+            );
+
+            // ~keep The seed `/t` is outside include_paths too, and the crawl still fetches it.
+            let urls = map_urls(&format!("{base}/t"), &config).await;
+            assert_eq!(urls, vec![format!("{base}/from-docs")], "{forward:?}");
+        }
     }
 
     #[tokio::test]
