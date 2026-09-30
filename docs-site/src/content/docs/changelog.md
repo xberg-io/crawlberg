@@ -173,6 +173,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **An `interact` action reported success while a request it sent was refused.** A paused
+  request counted toward its page only once the check had matched it to the page. For a frame the
+  check does not know yet, that match reads the frame tree of every live page, and it can take
+  longer than the 25 ms grace after an action. The action then ended with nothing in flight and
+  reported success, and the refusal was charged to no action at all. A result's
+  `ssrf_refused_urls` could miss such a request for the same reason. The request itself was always
+  refused. A paused request now counts from the moment the check receives the pause. (#192)
+
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
   a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
   then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
