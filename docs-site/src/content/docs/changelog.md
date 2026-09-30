@@ -128,6 +128,13 @@ title: "Changelog"
 
 ### Fixed
 
+- **The full and CLI Docker images, and the Elixir NIF builder, failed before compiling.** Their
+  build rewrote the workspace `members` list with a pattern that expects a one-line array, and the
+  root `Cargo.toml` writes it on several lines, so cargo could not load the copied manifest. The
+  full and CLI images now replace the whole array and copy `crates/crawlberg-browser`, which the
+  core crate names as a path dependency. The NIF builder no longer rewrites the root manifest: the
+  NIF crate is its own workspace, so it builds from its own manifest. (#553)
+
 - **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
   A page refused by a custom retry policy, or by an antibot strategy that asks for browser
   escalation, came back as an error when no escalation tier was left. It now comes back as the
