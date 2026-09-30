@@ -14,7 +14,9 @@ All notable changes to crawlberg are documented here.
   in a proxy user name or password ends the address early, so `http://user:4242#rest@proxy:8080`
   was read as the host `user` on port 4242. Such an address now fails `CrawlConfig::validate`,
   and the error asks to percent-encode the credential or to set it in `username` and `password`.
-  The error never shows the address.
+  The error never shows the address. An address with no credentials and an `@` in its path,
+  query or fragment is refused too, and its error says that a proxy address takes no path,
+  query or fragment.
 - **The config check refuses proxy credentials set in two places.** A proxy URL that holds a user
   name or password, together with `username` or `password`, now fails `CrawlConfig::validate`.
   Set the credentials in the URL or in the two fields, not both.
@@ -24,7 +26,9 @@ All notable changes to crawlberg are documented here.
 - **A proxy that a `ProxyProvider` returns gets the same check as the configured proxy.** A
   provider proxy that the check refuses is not used: the request goes direct, and an ERROR line
   names the target host and the reason, never the proxy URL. Its credentials reach the proxy as
-  `Proxy-Authorization`.
+  `Proxy-Authorization`. The provider is asked once for each request, redirect hops included,
+  so a rotating provider no longer sends one proxy's credentials to another, and a refused proxy
+  logs one ERROR line for each request. Each provider proxy has its own connection pool.
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
   `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
   user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address

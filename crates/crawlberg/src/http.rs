@@ -25,7 +25,7 @@ pub(crate) use body::{
     truncate_body_at_char_boundary,
 };
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
-pub(crate) use client::build_client;
+pub(crate) use client::{build_client, request_client};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
@@ -305,9 +305,9 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
 /// Build and send the GET for one hop.
 async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) -> Result<reqwest::Response, CrawlError> {
     crate::net::userinfo::refuse(current_url)?;
+    let client = request_client(context.client, context.config, current_url)?;
     // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
-    let mut req = context
-        .client
+    let mut req = client
         .get(current_url.to_string())
         .timeout(context.config.request_timeout);
 

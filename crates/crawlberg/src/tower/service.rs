@@ -246,6 +246,7 @@ async fn do_fetch(
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
     let sent_user_agent = resolved_user_agent(config, req);
+    let client = crate::http::request_client(client, config, &url)?;
     let http_req = apply_headers(client.get(url.to_string()), config, req, &url, &sent_user_agent);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.

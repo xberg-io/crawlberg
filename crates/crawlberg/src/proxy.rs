@@ -1,8 +1,8 @@
 //! Proxy provider trait + baseline impl.
 //!
 //! Substrate-level extension point for per-host proxy rotation. The engine
-//! calls [`ProxyProvider::next_proxy`] from `reqwest::Proxy::custom` per HTTP
-//! request, so implementations can rotate by host, by counter, or by external
+//! calls [`ProxyProvider::next_proxy`] once for each HTTP request, so
+//! implementations can rotate by host, by counter, or by external
 //! state. Returning `None` short-circuits to a direct connection.
 //!
 //! Crawlberg ships [`StaticProxyProvider`] — a fixed-pool round-robin
@@ -188,22 +188,6 @@ impl AdmittedProxy {
             None => proxy,
         })
     }
-
-    /// The URL a `reqwest::Proxy::custom` closure returns for this proxy.
-    ///
-    /// ~keep A custom proxy has no `basic_auth` for each URL it returns: reqwest reads the
-    /// ~keep credentials from the userinfo of that URL, so they join it here and it goes only
-    /// ~keep to reqwest.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn into_reqwest_custom_url(self) -> url::Url {
-        let ProxyUrl(mut url) = self.address;
-        if let Some(credentials) = self.credentials {
-            // ~keep Cannot fail: the address has a host, so it can hold userinfo.
-            let _ = url.set_username(&credentials.username);
-            let _ = url.set_password(Some(&credentials.password));
-        }
-        url
-    }
 }
 
 /// Shows the scheme, host and port, and whether credentials are set.
@@ -222,15 +206,20 @@ impl std::fmt::Debug for AdmittedProxy {
 /// ~keep A raw `@` after the authority means a `#`, `/` or `?` in a credential ended the
 /// ~keep authority early (#285): the parser then reads the user name as the host and the start
 /// ~keep of the password as the port, or keeps the rest of the password in the path or the
-/// ~keep fragment. It is refused.
+/// ~keep fragment. It is refused. Without a userinfo, the same text can also be an `@` in a
+/// ~keep path, query or fragment, so that error names both.
 pub(crate) fn admit_proxy(proxy: &ProxyConfig) -> Result<AdmittedProxy, CrawlError> {
     let ProxyUrl(mut url) = parse_proxy_url(&proxy.url)?;
     let in_url = !url.username().is_empty() || url.password().is_some();
     if after_authority(&proxy.url).contains('@') {
-        return Err(CrawlError::invalid_config(
+        return Err(CrawlError::invalid_config(if in_url {
             "invalid proxy URL: a user name or password in it holds a character that ends the address \
-             (such as #, / or ?); percent-encode it, or set it in username and password",
-        ));
+             (such as #, / or ?); percent-encode it, or set it in username and password"
+        } else {
+            "invalid proxy URL: it holds an @ after the host, and a proxy address takes no path, query \
+             or fragment; if the @ is part of a password, percent-encode the password, or set it in \
+             username and password"
+        }));
     }
     let in_fields = proxy.username.is_some() || proxy.password.is_some();
     if in_url && in_fields {
@@ -302,8 +291,8 @@ pub(crate) fn redacted_proxy_address(proxy: &ProxyConfig) -> String {
 
 /// Resolves a [`ProxyConfig`] for an outbound HTTP request.
 ///
-/// Implementations must be cheap (called per request from inside
-/// `reqwest::Proxy::custom`) and thread-safe. Returning `None` routes the
+/// Implementations must be cheap (called once for each request, redirect hops
+/// included) and thread-safe. Returning `None` routes the
 /// request directly without a proxy.
 pub trait ProxyProvider: std::fmt::Debug + Send + Sync + 'static {
     /// Pick a proxy for the given target host. `host` is the URL host string
@@ -707,6 +696,7 @@ mod tests {
             "http://op:pa@h/FIX385D-TAIL@proxy.test:8080",
             "http://op:pa@h?FIX385D-TAIL@proxy.test:8080",
             "op:pa@h#FIX385D-TAIL@proxy.test:8080",
+            "http://op:4242\\RB385Z@proxy.test:8080",
         ] {
             let err = crawl_through(proxy(raw))
                 .validate()
@@ -722,13 +712,39 @@ mod tests {
                 StaticProxyProvider::new(vec![proxy(raw)]),
                 redacted_proxy_address(&proxy(raw))
             );
-            for part in ["FIX385D-TAIL", "pa@h"] {
+            for part in ["FIX385D-TAIL", "RB385Z", "pa@h"] {
                 assert!(!shown.contains(part), "{raw}: '{part}' is shown: {shown}");
             }
         }
         crawl_through(proxy("http://op:pa%40h%23FIX385D-TAIL@proxy.test:8080"))
             .validate()
             .expect("positive twin: the percent-encoded password is accepted");
+    }
+
+    #[test]
+    fn an_at_sign_in_the_path_query_or_fragment_of_a_proxy_is_refused_for_the_path_not_a_password() {
+        for raw in [
+            "http://proxy.test:8080/p@th",
+            "http://proxy.test:8080/?q=a@b",
+            "http://proxy.test:8080?q=a@b",
+            "http://proxy.test:8080/#f@g",
+        ] {
+            let err = crawl_through(proxy(raw))
+                .validate()
+                .expect_err("an @ after the host is refused")
+                .to_string();
+            assert!(
+                err.contains("a proxy address takes no path, query or fragment"),
+                "{raw}: the error must name the path, query or fragment: {err}"
+            );
+            assert!(
+                !err.contains("user name or password in it"),
+                "{raw}: the address holds no credentials, so the error must not blame one: {err}"
+            );
+            for part in ["p@th", "a@b", "f@g"] {
+                assert!(!err.contains(part), "{raw}: '{part}' is shown: {err}");
+            }
+        }
     }
 
     #[test]

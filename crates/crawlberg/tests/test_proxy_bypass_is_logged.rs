@@ -1,12 +1,8 @@
 //! A `ProxyProvider` that hands back a URL reqwest cannot parse makes the request go
-//! DIRECT — reqwest's `Proxy::custom` closure has no error channel, so `None` is the only
-//! answer available and `None` means "no proxy". That silently defeats whatever egress
-//! control the proxy was there to enforce.
-//!
-//! The behaviour cannot be made fail-closed from inside the closure, so the requirement is
-//! that it is at least never silent. This test asserts the bypass is reported at `ERROR`
-//! naming the target host, and that the unparseable proxy URL is left out of the report
-//! entirely — it cannot be redacted, so it cannot be logged.
+//! DIRECT. That silently defeats whatever egress control the proxy was there to enforce, so
+//! the requirement is that it is at least never silent. These tests assert the bypass is
+//! reported at `ERROR`, once for each request, naming the target host, and that the proxy URL
+//! is left out of the report entirely: it cannot be redacted, so it cannot be logged.
 
 use std::sync::{Arc, Mutex};
 
@@ -150,5 +146,63 @@ async fn an_unparseable_provider_proxy_url_is_reported_before_the_request_goes_d
     assert!(
         recorded.iter().all(|(name, _)| name != "proxy_url"),
         "an unparseable proxy URL must not be recorded at all, got {recorded:?}"
+    );
+}
+
+/// Hands out a proxy that the credential check refuses: an unencoded `#` ends its password.
+#[derive(Debug)]
+struct RefusedProxyProvider;
+
+impl ProxyProvider for RefusedProxyProvider {
+    fn next_proxy(&self, _host: &str) -> Option<ProxyConfig> {
+        Some(ProxyConfig {
+            url: format!("http://operator:{PROXY_PASSWORD}#tail@proxy.invalid:8080"),
+            username: None,
+            password: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_refused_provider_proxy_is_reported_once_for_each_request_that_goes_direct() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>reached directly</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    let engine = CrawlEngine::builder()
+        .config(allow_private_config())
+        .with_proxy_provider(Arc::new(RefusedProxyProvider))
+        .build()
+        .expect("engine must build");
+
+    let sink: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let _guard = tracing::subscriber::set_default(ErrorEventSubscriber { sink: sink.clone() });
+
+    engine
+        .scrape(&mock.uri())
+        .await
+        .expect("the scrape must succeed directly");
+    engine.map(&mock.uri()).await.expect("the map must succeed directly");
+
+    let direct = mock.received_requests().await.expect("the mock records requests").len();
+    let recorded = sink.lock().expect("sink mutex must not be poisoned");
+    let reports = recorded
+        .iter()
+        .filter(|(name, value)| name == "message" && value.contains("bypassing the proxy"))
+        .count();
+    assert!(direct >= 2, "the scrape and the map must reach the site directly");
+    assert_eq!(
+        reports, direct,
+        "each request that goes direct must be reported once, got {reports} reports for {direct} requests"
+    );
+    assert!(
+        recorded.iter().all(|(_, value)| !value.contains(PROXY_PASSWORD)),
+        "the proxy password must never reach a log field, got {recorded:?}"
     );
 }

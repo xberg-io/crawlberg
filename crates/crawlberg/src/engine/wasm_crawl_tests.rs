@@ -98,8 +98,8 @@ fn permissive(config: CrawlConfig) -> CrawlConfig {
 /// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
 /// scope gate ever let it through.
 /// ~keep Setting `proxy` also suppresses the `PolicyResolver` DNS pinning that `build_client`
-/// ~keep otherwise installs (`http/client.rs`, gated on `proxy_provider.is_none() &&
-/// ~keep proxy.is_none()`), because hyper then resolves the proxy host rather than the target.
+/// ~keep otherwise installs (`http/client.rs`, only on a client that sends through no
+/// ~keep proxy), because hyper then resolves the proxy host rather than the target.
 /// ~keep So these tests no longer exercise the SSRF DNS-pinning path they used to; the
 /// ~keep allowlisted `validate_url` pre-check above is the only SSRF enforcement left in them.
 /// ~keep Coverage for the pinning itself lives in `build_client`'s own tests

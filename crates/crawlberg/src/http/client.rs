@@ -127,7 +127,15 @@ pub(crate) fn client_cache_contains(config: &CrawlConfig) -> bool {
 ///
 /// Returns a cached, cheaply-cloned client when one matching this configuration's
 /// [`ClientCacheKey`] already exists; otherwise builds one and caches it for reuse.
+///
+/// With a `proxy_provider`, this is the client for a request that goes direct: each request
+/// gets its own client from [`request_client`].
 pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(provider) = &config.proxy_provider {
+        return provider_clients(config, provider).client(config, None);
+    }
+
     let key = ClientCacheKey::from_config(config);
     if let Ok(cache) = client_cache().lock()
         && let Some(client) = cache.get(&key)
@@ -135,104 +143,203 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
         return Ok(client.clone());
     }
 
-    let client = configure_client(config)?
-        .build()
-        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
-
+    let client = build_static_client(config)?;
     cache_client(key, &client);
 
     Ok(client)
 }
 
+/// The client for one request to `url`.
+///
+/// Without a `proxy_provider` this is `client`. With one, the provider is asked once, its
+/// proxy is checked once, and the request gets the client for that proxy, or the direct
+/// client when the provider answers `None` or its proxy is refused.
+///
+/// ~keep The pick is made here, above reqwest, and never in a reqwest custom proxy: reqwest
+/// ~keep asks a custom proxy up to three times for one request (for the request headers and
+/// ~keep again for the connection), so a rotating provider could send the credentials of one
+/// ~keep proxy to another. Each proxy has its own client, so a pooled connection is never
+/// ~keep reused through a proxy that was not picked.
+pub(crate) fn request_client(
+    client: &reqwest::Client,
+    config: &CrawlConfig,
+    url: &url::Url,
+) -> Result<reqwest::Client, CrawlError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(provider) = &config.proxy_provider {
+        let proxy = pick_proxy(provider.as_ref(), url);
+        return provider_clients(config, provider).client(config, proxy.as_ref());
+    }
+    let _ = (config, url);
+    Ok(client.clone())
+}
+
+/// Asks `provider` once for the proxy of a request to `url`, and checks that proxy.
+///
+/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list), so
+/// ~keep it is not logged. A refused proxy also goes direct, which bypasses whatever egress
+/// ~keep control the proxy enforces, so it is logged at ERROR. The proxy URL is not logged: a
+/// ~keep URL the check refuses can hold a password it cannot redact, and the target host
+/// ~keep already names the request that went direct. The check's own error never shows it.
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_proxy(provider: &dyn crate::ProxyProvider, url: &url::Url) -> Option<crate::proxy::AdmittedProxy> {
+    let host = url.host_str().unwrap_or("");
+    let proxy = provider.next_proxy(host)?;
+    match crate::proxy::admit_proxy(&proxy) {
+        Ok(admitted) => Some(admitted),
+        Err(error) => {
+            tracing::error!(
+                target_host = %host,
+                %error,
+                "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
+            );
+            None
+        }
+    }
+}
+
+/// The clients of one `proxy_provider` config: one for each proxy it picked, and one for
+/// requests that go direct.
+///
+/// ~keep They share one cookie jar, so a cookie set through one proxy is sent through the
+/// ~keep next, as it was when one client served every proxy.
+#[cfg(not(target_arch = "wasm32"))]
+struct ProviderClients {
+    /// ~keep Held so the provider's address, which keys this entry, is not reused by another
+    /// ~keep provider while the entry is cached.
+    _provider: std::sync::Arc<dyn crate::ProxyProvider>,
+    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
+    clients: Mutex<HashMap<String, reqwest::Client>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ProviderClients {
+    /// The client that sends through `proxy`, or direct when it is `None`.
+    fn client(
+        &self,
+        config: &CrawlConfig,
+        proxy: Option<&crate::proxy::AdmittedProxy>,
+    ) -> Result<reqwest::Client, CrawlError> {
+        let identity = proxy.map(admitted_identity).unwrap_or_default();
+        if let Ok(clients) = self.clients.lock()
+            && let Some(client) = clients.get(&identity)
+        {
+            return Ok(client.clone());
+        }
+        let client = configure_client(config, proxy, self.jar.clone())?
+            .build()
+            .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
+        if let Ok(mut clients) = self.clients.lock() {
+            insert_bounded(&mut clients, identity, client.clone());
+        }
+        Ok(client)
+    }
+}
+
+/// The address and credentials of an admitted proxy, as one identity string.
+#[cfg(not(target_arch = "wasm32"))]
+fn admitted_identity(proxy: &crate::proxy::AdmittedProxy) -> String {
+    let (username, password) = proxy
+        .credentials()
+        .map_or(("", ""), |c| (c.username.as_str(), c.password.as_str()));
+    format!("{}\n{username}\n{password}", proxy.address().as_url())
+}
+
+/// Process-wide cache of [`ProviderClients`], keyed by [`ClientCacheKey`] with the
+/// provider's identity as its proxy.
+#[cfg(not(target_arch = "wasm32"))]
+fn provider_clients(
+    config: &CrawlConfig,
+    provider: &std::sync::Arc<dyn crate::ProxyProvider>,
+) -> std::sync::Arc<ProviderClients> {
+    type Cache = Mutex<HashMap<ClientCacheKey, std::sync::Arc<ProviderClients>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let key = ClientCacheKey::from_config(config);
+    let fresh = || {
+        std::sync::Arc::new(ProviderClients {
+            _provider: std::sync::Arc::clone(provider),
+            jar: new_cookie_jar(config),
+            clients: Mutex::new(HashMap::new()),
+        })
+    };
+    let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return fresh();
+    };
+    if let Some(clients) = cache.get(&key) {
+        return std::sync::Arc::clone(clients);
+    }
+    let clients = fresh();
+    insert_bounded(&mut cache, key, std::sync::Arc::clone(&clients));
+    clients
+}
+
 /// wasm32 has no redirect policy, request timeout, cookie jar, proxy or DNS resolver to
 /// configure: the browser's own `fetch` owns every one of them. ~keep
 #[cfg(target_arch = "wasm32")]
-fn configure_client(_config: &CrawlConfig) -> Result<reqwest::ClientBuilder, CrawlError> {
-    Ok(reqwest::Client::builder())
+fn build_static_client(_config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+    reqwest::Client::builder()
+        .build()
+        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))
 }
 
-/// Apply `config` to a fresh `reqwest::ClientBuilder`.
+/// Build the client for a config with at most a static proxy.
 #[cfg(not(target_arch = "wasm32"))]
-fn configure_client(config: &CrawlConfig) -> Result<reqwest::ClientBuilder, CrawlError> {
+fn build_static_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+    let proxy = config.proxy.as_ref().map(crate::proxy::admit_proxy).transpose()?;
+    configure_client(config, proxy.as_ref(), new_cookie_jar(config))?
+        .build()
+        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))
+}
+
+/// A fresh cookie jar when `config` enables cookies.
+///
+/// ~keep `cookie_provider`, not `cookie_store(true)`: reqwest's default jar loads no
+/// ~keep public-suffix list, so a host may set Domain= to a shared multi-tenant suffix
+/// ~keep (herokuapp.com, github.io, a bare TLD). One client is reused across a whole crawl
+/// ~keep that can span hosts, so that would be a supercookie leak between unrelated tenants.
+#[cfg(not(target_arch = "wasm32"))]
+fn new_cookie_jar(config: &CrawlConfig) -> Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>> {
+    config
+        .cookies_enabled
+        .then(|| std::sync::Arc::new(crate::net::cookie::PolicyCookieStore::default()))
+}
+
+/// Apply `config`, `proxy` and `jar` to a fresh `reqwest::ClientBuilder`.
+#[cfg(not(target_arch = "wasm32"))]
+fn configure_client(
+    config: &CrawlConfig,
+    proxy: Option<&crate::proxy::AdmittedProxy>,
+    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
+) -> Result<reqwest::ClientBuilder, CrawlError> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(config.request_timeout);
 
-    // ~keep `cookie_provider`, not `cookie_store(true)`: reqwest's default jar loads no
-    // public-suffix list, so a host may set Domain= to a shared multi-tenant suffix
-    // (herokuapp.com, github.io, a bare TLD). One client is reused across a whole crawl
-    // that can span hosts, so that would be a supercookie leak between unrelated tenants.
-    if config.cookies_enabled {
-        builder = builder.cookie_provider(std::sync::Arc::new(crate::net::cookie::PolicyCookieStore::default()));
+    if let Some(jar) = jar {
+        builder = builder.cookie_provider(jar);
     }
-
-    builder = apply_proxy(builder, config)?;
 
     // ~keep Closes the DNS-rebinding TOCTOU: `validate_url` resolves the host and checks
     // the answers, then hyper resolves it *again* to connect, so the checked addresses are
     // not the connected ones. `PolicyResolver` re-checks inside the resolution hyper
     // actually uses, leaving no second lookup to disagree with the first.
     //
-    // Skipped whenever a proxy is configured, because hyper then resolves the *proxy*
-    // host rather than the target: the policy would be applied to the wrong name (a proxy
-    // on a private address is a normal, previously-working setup), and the target's
+    // Skipped whenever this client sends through a proxy, because hyper then resolves the
+    // *proxy* host rather than the target: the policy would be applied to the wrong name (a
+    // proxy on a private address is a normal, previously-working setup), and the target's
     // resolution happens at the proxy, out of this process's reach, so client-side
     // pinning cannot be achieved through a proxy at all. `validate_url`'s own pre-check
     // still runs on the target in that case.
-    if config.proxy_provider.is_none() && config.proxy.is_none() {
-        builder = builder.dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
-            config.ssrf.clone(),
-        )));
+    match proxy {
+        Some(proxy) => builder = builder.proxy(proxy.reqwest_proxy()?),
+        None => {
+            builder = builder.dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
+                config.ssrf.clone(),
+            )));
+        }
     }
 
     Ok(builder)
-}
-
-/// Attach whichever proxy `config` asks for, if any.
-#[cfg(not(target_arch = "wasm32"))]
-fn apply_proxy(builder: reqwest::ClientBuilder, config: &CrawlConfig) -> Result<reqwest::ClientBuilder, CrawlError> {
-    // ~keep `proxy_provider` takes precedence over static proxy so reqwest can rotate per request.
-    if let Some(provider) = config.proxy_provider.clone() {
-        return Ok(builder.proxy(rotating_proxy(provider)));
-    }
-
-    let Some(ref proxy_config) = config.proxy else {
-        return Ok(builder);
-    };
-
-    Ok(builder.proxy(crate::proxy::admit_proxy(proxy_config)?.reqwest_proxy()?))
-}
-
-/// A `reqwest::Proxy` that asks `provider` which proxy to use, per request.
-#[cfg(not(target_arch = "wasm32"))]
-fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest::Proxy {
-    reqwest::Proxy::custom(move |url| {
-        let host = url.host_str().unwrap_or("");
-        // ~keep `None` here is the provider deliberately routing this host direct
-        // (a no-proxy list), not a failure — so it is not logged.
-        let cfg = provider.next_proxy(host)?;
-
-        // ~keep `Proxy::custom` can only answer Some/None: there is no channel to
-        // fail the request, and `None` means "connect directly". A malformed proxy
-        // URL therefore silently becomes an egress-control bypass — the one outcome
-        // an operator most needs to know about — so it is logged at ERROR. Failing
-        // closed is not reachable from inside this closure.
-        //
-        // ~keep The offending URL is deliberately NOT logged: a URL the proxy check refuses can
-        // hold a password it cannot redact, and the target host already names the request
-        // that went direct. The check's own error never shows the URL.
-        match crate::proxy::admit_proxy(&cfg) {
-            Ok(admitted) => Some(admitted.into_reqwest_custom_url()),
-            Err(error) => {
-                tracing::error!(
-                    target_host = %host,
-                    %error,
-                    "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
-                );
-                None
-            }
-        }
-    })
 }
 
 /// Store `client` under `key`, clearing the cache wholesale once it is full.
@@ -240,6 +347,11 @@ fn cache_client(key: ClientCacheKey, client: &reqwest::Client) {
     let Ok(mut cache) = client_cache().lock() else {
         return;
     };
+    insert_bounded(&mut cache, key, client.clone());
+}
+
+/// Insert `value` under `key`, clearing `cache` wholesale once it holds [`MAX_CACHED_CLIENTS`].
+fn insert_bounded<K: std::hash::Hash + Eq, V>(cache: &mut HashMap<K, V>, key: K, value: V) {
     if cache.len() >= MAX_CACHED_CLIENTS {
         tracing::debug!(
             cached = cache.len(),
@@ -248,7 +360,7 @@ fn cache_client(key: ClientCacheKey, client: &reqwest::Client) {
         );
         cache.clear();
     }
-    cache.insert(key, client.clone());
+    cache.insert(key, value);
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -470,5 +582,60 @@ mod tests {
             !client_cache_contains(&config_b),
             "building a client for config_a must not also cache config_b's distinct identity"
         );
+    }
+
+    fn provider_config(timeout_millis: u64) -> CrawlConfig {
+        CrawlConfig {
+            request_timeout: Duration::from_millis(timeout_millis),
+            proxy_provider: Some(std::sync::Arc::new(crate::proxy::StaticProxyProvider::new(vec![
+                ProxyConfig {
+                    url: "http://proxy.test:8080".to_owned(),
+                    ..ProxyConfig::default()
+                },
+            ]))),
+            ..CrawlConfig::default()
+        }
+    }
+
+    #[test]
+    fn with_a_proxy_provider_the_client_for_a_config_is_its_direct_client_not_a_second_one() {
+        let config = provider_config(918_277);
+        let _client = build_client(&config).expect("client must build");
+        assert!(
+            !client_cache_contains(&config),
+            "a provider config must not build a client of its own beside its per-proxy clients"
+        );
+        let clients = provider_clients(&config, config.proxy_provider.as_ref().expect("provider set"));
+        let cached = clients.clients.lock().expect("lock").len();
+        assert_eq!(cached, 1, "the direct client of the provider must be cached once");
+    }
+
+    #[test]
+    fn a_proxy_picked_twice_gets_one_client_and_a_second_proxy_gets_its_own() {
+        let config = provider_config(918_278);
+        let clients = provider_clients(&config, config.proxy_provider.as_ref().expect("provider set"));
+        let admit = |url: &str| {
+            crate::proxy::admit_proxy(&ProxyConfig {
+                url: url.to_owned(),
+                ..ProxyConfig::default()
+            })
+            .expect("a plain proxy is admitted")
+        };
+        let (a, b) = (admit("http://a.test:8080"), admit("http://b.test:8080"));
+        for proxy in [&a, &a, &b] {
+            let _client = clients.client(&config, Some(proxy)).expect("client must build");
+        }
+        let cached = clients.clients.lock().expect("lock").len();
+        assert_eq!(cached, 2, "one client for each picked proxy, reused on the next pick");
+    }
+
+    #[test]
+    fn a_full_client_cache_is_cleared_before_the_next_insert() {
+        let mut cache = HashMap::new();
+        for key in 0..=MAX_CACHED_CLIENTS {
+            insert_bounded(&mut cache, key, ());
+        }
+        assert_eq!(cache.len(), 1, "the insert past the cap must start from an empty cache");
+        assert!(cache.contains_key(&MAX_CACHED_CLIENTS), "the newest entry must be kept");
     }
 }
