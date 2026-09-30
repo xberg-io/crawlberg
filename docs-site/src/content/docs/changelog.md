@@ -100,6 +100,10 @@ title: "Changelog"
 
 ### Fixed
 
+- **The Chrome backend's record of a main-frame response printed its `Set-Cookie`.** The SSRF
+  interception keeps the headers of each main-frame response, and its debug output printed every
+  value. It now prints `***` for each credential header on the shared list, as the other response
+  header maps do. (#141, #386)
 - **The native browser backend logged the proxy password.** The backend put the proxy user
   name and password back into the proxy URL, and every module import logged that URL at debug
   level. The credentials now stay apart from the proxy address from the config check to the

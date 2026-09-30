@@ -38,8 +38,8 @@ pub enum InterceptResolution {
 
 impl std::fmt::Debug for InterceptResolution {
     /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
-    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the four
-    /// well-known credential names.
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the value of
+    /// each sensitive header name.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Continue {

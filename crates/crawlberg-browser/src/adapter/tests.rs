@@ -567,12 +567,20 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
             http_only: true,
         }],
         eval_script: Some(format!("fetch('/api?key={SECRET}')")),
+        origin_headers: Some(OriginHeaders {
+            host: "api.example.com".to_owned(),
+            headers: vec![("X-Origin-Token".to_owned(), SECRET.to_owned())],
+        }),
         ..NativeBrowserConfig::default()
     };
     for rendered in [format!("{config:?}"), format!("{config:#?}")] {
         assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
         assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
         assert!(rendered.contains("session"), "cookie name missing: {rendered}");
+        assert!(
+            rendered.contains("X-Origin-Token") && rendered.contains("api.example.com"),
+            "origin header name or host missing: {rendered}"
+        );
     }
     let compact = format!("{config:?}");
     let script = format!(
