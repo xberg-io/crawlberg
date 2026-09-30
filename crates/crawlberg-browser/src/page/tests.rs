@@ -2437,3 +2437,25 @@ async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
         "the denied address must receive no connection"
     );
 }
+
+/// Regression for #566: a classic script that finishes before its watchdog thread starts must not hold the
+/// page for the whole 5 s watchdog budget.
+#[tokio::test(flavor = "current_thread")]
+async fn a_short_classic_script_does_not_wait_out_the_watchdog() {
+    let base = serve(routes(&[(
+        "/",
+        "text/html",
+        "<html><body><script>1</script></body></html>",
+    )]))
+    .await;
+    for render in 1..=5 {
+        let mut page = test_page();
+        let start = std::time::Instant::now();
+        page.navigate(&base).await.expect("navigation must succeed");
+        let took = start.elapsed();
+        assert!(
+            took < std::time::Duration::from_millis(2500),
+            "render {render} took {took:?} against a 5 s watchdog budget"
+        );
+    }
+}
