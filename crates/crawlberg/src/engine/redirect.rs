@@ -3,14 +3,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use regex::Regex;
+use crate::helpers::PathPattern;
 use url::Url;
 
 use super::CrawlEngine;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
-use crate::helpers::RobotsOutcome;
 use crate::helpers::fetch_robots_outcome;
+use crate::helpers::{PathPatternTarget, RobotsOutcome};
 use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
@@ -89,16 +89,21 @@ impl PolicyRefusal {
         }
     }
 
-    /// The refusal as an error, for a caller with no place to report a URL it skipped.
+    /// The refusal as an error, for a caller with no place to report a URL it skipped: the
+    /// forbidden error the crawl raises when robots.txt refuses the agent a tier sends.
     pub(crate) fn into_error(self) -> CrawlError {
         match self {
-            Self::Blocked { reason, .. } => CrawlError::other(reason),
-            Self::Filtered { url } => CrawlError::other(format!("{url} is excluded from this crawl")),
+            Self::Blocked { reason, .. } => CrawlError::forbidden(reason),
+            Self::Filtered { url } => CrawlError::forbidden(format!(
+                "{} is excluded by include_paths or exclude_paths",
+                redact_url_credentials(&url)
+            )),
         }
     }
 }
 
 /// The crawl's per-URL policy: the path filters, then robots.txt for the URL's own origin.
+/// `map()`'s direct fetch applies the same policy through [`crate::http::HopPolicy`].
 ///
 /// ~keep [`follow_redirects`] consults this immediately before every request it makes, so a
 /// ~keep redirect target is judged by the rules of the origin it belongs to and is refused
@@ -108,14 +113,14 @@ impl PolicyRefusal {
 pub(crate) struct RedirectPolicy<'a> {
     pub(super) engine: &'a CrawlEngine,
     pub(super) client: &'a reqwest::Client,
-    pub(super) exclude_regexes: &'a [Regex],
+    pub(super) exclude_regexes: &'a [PathPattern],
     /// ~keep Applied only to genuine redirect targets (`is_redirect_hop`), never to the
     /// ~keep chain's own starting URL: that URL already passed whatever include check applied
     /// ~keep to it (none, if it is the seed at depth 0) before this policy ever saw it, exactly
     /// ~keep as `claim_redirect_target` only dedups a redirect target and not the chain's seed.
-    pub(super) include_regexes: &'a [Regex],
-    /// Whether `include_paths`/`exclude_paths` match `path?query` instead of just `path`.
-    pub(super) match_query: bool,
+    pub(super) include_regexes: &'a [PathPattern],
+    /// What `include_paths`/`exclude_paths` match against: the path, `path?query`, or the full URL.
+    pub(super) target: PathPatternTarget,
     /// What robots.txt established per origin, so one origin's file is read once per crawl.
     pub(super) outcomes: HashMap<RobotsCacheKey, Arc<RobotsOutcome>>,
     /// The origin of the last URL admitted, whose rules the crawl loop keeps applying.
@@ -133,18 +138,18 @@ pub(crate) struct RedirectPolicy<'a> {
 }
 
 impl<'a> RedirectPolicy<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         engine: &'a CrawlEngine,
         client: &'a reqwest::Client,
-        exclude_regexes: &'a [Regex],
-        include_regexes: &'a [Regex],
+        exclude_regexes: &'a [PathPattern],
+        include_regexes: &'a [PathPattern],
     ) -> Self {
         Self {
             engine,
             client,
             exclude_regexes,
             include_regexes,
-            match_query: engine.config.path_patterns_match_query,
+            target: PathPatternTarget::from_config(&engine.config),
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
@@ -168,40 +173,10 @@ impl<'a> RedirectPolicy<'a> {
         url: &str,
         is_redirect_hop: bool,
     ) -> Result<Option<PolicyRefusal>, CrawlError> {
-        // ~keep A URL this cannot parse is refused, not admitted. Letting it through would
-        // ~keep skip robots entirely on the strength of a parse failure, and this is the
-        // ~keep component that decides whether a request may go out at all -- the same
-        // ~keep fail-closed rule that governs `outcome_for_fetch_error`, where the catch-all
-        // ~keep arm has to be the closed one for the guarantee to hold.
-        // ~keep Both refusals below name the address through the redactor: a hostless value
-        // ~keep such as `user:token@host` is exactly the one that carries a credential.
-        let Ok(parsed) = Url::parse(url) else {
-            return Ok(Some(PolicyRefusal::Blocked {
-                url: url.to_owned(),
-                reason: format!(
-                    "robots_unreachable: cannot parse {} to determine its origin",
-                    redact_url_credentials(url)
-                ),
-            }));
+        let parsed = match self.address_refusal(url, is_redirect_hop) {
+            Ok(parsed) => parsed,
+            Err(refusal) => return Ok(Some(refusal)),
         };
-        // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
-        // ~keep share one cache entry and inherit an unrelated origin's rules.
-        if parsed.host_str().is_none() {
-            return Ok(Some(PolicyRefusal::Blocked {
-                url: url.to_owned(),
-                reason: format!(
-                    "robots_unreachable: {} has no host to read robots.txt from",
-                    redact_url_credentials(url)
-                ),
-            }));
-        }
-
-        // ~keep The path filters first: they are local, and an excluded URL should not cost
-        // ~keep its origin a robots.txt request either. See the field doc on
-        // ~keep `include_regexes` for why `is_redirect_hop` gates the include check.
-        if let Some(refusal) = self.filtered_by_path_patterns(url, &parsed, is_redirect_hop) {
-            return Ok(Some(refusal));
-        }
 
         // ~keep Chosen once per hop, here, before robots.txt is even read: the same call that
         // ~keep advances the UA rotation counter, so this hop's robots decision and the agent
@@ -211,20 +186,10 @@ impl<'a> RedirectPolicy<'a> {
         let user_agent = self.engine.choose_request_user_agent();
         let origin = RobotsCacheKey::new(&parsed, &user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
-        if first_visit {
-            let outcome = resolve_robots_outcome(self.engine, self.client, &parsed, url, &user_agent).await;
-            self.outcomes.insert(origin.clone(), outcome);
-        }
-        let outcome = self
-            .outcomes
-            .get(&origin)
-            .expect("the origin's robots.txt outcome was just read");
-        if let Some(reason) = robots_block_reason(outcome, &parsed) {
-            return Ok(Some(PolicyRefusal::Blocked {
-                url: url.to_owned(),
-                reason,
-            }));
-        }
+        let outcome = match self.robots_refusal(&origin, &parsed, url, &user_agent).await {
+            Ok(outcome) => outcome,
+            Err(refusal) => return Ok(Some(refusal)),
+        };
 
         if is_redirect_hop && let Some(refusal) = self.claim_redirect_target(url).await? {
             return Ok(Some(refusal));
@@ -237,11 +202,77 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep rather than behind it. Publishing it before the block check above would make
         // ~keep a refused URL wait out a delay for a request that is never sent.
         if first_visit {
-            self.engine.apply_crawl_delay(outcome, &parsed).await?;
+            self.engine.apply_crawl_delay(&outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
         self.pending_user_agent = Some(user_agent);
         Ok(None)
+    }
+
+    /// The refusal of `url` on its address alone: a URL that does not parse or has no host, then
+    /// the path filters. `Ok` carries the parsed URL.
+    fn address_refusal(&mut self, url: &str, is_redirect_hop: bool) -> Result<Url, PolicyRefusal> {
+        // ~keep A URL this cannot parse is refused, not admitted. Letting it through would
+        // ~keep skip robots entirely on the strength of a parse failure, and this is the
+        // ~keep component that decides whether a request may go out at all -- the same
+        // ~keep fail-closed rule that governs `outcome_for_fetch_error`, where the catch-all
+        // ~keep arm has to be the closed one for the guarantee to hold.
+        // ~keep Both refusals below name the address through the redactor: a hostless value
+        // ~keep such as `user:token@host` is exactly the one that carries a credential.
+        let Ok(parsed) = Url::parse(url) else {
+            return Err(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason: format!(
+                    "robots_unreachable: cannot parse {} to determine its origin",
+                    redact_url_credentials(url)
+                ),
+            });
+        };
+        // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
+        // ~keep share one cache entry and inherit an unrelated origin's rules.
+        if parsed.host_str().is_none() {
+            return Err(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason: format!(
+                    "robots_unreachable: {} has no host to read robots.txt from",
+                    redact_url_credentials(url)
+                ),
+            });
+        }
+
+        // ~keep The path filters first: they are local, and an excluded URL should not cost
+        // ~keep its origin a robots.txt request either. See the field doc on
+        // ~keep `include_regexes` for why `is_redirect_hop` gates the include check.
+        match self.filtered_by_path_patterns(url, &parsed, is_redirect_hop) {
+            Some(refusal) => Err(refusal),
+            None => Ok(parsed),
+        }
+    }
+
+    /// The refusal robots.txt gives `parsed` at `origin` for `user_agent`, reading the origin's
+    /// file on its first visit only. `Ok` carries what the file established for the origin.
+    async fn robots_refusal(
+        &mut self,
+        origin: &RobotsCacheKey,
+        parsed: &Url,
+        url: &str,
+        user_agent: &str,
+    ) -> Result<Arc<RobotsOutcome>, PolicyRefusal> {
+        let outcome = match self.outcomes.get(origin) {
+            Some(outcome) => Arc::clone(outcome),
+            None => {
+                let outcome = resolve_robots_outcome(self.engine, self.client, parsed, url, user_agent).await;
+                self.outcomes.insert(origin.clone(), Arc::clone(&outcome));
+                outcome
+            }
+        };
+        match robots_block_reason(&outcome, parsed) {
+            Some(reason) => Err(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason,
+            }),
+            None => Ok(outcome),
+        }
     }
 
     /// Whether `url` is filtered by `exclude_paths`/`include_paths`, as [`PolicyRefusal::Filtered`].
@@ -251,7 +282,7 @@ impl<'a> RedirectPolicy<'a> {
             self.exclude_regexes,
             self.include_regexes,
             is_redirect_hop,
-            self.match_query,
+            self.target,
             &mut self.urls_filtered,
         );
         (!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() })
@@ -279,6 +310,28 @@ impl<'a> RedirectPolicy<'a> {
         self.last_origin
             .and_then(|origin| self.outcomes.remove(&origin))
             .unwrap_or_else(|| Arc::new(RobotsOutcome::AllowAll))
+    }
+}
+
+/// The same address and robots.txt decision [`RedirectPolicy::admits`] makes, for a fetch outside
+/// the crawl loop: `map()`'s direct fetch, which sends the configured agent on every request.
+///
+/// ~keep The crawl's extras stay out: that fetch picks no agent from the rotation, has no
+/// ~keep frontier to claim a hop in and goes through no rate limiter to publish a crawl delay to.
+impl crate::http::HopPolicy for RedirectPolicy<'_> {
+    async fn admit(&mut self, url: &Url, is_redirect_hop: bool) -> Result<(), CrawlError> {
+        let refusal = match self.address_refusal(url.as_str(), is_redirect_hop) {
+            Err(refusal) => Some(refusal),
+            Ok(parsed) => {
+                let engine = self.engine;
+                let user_agent = crate::helpers::default_robots_user_agent(&engine.config);
+                let origin = RobotsCacheKey::new(&parsed, user_agent);
+                self.robots_refusal(&origin, &parsed, url.as_str(), user_agent)
+                    .await
+                    .err()
+            }
+        };
+        refusal.map_or(Ok(()), |refusal| Err(refusal.into_error()))
     }
 }
 
@@ -577,6 +630,7 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         headers: HashMap::new(),
         landed: None,
         sent_user_agent: None,
+        soft_error: false,
     }
 }
 
@@ -784,6 +838,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_refusal_is_the_forbidden_error_and_names_a_filtered_address_without_its_credential() {
+        let blocked = PolicyRefusal::Blocked {
+            url: "https://example.com/private".to_owned(),
+            reason: "robots.txt disallows /private".to_owned(),
+        }
+        .into_error();
+        assert!(
+            matches!(blocked, CrawlError::Forbidden { .. }),
+            "a robots.txt refusal must be the crawl's forbidden error, got {blocked:?}"
+        );
+        assert_eq!(blocked.to_string(), "forbidden: robots.txt disallows /private");
+
+        let filtered = PolicyRefusal::Filtered {
+            url: "https://user:hunter2@example.com/private".to_owned(),
+        }
+        .into_error();
+        assert!(
+            matches!(filtered, CrawlError::Forbidden { .. }),
+            "a path-filter refusal must be the crawl's forbidden error, got {filtered:?}"
+        );
+        let message = filtered.to_string();
+        assert!(
+            !message.contains("hunter2"),
+            "the refusal must not carry the credential: {message}"
+        );
+        assert!(
+            message.contains("example.com/private is excluded by include_paths or exclude_paths"),
+            "the refusal must name the address: {message}"
+        );
+    }
+
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> crate::tower::CrawlResponse {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         for (name, value) in headers {
@@ -801,6 +887,7 @@ mod tests {
             headers: map,
             landed: None,
             sent_user_agent: None,
+            soft_error: false,
         }
     }
 

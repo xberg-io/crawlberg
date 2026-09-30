@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use regex::Regex;
+use crate::helpers::PathPattern;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use url::Url;
@@ -117,8 +117,8 @@ impl CrawlEngine {
         // ~keep `Arc` rather than `Vec`: every spawned frontier fetch builds its own
         // ~keep task-local `RedirectPolicy` (see `fetch_and_extract`) and needs a cheap,
         // ~keep `'static` clone of these lists to do it.
-        let exclude_regexes: Arc<[Regex]> = compile_regexes(&self.config.exclude_paths)?.into();
-        let include_regexes: Arc<[Regex]> = compile_regexes(&self.config.include_paths)?.into();
+        let exclude_regexes: Arc<[PathPattern]> = compile_regexes(&self.config.exclude_paths)?.into();
+        let include_regexes: Arc<[PathPattern]> = compile_regexes(&self.config.include_paths)?.into();
 
         // ~keep robots.txt is read before anything goes on the wire, and the policy travels
         // into the redirect resolution below rather than bracketing it. A redirect can leave
@@ -734,8 +734,8 @@ impl CrawlEngine {
 
     /// Check whether a URL should be fetched based on path filters and robots.txt.
     fn should_fetch_url(&self, entry: &FrontierEntry, context: &LoopContext<'_>, urls_filtered: &mut usize) -> bool {
-        let exclude_regexes: &[Regex] = &context.exclude_regexes;
-        let include_regexes: &[Regex] = &context.include_regexes;
+        let exclude_regexes: &[PathPattern] = &context.exclude_regexes;
+        let include_regexes: &[PathPattern] = &context.include_regexes;
         let robots = context.robots;
         let page_parsed = match Url::parse(&entry.url) {
             Ok(u) => u,
@@ -751,7 +751,7 @@ impl CrawlEngine {
             exclude_regexes,
             include_regexes,
             entry.depth > 0,
-            self.config.path_patterns_match_query,
+            crate::helpers::PathPatternTarget::from_config(&self.config),
             urls_filtered,
         ) {
             return false;
@@ -861,8 +861,8 @@ async fn fetch_and_extract(
     entry: FrontierEntry,
     preloaded_response: Option<RedirectOutcome>,
     permit: tokio::sync::OwnedSemaphorePermit,
-    exclude_regexes: Arc<[Regex]>,
-    include_regexes: Arc<[Regex]>,
+    exclude_regexes: Arc<[PathPattern]>,
+    include_regexes: Arc<[PathPattern]>,
 ) -> Result<FetchOutcome, (FrontierEntry, CrawlError)> {
     let _permit = permit;
 

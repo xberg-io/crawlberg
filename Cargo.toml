@@ -58,6 +58,7 @@ clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
 crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.8.0" }
 crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.8.0" }
+crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.8.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Held at 0.37, and cannot move while `selectors` is at 0.40: selectors-0.40.0 itself
 # depends on cssparser 0.37 and exposes those types in the parser traits that
@@ -79,6 +80,7 @@ encoding_rs = "0.8"
 
 # Binding framework dependencies
 ext-php-rs = "0.15.15"
+fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
 html-escape = "0.2.15"
@@ -136,18 +138,21 @@ pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 quick-xml = "0.42"
 rayon = "1"
 regex = "1"
+regex-syntax = "0.8"
 # default-features = false: reqwest's `default` set (default-tls, http2, system-proxy) pulls
 # tokio/net -> mio, which fails to compile on wasm32 even though reqwest's own code cfg-gates
 # native transport off wasm. Native-only features are re-added per-crate under
 # `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
 reqwest = { version = "0.13", default-features = false, features = ["cookies", "gzip", "brotli"] }
 rmcp = { version = "3", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rustix = { version = "1", default-features = false }
 schemars = "1.2"
 selectors = "0.40"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 servo_arc = "0.4"
 sha2 = "0.11"
+sysinfo = { version = "0.39", default-features = false }
 tempfile = "3"
 thiserror = "2"
 tl = { package = "astral-tl", version = "0.8" }
