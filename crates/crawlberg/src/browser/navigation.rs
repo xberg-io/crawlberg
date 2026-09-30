@@ -135,8 +135,16 @@ async fn render(
         tokio::time::sleep(extra).await;
     }
 
-    let (html, document) =
-        read_one_document(|| committed_document(page), || page_content(page, "extract HTML")).await?;
+    // ~keep The screenshot is taken inside the read, so it is of the same committed document as
+    // ~keep the HTML, the status and the final URL (crawlberg#318).
+    let ((html, screenshot), document) = read_one_document(
+        || committed_document(page),
+        || async move {
+            let html = page_content(page, "extract HTML").await?;
+            Ok((html, capture_screenshot(page, config, want_screenshot).await))
+        },
+    )
+    .await?;
     let recorded = watch.document(&document.loader_id);
     if let Some(failed_url) = document.unreachable_url {
         return error_page_outcome(failed_url, recorded, intercepted.redirects_followed);
@@ -146,12 +154,11 @@ async fn render(
         |doc| (doc.status, doc.headers, doc.redirects > 0),
     );
 
-    // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
-    // ~keep resolve against. An unreadable URL falls back to the requested one.
-    let final_url = page.url().await.ok().flatten().unwrap_or_else(|| url.to_owned());
+    // ~keep Chrome follows redirects itself, so the document it committed is the base its links
+    // ~keep resolve against.
+    let final_url = document.url;
 
     let body_bytes = html.as_bytes().to_vec();
-    let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
     Ok(BrowserPage {
         response: HttpResponse {
@@ -563,89 +570,148 @@ mod tests {
         );
     }
 
+    /// A real Chrome with the firewall and a watch as the pool builds them, and a site where `/one`
+    /// answers 201 and `/two` 203, each with its own text and background colour.
+    struct RenderFixture {
+        base: String,
+        config: CrawlConfig,
+        browser: std::sync::Arc<chromiumoxide::Browser>,
+        firewall: crate::ssrf_intercept::BrowserFirewall,
+        page: chromiumoxide::Page,
+        watch: Watch,
+        _site: wiremock::MockServer,
+    }
+
+    impl RenderFixture {
+        /// Launches Chrome, or returns `None` after a skip line when no Chrome is usable.
+        #[allow(
+            clippy::print_stderr,
+            reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+        )]
+        async fn start(test_name: &str) -> Option<Self> {
+            use std::sync::Arc;
+
+            use tokio_stream::StreamExt;
+            use wiremock::matchers::{method, path};
+            use wiremock::{Mock, MockServer, ResponseTemplate};
+
+            use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
+
+            let site = MockServer::start().await;
+            for (route, status, colour) in [("/one", 201, "red"), ("/two", 203, "blue")] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(ResponseTemplate::new(status).set_body_raw(
+                        format!("<html><body style=\"background:{colour}\"><p>doc{route}</p></body></html>"),
+                        "text/html",
+                    ))
+                    .mount(&site)
+                    .await;
+            }
+            let base = site.uri().replace("127.0.0.1", "localhost");
+            let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
+            let builder = chromiumoxide::browser::BrowserConfig::builder()
+                .no_sandbox()
+                .new_headless_mode()
+                .user_data_dir(dir);
+            let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
+                Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
+                Err(error) => Err(error),
+            };
+            let (browser, mut handler) = match launched {
+                Ok(launched) => launched,
+                Err(error) => {
+                    eprintln!("skipping {test_name}: no usable Chrome: {error}");
+                    return None;
+                }
+            };
+            tokio::spawn(async move { while handler.next().await.is_some() {} });
+            let browser = Arc::new(browser);
+            let mut config = CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+                .build();
+            config.capture_screenshot = true;
+            let firewall =
+                BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Launched, PageContext::of(&config))
+                    .await
+                    .expect("the listener must start");
+            let page = firewall.handle().new_page(None).await.expect("page");
+            let watch = firewall
+                .handle()
+                .watch(&page, &config, 10)
+                .await
+                .expect("the watch must start");
+            Some(Self {
+                base,
+                config,
+                browser,
+                firewall,
+                page,
+                watch,
+                _site: site,
+            })
+        }
+
+        fn url(&self, route: &str) -> String {
+            format!("{}{route}", self.base)
+        }
+
+        /// Renders `/one`.
+        async fn render(&self, want_screenshot: bool) -> Result<BrowserPage, CrawlError> {
+            render(
+                &self.url("/one"),
+                &self.config,
+                &self.page,
+                &self.watch,
+                want_screenshot,
+            )
+            .await
+        }
+
+        /// A screenshot of `route` once it has loaded, taken as the render takes one.
+        async fn screenshot_of(&self, route: &str) -> Vec<u8> {
+            self.page.goto(self.url(route)).await.expect("the page must load");
+            capture_screenshot(&self.page, &self.config, true)
+                .await
+                .expect("the screenshot must be taken")
+        }
+
+        async fn stop(self) {
+            self.watch.close().await;
+            self.firewall.stop().await;
+            if let Some(mut browser) = std::sync::Arc::into_inner(self.browser) {
+                let _ = browser.close().await;
+                let _ = browser.wait().await;
+            }
+        }
+    }
+
+    /// The route whose document `response` holds, by its HTML, and that route's status.
+    fn rendered_route(response: &HttpResponse) -> (&'static str, u16) {
+        if response.body.contains("doc/one") {
+            ("/one", 201)
+        } else {
+            ("/two", 203)
+        }
+    }
+
     /// A document committed between the render's read of the HTML and its read of the committed
     /// document does not pair the first document's HTML with the second's status and URL. The
     /// test navigates from `/one` (201) to `/two` (203) right after the HTML read. Launches a real
     /// Chrome and skips when none is found.
     #[tokio::test(flavor = "multi_thread")]
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
-    )]
     async fn a_document_committed_after_the_html_read_is_not_paired_with_that_html() {
-        use std::sync::Arc;
-
-        use tokio_stream::StreamExt;
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        use crate::chrome_frame::NAVIGATE_AFTER_CONTENT;
-        use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
-
         let test_name = "a_document_committed_after_the_html_read_is_not_paired_with_that_html";
-        let site = MockServer::start().await;
-        for (route, status) in [("/one", 201), ("/two", 203)] {
-            Mock::given(method("GET"))
-                .and(path(route))
-                .respond_with(
-                    ResponseTemplate::new(status)
-                        .set_body_raw(format!("<html><body><p>doc{route}</p></body></html>"), "text/html"),
-                )
-                .mount(&site)
-                .await;
-        }
-        let base = site.uri().replace("127.0.0.1", "localhost");
-        let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
-        let builder = chromiumoxide::browser::BrowserConfig::builder()
-            .no_sandbox()
-            .new_headless_mode()
-            .user_data_dir(dir);
-        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
-            Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
-            Err(error) => Err(error),
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
         };
-        let (browser, mut handler) = match launched {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping {test_name}: no usable Chrome: {error}");
-                return;
-            }
-        };
-        tokio::spawn(async move { while handler.next().await.is_some() {} });
-        let browser = Arc::new(browser);
-        let config = CrawlConfig::builder()
-            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
-            .build();
-        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Launched, PageContext::of(&config))
-            .await
-            .expect("the listener must start");
-        let page = firewall.handle().new_page(None).await.expect("page");
-        let watch = firewall
-            .handle()
-            .watch(&page, &config, 10)
-            .await
-            .expect("the watch must start");
-
-        let rendered = NAVIGATE_AFTER_CONTENT
-            .scope(
-                std::cell::Cell::new(Some(format!("{base}/two"))),
-                render(&format!("{base}/one"), &config, &page, &watch, false),
-            )
+        let rendered = crate::chrome_frame::NAVIGATE_AFTER_CONTENT
+            .scope(std::cell::Cell::new(Some(fixture.url("/two"))), fixture.render(false))
             .await;
-        watch.close().await;
-        firewall.stop().await;
-        if let Some(mut browser) = Arc::into_inner(browser) {
-            let _ = browser.close().await;
-            let _ = browser.wait().await;
-        }
+        fixture.stop().await;
 
         let response = rendered.expect("the render must succeed").response;
-        let route = if response.body.contains("doc/one") {
-            "/one"
-        } else {
-            "/two"
-        };
-        let status = if route == "/one" { 201 } else { 203 };
+        let (route, status) = rendered_route(&response);
         assert_eq!(
             (response.status, response.final_url.ends_with(route)),
             (status, true),
@@ -657,6 +723,79 @@ mod tests {
         assert_eq!(
             route, "/two",
             "{test_name}: the HTML must be read again from the new document"
+        );
+    }
+
+    /// A document committed right after the render's read of one document does not give the
+    /// render the new document's URL. The test navigates from `/one` to `/two` right after the
+    /// read of the committed document that closes the HTML read. Launches a real Chrome and skips
+    /// when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_final_url_is_the_url_of_the_document_the_html_came_from() {
+        let test_name = "the_final_url_is_the_url_of_the_document_the_html_came_from";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let rendered = crate::chrome_frame::NAVIGATE_AFTER_DOCUMENT_READS
+            .scope(
+                std::cell::Cell::new(Some((2, fixture.url("/two")))),
+                fixture.render(false),
+            )
+            .await;
+        fixture.stop().await;
+
+        let response = rendered.expect("the render must succeed").response;
+        let (route, status) = rendered_route(&response);
+        assert_eq!(
+            (route, response.status),
+            ("/one", 201),
+            "{test_name}: the navigation comes after the read, so the HTML and status are /one's"
+        );
+        assert!(
+            response.final_url.ends_with("/one"),
+            "{test_name}: the HTML is /one's, so the final URL must be too: {} {status}",
+            response.final_url
+        );
+    }
+
+    /// A document committed right after the render's read of one document does not give the
+    /// render a screenshot of the new document. The test first takes a screenshot of each page,
+    /// then navigates from `/one` to `/two` right after the read of the committed document that
+    /// closes the HTML read. Launches a real Chrome and skips when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_screenshot_is_of_the_document_the_html_came_from() {
+        let test_name = "the_screenshot_is_of_the_document_the_html_came_from";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let one = fixture.screenshot_of("/one").await;
+        let two = fixture.screenshot_of("/two").await;
+        let rendered = crate::chrome_frame::NAVIGATE_AFTER_DOCUMENT_READS
+            .scope(
+                std::cell::Cell::new(Some((2, fixture.url("/two")))),
+                fixture.render(true),
+            )
+            .await;
+        fixture.stop().await;
+
+        assert_ne!(one, two, "{test_name}: the two pages must look different");
+        let response = rendered.expect("the render must succeed").response;
+        assert_eq!(
+            rendered_route(&response).0,
+            "/one",
+            "{test_name}: the navigation comes after the read, so the HTML is /one's"
+        );
+        let screenshot = response.screenshot.expect("the render must take a screenshot");
+        let shows = if screenshot == one {
+            "/one"
+        } else if screenshot == two {
+            "/two"
+        } else {
+            "neither page"
+        };
+        assert_eq!(
+            shows, "/one",
+            "{test_name}: the HTML is /one's, so the screenshot must be of /one too"
         );
     }
 }

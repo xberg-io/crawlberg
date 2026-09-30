@@ -29,7 +29,8 @@ pub(crate) struct CommittedDocument {
 
 /// The document the main frame of `page` has committed.
 pub(crate) async fn committed_document(page: &chromiumoxide::Page) -> Result<CommittedDocument, CrawlError> {
-    page.execute(GetFrameTreeParams::default())
+    let document = page
+        .execute(GetFrameTreeParams::default())
         .await
         .map(|tree| {
             let frame = &tree.result.frame_tree.frame;
@@ -39,7 +40,10 @@ pub(crate) async fn committed_document(page: &chromiumoxide::Page) -> Result<Com
                 url: format!("{}{}", frame.url, frame.url_fragment.as_deref().unwrap_or_default()),
             }
         })
-        .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
+        .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))?;
+    #[cfg(test)]
+    navigate_after_document_read(page).await;
+    Ok(document)
 }
 
 /// The HTML of `page`. `what` names the read in its error.
@@ -65,6 +69,26 @@ async fn navigate_after_content(page: &chromiumoxide::Page) {
     if let Some(url) = NAVIGATE_AFTER_CONTENT.try_with(std::cell::Cell::take).ok().flatten() {
         page.goto(url).await.expect("the test navigation must load");
     }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// A count and a URL: the page navigates to the URL once, right after that many more reads of
+    /// its committed document in this task. A test sets it to commit a new document after a read
+    /// bound to one document has closed.
+    pub(crate) static NAVIGATE_AFTER_DOCUMENT_READS: std::cell::Cell<Option<(usize, String)>>;
+}
+
+#[cfg(test)]
+async fn navigate_after_document_read(page: &chromiumoxide::Page) {
+    let Ok(Some((reads, url))) = NAVIGATE_AFTER_DOCUMENT_READS.try_with(std::cell::Cell::take) else {
+        return;
+    };
+    if reads > 1 {
+        let _ = NAVIGATE_AFTER_DOCUMENT_READS.try_with(|hook| hook.set(Some((reads - 1, url))));
+        return;
+    }
+    page.goto(url).await.expect("the test navigation must load");
 }
 
 /// Read the page with `read` and pair the result with the document `read_document` reports.

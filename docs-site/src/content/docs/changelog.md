@@ -158,11 +158,12 @@ title: "Changelog"
   the server did not answer, the fetch fails with a browser error that names the URL. After a page
   navigates itself, only the redirects of that navigation make a 404 a page, not the redirects of
   the requested URL. (#317, #319)
-- **The HTML and the status of a browser render come from one document.** They were separate
-  reads, so a navigation that committed between them could pair the HTML of one document with
-  the status of the next. The render now reads which document is committed before and after
-  the HTML, and reads the HTML again when the document changed. A page that navigates during each
-  of three reads fails with a browser error. (#318)
+- **The HTML, status, final URL and screenshot of a browser render come from one document.**
+  They were separate reads, so a navigation that committed between them could pair the HTML of
+  one document with the status, URL or screenshot of the next. The render now reads which
+  document is committed before and after it reads the HTML and takes the screenshot, and reads
+  both again when the document changed. The final URL is the URL of that document. A page that
+  navigates during each of three reads fails with a browser error. (#318)
 - **A browser screenshot of a page that keeps navigating held the fetch until its deadline.**
   Chrome can leave a screenshot unanswered while the page keeps replacing its document. The
   screenshot now stops after 5 seconds, and the page is reported without one.
