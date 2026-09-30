@@ -77,6 +77,27 @@ async fn test_script_execution() {
 /// `while(true){}` spun V8 at 100% CPU with no recovery (observed on
 /// staging: three worker threads pinned for six hours). Every script now
 /// gets the wall-clock execution bound regardless of size.
+#[test]
+fn the_watchdog_sees_a_script_that_finished_before_it_started() {
+    let pair = (std::sync::Mutex::new(true), std::sync::Condvar::new());
+    let start = std::time::Instant::now();
+    assert!(super::script::wait_for_cancel(&pair, std::time::Duration::from_secs(5)));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "a flag set before the wait ends it at once, took {:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn the_watchdog_fires_when_the_script_is_still_running() {
+    let pair = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+    assert!(!super::script::wait_for_cancel(
+        &pair,
+        std::time::Duration::from_millis(50)
+    ));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn execute_script_guarded_kills_small_infinite_loop() {
     let mut rt = setup_runtime("<html><body></body></html>");

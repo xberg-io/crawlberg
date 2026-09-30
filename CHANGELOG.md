@@ -144,6 +144,12 @@ All notable changes to crawlberg are documented here.
   longer ends the wait early. An evaluation that did not settle in time used to return the result
   of the evaluation before it; it now comes back as `undefined`. (#541)
 
+- **A classic script could hold its page for 5 seconds after it finished.** The native browser
+  backend runs each classic script under a 5-second watchdog. When the script finished before the
+  watchdog thread started, which happens on a loaded host, the watchdog missed the signal and slept
+  out its full budget while the page waited for it. The watchdog now checks whether the script is
+  done before it starts to wait. (#566)
+
 - **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
   with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
   now reports the status of the response it refused. A block page served with a 2xx status still

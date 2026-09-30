@@ -42,22 +42,8 @@ impl BrowserJsRuntime {
         let pair_clone = pair.clone();
 
         let watchdog = std::thread::spawn(move || {
-            let (lock, cvar) = &*pair_clone;
-            let mut cancelled = lock.lock().unwrap();
-            let deadline = std::time::Instant::now() + timeout;
-
-            loop {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    isolate_handle.terminate_execution();
-                    return;
-                }
-
-                let result = cvar.wait_timeout(cancelled, remaining).unwrap();
-                cancelled = result.0;
-                if *cancelled {
-                    return;
-                }
+            if !super::script::wait_for_cancel(&pair_clone, timeout) {
+                isolate_handle.terminate_execution();
             }
         });
 

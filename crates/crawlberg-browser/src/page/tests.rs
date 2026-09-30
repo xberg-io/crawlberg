@@ -412,6 +412,16 @@ async fn an_inline_module_import_blocked_by_interception_is_not_fetched() {
 /// Serves `responses` beside the page `html`, navigates with interception blocking every address
 /// that ends in `blocked.js`, and returns the page with the request lines the server saw.
 async fn navigate_intercepted_raw(html: &str, responses: &[(&str, &str)]) -> (Page, Vec<String>) {
+    let (page, requests) = navigate_intercepted_raw_live(html, responses).await;
+    let requests = requests.lock().expect("lock").clone();
+    (page, requests)
+}
+
+/// [`navigate_intercepted_raw`] with the live request log, for a page that keeps requesting after navigation.
+async fn navigate_intercepted_raw_live(
+    html: &str,
+    responses: &[(&str, &str)],
+) -> (Page, Arc<std::sync::Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let page_response = ok_response("text/html", html);
@@ -425,7 +435,6 @@ async fn navigate_intercepted_raw(html: &str, responses: &[(&str, &str)]) -> (Pa
     page.navigate(&format!("http://{addr}/"))
         .await
         .expect("navigation must succeed");
-    let requests = requests.lock().expect("lock").clone();
     (page, requests)
 }
 
@@ -455,10 +464,12 @@ async fn a_module_redirect_to_a_blocked_address_is_not_fetched() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_dynamic_import_of_a_blocked_address_is_not_fetched() {
     let html = "<html><body><script>\
-                import('/fine.js').then(() => { globalThis.fine = true; });\
-                import('/blocked.js').then(() => { globalThis.blocked = 'loaded'; }, () => { globalThis.blocked = 'refused'; });\
+                globalThis.settled = Promise.allSettled([\
+                import('/fine.js').then(() => { globalThis.fine = true; }),\
+                import('/blocked.js').then(() => { globalThis.blocked = 'loaded'; }, () => { globalThis.blocked = 'refused'; }),\
+                ]);\
                 </script></body></html>";
-    let (mut page, requests) = navigate_intercepted_raw(
+    let (mut page, requests) = navigate_intercepted_raw_live(
         html,
         &[
             ("/fine.js", &ok_response("text/javascript", "export {};")),
@@ -467,14 +478,21 @@ async fn a_dynamic_import_of_a_blocked_address_is_not_fetched() {
     )
     .await;
 
+    // The page's drain has a time budget, and under load an import can settle after it, so wait for
+    // both imports' own promises before reading what they set.
+    let settled = page
+        .evaluate_for_cdp(
+            "globalThis.settled.then(() => JSON.stringify([!!globalThis.fine, globalThis.blocked || null]))",
+            true,
+            true,
+        )
+        .await;
     assert_eq!(
-        global(
-            &mut page,
-            "JSON.stringify([!!globalThis.fine, globalThis.blocked || null])"
-        ),
-        serde_json::json!("[true,\"refused\"]"),
+        settled.value,
+        Some(serde_json::json!("[true,\"refused\"]")),
         "the allowed import loads and the blocked one is refused"
     );
+    let requests = requests.lock().expect("lock").clone();
     assert!(requested(&requests, "/fine.js"), "{requests:?}");
     assert!(
         !requested(&requests, "/blocked.js"),

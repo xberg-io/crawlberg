@@ -10,6 +10,20 @@ use super::BrowserJsRuntime;
 /// How long an awaited evaluation may wait for its own promise to settle.
 const AWAIT_BUDGET: tokio::time::Duration = tokio::time::Duration::from_secs(5);
 
+/// Wait until the flag in `pair` is set or `timeout` passes. `true` means the flag was set in time.
+pub(super) fn wait_for_cancel(
+    pair: &(std::sync::Mutex<bool>, std::sync::Condvar),
+    timeout: std::time::Duration,
+) -> bool {
+    let (lock, cvar) = pair;
+    // ~keep Read the flag before waiting: a script can finish before this thread starts, and its notify is lost.
+    let cancelled = lock.lock().unwrap();
+    let (_cancelled, wait) = cvar
+        .wait_timeout_while(cancelled, timeout, |cancelled| !*cancelled)
+        .unwrap();
+    !wait.timed_out()
+}
+
 impl BrowserJsRuntime {
     pub fn execute_script(&mut self, _name: &str, source: &str) -> Result<(), String> {
         self.runtime
@@ -37,22 +51,8 @@ impl BrowserJsRuntime {
         let pair_clone = pair.clone();
 
         let watchdog = std::thread::spawn(move || {
-            let (lock, cvar) = &*pair_clone;
-            let mut cancelled = lock.lock().unwrap();
-            let deadline = std::time::Instant::now() + timeout;
-
-            loop {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    isolate_handle.terminate_execution();
-                    return;
-                }
-
-                let result = cvar.wait_timeout(cancelled, remaining).unwrap();
-                cancelled = result.0;
-                if *cancelled {
-                    return;
-                }
+            if !wait_for_cancel(&pair_clone, timeout) {
+                isolate_handle.terminate_execution();
             }
         });
 
