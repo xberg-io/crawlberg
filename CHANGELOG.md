@@ -136,6 +136,14 @@ All notable changes to crawlberg are documented here.
   costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
   after the next module script runs. (#486)
 
+- **An awaited script evaluation waited for the whole page to go idle.** The native browser backend
+  ran an awaited evaluation or function call until nothing at all was pending on the page. A page
+  with a fetch that never answers made every awaited evaluation wait out a 5-second budget, even
+  for `Promise.resolve(1)`: two such evaluations took 10 seconds. Each awaited evaluation now waits
+  only for its own promise, for at most 5 seconds, and an error from other work on the page no
+  longer ends the wait early. An evaluation that did not settle in time used to return the result
+  of the evaluation before it; it now comes back as `undefined`. (#541)
+
 - **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
   with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
   now reports the status of the response it refused. A block page served with a 2xx status still

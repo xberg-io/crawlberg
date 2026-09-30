@@ -918,6 +918,150 @@ async fn a_module_src_that_rejects_while_other_work_runs_is_not_recorded() {
     );
 }
 
+/// Navigates to a page whose script starts a fetch that never answers, so the page never goes idle.
+async fn page_with_a_stalled_fetch(stall: &str) -> Page {
+    let html = format!("<html><body><script>fetch('{stall}/never');</script></body></html>");
+    navigate_bounded(&html, &[]).await
+}
+
+/// The number an awaited evaluation returned by value.
+fn number(info: &crate::js::runtime::RemoteObjectInfo) -> Option<f64> {
+    info.value.as_ref().and_then(serde_json::Value::as_f64)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_does_not_wait_for_a_stalled_fetch_on_the_page() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    for n in [1, 2] {
+        let started = std::time::Instant::now();
+        let info = js
+            .evaluate_for_cdp(&format!("Promise.resolve({n})"), true, true)
+            .await
+            .expect("the evaluation settles");
+        let took = started.elapsed();
+        assert_eq!(number(&info), Some(f64::from(n)));
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "awaited evaluation {n} waited for the stalled fetch: took {took:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_function_call_does_not_wait_for_a_stalled_fetch_on_the_page() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    for n in [1, 2] {
+        let started = std::time::Instant::now();
+        let info = js
+            .call_function_on_for_cdp(&format!("async function() {{ return {n}; }}"), None, &[], true, true)
+            .await
+            .expect("the call settles");
+        let took = started.elapsed();
+        assert_eq!(number(&info), Some(f64::from(n)));
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "awaited function call {n} waited for the stalled fetch: took {took:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_whose_own_fetch_stalls_fails_at_its_budget() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp("Promise.resolve({ earlier: true })", false, true)
+        .await
+        .expect("an earlier evaluation settles");
+
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        js.evaluate_for_cdp(&format!("fetch('{stall}/own').then(() => 'answered')"), false, true),
+    )
+    .await
+    .expect("a stalled evaluation must end at its budget, not hang");
+    let took = started.elapsed();
+
+    let error = result.expect_err("a stalled evaluation must fail, not return the earlier evaluation's result");
+    assert!(error.contains("did not settle"), "unexpected error: {error}");
+    assert!(
+        took >= std::time::Duration::from_secs(4) && took < std::time::Duration::from_secs(8),
+        "a stalled evaluation must end at its 5-second budget: took {took:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_of_a_promise_nothing_settles_fails_at_once() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp("Promise.resolve({ earlier: true })", false, true)
+        .await
+        .expect("an earlier evaluation settles");
+
+    let started = std::time::Instant::now();
+    let result = js.evaluate_for_cdp("new Promise(() => {})", false, true).await;
+    let took = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a promise nothing settles must fail, not return the earlier evaluation's result: {result:?}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(1),
+        "nothing can settle it, so it must not wait: took {took:?}"
+    );
+}
+
+/// The evaluation waits on three fetches in a row, so the one background fetch fails while it still waits.
+/// A page timer cannot stand in for the wait: the page runs timer callbacks at once, whatever the delay.
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_error_from_other_page_work_does_not_end_an_awaited_evaluation_early() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[("/data.txt", "text/plain", "fetched")]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp(
+        "fetch('/data.txt').then(() => { throw new Error('late'); })",
+        true,
+        false,
+    )
+    .await
+    .expect("the background fetch starts");
+
+    let info = js
+        .evaluate_for_cdp(
+            "fetch('/data.txt').then(() => fetch('/data.txt')).then(() => fetch('/data.txt')).then(() => 7)",
+            true,
+            true,
+        )
+        .await
+        .expect("the evaluation settles although other work on the page fails meanwhile");
+
+    assert_eq!(number(&info), Some(7.0));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_that_settles_as_other_work_fails_returns_its_value() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[("/data.txt", "text/plain", "fetched")]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    let info = js
+        .evaluate_for_cdp(
+            "fetch('/data.txt').then(() => { Promise.reject(new Error('other')); return 7; })",
+            true,
+            true,
+        )
+        .await
+        .expect("the evaluation settled in the same tick as the other rejection, so it succeeds");
+
+    assert_eq!(number(&info), Some(7.0));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn an_inline_module_still_runs_the_modules_it_imports() {
     let html = format!(

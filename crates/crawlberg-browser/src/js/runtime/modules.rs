@@ -2,8 +2,6 @@
 
 use std::task::Poll;
 
-use deno_core::error::{CoreError, CoreErrorKind};
-
 use super::BrowserJsRuntime;
 
 /// How long fetching a module graph may take, and then how long running it may take.
@@ -46,41 +44,9 @@ impl BrowserJsRuntime {
 
     /// Run a loaded module and drive the event loop until the module's own evaluation settles.
     async fn evaluate_module(&mut self, module_id: deno_core::ModuleId, name: &str) -> Result<(), String> {
-        // ~keep Wait for this module, not for the whole event loop to go idle: an earlier module's
-        // ~keep stalled await leaves an op that never settles, and every later module would wait on it.
-        let mut evaluation = Box::pin(self.runtime.mod_evaluate(module_id));
+        let evaluation = self.runtime.mod_evaluate(module_id);
+        let waited = self.run_until_settled(evaluation, MODULE_BUDGET, name).await;
         let options = deno_core::PollEventLoopOptions::default();
-        let runtime = &mut self.runtime;
-        let waited = tokio::time::timeout(
-            MODULE_BUDGET,
-            std::future::poll_fn(|cx| {
-                if let Poll::Ready(own) = evaluation.as_mut().poll(cx) {
-                    return Poll::Ready(own);
-                }
-                let error = match runtime.poll_event_loop(cx, options) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(())) => {
-                        return Poll::Ready(match evaluation.as_mut().poll(cx) {
-                            Poll::Ready(own) => own,
-                            Poll::Pending => Err(CoreError(Box::new(CoreErrorKind::PendingPromiseResolution))),
-                        });
-                    }
-                    Poll::Ready(Err(error)) => error,
-                };
-                // ~keep An error the event loop reports while this module is still running belongs to other
-                // ~keep work on the page, such as a fetch an earlier module did not await, and must not cut this
-                // ~keep module short. The wait goes on only while the loop has other work: with none left, the
-                // ~keep error is deno_core reporting this module's await as stalled, and it repeats on every poll.
-                match runtime.poll_event_loop(cx, options) {
-                    Poll::Pending => {
-                        tracing::warn!("Script error while {} ran: {}", name, error);
-                        Poll::Pending
-                    }
-                    Poll::Ready(_) => Poll::Ready(Err(error)),
-                }
-            }),
-        )
-        .await;
 
         match waited {
             // ~keep deno_core reports a module that throws as an unhandled rejection on the event loop, not

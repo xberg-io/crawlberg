@@ -128,10 +128,14 @@ impl BrowserJsRuntime {
         }
     }
 
-    /// Resolve pending promises after an awaited `<eval-remote>` run and read back its
-    /// metadata, surfacing a rejection as an `Err` the same way CDP callers expect.
-    async fn read_awaited_meta(&mut self, oid: &str) -> Result<deno_core::v8::Global<deno_core::v8::Value>, String> {
-        self.resolve_promises().await;
+    /// Wait for the `promise` of an awaited `<eval-remote>` run and read back its metadata,
+    /// surfacing a rejection as an `Err` the same way CDP callers expect.
+    async fn read_awaited_meta(
+        &mut self,
+        promise: deno_core::v8::Global<deno_core::v8::Value>,
+        oid: &str,
+    ) -> Result<deno_core::v8::Global<deno_core::v8::Value>, String> {
+        self.resolve_promises(promise).await?;
         let rejected = self
             .runtime
             .execute_script("<readRejected>", "globalThis.__crawlberg_await_rejected".to_string())
@@ -175,7 +179,7 @@ impl BrowserJsRuntime {
             .map_err(|e| format!("JS error: {}", e))?;
 
         let meta_str = if await_promise {
-            self.read_awaited_meta(&oid).await?
+            self.read_awaited_meta(result, &oid).await?
         } else {
             result
         };
@@ -201,7 +205,7 @@ impl BrowserJsRuntime {
     }
 
     /// Awaited branch of [`Self::call_function_on_for_cdp`]: run the call inside an async IIFE,
-    /// drain the event loop, then read back either the resolved value or its remote-object meta.
+    /// wait for its promise, then read back either the resolved value or its remote-object meta.
     async fn call_fn_awaited(
         &mut self,
         setup: &str,
@@ -228,11 +232,12 @@ impl BrowserJsRuntime {
             meta_fn = Self::meta_extract_js("__result"),
         );
 
-        self.runtime
+        let promise = self
+            .runtime
             .execute_script("<callFnAsync>", code)
             .map_err(|e| format!("JS error: {}", e))?;
 
-        self.resolve_promises().await;
+        self.resolve_promises(promise).await?;
 
         if return_by_value {
             let read = self
