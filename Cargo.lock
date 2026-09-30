@@ -1190,6 +1190,7 @@ dependencies = [
  "chromiumoxide",
  "chrono",
  "crawlberg-browser",
+ "crawlberg-robots",
  "criterion 0.8.2",
  "dashmap 6.2.1",
  "dirs",
@@ -1259,6 +1260,7 @@ version = "1.8.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "crawlberg-robots",
  "cssparser",
  "deno_core",
  "deno_error",
@@ -1391,6 +1393,10 @@ dependencies = [
  "serde_json",
  "tokio",
 ]
+
+[[package]]
+name = "crawlberg-robots"
+version = "1.8.0"
 
 [[package]]
 name = "crawlberg-swift"

@@ -147,6 +147,36 @@ title: "Changelog"
   body that starts with the gzip header, whatever its content type says, the way the direct fetch
   already did. (#534)
 
+- **The browser fallback read robots.txt with its own parser, which dropped the first group after
+  a UTF-8 byte-order mark.** A file that opened with the mark and disallowed `/private` let the
+  browser open `/private`. The browser fallback now uses the crawl engine's robots.txt parser,
+  which moves into the new `crawlberg-robots` crate; `crawlberg::robots` re-exports it unchanged.
+  That parser already skips a leading byte-order mark (#516). The browser fallback now decides
+  these cases the way the crawl engine does (#540):
+  - The longest matching rule wins. Before, any matching `Allow` beat a longer `Disallow`.
+  - A `*` inside a pattern, such as `Disallow: /*.pdf$`, matches any text. Before, only a
+    trailing `*` did, and an inner one matched nothing.
+  - A group with several `User-agent` lines applies to each of them. Before, only the last
+    `User-agent` line of the group counted.
+  - A `User-agent` token applies only when it is a prefix of the crawler's user agent. Before,
+    a token that contained the user agent, or that the user agent contained anywhere, also
+    matched.
+  - A trailing `# comment` on a rule line is ignored. Before, it became part of the pattern.
+  - When a group names the crawler, only the groups that name it apply. Before, the
+    `User-agent: *` rules applied as well.
+  - A rule before the first `User-agent` line joins the first group. Before, the browser
+    fallback ignored it.
+  - An unknown directive between two `User-agent` lines joins them into one group. Before,
+    only the second `User-agent` line counted.
+
+- **When a robots.txt had two groups for the crawler, the crawl engine obeyed only the last
+  one.** A file with `User-agent: crawlberg` / `Disallow: /a` and, further down, a second
+  `User-agent: crawlberg` group with `Disallow: /c` let the crawler fetch `/a`. The parser now
+  combines every group that names the crawler into one, as RFC 9309 section 2.2.1 says, and
+  does the same for several `User-agent: *` groups. When two combined groups set a
+  `Crawl-delay`, the later one wins. When only an earlier group sets one, that value applies.
+  The browser fallback uses the same parser (#540).
+
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
   directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose

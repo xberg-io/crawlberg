@@ -1,0 +1,14 @@
+[package]
+name = "crawlberg-robots"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The robots.txt parser shared by the crawlberg crawler and its headless-browser fallback."
+
+[dependencies]
+
+[lints]
+workspace = true
