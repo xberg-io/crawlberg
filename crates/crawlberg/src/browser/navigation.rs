@@ -580,7 +580,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         use crate::chrome_frame::NAVIGATE_AFTER_CONTENT;
-        use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin};
+        use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
         let test_name = "a_document_committed_after_the_html_read_is_not_paired_with_that_html";
         let site = MockServer::start().await;
@@ -613,13 +613,13 @@ mod tests {
         };
         tokio::spawn(async move { while handler.next().await.is_some() {} });
         let browser = Arc::new(browser);
-        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Launched)
-            .await
-            .expect("the listener must start");
         let config = CrawlConfig::builder()
             .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
             .build();
-        let page = browser.new_page("about:blank").await.expect("page");
+        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Launched, PageContext::of(&config))
+            .await
+            .expect("the listener must start");
+        let page = firewall.handle().new_page(None).await.expect("page");
         let watch = firewall
             .handle()
             .watch(&page, &config, 10)

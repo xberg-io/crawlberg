@@ -7,6 +7,8 @@
 //! taxonomy contract (`CrawlError` variant -> JSON-RPC error code) holds
 //! end-to-end through the real HTTP/JSON-RPC pipeline.
 
+mod common;
+
 use crawlberg::CrawlConfig;
 
 #[test]
@@ -50,9 +52,9 @@ fn test_crawl_config_json_roundtrip() {
 #[cfg(all(feature = "api", feature = "mcp"))]
 #[tokio::test]
 async fn scrape_tool_maps_404_to_resource_not_found_over_mcp() {
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
     use axum::routing::get;
+    use common::mcp::{json_rpc_frame, mcp_request};
     use crawlberg::HostMatcher;
     use tower::ServiceExt;
 
@@ -103,37 +105,11 @@ async fn scrape_tool_maps_404_to_resource_not_found_over_mcp() {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("body collects");
-    let value = parse_json_rpc_frame(&String::from_utf8_lossy(&bytes));
+    let value = json_rpc_frame(&String::from_utf8_lossy(&bytes));
 
     assert_eq!(
         value["error"]["code"],
         serde_json::json!(-32002),
         "a 404 from the crawl target must map to RESOURCE_NOT_FOUND, not INTERNAL_ERROR: {value}"
     );
-
-    fn mcp_request(body: String) -> Request<Body> {
-        Request::builder()
-            .method("POST")
-            .uri("/mcp")
-            .header("host", "localhost")
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .body(Body::from(body))
-            .expect("valid request")
-    }
-
-    /// Extract the JSON-RPC frame from a plain-JSON or SSE (`data: ...`) body.
-    fn parse_json_rpc_frame(body: &str) -> serde_json::Value {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(body.trim())
-            && (value.get("result").is_some() || value.get("error").is_some())
-        {
-            return value;
-        }
-        body.lines()
-            .find_map(|line| {
-                line.strip_prefix("data: ")
-                    .and_then(|rest| serde_json::from_str(rest).ok())
-            })
-            .unwrap_or_else(|| panic!("no JSON-RPC result frame found in body: {body}"))
-    }
 }

@@ -119,8 +119,9 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &dest_path)?;
         } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &dest_path)
-                .map_err(|e| CrawlError::other(format!("failed to copy profile file: {e}")))?;
+            std::fs::copy(entry.path(), &dest_path).map_err(|e| {
+                CrawlError::other(format!("failed to copy profile file {}: {e}", entry.path().display()))
+            })?;
         }
     }
     Ok(())
@@ -131,6 +132,10 @@ pub(super) async fn launch_or_connect(
     config: &CrawlConfig,
 ) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
+        crate::types::warn_ignored_launch_options(
+            &config.browser,
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally",
+        );
         if config.browser_profile.is_some() {
             tracing::warn!(
                 profile = config.browser_profile.as_deref().unwrap_or_default(),
@@ -138,16 +143,13 @@ pub(super) async fn launch_or_connect(
                  the remote Chrome process's profile is managed externally"
             );
         }
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         let proxy = crate::proxy::chrome_proxy_for(config)?;
         let user_data = resolve_user_data_dir(config)?;
 
-        let builder = build_one_shot_launch_builder(&user_data.path, proxy.as_ref());
-        let browser_config = builder
+        let browser_config = build_one_shot_launch_builder(&user_data.path, &config.browser, proxy.as_ref())?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -166,8 +168,9 @@ pub(super) async fn launch_or_connect(
 /// ~keep path actually passes without spawning a real Chrome process.
 fn build_one_shot_launch_builder(
     user_data_dir: &std::path::Path,
+    browser: &crate::types::BrowserConfig,
     proxy: Option<&crate::proxy::ChromeProxy>,
-) -> BrowserConfigBuilder {
+) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -177,8 +180,14 @@ fn build_one_shot_launch_builder(
     builder = builder
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
-    let builder = crate::browser_pool::apply_default_args(builder);
-    crate::browser_pool::apply_proxy(builder, proxy)
+    builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
+    builder = crate::browser_pool::apply_proxy(builder, proxy, &browser.chrome_args);
+    crate::browser_pool::apply_launch_overrides(
+        builder,
+        "browser",
+        browser.chrome_path.as_deref(),
+        &browser.chrome_args,
+    )
 }
 
 /// Returns a modern Chrome user-agent string suitable for the runtime environment.
@@ -298,6 +307,42 @@ mod user_data_dir_tests {
         let _ = std::fs::remove_dir_all(&resolved.path);
     }
 
+    /// The error of a profile copy that fails names the file it could not copy.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_profile_copy_names_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let name = unique_profile_name("copy-error");
+        let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+        profile.create().expect("profile directory must be creatable");
+        let _guard = ProfileGuard(profile.clone());
+        let unreadable = profile.user_data_dir.join("unreadable-marker");
+        std::fs::write(&unreadable, b"x").expect("marker file must be writable");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))
+            .expect("permissions must be settable");
+        if std::fs::read(&unreadable).is_ok() {
+            // ~keep Root reads a mode 000 file, so the copy cannot fail here.
+            return;
+        }
+
+        let config = CrawlConfig {
+            browser_profile: Some(name),
+            save_browser_profile: false,
+            ..CrawlConfig::default()
+        };
+        let error = resolve_user_data_dir(&config)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        let _ = std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600));
+
+        assert!(
+            error.contains("unreadable-marker") && error.contains("failed to copy profile file"),
+            "the copy error must name the file: {error:?}"
+        );
+    }
+
     #[test]
     fn copy_dir_recursive_copies_nested_files_and_skips_symlinks() {
         let root = std::env::temp_dir().join(unique_profile_name("copy"));
@@ -336,7 +381,12 @@ mod tests {
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` (even behind a comment claiming it still does) fails
         // ~keep here because the returned flags actually change.
-        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), None);
+        let builder = build_one_shot_launch_builder(
+            std::path::Path::new("/tmp/browser-rs-test-profile"),
+            &crate::types::BrowserConfig::default(),
+            None,
+        )
+        .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
     }
 
@@ -355,7 +405,12 @@ mod tests {
         let proxy = crate::proxy::chrome_proxy_for(&config).expect("a usable proxy");
         let debug = format!(
             "{:?}",
-            build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), proxy.as_ref())
+            build_one_shot_launch_builder(
+                std::path::Path::new("/tmp/browser-rs-test-profile"),
+                &config.browser,
+                proxy.as_ref()
+            )
+            .expect("the config names no binary to check")
         );
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:3128\""),
@@ -365,6 +420,56 @@ mod tests {
             debug.contains("proxy-bypass-list=<-loopback>"),
             "loopback requests must not bypass the proxy: {debug}"
         );
+    }
+
+    #[test]
+    fn a_caller_proxy_flag_replaces_the_one_the_configured_proxy_sets() {
+        let proxy = crate::proxy::chrome_proxy(&crate::types::ProxyConfig {
+            url: "http://127.0.0.1:9".into(),
+            ..Default::default()
+        })
+        .expect("an http proxy is a Chrome proxy");
+        for (caller_flag, replaced) in [
+            ("--proxy-server=http://127.0.0.1:7", "proxy-server=http://127.0.0.1:9"),
+            ("--proxy-bypass-list=*.internal", "proxy-bypass-list=<-loopback>"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
+                ..Default::default()
+            };
+            let debug = format!(
+                "{:?}",
+                build_one_shot_launch_builder(
+                    std::path::Path::new("/tmp/browser-rs-test-profile"),
+                    &browser,
+                    Some(&proxy)
+                )
+                .expect("the config names no binary to check")
+            );
+            assert!(
+                debug.contains(&format!("key: \"{}\"", &caller_flag[2..])),
+                "{caller_flag}: the caller's flag is missing: {debug}"
+            );
+            assert!(
+                !debug.contains(replaced),
+                "{caller_flag}: the configured proxy's {replaced} must not sit beside it: {debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_one_shot_launch_builder_uses_the_configured_chrome_path_and_args() {
+        crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+            build_one_shot_launch_builder(
+                std::path::Path::new("/tmp/browser-rs-test-profile"),
+                &crate::types::BrowserConfig {
+                    chrome_path,
+                    chrome_args,
+                    ..Default::default()
+                },
+                None,
+            )
+        });
     }
 
     /// A profile directory nobody took ownership of is removed when its guard drops.
@@ -390,6 +495,58 @@ mod tests {
             !path.exists(),
             "an unclaimed ephemeral profile directory must be removed"
         );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password or path token, though the failing origin must still be readable for debugging.
+    ///
+    /// ~keep A closed local port refuses the connection immediately, so this needs no real
+    /// ~keep Chrome and stays fast. `ws://` skips chromiumoxide's `json/version` HTTP probe
+    /// ~keep and goes straight to the WebSocket handshake. The endpoint-listener test just
+    /// ~keep below reaches the same error path with a local socket that answers HTTP 418, so
+    /// ~keep a closed port is not the only way here; it stays because it needs no listener at all.
+    #[tokio::test]
+    async fn connect_error_prints_only_the_endpoint_origin() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            !msg.contains("b1946ac9-guid"),
+            "the CDP path token must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
+        );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 
     /// `hand_over` passes the path on and stops the guard from removing it.

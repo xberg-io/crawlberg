@@ -94,6 +94,25 @@ async fn crawl_refuses_private_ip() {
     }
 }
 
+/// scrape() must refuse the reserved range 240.0.0.0/4 through the actual fetch path
+/// (create_engine -> Tower stack -> http_fetch -> validate_url), not only through a
+/// direct validate_url call: proves the deny-list entry is wired into what the product
+/// invokes on every request, not only into a helper the other tests in this file call.
+#[tokio::test]
+async fn scrape_refuses_the_reserved_range() {
+    let result = scrape(&engine(CrawlConfig::default()), "http://240.0.0.1/").await;
+
+    match result {
+        Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
+            assert!(
+                reason.contains("private_network"),
+                "reason must contain 'private_network', got: '{reason}'"
+            );
+        }
+        other => panic!("expected CrawlError::SsrfPolicyViolation, got {other:?}"),
+    }
+}
+
 /// When allow_private_networks(true) is set, scrape() must succeed against a
 /// server listening on 127.0.0.1 (the wiremock default bind address).
 #[tokio::test]
@@ -263,6 +282,46 @@ async fn redirect_to_private_outside_allowlist_refused() {
         }
         other => panic!("expected DeniedByPolicy(private_network), got {other:?}"),
     }
+}
+
+/// A real scrape whose first hop is allowlisted and whose `Location` points outside the
+/// allowlist is refused with an SSRF error that names the redirect target. The mock's
+/// request count is the positive twin: the first hop was fetched, so the refusal came
+/// from the redirect, not from the seed.
+///
+/// ~keep GUARD: passes even if the redirect chain's own SSRF check (engine/redirect.rs)
+/// ~keep is removed, because the Tower service's fetch (`do_fetch` in tower/service.rs)
+/// ~keep re-validates the URL before it sends every hop; it cannot pin the chain-level
+/// ~keep check, only that some layer refuses the target.
+#[tokio::test]
+async fn scrape_refuses_a_redirect_to_a_private_address_outside_the_allowlist() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "http://10.0.0.1/target"))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .ssrf_allowlist_host(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"))
+        .build();
+
+    let err = scrape(&engine(config), &mock.uri())
+        .await
+        .expect_err("a redirect to 10.0.0.1 (outside the allowlist) must be refused");
+
+    match &err {
+        CrawlError::SsrfPolicyViolation { url, .. } => {
+            assert!(
+                url.contains("10.0.0.1"),
+                "the refusal must name the redirect target, got url '{url}'"
+            );
+        }
+        other => panic!("expected SsrfPolicyViolation for the redirect target, got {other:?}"),
+    }
+    mock.verify().await;
 }
 
 /// validate_url must refuse `file:///etc/passwd` with DisallowedScheme("file").

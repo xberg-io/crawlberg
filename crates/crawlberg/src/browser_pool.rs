@@ -12,17 +12,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
-use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
-use chromiumoxide::cdp::browser_protocol::target::{
-    CloseTargetParams, CreateBrowserContextParams, CreateTargetParams, TargetId,
-};
+use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin};
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,8 +46,8 @@ const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// ~keep without re-stripping the `--`. Normalizing here, once, means a fourth launch path
 /// ~keep can't reintroduce the double-dash bug (see `chrome_args.rs`) by forgetting to
 /// ~keep call `chrome_arg_key` itself.
-/// ~keep Caller-supplied `chrome_args` config entries do not come through this function
-/// ~keep and still need their own `chrome_arg_key` call at the call site.
+/// ~keep Caller-supplied `chrome_args` config entries do not come through this function;
+/// ~keep [`apply_launch_overrides`] normalizes them for every launch path.
 pub(crate) fn safe_default_args() -> Vec<&'static str> {
     let mut all_args = vec![
         "--disable-background-networking",
@@ -112,7 +109,8 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
     filtered.into_iter().map(chrome_arg_key).collect()
 }
 
-/// Push every entry of [`safe_default_args`] onto `builder`.
+/// Push every entry of [`safe_default_args`] onto `builder`, except a default whose switch
+/// name one of the caller's `chrome_args` also names: the caller's flag replaces it.
 ///
 /// ~keep All three launch paths (`browser.rs`, `browser_pool.rs`,
 /// ~keep `interact/chromiumoxide.rs`) call this instead of looping over
@@ -120,9 +118,14 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
 /// ~keep chromiumoxide exists exactly once. A fourth launch path gets the fix
 /// ~keep by calling this function; it cannot reintroduce the double-dash bug by
 /// ~keep writing its own loop and forgetting to normalize.
-pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserConfigBuilder {
+/// ~keep Replacing rather than appending is the only way to make the caller's value win:
+/// ~keep chromiumoxide keeps launch flags in a HashMap, so two values for one switch reach
+/// ~keep Chrome in no fixed order.
+pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder, chrome_args: &[String]) -> BrowserConfigBuilder {
     for arg in safe_default_args() {
-        builder = builder.arg(arg);
+        if !caller_sets_switch(chrome_args, crate::types::chrome_switch_name(arg)) {
+            builder = builder.arg(arg);
+        }
     }
     builder
 }
@@ -132,22 +135,65 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
 ///
 /// ~keep Without it Chrome sends loopback requests direct whatever proxy is set, both for
 /// ~keep `--proxy-server` and for a browser context's `proxyServer`.
-const NO_LOOPBACK_BYPASS: &str = "<-loopback>";
+pub(crate) const NO_LOOPBACK_BYPASS: &str = "<-loopback>";
 
 /// Route `builder`'s Chrome through `proxy`, when there is one. Every launch path calls this,
-/// so the flags are written once.
+/// so the flags are written once. A flag whose switch one of the caller's `chrome_args` also
+/// names is left out: the caller's flag replaces it, as in [`apply_default_args`].
 pub(crate) fn apply_proxy(
-    builder: BrowserConfigBuilder,
+    mut builder: BrowserConfigBuilder,
     proxy: Option<&crate::proxy::ChromeProxy>,
+    chrome_args: &[String],
 ) -> BrowserConfigBuilder {
-    match proxy {
-        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
-        // ~keep `----proxy-server=...` and the proxy was silently never applied.
-        Some(proxy) => builder
-            .arg(format!("proxy-server={}", proxy.server))
-            .arg(format!("proxy-bypass-list={NO_LOOPBACK_BYPASS}")),
-        None => builder,
+    let Some(proxy) = proxy else {
+        return builder;
+    };
+    // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+    // ~keep `----proxy-server=...` and the proxy was silently never applied.
+    for (switch, value) in [
+        ("proxy-server", proxy.server.as_str()),
+        ("proxy-bypass-list", NO_LOOPBACK_BYPASS),
+    ] {
+        if !caller_sets_switch(chrome_args, switch) {
+            builder = builder.arg(format!("{switch}={value}"));
+        }
     }
+    builder
+}
+
+/// Whether one of the caller's `chrome_args` names the Chrome switch `name`, byte-exact.
+///
+/// ~keep Exact comparison is sound because `check_chrome_args` refuses a name with an
+/// ~keep uppercase letter before any launch.
+pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
+    chrome_args
+        .iter()
+        .any(|arg| crate::types::chrome_switch_name(arg) == name)
+}
+
+/// Point `builder` at the caller's Chrome binary, if one is named, and add the caller's
+/// extra flags. [`apply_default_args`] has already left out any default they replace.
+///
+/// A named binary that is missing or not executable is an error naming the path, never a
+/// fallback to chromiumoxide's own detection. `chrome_args` that `CrawlConfig::validate` would
+/// refuse are an error here too, for the pool, whose config never passes through `validate`.
+/// `section` names the config the options came from (`browser` or `BrowserPoolConfig`), and
+/// the error names the key in it.
+pub(crate) fn apply_launch_overrides(
+    mut builder: BrowserConfigBuilder,
+    section: &str,
+    chrome_path: Option<&std::path::Path>,
+    chrome_args: &[String],
+) -> Result<BrowserConfigBuilder, CrawlError> {
+    crate::types::check_chrome_args(section, chrome_args).map_err(CrawlError::browser_error)?;
+    if let Some(path) = chrome_path {
+        crate::types::check_chrome_executable(section, path).map_err(CrawlError::browser_error)?;
+        builder = builder.chrome_executable(path);
+    }
+    for arg in chrome_args {
+        builder = builder.arg(chrome_arg_key(arg.as_str()));
+    }
+    Ok(builder)
 }
 
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
@@ -155,7 +201,10 @@ pub(crate) fn apply_proxy(
 ///
 /// ~keep Split out from `launch_browser` so a test can assert on the flags this path
 /// ~keep actually passes without spawning a real Chrome process.
-fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[String]) -> BrowserConfigBuilder {
+fn build_pool_launch_builder(
+    user_data_dir: &std::path::Path,
+    config: &BrowserPoolConfig,
+) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = BrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -166,54 +215,13 @@ fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[Str
     builder = builder
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
-    builder = apply_default_args(builder);
-    for arg in chrome_args {
-        builder = builder.arg(chrome_arg_key(arg.as_str()));
-    }
-    builder
-}
-
-/// The browser context of `bs` whose requests go through `server`, made on first use.
-///
-/// ~keep `disposeOnDetach`: on a Chrome the pool only connected to, the context goes away with
-/// ~keep the connection instead of being left in the caller's browser.
-async fn proxy_context(bs: &mut BrowserState, server: &str) -> Result<BrowserContextId, CrawlError> {
-    if let Some(id) = bs.proxy_contexts.get(server) {
-        return Ok(id.clone());
-    }
-    let id = create_proxy_context(&bs.browser, server).await?;
-    bs.proxy_contexts.insert(server.to_owned(), id.clone());
-    Ok(id)
-}
-
-/// A new browser context of `browser` whose requests go through `server`.
-async fn create_proxy_context(browser: &Browser, server: &str) -> Result<BrowserContextId, CrawlError> {
-    let params = CreateBrowserContextParams {
-        dispose_on_detach: Some(true),
-        proxy_server: Some(server.to_owned()),
-        proxy_bypass_list: Some(NO_LOOPBACK_BYPASS.to_owned()),
-        ..CreateBrowserContextParams::default()
-    };
-    tokio::time::timeout(PAGE_OPEN_TIMEOUT, browser.create_browser_context(params))
-        .await
-        .map_err(|_| CrawlError::browser_error("timeout creating the proxy's browser context"))?
-        .map_err(|e| CrawlError::browser_error(format!("failed to create the proxy's browser context: {e}")))
-}
-
-/// Open a blank page for `config` in a Chrome crawlberg did not launch, so `--proxy-server`
-/// never reached it: with a proxy, the page opens in a browser context made with it.
-pub(crate) async fn open_connected_page(
-    browser: &Browser,
-    config: &crate::types::CrawlConfig,
-) -> Result<chromiumoxide::Page, CrawlError> {
-    let mut target = CreateTargetParams::new("about:blank");
-    if let Some(proxy) = crate::proxy::chrome_proxy_for(config)? {
-        target.browser_context_id = Some(create_proxy_context(browser, &proxy.server).await?);
-    }
-    browser
-        .new_page(target)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))
+    builder = apply_default_args(builder, &config.chrome_args);
+    apply_launch_overrides(
+        builder,
+        "BrowserPoolConfig",
+        config.chrome_path.as_deref(),
+        &config.chrome_args,
+    )
 }
 
 /// Configuration for a [`BrowserPool`].
@@ -228,7 +236,12 @@ pub struct BrowserPoolConfig {
     /// If set, connect to an already-running Chrome via this CDP WebSocket URL
     /// instead of launching a new process.
     pub browser_endpoint: Option<String>,
-    /// Extra command-line arguments forwarded to the Chrome process.
+    /// Chrome executable to launch. `None` uses the `CHROME` environment variable, then
+    /// searches the machine. Ignored when `browser_endpoint` is set.
+    pub chrome_path: Option<std::path::PathBuf>,
+    /// Extra command-line arguments forwarded to the Chrome process, after the defaults.
+    /// Checked by the rules of `BrowserConfig::chrome_args` when the pool launches Chrome:
+    /// a refused entry makes `warm` and `acquire_page` return an error.
     pub chrome_args: Vec<String>,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
@@ -241,6 +254,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
         let Self {
             max_pages,
             browser_endpoint,
+            chrome_path,
             chrome_args,
             launch_timeout,
         } = self;
@@ -252,6 +266,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
                     .as_deref()
                     .map(crate::net::redact::redact_url_to_origin),
             )
+            .field("chrome_path", chrome_path)
             .field("chrome_args", chrome_args)
             .field("launch_timeout", launch_timeout)
             .finish()
@@ -263,6 +278,7 @@ impl Default for BrowserPoolConfig {
         Self {
             max_pages: 8,
             browser_endpoint: None,
+            chrome_path: None,
             chrome_args: Vec::new(),
             launch_timeout: Duration::from_secs(30),
         }
@@ -292,9 +308,6 @@ struct BrowserState {
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<std::path::PathBuf>,
     pending_closes: PendingCloses,
-    /// One browser context per proxy address, so pages of crawls with different proxies share
-    /// this Chrome but not a proxy. They end with the process, or with the connection.
-    proxy_contexts: std::collections::HashMap<String, BrowserContextId>,
 }
 
 /// How a browser left [`close_browser_within`]: under its own steam, or killed.
@@ -361,6 +374,31 @@ async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: Browser
         );
         abort.abort();
     }
+}
+
+/// Connect to the external Chrome at a configured CDP `endpoint`. The pool, the one-shot
+/// launch path and the interact backend all connect through this one function.
+///
+/// ~keep async-tungstenite accepts only a lower-case `ws`/`wss` scheme, and `http::Uri` refuses
+/// ~keep surrounding spaces and a missing `//`, while the endpoint checks accept all of those
+/// ~keep spellings. So a WebSocket endpoint is sent in the normalized form of the same parse the
+/// ~keep checks use. Any other endpoint (chromiumoxide also takes an `http://` DevTools address,
+/// ~keep and the pool's own field has no check) is sent as written.
+///
+/// The endpoint is a capability (its userinfo, its CDP path GUID or a `?token=` drives the
+/// browser), and the error flows into API error bodies and MCP error payloads, so only its
+/// origin prints.
+///
+/// ~keep The connect future is boxed. Every crawl future that can reach a connect contains this
+/// ~keep one, and without the box the extra async layer pushes the generated Dart bridge's
+/// ~keep crawl future past rustc's layout query depth limit (`crawlberg-dart` fails to build).
+pub(crate) async fn connect_endpoint(endpoint: &str) -> Result<(Browser, chromiumoxide::Handler), CrawlError> {
+    let normalized = crate::net::parse_websocket_url(endpoint);
+    let address = normalized.as_ref().map_or(endpoint, url::Url::as_str);
+    Box::pin(Browser::connect(address)).await.map_err(|e| {
+        let redacted = crate::net::redact::redact_url_to_origin(endpoint);
+        CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
+    })
 }
 
 /// Tear down `browser` and the task that runs its CDP handler.
@@ -528,8 +566,8 @@ impl BrowserPool {
         self.acquire_page_through(None).await
     }
 
-    /// Acquire a new blank page whose requests go through `proxy`: the page opens in a browser
-    /// context made with that proxy, shared by every page of the pool that names the same one.
+    /// Acquire a new blank page whose requests go through `proxy`: the page's own browser
+    /// context is made with that proxy.
     pub(crate) async fn acquire_page_through(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
@@ -628,15 +666,10 @@ impl BrowserPool {
             self.healthy.store(true, Ordering::Release);
         }
 
-        let bs = guard.as_mut().expect("browser state was just set above");
-        let mut target = CreateTargetParams::new("about:blank");
-        if let Some(proxy) = proxy {
-            target.browser_context_id = Some(proxy_context(bs, &proxy.server).await?);
-        }
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page(target))
+        let bs = guard.as_ref().expect("browser state was just set above");
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page(proxy))
             .await
-            .map_err(|_| CrawlError::browser_error("timeout opening page"))?
-            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))?;
+            .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         Ok((page, Arc::clone(&bs.pending_closes)))
     }
 
@@ -666,10 +699,9 @@ impl BrowserPool {
     /// Launch (or connect to) a Chrome process according to the pool config.
     async fn launch_browser(&self) -> Result<BrowserState, CrawlError> {
         let (browser, mut handler, data_dir) = if let Some(ref endpoint) = self.config.browser_endpoint {
-            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::connect(endpoint))
+            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, connect_endpoint(endpoint))
                 .await
-                .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))?
-                .map_err(|e| CrawlError::browser_error(format!("failed to connect to browser: {e}")))?;
+                .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))??;
             (browser, handler, None)
         } else {
             use std::sync::atomic::AtomicU64;
@@ -679,7 +711,7 @@ impl BrowserPool {
                 std::process::id(),
                 COUNTER.fetch_add(1, Ordering::Relaxed),
             ));
-            let builder = build_pool_launch_builder(&user_data_dir, &self.config.chrome_args);
+            let builder = build_pool_launch_builder(&user_data_dir, &self.config)?;
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -696,6 +728,7 @@ impl BrowserPool {
         let firewall = match BrowserFirewall::start(
             Arc::clone(&browser),
             BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+            PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
         )
         .await
         {
@@ -726,7 +759,6 @@ impl BrowserPool {
             handler_handle,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
-            proxy_contexts: std::collections::HashMap::new(),
         })
     }
 }
@@ -851,6 +883,52 @@ pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder)
     }
 }
 
+/// Assert that `build` hands `chrome_path` and `chrome_args` to chromiumoxide: the binary is
+/// the configured one, each caller flag is normalized, and a caller flag replaces the default
+/// of the same name.
+/// Shared by the builder test of each of the three launch paths.
+#[cfg(test)]
+pub(crate) fn assert_launch_overrides_reach_the_builder(
+    build: impl Fn(Option<std::path::PathBuf>, Vec<String>) -> Result<BrowserConfigBuilder, CrawlError>,
+) {
+    let binary = crate::types::executable_temp_file("builder");
+    let result = build(
+        Some(binary.clone()),
+        vec!["--user-agent=crawlberg-marker".to_owned(), "--lang=fr".to_owned()],
+    );
+    let _ = std::fs::remove_file(&binary);
+    let debug = format!("{:?}", result.expect("an executable chrome_path must be accepted"));
+
+    assert!(
+        debug.contains(&format!("executable: Some({:?})", binary)),
+        "chrome_path did not reach chromiumoxide's executable: {debug}"
+    );
+    for caller_flag in ["user-agent=crawlberg-marker", "lang=fr"] {
+        assert!(
+            debug.contains(&format!("key: {caller_flag:?}")),
+            "caller flag {caller_flag:?} missing or not normalized: {debug}"
+        );
+    }
+    assert!(
+        !debug.contains("key: \"lang=en_US\""),
+        "the caller's --lang must replace the default --lang, not sit beside it: {debug}"
+    );
+    assert!(
+        debug.contains("key: \"disable-sync\""),
+        "defaults the caller did not name must stay: {debug}"
+    );
+
+    let missing = build(
+        Some(std::path::PathBuf::from("/nonexistent/crawlberg-chrome")),
+        Vec::new(),
+    )
+    .expect_err("a missing chrome_path must be an error, not a fallback to detection");
+    assert!(
+        missing.to_string().contains("/nonexistent/crawlberg-chrome"),
+        "the error must name the path, got: {missing}"
+    );
+}
+
 #[cfg(test)]
 #[path = "browser_pool_tests.rs"]
-mod tests;
+pub(crate) mod tests;

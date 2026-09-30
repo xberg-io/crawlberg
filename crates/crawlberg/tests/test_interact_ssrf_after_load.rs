@@ -419,6 +419,36 @@ async fn interact_fails_no_later_action_for_a_request_an_earlier_one_scheduled()
     );
 }
 
+/// On an external browser reached through `browser.endpoint`, the interaction's page starts
+/// with the browser's own cookies.
+#[tokio::test]
+async fn interact_on_an_external_browser_starts_with_its_cookies() {
+    let test_name = "interact_on_an_external_browser_starts_with_its_cookies";
+    let (site, seed) = seed_site("<p>start</p>").await;
+    let Some(mut other_client) = common::launch_external_chrome_with_cookie(test_name, &seed).await else {
+        return;
+    };
+    let mut config = config();
+    config.browser.endpoint = Some(other_client.websocket_address().clone());
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = interact(&engine, &seed, vec![execute_js("return 1")]).await;
+    let received = site.received_requests().await.expect("recording");
+    let sent = received
+        .iter()
+        .find(|request| request.url.path() == "/")
+        .and_then(|request| request.headers.get("cookie"))
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let _ = other_client.close().await;
+    let _ = other_client.wait().await;
+    result.unwrap_or_else(|error| panic!("{test_name}: interact must succeed: {error:?}"));
+    assert!(
+        sent.contains("owner=1"),
+        "{test_name}: the interaction's page must start with the external browser's cookie, sent {sent:?}"
+    );
+}
+
 /// Ten actions that send nothing cost little more than none: the check waits only while a
 /// request is being judged.
 #[tokio::test]

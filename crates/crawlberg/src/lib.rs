@@ -61,6 +61,8 @@ pub mod sitemap;
 pub mod telemetry;
 pub(crate) mod time;
 pub(crate) mod tower;
+#[cfg(test)]
+mod tracing_capture;
 pub mod traits;
 mod types;
 pub(crate) mod waf;

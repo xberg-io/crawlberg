@@ -950,6 +950,24 @@ int32_t cberg_browser_config_capture_network_events(CBERGAlefHandle handle);
 int32_t cberg_browser_config_session_affinity(CBERGAlefHandle handle);
 
 /**
+ * Get the `chrome_path` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_browser_config_chrome_path(CBERGAlefHandle handle);
+
+/**
+ * Get the `chrome_args` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_browser_config_chrome_args(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */

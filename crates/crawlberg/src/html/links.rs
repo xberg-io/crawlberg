@@ -2,14 +2,14 @@
 
 use std::borrow::Cow;
 
-use tl::VDom;
 use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
-use super::real_tags::{self, StartTag};
-use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier, mask_raw_text_markup};
+use super::raw_text::MaskedHtml;
+use super::real_tags::{RealTags, StartTag};
+use super::selectors::SEL_A_HREF;
+use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -38,43 +38,30 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
     LinkType::Internal
 }
 
-/// The URL a document's relative references resolve against: the `href` of its first `<base>`
-/// that has one, decoded and joined to the document URL, or the document URL itself when there is
-/// none, it does not parse, or its scheme is `data` or `javascript` (the HTML frozen base URL steps).
-pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
-    let parser = dom.parser();
-    dom.query_selector(SEL_BASE_HREF)
-        .and_then(|mut iter| iter.next())
-        .and_then(|h| h.get(parser))
-        .and_then(|n| n.as_tag())
-        .map(|tag| get_attr(tag, "href").unwrap_or_default())
+/// The URL a document's relative references resolve against: `base_href`, the decoded `href` of
+/// its first `<base>` in tree order that has one (see [`MaskedHtml::base_href`]), joined to the
+/// document URL, or the document URL itself when there is none, it does not parse, or its scheme
+/// is `data` or `javascript` (the HTML frozen base URL steps).
+pub(crate) fn effective_base_url(base_href: Option<&str>, document_url: &Url) -> Url {
+    base_href
         // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
         // the document URL instead of requiring it to already be absolute.
-        .and_then(|href| crate::net::userinfo::resolve(document_url, &href))
+        .and_then(|href| crate::net::userinfo::resolve(document_url, href))
         .filter(|base| !matches!(base.scheme(), "data" | "javascript"))
         .unwrap_or_else(|| document_url.clone())
 }
 
-/// Extract all links from `html`, resolved against `base_url`, the document's base URL from
+/// Extract all links from `page`, resolved against `base_url`, the document's base URL from
 /// [`effective_base_url`].
 ///
-/// ~keep `html` is read a second time, on its own, rather than reusing the caller's already-parsed
-/// ~keep document: tl and html5ever's tokenizer can read a malformed `<a>` tag's boundary
-/// ~keep differently (#294), so every real `<a>` start tag is rewritten into unambiguous form,
-/// ~keep as html5ever reads it, before tl parses it for the link's text, `rel` and qualifiers.
-/// ~keep A well-formed `<a>` tag rewrites to itself, so this changes nothing for one.
-///
-/// ~keep `html` must already be masked by [`mask_raw_text_markup`]: this function's own
-/// ~keep html5ever-driven tag scan reads a raw-text element or an abruptly closed comment the
-/// ~keep way a browser does, but it never rewrites their bytes, so an unmasked one still reaches
-/// ~keep tl unchanged and tl mis-parses it exactly as it did before this rewrite existed. Both
-/// ~keep call sites (`extract.rs`, `map.rs`) already mask before calling this.
-pub(crate) fn extract_links(html: &str, base_url: &Url) -> Vec<LinkInfo> {
-    debug_assert!(
-        mask_raw_text_markup(html).as_ref() == html,
-        "extract_links requires html already masked by mask_raw_text_markup"
-    );
-    let canonical = canonicalize_anchor_tags(html);
+/// ~keep The page is parsed by tl a second time, on its own, rather than reusing the caller's
+/// ~keep already-parsed document: tl and html5ever's tokenizer can read a malformed `<a>` tag's
+/// ~keep boundary differently (#294), so every real `<a>` start tag is rewritten into
+/// ~keep unambiguous form, as html5ever read it while masking the page, before tl parses it for
+/// ~keep the link's text, `rel` and qualifiers. A well-formed `<a>` tag rewrites to itself, so
+/// ~keep this changes nothing for one.
+pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkInfo> {
+    let canonical = canonicalize_anchor_tags(&page.text, &page.anchors);
     let Ok(dom) = super::parse_html(&canonical) else {
         return Vec::new();
     };
@@ -120,14 +107,13 @@ pub(crate) fn extract_links(html: &str, base_url: &Url) -> Vec<LinkInfo> {
     links
 }
 
-/// Rewrite every real `<a>` start tag in `html` into unambiguous form: its name lower-cased, each
+/// Rewrite every real `<a>` start tag of `tags` in `html` into unambiguous form: its name lower-cased, each
 /// attribute once in source order, double-quoted, as html5ever's tokenizer reads it.
 ///
 /// A malformed tag such as `<a href=b ="x>one</a><a href="y">two</a>` makes tl read a different
 /// tag boundary, or none at all, than a real HTML parser does, so the rewritten tag is what tl
 /// parses instead. Every byte outside a rewritten tag is kept.
-fn canonicalize_anchor_tags(html: &str) -> Cow<'_, str> {
-    let tags = real_tags::scan(html, |name| name == "a");
+fn canonicalize_anchor_tags<'h>(html: &'h str, tags: &RealTags) -> Cow<'h, str> {
     let mut out = String::new();
     let mut cursor = 0;
     let mut written = String::new();
@@ -156,7 +142,7 @@ fn canonicalize_anchor_tags(html: &str) -> Cow<'_, str> {
 fn write_anchor_tag(out: &mut String, tag: &StartTag<'_>) {
     out.push_str("<a");
     for attr in tag.attrs {
-        let name = &*attr.name.local;
+        let name = &*attr.name;
         if !is_plain_attr_name(name) {
             continue;
         }
@@ -185,9 +171,15 @@ mod tests {
     use super::*;
 
     fn extract(html: &str, document_url: &str) -> Vec<LinkInfo> {
-        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let page = crate::html::mask_raw_text_markup(html);
         let document_url = Url::parse(document_url).expect("valid document URL");
-        extract_links(html, &effective_base_url(&dom, &document_url))
+        extract_links(&page, &effective_base_url(page.base_href.as_deref(), &document_url))
+    }
+
+    /// The base URL of `html` served at `document_url`.
+    fn base_of(html: &str, document_url: &Url) -> String {
+        let page = crate::html::mask_raw_text_markup(html);
+        effective_base_url(page.base_href.as_deref(), document_url).into()
     }
 
     /// The pre-fix behaviour: tl parses `html` directly, with no canonicalization pass first.
@@ -251,18 +243,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "requires html already masked")]
-    fn extract_links_panics_in_debug_when_the_caller_forgot_to_mask() {
-        // ~keep `<title>` content is raw text: a real parser never reads the `<a href=1>` inside
-        // ~keep it as a tag, so `mask_raw_text_markup` always rewrites this input. Calling
-        // ~keep `extract_links` on it unmasked is the precondition violation both call sites
-        // ~keep (`extract.rs`, `map.rs`) avoid by masking first.
-        let html = "<title>x<a href=1></title>";
-        let base_url = Url::parse("https://example.com/").expect("valid base URL");
-        let _ = extract_links(html, &base_url);
-    }
-
-    #[test]
     fn a_malformed_attribute_name_is_left_out_of_the_rewritten_tag() {
         // ~keep html5ever's attribute-name state treats a `"` as a parse error but still appends
         // ~keep it to the name (only whitespace, `/`, `>` and `=` end the name), so `x"y` is a
@@ -270,19 +250,19 @@ mod tests {
         // ~keep inside the tag, which reopens exactly the tag-boundary ambiguity this rewrite
         // ~keep exists to remove: tl would read the embedded `"` as starting a new attribute value.
         let html = r#"<a x"y="1" href="/ok">z</a>"#;
-        let tags = real_tags::scan(html, |name| name == "a");
-        let tag = tags.iter().next().expect("one tag");
+        let page = crate::html::mask_raw_text_markup(html);
+        let tag = page.anchors.iter().next().expect("one tag");
         assert_eq!(
             tag.attrs.len(),
             2,
             "expected html5ever to read two attributes, got {:?}",
             tag.attrs
                 .iter()
-                .map(|a| (&*a.name.local, &*a.value))
+                .map(|a| (&*a.name, a.value.as_str()))
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            &*tag.attrs[0].name.local, "x\"y",
+            &*tag.attrs[0].name, "x\"y",
             "the malformed name html5ever actually read"
         );
 
@@ -420,12 +400,7 @@ mod tests {
             ("https://cdn.example/assets/", "https://cdn.example/assets/"),
         ] {
             let html = format!(r#"<base href="{href}">"#);
-            let dom = crate::html::parse_html(&html).expect("valid HTML");
-            assert_eq!(
-                effective_base_url(&dom, &document_url).as_str(),
-                expected,
-                "for base {href:?}"
-            );
+            assert_eq!(base_of(&html, &document_url), expected, "for base {href:?}");
         }
     }
 
@@ -451,8 +426,7 @@ mod tests {
         assert_eq!(links[0].url, "http://example.com/a");
 
         let html = r#"<base href="http://user:s3cret@example.com/dir/"><a href="page.html">link</a>"#;
-        let dom = crate::html::parse_html(html).expect("valid HTML");
         let document = Url::parse("https://example.com/").expect("valid base URL");
-        assert_eq!(effective_base_url(&dom, &document).as_str(), "http://example.com/dir/");
+        assert_eq!(base_of(html, &document), "http://example.com/dir/");
     }
 }

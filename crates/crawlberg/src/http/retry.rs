@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::status::error_status;
-use super::{HttpResponse, http_fetch};
+use super::{Fetched, FetchedPage, RefreshRedirects, fetch_as};
 use crate::defaults::dispatch::compute_backoff_ms;
 use crate::error::CrawlError;
 use crate::types::CrawlConfig;
@@ -29,20 +29,24 @@ pub(crate) fn should_retry_error(error: &CrawlError, retry_codes: &[u16]) -> boo
 ///
 /// Retries the errors [`should_retry_error`] admits for `config.retry_codes`. Uses the
 /// crate-wide exponential backoff (see [`compute_backoff_ms`]), seeded from
-/// `config.retry_initial_delay_ms` and capped at `config.retry_max_delay_ms`.
+/// `config.retry_initial_delay_ms` and capped at `config.retry_max_delay_ms`. `refresh` says
+/// whether each attempt follows a refresh as a redirect, under the crawl's chain rules, and
+/// `fetched` picks the 2xx WAF decision each attempt gets.
 pub(crate) async fn fetch_with_retry(
     url: &str,
     config: &CrawlConfig,
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
-) -> Result<HttpResponse, CrawlError> {
+    refresh: RefreshRedirects,
+    fetched: Fetched,
+) -> Result<FetchedPage, CrawlError> {
     let retries = config.retry_count;
     let retry_codes = config.retry_codes.clone();
 
     let mut last_err = None;
     for attempt in 0..=retries {
-        match http_fetch(url, config, extra_headers, client).await {
-            Ok(resp) => return Ok(resp),
+        match fetch_as(url, config, extra_headers, client, refresh, fetched).await {
+            Ok(page) => return Ok(page),
             Err(e) => {
                 let should_retry = should_retry_error(&e, &retry_codes);
                 if should_retry && attempt < retries {
@@ -63,6 +67,7 @@ pub(crate) async fn fetch_with_retry(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::http::status::HttpStatus;
     use crate::http::status_error;
 
     fn from_status(status: u16) -> CrawlError {
@@ -87,6 +92,36 @@ mod tests {
                     "{error:?} must NOT retry when only {other} is listed"
                 );
             }
+        }
+    }
+
+    /// Guard, not a red-green test: a 403 and a WAF block carry their response status since
+    /// crawlberg#133, and `should_retry_error` gates on the error variant before it reads that
+    /// status — so listing 403, 429 or 503 in `retry_codes` must not make either retryable.
+    #[test]
+    fn a_forbidden_or_a_waf_block_is_not_retried_even_when_its_status_is_listed() {
+        let listed = [403_u16, 429, 503];
+        let cases = [
+            (CrawlError::forbidden_with_source("forbidden", HttpStatus(403)), 403_u16),
+            (
+                CrawlError::waf_blocked_with_source("datadome", "waf/blocked on 429", HttpStatus(429)),
+                429,
+            ),
+            (
+                CrawlError::waf_blocked_with_source("cloudflare", "waf/blocked on 503", HttpStatus(503)),
+                503,
+            ),
+        ];
+        for (error, status) in cases {
+            assert_eq!(
+                error_status(&error),
+                Some(status),
+                "the error must carry its status: {error:?}"
+            );
+            assert!(
+                !should_retry_error(&error, &listed),
+                "{error:?} must not be retried even with retry_codes {listed:?}"
+            );
         }
     }
 

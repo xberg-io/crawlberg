@@ -99,12 +99,13 @@ impl From<CliBrowserMode> for BrowserMode {
 
 /// Validate that a `--browser-endpoint` value is a WebSocket URL (`ws://` or `wss://`).
 pub fn parse_browser_endpoint(value: &str) -> Result<String, String> {
-    if value.starts_with("ws://") || value.starts_with("wss://") {
+    if crawlberg::net::is_websocket_scheme(value) {
         Ok(value.to_owned())
     } else {
-        Err(format!(
-            "browser endpoint must be a WebSocket URL starting with ws:// or wss://, got: {value:?}"
-        ))
+        // ~keep Do not echo the value, not even redacted: the same rule as the library's own
+        // ~keep `browser.endpoint` check. The endpoint is a capability (its userinfo, path or
+        // ~keep `?token=` drives the browser), and callers may log this error.
+        Err("browser endpoint must be a WebSocket URL starting with ws:// or wss://".to_owned())
     }
 }
 
@@ -447,10 +448,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_browser_endpoint_accepts_upper_and_mixed_case_ws_schemes() {
+        assert!(parse_browser_endpoint("WS://127.0.0.1:9222/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("WSS://remote.host/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("Ws://127.0.0.1:9222/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("wSs://remote.host/devtools/browser/abc").is_ok());
+    }
+
+    #[test]
     fn parse_browser_endpoint_rejects_non_ws_urls() {
         assert!(parse_browser_endpoint("http://127.0.0.1:9222").is_err());
         assert!(parse_browser_endpoint("https://remote.host").is_err());
         assert!(parse_browser_endpoint("127.0.0.1:9222").is_err());
+        assert!(parse_browser_endpoint("HTTP://127.0.0.1:9222").is_err());
+    }
+
+    #[test]
+    fn parse_browser_endpoint_rejects_host_less_ws_url() {
+        assert!(parse_browser_endpoint("ws://").is_err());
+    }
+
+    #[test]
+    fn parse_browser_endpoint_accepts_no_slash_and_whitespace_padded_ws_forms() {
+        // ~keep `url::Url::parse` treats `ws`/`wss` as WHATWG special schemes, so a missing
+        // `//` still parses into an authority (`ws:host` == `ws://host/`), and it strips
+        // leading/trailing space before parsing at all. Both forms carry a real host, so
+        // both are accepted like any other spelling of the same address.
+        assert!(parse_browser_endpoint("ws:127.0.0.1:9222").is_ok());
+        assert!(parse_browser_endpoint(" ws://127.0.0.1:9222 ").is_ok());
+    }
+
+    #[test]
+    fn parse_browser_endpoint_error_does_not_echo_the_endpoint() {
+        let err = parse_browser_endpoint("http://user:hunter2@127.0.0.1:9222/devtools?token=abc123").unwrap_err();
+        assert!(
+            !err.contains("hunter2"),
+            "password must not survive into the error, got: {err}"
+        );
+        assert!(
+            !err.contains("abc123"),
+            "the endpoint token must not survive into the error, got: {err}"
+        );
     }
 
     #[test]
