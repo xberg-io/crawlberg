@@ -197,14 +197,20 @@ jobs:
 
       # ~keep Scoped to -p crawlberg: it owns every feature flag, and a workspace-wide run would
       # ~keep drag in ext-php-rs's `php` binary and the FFI/py build scripts for no extra
-      # ~keep coverage. --no-dev-deps keeps each configuration to a library build; the test
-      # ~keep targets are already covered by the --all-features clippy run in the `rust` job.
+      # ~keep coverage. --no-dev-deps keeps each configuration to a library build, so no
+      # ~keep dev-dependency feature can hide a library that fails to compile on its own.
       # ~keep No --locked: cargo-hack reruns cargo against crates/crawlberg/Cargo.toml directly
       # ~keep and that rejects --locked with "cannot update the lock file", even though the lock
       # ~keep comes back byte-identical. The diff check below is the stronger guarantee anyway --
       # ~keep it fails on real drift rather than on cargo wanting write access.
       - name: Clippy each feature
         run: cargo hack clippy -p crawlberg --each-feature --no-dev-deps -- -D warnings
+        shell: bash
+
+      # ~keep The test targets build under each feature too: a test can use an item that only
+      # ~keep another feature compiles in, and the --all-features run cannot see that.
+      - name: Clippy each feature with the test targets
+        run: cargo hack clippy -p crawlberg --each-feature --all-targets -- -D warnings
         shell: bash
 
       - name: Assert the lockfile did not drift
