@@ -31,8 +31,12 @@
 		},
 		{
 			"type": "contains",
-			"field": "metadata.description",
-			"value": "broken HTML"
+			"field": "metadata.title",
+			"value": "Malformed Page"
+		},
+		{
+			"type": "is_empty",
+			"field": "metadata.description"
 		}
 	]
 }
