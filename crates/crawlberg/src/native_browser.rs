@@ -16,12 +16,30 @@ use crate::types::{BrowserWait, CookieInfo, CrawlConfig, ResponseMeta};
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static NATIVE_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Render `url` with the native backend. Returns the page, the URLs the SSRF policy refused for
+/// requests the page sent, and the redirects the backend followed within `max_redirects`.
+/// ~keep Only the browser tier in `browser.rs` calls it; a native scrape renders each
+/// ~keep hop with `native_browser_render`.
+#[cfg(any(feature = "browser", test))]
 pub(crate) async fn native_browser_fetch(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+    let mut jar = to_native_cookies(prior_cookies);
+    native_browser_render(url, config, &mut jar, native_executor).await
+}
+
+/// Render `url` with the native backend, starting from the cookies in `jar` and leaving in it the
+/// jar the render ended with. The records keep their `secure` and `http_only` flags, so a chain
+/// of renders carries its cookies from one render to the next as one browser would.
+pub(crate) async fn native_browser_render(
+    url: &str,
+    config: &CrawlConfig,
+    jar: &mut Vec<NBCookie>,
+    native_executor: &NativeBrowserExecutor,
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -41,7 +59,7 @@ pub(crate) async fn native_browser_fetch(
     }
     let _guard = SessionGuard;
 
-    native_browser_fetch_inner(url, config, prior_cookies, native_executor)
+    native_browser_fetch_inner(url, config, jar, native_executor)
         .instrument(span)
         .await
 }
@@ -49,9 +67,9 @@ pub(crate) async fn native_browser_fetch(
 async fn native_browser_fetch_inner(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    jar: &mut Vec<NBCookie>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -73,7 +91,7 @@ async fn native_browser_fetch_inner(
     }
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-    let native_config = build_native_config(config, prior_cookies, ssrf)?;
+    let native_config = build_native_config(config, jar.clone(), ssrf)?;
 
     let timeout = config.browser.timeout;
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
@@ -114,8 +132,9 @@ async fn native_browser_fetch_inner(
             .into_iter()
             .map(response_meta_from_event)
             .collect(),
-        cookies: rendered.cookies.into_iter().map(cookie_info_from_native).collect(),
+        cookies: rendered.cookies.iter().cloned().map(cookie_info_from_native).collect(),
     };
+    *jar = rendered.cookies;
 
     let refused = crate::net::browser_policy::take_refused(&refused);
     let response = HttpResponse {
@@ -135,7 +154,7 @@ async fn native_browser_fetch_inner(
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
     };
-    Ok((response, refused))
+    Ok((response, refused, rendered.redirects))
 }
 
 /// Content type assumed when the render reports none.
@@ -171,6 +190,7 @@ fn native_wait_until(wait: &BrowserWait) -> crawlberg_browser::adapter::NativeBr
 ///
 /// `secure` and `http_only` are not tracked by [`CookieInfo`], so they are sent
 /// as `false`; the render only needs name/value/domain/path to replay a session.
+#[cfg(any(feature = "browser", test))]
 fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
     prior_cookies
         .unwrap_or(&[])
@@ -182,6 +202,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
             path: c.path.clone(),
             secure: false,
             http_only: false,
+            host_only: false,
         })
         .collect()
 }
@@ -189,7 +210,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 /// Assemble the native backend's render configuration from the crawl config.
 fn build_native_config(
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Vec<NBCookie>,
     ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
 ) -> Result<crawlberg_browser::adapter::NativeBrowserConfig, CrawlError> {
     Ok(crawlberg_browser::adapter::NativeBrowserConfig {
@@ -200,7 +221,7 @@ fn build_native_config(
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy_url: resolve_proxy_url(config)?,
-        prior_cookies: to_native_cookies(prior_cookies),
+        prior_cookies,
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
         wait_selector: config.browser.wait_selector.clone(),
@@ -209,6 +230,7 @@ fn build_native_config(
         ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
+        max_redirects: Some(config.max_redirects),
     })
 }
 
@@ -275,7 +297,7 @@ mod tests {
         );
 
         let native =
-            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
+            build_native_config(&config, Vec::new(), test_validator(&config)).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),
@@ -305,7 +327,7 @@ mod tests {
             std::collections::HashMap::new(),
         );
 
-        let scoped = build_native_config(&config, None, test_validator(&config))
+        let scoped = build_native_config(&config, Vec::new(), test_validator(&config))
             .expect("an admitted config must build")
             .origin_headers
             .expect("the header must be scoped to the seed host");
@@ -321,7 +343,7 @@ mod tests {
         };
 
         let native =
-            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
+            build_native_config(&config, Vec::new(), test_validator(&config)).expect("an admitted config must build");
         assert_eq!(native.origin_headers, None);
     }
 
@@ -479,5 +501,67 @@ mod tests {
         assert_eq!(meta.etag.as_deref(), Some("\"abc\""));
         assert_eq!(meta.last_modified, None);
         assert_eq!(meta.cache_control, None);
+    }
+
+    /// Render `http://<host>:<port>/` with one prior cookie for `domain`; return the Cookie
+    /// headers the page request carried.
+    async fn cookies_sent_with_a_prior_cookie(host: &str, domain: &str) -> Vec<String> {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        let executor =
+            NativeBrowserExecutor::new(crawlberg_browser::adapter::NativeBrowserExecutorConfig::with_workers(1))
+                .expect("a single-worker executor must start");
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: crate::types::BrowserBackend::Native,
+                mode: crate::types::BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let prior = [CookieInfo {
+            name: "session".to_owned(),
+            value: "abc".to_owned(),
+            domain: Some(domain.to_owned()),
+            path: Some("/".to_owned()),
+        }];
+
+        let url = format!("http://{host}:{}/", site.address().port());
+        native_browser_fetch(&url, &config, Some(&prior), &executor)
+            .await
+            .expect("the render must succeed");
+
+        let requests = site.received_requests().await.expect("request recording is on");
+        requests
+            .iter()
+            .flat_map(|r| r.headers.get_all("cookie").iter())
+            .filter_map(|v| v.to_str().ok().map(str::to_owned))
+            .collect()
+    }
+
+    /// The caller's prior cookies start the render's jar: the page request carries them.
+    #[tokio::test]
+    async fn a_native_fetch_sends_the_prior_cookies_it_is_given() {
+        let sent = cookies_sent_with_a_prior_cookie("127.0.0.1", "127.0.0.1").await;
+        assert_eq!(sent, ["session=abc"], "the page request must carry the prior cookie");
+    }
+
+    /// A prior cookie names its domain, so it also goes to that domain's subdomains.
+    #[tokio::test]
+    async fn a_native_fetch_sends_a_prior_cookie_to_a_subdomain_of_its_domain() {
+        let sent = cookies_sent_with_a_prior_cookie("a.localhost", "localhost").await;
+        assert_eq!(
+            sent,
+            ["session=abc"],
+            "a.localhost must get the prior cookie for localhost"
+        );
     }
 }

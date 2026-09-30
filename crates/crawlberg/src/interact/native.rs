@@ -96,6 +96,7 @@ fn build_native_config(
         ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
+        max_redirects: Some(config.max_redirects),
     })
 }
 

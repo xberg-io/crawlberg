@@ -137,6 +137,41 @@ async fn native_follows_redirect() {
     );
 }
 
+/// The native backend counts the one redirect of a one-hop chain, as HTTP mode does.
+#[tokio::test]
+async fn native_counts_a_landing_on_another_url_as_one_redirect() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(301).append_header("location", "/final"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>Redirected</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", mock.uri()))
+        .await
+        .expect("the crawl must succeed");
+    assert_eq!(
+        (result.redirect_count, result.final_url.as_str()),
+        (1, format!("{}/final", mock.uri()).as_str()),
+        "error={:?}",
+        result.error
+    );
+}
+
 #[tokio::test]
 async fn native_respects_timeout() {
     let url = "http://192.0.2.1:80/timeout-target";
@@ -574,4 +609,525 @@ async fn native_keeps_the_page_and_lists_the_refused_requests() {
         received.is_empty(),
         "the denied address must receive nothing: {received:?}"
     );
+}
+
+/// `/` answers 301 to `/r1`, `/r1` to `/r2`, and so on for `hops` redirects; the last hop
+/// lands on a 200 page.
+async fn native_redirect_chain(hops: usize) -> MockServer {
+    let mock = MockServer::start().await;
+    for hop in 0..hops {
+        let from = if hop == 0 { "/".to_owned() } else { format!("/r{hop}") };
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(301).append_header("location", format!("/r{}", hop + 1)))
+            .mount(&mock)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/r{hops}")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+    mock
+}
+
+async fn native_requested_paths(mock: &MockServer) -> Vec<String> {
+    mock.received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect()
+}
+
+/// A crawl of `site` at `max_redirects` with `mode`, as (redirect count, final path, status).
+async fn native_chain_outcome(
+    site: &MockServer,
+    mode: crawlberg::BrowserMode,
+    max_redirects: usize,
+) -> (usize, String, u16) {
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        max_redirects,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig { mode, ..c })
+    };
+    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the crawl must succeed");
+    let status = result.pages.first().map_or(0, |page| page.status_code);
+    (
+        result.redirect_count,
+        result.final_url.trim_start_matches(&site.uri()).to_owned(),
+        status,
+    )
+}
+
+/// The native backend stops a chain longer than `max_redirects` where HTTP mode stops it, in
+/// crawl and in scrape (#115).
+#[tokio::test]
+async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
+    let http = native_chain_outcome(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
+    assert_eq!(
+        http,
+        (2, "/r2".to_owned(), 301),
+        "HTTP mode stops on the 3xx at the limit"
+    );
+
+    let site = native_redirect_chain(5).await;
+    assert_eq!(
+        native_chain_outcome(&site, crawlberg::BrowserMode::Always, 2).await,
+        http,
+        "the native backend must report the chain the way HTTP mode does"
+    );
+    let requested = native_requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| ["/r3", "/r4", "/r5"].contains(&p.as_str())),
+        "the native backend must not request past the limit, requested: {requested:?}"
+    );
+
+    let site = native_redirect_chain(5).await;
+    let config = CrawlConfig {
+        max_redirects: 2,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the scrape must succeed");
+    assert_eq!(
+        (scraped.status_code, scraped.final_url.trim_start_matches(&site.uri())),
+        (301, "/r2"),
+        "the scrape must stop on the 3xx at the limit"
+    );
+    let requested = native_requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| p == "/r3"),
+        "the scrape must not request past the limit, requested: {requested:?}"
+    );
+}
+
+/// A navigation the page's script starts counts as one redirect in the native backend, as it
+/// does in Chrome: past the limit the page stays where it is (#115).
+#[tokio::test]
+async fn native_counts_a_script_navigation_against_max_redirects() {
+    for (max_redirects, expected) in [(0, (0, "/".to_owned(), 200)), (1, (1, "/after".to_owned(), 200))] {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "<html><body><p>start</p><script>location.replace('/after')</script></body></html>",
+                "text/html",
+            ))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/after"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>after</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        assert_eq!(
+            native_chain_outcome(&site, crawlberg::BrowserMode::Always, max_redirects).await,
+            expected,
+            "max_redirects={max_redirects}"
+        );
+        if max_redirects == 0 {
+            let requested = native_requested_paths(&site).await;
+            assert!(
+                !requested.iter().any(|p| p == "/after"),
+                "the native backend must not follow the script past the limit, requested: {requested:?}"
+            );
+        }
+    }
+}
+
+/// A native scrape follows a meta refresh within `max_redirects` and ends where HTTP mode ends:
+/// on the refresh target within the limit, on the refresh page past it (#530).
+#[tokio::test]
+async fn native_scrape_follows_a_meta_refresh_where_http_mode_does() {
+    for (max_redirects, expected) in [(0, (200, "/".to_owned())), (1, (200, "/n".to_owned()))] {
+        for mode in [crawlberg::BrowserMode::Never, crawlberg::BrowserMode::Always] {
+            let site = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    r#"<html><head><meta http-equiv="refresh" content="0; url=/n"></head><body>refresh</body></html>"#,
+                    "text/html",
+                ))
+                .mount(&site)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/n"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+                .mount(&site)
+                .await;
+            let config = CrawlConfig {
+                max_redirects,
+                respect_robots_txt: false,
+                ..native_config(|c| BrowserConfig {
+                    mode: mode.clone(),
+                    ..c
+                })
+            };
+            let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+                .await
+                .expect("the scrape must succeed");
+            assert_eq!(
+                (
+                    scraped.status_code,
+                    scraped.final_url.trim_start_matches(&site.uri()).to_owned()
+                ),
+                expected,
+                "{mode:?} at max_redirects={max_redirects}: the scrape must end where HTTP mode ends"
+            );
+        }
+    }
+}
+
+/// A native scrape through a meta refresh keeps the cookies the refresh page set: the request to
+/// the refresh target carries them, the result lists them, and an HttpOnly cookie keeps its flag
+/// on the next hop. A Secure cookie that the page set over plain http is not stored.
+#[tokio::test]
+async fn native_scrape_through_a_meta_refresh_keeps_the_refresh_page_cookies() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    r#"<html><head><meta http-equiv="refresh" content="0; url=/n"></head><body>refresh</body></html>"#,
+                    "text/html",
+                )
+                .append_header("set-cookie", "first=1; Path=/")
+                .append_header("set-cookie", "hidden=h; Path=/; HttpOnly")
+                .append_header("set-cookie", "sec=s; Path=/; Secure"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<html><body>landed</body></html>", "text/html")
+                .append_header("set-cookie", "second=2; Path=/"),
+        )
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig {
+            eval_script: Some("document.cookie".to_owned()),
+            ..c
+        })
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url.trim_start_matches(&site.uri()), "/n");
+    let target_request = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .into_iter()
+        .find(|r| r.url.path() == "/n")
+        .expect("the scrape must request the refresh target");
+    let sent: Vec<String> = target_request
+        .headers
+        .get_all("cookie")
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or_default().split("; ").map(str::to_owned))
+        .collect();
+    assert!(
+        sent.iter().any(|c| c == "first=1") && sent.iter().any(|c| c == "hidden=h"),
+        "the request to the refresh target must carry the refresh page's cookies, sent {sent:?}"
+    );
+    assert!(
+        !sent.iter().any(|c| c.starts_with("sec=")),
+        "a Secure cookie must not go out over plain http, sent {sent:?}"
+    );
+    let browser = scraped.browser.expect("a native render reports browser extras");
+    let mut names: Vec<&str> = browser.cookies.iter().map(|c| c.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["first", "hidden", "second"],
+        "the result must list every cookie of the scrape, and no Secure cookie set over http"
+    );
+    let script_cookies = browser
+        .eval_result
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        script_cookies.contains("first=1") && script_cookies.contains("second=2"),
+        "the target page's script must see the carried cookie and its own, saw {script_cookies:?}"
+    );
+    assert!(
+        !script_cookies.contains("hidden="),
+        "an HttpOnly cookie must stay hidden from script on the next hop, saw {script_cookies:?}"
+    );
+}
+
+/// The names of the cookies that the request for `at` sent to `site`.
+async fn cookies_sent_to(site: &MockServer, at: &str) -> Vec<String> {
+    let request = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .into_iter()
+        .find(|r| r.url.path() == at)
+        .unwrap_or_else(|| panic!("the scrape must request {at}"));
+    request
+        .headers
+        .get_all("cookie")
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or_default().split("; ").map(str::to_owned))
+        .collect()
+}
+
+/// A page on `127.0.0.1` sets a cookie for `Domain=localhost` and sends the scrape to
+/// `localhost/n` with the response that `first` builds for that target. The request to
+/// `localhost` must not carry the cookie, because the host that set it is not in that domain
+/// (RFC 6265 section 5.3).
+async fn assert_a_foreign_domain_cookie_does_not_reach_the_next_host(first: impl FnOnce(&str) -> ResponseTemplate) {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            first(&target)
+                .append_header("set-cookie", "own=1; Path=/")
+                .append_header("set-cookie", "inj=1; Path=/; Domain=localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://127.0.0.1:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert!(
+        !sent.iter().any(|c| c.starts_with("inj=")),
+        "a cookie that 127.0.0.1 set for Domain=localhost must not reach localhost, sent {sent:?}"
+    );
+    let browser = scraped.browser.expect("a native render reports browser extras");
+    let names: Vec<&str> = browser.cookies.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["own"], "the jar must not store the foreign-domain cookie");
+}
+
+#[tokio::test]
+async fn native_scrape_refuses_a_domain_cookie_for_another_host_through_a_302() {
+    assert_a_foreign_domain_cookie_does_not_reach_the_next_host(|target| {
+        ResponseTemplate::new(302).append_header("location", target)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_scrape_refuses_a_domain_cookie_for_another_host_through_a_meta_refresh() {
+    assert_a_foreign_domain_cookie_does_not_reach_the_next_host(|target| {
+        ResponseTemplate::new(200).set_body_raw(
+            format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+            "text/html",
+        )
+    })
+    .await;
+}
+
+/// A cookie that `a.localhost` sets without a `Domain` attribute is host-only: the carried jar
+/// sends it back to `a.localhost` only, not to `b.a.localhost` after a meta refresh. The cookie
+/// set with `Domain=a.localhost` goes to both (RFC 6265 section 5.3 step 6).
+#[tokio::test]
+async fn native_scrape_sends_a_host_only_cookie_to_its_own_host_only_across_a_meta_refresh() {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://b.a.localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+                    "text/html",
+                )
+                .append_header("set-cookie", "host=1; Path=/")
+                .append_header("set-cookie", "domain=1; Path=/; Domain=a.localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://a.localhost:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert_eq!(
+        sent,
+        ["domain=1"],
+        "only the Domain=a.localhost cookie may reach b.a.localhost"
+    );
+}
+
+/// A cookie that `a.localhost` sets for `Domain=localhost` does not reach `b.localhost` after a
+/// meta refresh, because `localhost` is a public suffix (RFC 6265bis section 5.7 step 9).
+#[tokio::test]
+async fn native_scrape_refuses_a_public_suffix_domain_cookie_across_a_meta_refresh() {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://b.localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+                    "text/html",
+                )
+                .append_header("set-cookie", "own=1; Path=/")
+                .append_header("set-cookie", "lh=1; Path=/; Domain=localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://a.localhost:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert!(
+        sent.is_empty(),
+        "a cookie that a.localhost set for Domain=localhost must not reach b.localhost, sent {sent:?}"
+    );
+}
+
+/// A native scrape through a meta refresh lists the addresses the SSRF policy refused on every
+/// hop: the refresh page's script and the landing page's `fetch()`.
+#[tokio::test]
+async fn native_scrape_through_a_meta_refresh_lists_the_refused_requests_of_every_hop() {
+    let site = MockServer::start().await;
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("// denied"))
+        .mount(&denied)
+        .await;
+    let script = format!("http://127.0.0.1:{}/denied.js", denied.address().port());
+    let fetched = format!("http://127.0.0.1:{}/secret", denied.address().port());
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!(
+                r#"<html><head><meta http-equiv="refresh" content="0; url=/n"><script src={script:?}></script></head><body>refresh</body></html>"#
+            ),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<html><body><p>landed</p><script>fetch({fetched:?}).catch(() => {{}});</script></body></html>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: crawlberg::BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            extra_wait: Some(Duration::from_millis(500)),
+            ..BrowserConfig::default()
+        },
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..CrawlConfig::builder()
+            .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+            .build()
+    };
+    let seed = format!("http://localhost:{}/", site.address().port());
+
+    let result = scrape(&engine_with(config), &seed)
+        .await
+        .expect("the scrape must succeed");
+
+    assert!(
+        result.html.contains("landed"),
+        "the scrape must land on /n: {}",
+        result.html
+    );
+    let mut listed = result.ssrf_refused_urls.clone();
+    listed.sort();
+    let mut expected = vec![script, fetched];
+    expected.sort();
+    assert_eq!(
+        listed, expected,
+        "the result must list the refused addresses of both hops"
+    );
+}
+
+/// A native scrape of a seed that answers 404 fails with `not_found` as HTTP mode does, also
+/// when the seed has no trailing slash and the page's URL gains one (#529).
+#[tokio::test]
+async fn native_scrape_of_a_missing_seed_without_a_trailing_slash_is_not_found() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw("<html><body>missing</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let seed = site.uri();
+    assert!(!seed.ends_with('/'), "the seed must have no trailing slash: {seed}");
+
+    for mode in [crawlberg::BrowserMode::Never, crawlberg::BrowserMode::Always] {
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..native_config(|c| BrowserConfig {
+                mode: mode.clone(),
+                ..c
+            })
+        };
+        match scrape(&engine_with(config), &seed).await {
+            Err(crawlberg::CrawlError::NotFound { .. }) => {}
+            other => panic!("{mode:?}: a missing seed must fail with not_found, got {other:?}"),
+        }
+    }
 }
