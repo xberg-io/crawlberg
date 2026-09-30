@@ -404,7 +404,8 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
         )
         .await;
-        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll))
+            .expect("no proxy, so the client must build");
         let url = format!("http://{addr}/").parse::<Url>().expect("valid URL");
 
         let stopped = client
@@ -428,7 +429,8 @@ mod tests {
             "HTTP/1.1 301 Moved Permanently\r\nLocation: http://{end}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
         let (start, _) = recording_server(redirect).await;
-        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll))
+            .expect("no proxy, so the client must build");
         let url = format!("http://{start}/").parse::<Url>().expect("valid URL");
 
         let stopped = client

@@ -1489,7 +1489,7 @@ async fn a_stealth_page_fetches_through_the_context_proxy() {
 
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL")),
+        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"), None),
     )
     .await
     .expect("the fetch must finish")
@@ -2143,7 +2143,8 @@ async fn a_counted_stealth_navigation_ends_on_the_redirect_at_the_limit() {
         ("/b", &ok_response("text/html", "<p>b</p>")),
     ]))
     .await;
-    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
     assert!(
         page.stealth_client.is_some(),
