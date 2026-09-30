@@ -620,7 +620,8 @@ async fn launch_endpoint_chrome(
     }
 }
 
-/// A `--proxy-server` or `--proxy-bypass-list` in `chrome_args` never replaces the configured
+/// A Chrome proxy switch in `chrome_args` (`--proxy-server`, `--proxy-bypass-list`,
+/// `--no-proxy-server`, `--proxy-pac-url` or `--proxy-auto-detect`) never replaces the configured
 /// proxy: every entry point sends a remote page and a loopback page through it.
 #[tokio::test]
 async fn a_caller_proxy_flag_never_replaces_the_configured_proxy() {
@@ -632,6 +633,9 @@ async fn a_caller_proxy_flag_never_replaces_the_configured_proxy() {
     for flag in [
         format!("--proxy-server=http://{caller}"),
         "--proxy-bypass-list=*.internal".to_owned(),
+        "--no-proxy-server".to_owned(),
+        format!("--proxy-pac-url=data:,function FindProxyForURL(u,h){{return \"PROXY {caller}\";}}"),
+        "--proxy-auto-detect".to_owned(),
     ] {
         for target in [TARGET, loopback.as_str()] {
             for entry in [

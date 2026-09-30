@@ -181,9 +181,10 @@ pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
 /// [`apply_default_args`] has already left out any default they replace.
 ///
 /// The configured proxy wins over the caller's flags, as it does on a pooled or connected
-/// page, whose browser context is made with it: a caller `--proxy-server` or
-/// `--proxy-bypass-list` is dropped with a warning that names the switch but not its value,
-/// and loopback requests always go through the proxy.
+/// page, whose browser context is made with it: a caller `--proxy-server`,
+/// `--proxy-bypass-list`, `--no-proxy-server`, `--proxy-pac-url` or `--proxy-auto-detect` is
+/// dropped with a warning that names the switch but not its value, and loopback requests always
+/// go through the proxy.
 ///
 /// A named binary that is missing or not executable is an error naming the path, never a
 /// fallback to chromiumoxide's own detection. `chrome_args` that `CrawlConfig::validate` would
@@ -223,8 +224,15 @@ pub(crate) fn apply_launch_overrides(
     Ok(builder)
 }
 
-/// The Chrome switches the configured proxy sets on a launch.
-const PROXY_SWITCHES: [&str; 2] = ["proxy-server", "proxy-bypass-list"];
+/// The Chrome switches that choose a launch's proxy. The configured proxy sets the first two;
+/// Chrome reads the other three before `--proxy-server`, so each of them would replace it.
+const PROXY_SWITCHES: [&str; 5] = [
+    "proxy-server",
+    "proxy-bypass-list",
+    "no-proxy-server",
+    "proxy-pac-url",
+    "proxy-auto-detect",
+];
 
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
 /// `browser_endpoint` connect branch).
