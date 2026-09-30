@@ -2,23 +2,32 @@ use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, release_browser};
+use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let (browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    run_launched(launch_or_connect(config).await?, url, actions, config).await
+}
+
+/// Run `actions` in a browser [`launch_or_connect`] returned, then tear the browser down and
+/// remove its profile directory.
+async fn run_launched(
+    (browser, mut handler, data_dir): Launched,
+    url: &str,
+    actions: &[PageAction],
+    config: &CrawlConfig,
+) -> Result<InteractionResult, CrawlError> {
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let result = run_with_browser(&browser, url, actions, config).await;
@@ -30,9 +39,7 @@ pub(super) async fn run(
         config.browser.shutdown_timeout,
     )
     .await;
-    if let Some(dir) = data_dir {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    drop(data_dir);
 
     result
 }
@@ -106,41 +113,57 @@ async fn run_with_browser(
 
     let result = async {
         prepare_page(&page, config).await?;
-        navigate_and_wait(&page, url, config).await?;
-        if let Some(ref script) = config.browser.eval_script {
-            evaluate_json(&page, script).await.map_err(|e| {
-                CrawlError::browser_error(format!(
-                    "post-navigation eval_script failed before interaction actions: {e}"
-                ))
-            })?;
-        }
-
-        let (action_results, screenshot) = run_actions(&page, actions).await;
-
-        let final_html = page
-            .content()
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-        let final_url = evaluate_json(&page, "location.href")
-            .await
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| url.to_owned());
-
-        let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
-
-        Ok(InteractionResult {
-            action_results,
-            final_html,
-            final_url,
-            screenshot,
-            screenshot_base64,
-        })
+        // ~keep The interception stays on until the page is closed: it adds the seed-host
+        // ~keep headers and the SSRF check to requests the actions send too.
+        let interceptor = crate::ssrf_intercept::start_ssrf_interception(&page, config).await?;
+        let outcome = interact_on_page(&page, url, actions, config, &interceptor).await;
+        interceptor.finish().await;
+        outcome
     }
     .await;
 
     let _ = page.close().await;
     result
+}
+
+/// Navigate, run the actions, and read the final page, under the caller's interception.
+async fn interact_on_page(
+    page: &chromiumoxide::Page,
+    url: &str,
+    actions: &[PageAction],
+    config: &CrawlConfig,
+    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
+) -> Result<InteractionResult, CrawlError> {
+    navigate_and_wait(page, url, config, interceptor).await?;
+    if let Some(ref script) = config.browser.eval_script {
+        evaluate_json(page, script).await.map_err(|e| {
+            CrawlError::browser_error(format!(
+                "post-navigation eval_script failed before interaction actions: {e}"
+            ))
+        })?;
+    }
+
+    let (action_results, screenshot) = run_actions(page, actions).await;
+
+    let final_html = page
+        .content()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
+    let final_url = evaluate_json(page, "location.href")
+        .await
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned());
+
+    let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
+
+    Ok(InteractionResult {
+        action_results,
+        final_html,
+        final_url,
+        screenshot,
+        screenshot_base64,
+    })
 }
 
 async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
@@ -154,30 +177,6 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
             .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
-    let mut extra_headers = serde_json::Map::new();
-    for (key, value) in &config.custom_headers {
-        extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
-    }
-
     Ok(())
 }
 
@@ -185,9 +184,13 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 // ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
 // ~keep redirects/client-side navigations internally, so per-request CDP interception is still
 // ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
-async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
+async fn navigate_and_wait(
+    page: &chromiumoxide::Page,
+    url: &str,
+    config: &CrawlConfig,
+    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
+) -> Result<(), CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -200,8 +203,7 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     })
     .await;
 
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    resolve_navigation_outcome(navigation, interceptor.take_blocked(), timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -228,9 +230,9 @@ fn resolve_navigation_outcome(
     };
     if let Some((blocked_url, reason)) = blocked {
         // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
-        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
-        // ~keep refused request had. xberg-io/crawlberg#180.
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `ssrf_intercept` records a URL
+        // ~keep with userinfo without it, and `ssrf_violation` redacts again as the last guard.
+        // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
@@ -433,20 +435,20 @@ fn action_type(action: &PageAction) -> &'static str {
     }
 }
 
-async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
+/// A launched or connected browser, its CDP handler, and the profile directory of a launched one.
+type Launched = (Browser, Handler, Option<ScratchProfileDir>);
+
+async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        crate::types::warn_ignored_launch_options(
+            &config.browser,
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally",
+        );
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
-        use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-        static LAUNCH_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "crawlberg-interact-{}-{}",
-            std::process::id(),
-            LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
-        ));
+        // ~keep Removed on drop, so a failed or cancelled launch or run removes it too.
+        let user_data_dir = ScratchProfileDir::create("crawlberg-interact-")?;
 
         let proxy_url = config
             .browser
@@ -454,18 +456,15 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             .as_ref()
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
-        let builder = build_interact_launch_builder(&user_data_dir, proxy_url);
-        let browser_config = builder
+        let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy_url, &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-        match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, Some(user_data_dir))),
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&user_data_dir);
-                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
-            }
-        }
+        let (browser, handler, user_data_dir) = user_data_dir
+            .launch(browser_config)
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
+        Ok((browser, handler, Some(user_data_dir)))
     }
 }
 
@@ -477,32 +476,219 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
 fn build_interact_launch_builder(
     user_data_dir: &std::path::Path,
     proxy_url: Option<&str>,
-) -> chromiumoxide::browser::BrowserConfigBuilder {
+    browser: &crate::types::BrowserConfig,
+) -> Result<chromiumoxide::browser::BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
         .disable_default_args();
-    builder = crate::browser_pool::apply_default_args(builder);
-    if let Some(proxy) = proxy_url {
+    builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
+    if let Some(proxy) = proxy_url
+        && !crate::browser_pool::caller_sets_switch(&browser.chrome_args, "proxy-server")
+    {
         // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
         // ~keep `----proxy-server=...` and the proxy was silently never applied.
         builder = builder.arg(format!("proxy-server={proxy}"));
     }
-    builder
+    crate::browser_pool::apply_launch_overrides(
+        builder,
+        "browser",
+        browser.chrome_path.as_deref(),
+        &browser.chrome_args,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// An interact run removes the profile directory of the Chrome it launched, with no Chrome
+    /// process left using it.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it() {
+        let config = CrawlConfig::default();
+        let launched = match launch_or_connect(&config).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let path = launched
+            .2
+            .as_ref()
+            .map(|dir| dir.path().to_path_buf())
+            .expect("a launched Chrome must have a profile directory");
+        assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
+
+        let before = crate::browser_pool::tests::profile_drops_here();
+        let _ = run_launched(launched, "about:blank", &[], &config).await;
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
+
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path)
+        })
+        .await
+        .expect("an interact run must stop its Chrome and remove its profile directory");
+    }
+
+    /// An interact launch that fails drops its profile directory, off the executor thread.
+    ///
+    /// ~keep No Chrome is needed: `chrome_path` names a script that exits at once, so the check
+    /// ~keep on the binary passes and the launch itself fails. The test goes through
+    /// ~keep `launch_or_connect` itself, so a call site that stops dropping the directory on a
+    /// ~keep failed launch fails here.
+    #[tokio::test]
+    async fn a_failed_interact_launch_removes_its_profile_directory() {
+        let not_chrome = crate::types::executable_temp_file("interact-launch");
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(not_chrome.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let before = crate::browser_pool::tests::profile_drops_here();
+
+        let launched = launch_or_connect(&config).await;
+
+        let _ = std::fs::remove_file(&not_chrome);
+        let Err(error) = launched else {
+            panic!("a launch of a binary that is not Chrome must fail");
+        };
+        assert!(
+            error.to_string().contains("failed to launch browser"),
+            "the launch itself must fail, not the check on the binary: {error}"
+        );
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
+    }
+
+    /// A refused `chrome_path` removes the scratch directory `launch_or_connect` created for the
+    /// launch it never made.
+    ///
+    /// ~keep Pins the call site in `launch_or_connect`: `ScratchProfileDir::create(..)?` then
+    /// ~keep `build_interact_launch_builder(..)?`, whose `?` drops the guard on a refusal. No
+    /// ~keep Chrome is needed: the check on the path fails before any process would be spawned.
+    #[tokio::test]
+    async fn an_interact_launch_refused_by_a_missing_chrome_path_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-interact-chrome")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_scratch_dir(|| launch_or_connect(&config))
+                .await;
+        assert!(
+            error.contains("cannot be used"),
+            "the error must name the path, got: {error}"
+        );
+    }
+
+    /// The same call site refused by a `chrome_args` entry instead of `chrome_path`.
+    #[tokio::test]
+    async fn an_interact_launch_refused_by_a_user_data_dir_flag_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_args: vec!["--user-data-dir=/tmp/crawlberg-interact-elsewhere".to_owned()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_scratch_dir(|| launch_or_connect(&config))
+                .await;
+        assert!(
+            error.contains("must not set --user-data-dir"),
+            "the error must name the refused flag, got: {error}"
+        );
+    }
+
+    /// An interact launch records the Chrome it starts, so dropping its profile directory stops
+    /// that Chrome and removes the directory.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn dropping_an_interact_launchs_profile_directory_stops_its_chrome() {
+        let (browser, handler, dir) = match launch_or_connect(&CrawlConfig::default()).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let dir = dir.expect("a launched Chrome must have a profile directory");
+        let path = dir.path().to_path_buf();
+
+        crate::browser_pool::tests::assert_dropping_the_profile_stops_its_chrome(browser, handler, dir, path).await;
+    }
+
+    /// An interact run cut off during its launch hands its profile teardown off the executor thread.
+    ///
+    /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
+    /// ~keep directory drops on the same path.
+    #[tokio::test]
+    async fn a_cancelled_interact_run_tears_its_profile_down_off_the_executor_thread() {
+        let config = CrawlConfig::default();
+        let before = crate::browser_pool::tests::profile_drops_here();
+
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(1), run("about:blank", &[], &config)).await;
+
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
+    }
+
     #[test]
     fn the_interact_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` fails here because the returned flags actually change.
-        let builder = build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), None);
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            None,
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            Some("http://127.0.0.1:9"),
+            &crate::types::BrowserConfig {
+                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+                ..Default::default()
+            },
+        )
+        .expect("no binary is named, so there is nothing to check");
+        let debug = format!("{builder:?}");
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
+            "the caller's proxy-server flag is missing: {debug}"
+        );
+        assert!(
+            !debug.contains("proxy-server=http://127.0.0.1:9"),
+            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
+        );
+    }
+
+    #[test]
+    fn the_interact_launch_builder_uses_the_configured_chrome_path_and_args() {
+        crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+            build_interact_launch_builder(
+                std::path::Path::new("/tmp/interact-test-profile"),
+                Some("http://127.0.0.1:9"),
+                &crate::types::BrowserConfig {
+                    chrome_path,
+                    chrome_args,
+                    ..Default::default()
+                },
+            )
+        });
     }
 
     #[test]
@@ -510,7 +696,9 @@ mod tests {
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
             Some("http://127.0.0.1:9"),
-        );
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         let debug = format!("{builder:?}");
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
@@ -549,5 +737,59 @@ mod tests {
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
         );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password or path token, though the failing origin must still be readable for debugging.
+    ///
+    /// ~keep The launch path has the same test: xberg-io/crawlberg#473 was this test missing
+    /// ~keep here after #424 added it only there, so each connect site keeps its own. A closed
+    /// ~keep local port refuses the connection immediately, so this needs no real Chrome and
+    /// ~keep stays fast; `ws://` skips chromiumoxide's `json/version` HTTP probe and goes
+    /// ~keep straight to the WebSocket handshake. The endpoint-listener test just below reaches
+    /// ~keep the same error path with a local socket that answers HTTP 418, so a closed port is
+    /// ~keep no longer the only way here; it stays because it needs no listener at all.
+    #[tokio::test]
+    async fn connect_error_prints_only_the_endpoint_origin() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            !msg.contains("b1946ac9-guid"),
+            "the CDP path token must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
+        );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 }

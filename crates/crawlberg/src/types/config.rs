@@ -15,9 +15,6 @@ const MAX_CRAWL_DEPTH: usize = 100;
 /// Upper bound accepted for `CrawlConfig::max_redirects`.
 const MAX_REDIRECT_HOPS: usize = 100;
 
-/// Proxy URL schemes reqwest can build a proxy from.
-const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
-
 /// Range a `CrawlConfig::retry_codes` entry must fall in to be a real HTTP status code.
 const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
 
@@ -50,6 +47,7 @@ fn default_tracking_params() -> Vec<String> {
     ]
 }
 mod credentials;
+mod debug;
 mod primitives;
 mod sections;
 
@@ -60,12 +58,19 @@ pub use primitives::{
     BrowserBackend, BrowserMode, BrowserWait, ContentFilterKind, CrawlStrategyKind, DocumentContentEncoding,
     ExtractionMeta,
 };
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) use sections::chrome_switch_name;
+#[cfg(test)]
+pub(crate) use sections::executable_temp_file;
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) use sections::warn_ignored_launch_options;
 pub use sections::{BrowserConfig, ContentConfig};
+pub(crate) use sections::{check_chrome_args, check_chrome_executable};
 
 pub(crate) use primitives::duration_ms;
 
 /// Configuration for crawl, scrape, and map operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct CrawlConfig {
     /// Maximum crawl depth (number of link hops from the start URL).
@@ -101,7 +106,9 @@ pub struct CrawlConfig {
     pub respect_robots_txt: bool,
     /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
     /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-    /// than raised as `CrawlError`. Default `false` preserves the historical
+    /// than raised as `CrawlError`. A WAF block reports the status of the refused
+    /// response when it is a 4xx or 5xx, and 403 when the block page came with a
+    /// 2xx status. Default `false` preserves the historical
     /// throw-on-error contract for direct fetches. Independently of this flag,
     /// 404s reached at the end of a redirect chain are *always* surfaced softly —
     /// the user opted into redirect-following, so receiving a 404 there is part of
@@ -132,9 +139,18 @@ pub struct CrawlConfig {
     /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
     /// `path`. Defaults to `false`, matching path only: a pattern anchored with `$` (e.g.
     /// `/feed/?$`) changes meaning once the query joins the matched text, so this must stay
-    /// opt-in rather than silently changing what an existing config matches.
+    /// opt-in rather than silently changing what an existing config matches. Has no effect
+    /// when [`Self::path_patterns_match_url`] is `true`.
     #[serde(default)]
     pub path_patterns_match_query: bool,
+    /// Whether `include_paths`/`exclude_paths` match against the full URL,
+    /// `scheme://host[:port]/path?query`, so a pattern can scope by host. Defaults to `false`.
+    /// When `true` it takes precedence over [`Self::path_patterns_match_query`]: the query is
+    /// part of the full URL whatever that flag says. The matched text never contains a
+    /// `user:password@`, a fragment or a default port, and the host is in punycode
+    /// (`bücher.de` is matched as `xn--bcher-kva.de`).
+    #[serde(default)]
+    pub path_patterns_match_url: bool,
     /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
     /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
     /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
@@ -153,7 +169,8 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request.
+    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+    /// does not carry them.
     #[serde(default)]
     pub custom_headers: HashMap<String, String>,
     /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -321,6 +338,14 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub dispatch: Option<DispatchProfile>,
+    /// The seed host that credentials are scoped to, and the credentials the seed URL carried.
+    ///
+    /// Set by the engine when it admits a seed URL; a caller cannot build one and leaves it
+    /// `None`.
+    #[doc(hidden)]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub credential_scope: Option<crate::net::CredentialScope>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -360,6 +385,7 @@ impl Default for CrawlConfig {
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
             path_patterns_match_query: false,
+            path_patterns_match_url: false,
             dedup_include_query: false,
             strip_tracking_params: false,
             tracking_params: default_tracking_params(),
@@ -399,6 +425,7 @@ impl Default for CrawlConfig {
             ssrf: SsrfPolicy::from_env(),
             ssrf_deny_private_explicit: None,
             dispatch: None,
+            credential_scope: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]
@@ -422,7 +449,7 @@ impl CrawlConfig {
     // ~keep Everything above is copied verbatim into all sixteen generated language bindings, so
     // ~keep it says what a caller in any language observes and nothing about Rust. The
     // ~keep maintenance facts live here instead: the sequence of checks below IS that observable
-    // ~keep order, and `validate_reports_violations_in_a_fixed_order` walks all 16 violations to
+    // ~keep order, and `validate_reports_violations_in_a_fixed_order` walks all 19 violations to
     // ~keep pin it, so reordering these calls will fail that test rather than slip through.
     pub fn validate(&self) -> Result<(), crate::error::CrawlError> {
         self.validate_max_concurrent()?;
@@ -440,6 +467,7 @@ impl CrawlConfig {
         self.validate_retry_count()?;
         self.validate_request_timeout()?;
         self.validate_browser_endpoint()?;
+        self.validate_browser_launch()?;
         Ok(())
     }
 
@@ -504,15 +532,8 @@ impl CrawlConfig {
         let Some(ref proxy) = self.proxy else {
             return Ok(());
         };
-        let parsed = url::Url::parse(&proxy.url)
-            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
-        let scheme = parsed.scheme();
-        if !SUPPORTED_PROXY_SCHEMES.contains(&scheme) {
-            return Err(CrawlError::invalid_config(format!(
-                "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
-            )));
-        }
-        Ok(())
+        let parsed = crate::proxy::parse_proxy_url(&proxy.url)?;
+        crate::proxy::ensure_supported_scheme(&parsed)
     }
 
     fn validate_auth(&self) -> Result<(), CrawlError> {
@@ -535,11 +556,11 @@ impl CrawlConfig {
 
     fn validate_path_patterns(&self) -> Result<(), CrawlError> {
         for pattern in &self.include_paths {
-            regex::Regex::new(pattern)
+            crate::helpers::PathPattern::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid include_path regex '{pattern}': {e}")))?;
         }
         for pattern in &self.exclude_paths {
-            regex::Regex::new(pattern)
+            crate::helpers::PathPattern::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid exclude_path regex '{pattern}': {e}")))?;
         }
         Ok(())
@@ -573,12 +594,15 @@ impl CrawlConfig {
 
     fn validate_browser_endpoint(&self) -> Result<(), CrawlError> {
         if let Some(ref endpoint) = self.browser.endpoint
-            && !endpoint.starts_with("ws://")
-            && !endpoint.starts_with("wss://")
+            && !crate::net::is_websocket_scheme(endpoint)
         {
-            return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
-            )));
+            // ~keep Do not echo the value, not even redacted. The endpoint is a capability
+            // ~keep (its path or `?token=` grants control of the browser), this error's
+            // ~keep Display reaches logs and API error bodies, and the field name is enough
+            // ~keep for the caller to find it.
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint must start with ws:// or wss://",
+            ));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
             return Err(CrawlError::invalid_config(
@@ -587,355 +611,29 @@ impl CrawlConfig {
         }
         Ok(())
     }
+
+    fn validate_browser_launch(&self) -> Result<(), CrawlError> {
+        if !self.launches_chrome_from_browser_config() {
+            // ~keep The fetch logs that the launch options are ignored, as it does for
+            // ~keep `browser_profile`; refusing the config here would contradict that.
+            return Ok(());
+        }
+        check_chrome_args("browser", &self.browser.chrome_args).map_err(CrawlError::invalid_config)?;
+        if let Some(ref path) = self.browser.chrome_path {
+            check_chrome_executable("browser", path).map_err(CrawlError::invalid_config)?;
+        }
+        Ok(())
+    }
+
+    /// Whether any fetch can launch Chrome from `browser.chrome_path` and `browser.chrome_args`:
+    /// not with an external endpoint or the native backend.
+    // ~keep A shared browser pool does not count: scrapes and crawls use the pool's own
+    // ~keep launch config, but `interact()` still launches Chrome from these fields.
+    fn launches_chrome_from_browser_config(&self) -> bool {
+        self.browser.endpoint.is_none() && self.browser.backend == BrowserBackend::Chromiumoxide
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
-    /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
-    /// already carries `#[serde(default)]` the field attribute is therefore not redundant — it
-    /// silently cancels the documented default. Deserialising is how every binding builds a config,
-    /// so a disagreement here ships a different default to every non-Rust caller.
-    fn assert_default_matches_empty_object<T>(name: &str)
-    where
-        T: Default + Serialize + serde::de::DeserializeOwned,
-    {
-        let from_impl = serde_json::to_value(T::default()).expect("serialize Default");
-        let parsed: T = serde_json::from_str("{}").expect("deserialize empty object");
-        let from_json = serde_json::to_value(parsed).expect("serialize deserialized");
-        assert_eq!(
-            from_impl, from_json,
-            "{name}::default() and from_str(\"{{}}\") disagree; a field-level #[serde(default)] is \
-             overriding the struct's Default impl"
-        );
-    }
-
-    #[test]
-    fn should_deserialize_empty_object_to_the_declared_default() {
-        assert_default_matches_empty_object::<CrawlConfig>("CrawlConfig");
-        assert_default_matches_empty_object::<ContentConfig>("ContentConfig");
-        assert_default_matches_empty_object::<BrowserConfig>("BrowserConfig");
-    }
-
-    #[test]
-    fn should_keep_nested_defaults_when_one_unrelated_field_is_set() {
-        let config: CrawlConfig = serde_json::from_str(r#"{"content":{"remove_forms":true}}"#).expect("parse");
-        assert_eq!(
-            config.content.exclude_selectors,
-            vec!["noscript".to_owned()],
-            "setting one content field must not drop the other content defaults"
-        );
-
-        let config: CrawlConfig =
-            serde_json::from_str(r#"{"browser":{"capture_network_events":true}}"#).expect("parse");
-        assert!(
-            config.browser.session_affinity,
-            "setting one browser field must not turn off session_affinity, documented as default true"
-        );
-    }
-
-    /// Characterization: `validate` reports the FIRST violation, and the order it checks
-    /// rules in is observable behaviour — a config that breaks several rules gets exactly one
-    /// message, and which one depends on the check order. Pinned here so the order survives
-    /// any restructuring of `validate`. ~keep
-    #[test]
-    fn validate_reports_violations_in_a_fixed_order() {
-        let mut config = maximally_invalid_config();
-
-        for (position, (fragment, repair)) in ORDERED_VIOLATIONS.iter().enumerate() {
-            let error = config
-                .validate()
-                .expect_err(&format!("violation {position} ({fragment}) must still be reported"))
-                .to_string();
-            assert!(
-                error.contains(fragment),
-                "violation {position}: expected an error containing {fragment:?}, got: {error}"
-            );
-            repair(&mut config);
-        }
-
-        config.validate().expect("every violation has been repaired");
-    }
-
-    /// Repairs the violation its table entry names, so the next check becomes reachable.
-    type ConfigRepair = fn(&mut CrawlConfig);
-
-    /// A config that breaks every rule `validate` enforces, at once.
-    fn maximally_invalid_config() -> CrawlConfig {
-        let mut config = CrawlConfig {
-            max_concurrent: Some(0),
-            content_filter: Some(ContentFilterKind::Bm25),
-            bm25_query: None,
-            max_depth: Some(101),
-            max_pages: Some(0),
-            max_redirects: 101,
-            max_body_size: Some(0),
-            proxy: Some(ProxyConfig {
-                url: "ftp://proxy.internal:2121".into(),
-                ..Default::default()
-            }),
-            auth: Some(AuthConfig::Bearer { token: String::new() }),
-            include_paths: vec!["(unclosed".into()],
-            exclude_paths: vec!["(unclosed".into()],
-            retry_codes: vec![999],
-            retry_count: MAX_RETRY_COUNT + 1,
-            request_timeout: Duration::ZERO,
-            browser: BrowserConfig {
-                wait: BrowserWait::Selector,
-                wait_selector: None,
-                backend: BrowserBackend::Native,
-                endpoint: Some("http://not-websocket:3000".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        config.ssrf.scheme_allowlist = vec!["ftp".to_owned()];
-        config
-    }
-
-    /// Every violation `maximally_invalid_config` carries, in the order `validate` reports
-    /// them, each paired with the repair that unblocks the next one.
-    const ORDERED_VIOLATIONS: &[(&str, ConfigRepair)] = &[
-        ("max_concurrent must be > 0", |c| c.max_concurrent = Some(1)),
-        ("bm25_query is required when content_filter is bm25", |c| {
-            c.bm25_query = Some("query".to_owned())
-        }),
-        ("browser.wait_selector required when browser.wait is Selector", |c| {
-            c.browser.wait_selector = Some("#main".to_owned())
-        }),
-        ("max_depth must be <= 100 (got 101)", |c| c.max_depth = Some(100)),
-        ("max_pages must be > 0", |c| c.max_pages = Some(1)),
-        ("max_redirects must be <= 100", |c| c.max_redirects = 100),
-        ("ssrf.scheme_allowlist contains unsupported scheme 'ftp'", |c| {
-            c.ssrf.scheme_allowlist = vec!["https".to_owned()]
-        }),
-        ("max_body_size must be > 0", |c| c.max_body_size = Some(1)),
-        ("invalid proxy URL scheme 'ftp'", |c| {
-            c.proxy = Some(ProxyConfig {
-                url: "http://proxy.internal:8080".into(),
-                ..Default::default()
-            })
-        }),
-        ("auth.bearer.token must not be empty", |c| {
-            c.auth = Some(AuthConfig::Bearer {
-                token: "token".to_owned(),
-            })
-        }),
-        ("invalid include_path regex '(unclosed'", |c| {
-            c.include_paths = vec!["^/docs".to_owned()]
-        }),
-        ("invalid exclude_path regex '(unclosed'", |c| {
-            c.exclude_paths = vec!["^/private".to_owned()]
-        }),
-        ("invalid retry code: 999", |c| c.retry_codes = vec![503]),
-        ("retry_count must be <= 20 (got 21)", |c| {
-            c.retry_count = MAX_RETRY_COUNT
-        }),
-        ("request_timeout must be > 0", |c| {
-            c.request_timeout = Duration::from_secs(30)
-        }),
-        ("browser.endpoint must start with ws:// or wss://", |c| {
-            c.browser.endpoint = Some("ws://localhost:9222".to_owned())
-        }),
-        ("browser.endpoint is only supported by the chromiumoxide backend", |c| {
-            c.browser.backend = BrowserBackend::Chromiumoxide
-        }),
-    ];
-
-    #[test]
-    fn validate_rejects_an_absurd_retry_count() {
-        let config = CrawlConfig {
-            retry_count: 1_000_000,
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("retry_count must be <= 20"),
-            "expected a retry_count bound error, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn validate_accepts_the_maximum_allowed_retry_count() {
-        let config = CrawlConfig {
-            retry_count: 20,
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok(), "retry_count at the bound must be accepted");
-    }
-
-    #[test]
-    fn validate_rejects_http_browser_endpoint() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                endpoint: Some("http://not-websocket:3000".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
-    }
-
-    #[test]
-    fn validate_rejects_unsupported_ssrf_scheme_allowlist_entries() {
-        for scheme in ["ftp", "http://"] {
-            let mut config = CrawlConfig::default();
-            config.ssrf.scheme_allowlist = vec![scheme.to_owned()];
-
-            let error = config.validate().expect_err("only HTTP transports are supported");
-            assert!(
-                error.to_string().contains(scheme),
-                "validation error must identify the unsupported scheme, got: {error}"
-            );
-        }
-
-        let mut config = CrawlConfig::default();
-        config.ssrf.scheme_allowlist = vec!["http".to_owned(), "HTTP".to_owned()];
-        let error = config
-            .validate()
-            .expect_err("scheme matching is case-insensitive, so case variants are duplicates");
-        assert!(
-            error.to_string().contains("duplicate scheme 'HTTP'"),
-            "validation error must identify the duplicate scheme, got: {error}"
-        );
-    }
-
-    #[test]
-    fn validate_accepts_ws_endpoint() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                endpoint: Some("ws://localhost:9222".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_accepts_wss_endpoint() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                endpoint: Some("wss://remote-browser.example.com/devtools".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_accepts_no_endpoint() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                endpoint: None,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn browser_backend_defaults_to_chromiumoxide() {
-        assert_eq!(BrowserConfig::default().backend, BrowserBackend::Chromiumoxide);
-    }
-
-    #[test]
-    fn validate_rejects_native_endpoint() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                backend: BrowserBackend::Native,
-                endpoint: Some("ws://localhost:9222".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("chromiumoxide"), "unexpected error: {msg}");
-    }
-
-    #[test]
-    fn proxy_config_debug_redacts_password_and_url_userinfo() {
-        let proxy = ProxyConfig {
-            url: "http://svc-account:hunter2@proxy.internal:8080".into(),
-            username: Some("svc-account".into()),
-            password: Some("hunter2".into()),
-        };
-        let rendered = format!("{proxy:?}");
-        assert!(
-            !rendered.contains("hunter2"),
-            "Debug output must not contain the raw password, got '{rendered}'"
-        );
-        assert!(
-            rendered.contains("svc-account"),
-            "Debug output should still show the non-secret username, got '{rendered}'"
-        );
-    }
-
-    #[test]
-    fn proxy_config_debug_shows_none_when_password_unset() {
-        let proxy = ProxyConfig {
-            url: "http://proxy.internal:8080".into(),
-            username: None,
-            password: None,
-        };
-        let rendered = format!("{proxy:?}");
-        assert!(
-            rendered.contains("password: None"),
-            "unset password must render as None, got '{rendered}'"
-        );
-    }
-
-    #[test]
-    fn auth_config_debug_redacts_basic_password() {
-        let auth = AuthConfig::Basic {
-            username: "alice".into(),
-            password: "hunter2".into(),
-        };
-        let rendered = format!("{auth:?}");
-        assert!(
-            !rendered.contains("hunter2"),
-            "Debug output must not contain the raw password, got '{rendered}'"
-        );
-        assert!(
-            rendered.contains("alice"),
-            "Debug output should still show the non-secret username, got '{rendered}'"
-        );
-    }
-
-    #[test]
-    fn auth_config_debug_redacts_bearer_token() {
-        let auth = AuthConfig::Bearer {
-            token: "sk-super-secret-token".into(),
-        };
-        let rendered = format!("{auth:?}");
-        assert!(
-            !rendered.contains("sk-super-secret-token"),
-            "Debug output must not contain the raw bearer token, got '{rendered}'"
-        );
-    }
-
-    #[test]
-    fn auth_config_debug_redacts_header_value() {
-        let auth = AuthConfig::Header {
-            name: "X-Api-Key".into(),
-            value: "sk-super-secret-key".into(),
-        };
-        let rendered = format!("{auth:?}");
-        assert!(
-            !rendered.contains("sk-super-secret-key"),
-            "Debug output must not contain the raw header value, got '{rendered}'"
-        );
-        assert!(
-            rendered.contains("X-Api-Key"),
-            "Debug output should still show the non-secret header name, got '{rendered}'"
-        );
-    }
-}
+#[path = "config_tests.rs"]
+mod tests;

@@ -47,12 +47,13 @@ pub(crate) fn encode_screenshot_base64(bytes: &[u8]) -> String {
 /// the check below -- a rejected seed URL fails here before either backend runs.
 pub(crate) async fn run(
     engine: &CrawlEngine,
-    url: &str,
+    seed: &crate::engine::SeedUrl,
     actions: &[PageAction],
 ) -> Result<InteractionResult, CrawlError> {
     validate_actions(actions)?;
     engine.config.validate()?;
-    validate_seed_url(url, &engine.config.ssrf).await?;
+    validate_seed_url(seed.url(), &engine.config.ssrf).await?;
+    let url = seed.as_str();
 
     match engine.config.browser.backend {
         BrowserBackend::Chromiumoxide => run_chromiumoxide(url, actions, &engine.config).await,
@@ -100,11 +101,10 @@ async fn run_native(
 }
 
 /// Reject `url` before any browser is launched, for either backend.
-async fn validate_seed_url(url: &str, policy: &crate::net::SsrfPolicy) -> Result<(), CrawlError> {
-    let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
-    crate::net::ssrf::validate_url(&target, policy)
+async fn validate_seed_url(target: &url::Url, policy: &crate::net::SsrfPolicy) -> Result<(), CrawlError> {
+    crate::net::ssrf::validate_url(target, policy)
         .await
-        .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))
+        .map_err(|e| CrawlError::ssrf_violation(target.as_str(), e.to_string()))
 }
 
 #[cfg(test)]
@@ -121,7 +121,11 @@ mod validate_seed_url_tests {
 
     #[tokio::test]
     async fn rejects_a_loopback_seed_url() {
-        let result = validate_seed_url("http://127.0.0.1:9/", &SsrfPolicy::default()).await;
+        let result = validate_seed_url(
+            &url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"),
+            &SsrfPolicy::default(),
+        )
+        .await;
         assert!(
             matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
             "loopback seed URL must be rejected, got {result:?}"
@@ -134,7 +138,11 @@ mod validate_seed_url_tests {
             deny_private: false,
             ..SsrfPolicy::default()
         };
-        let result = validate_seed_url("http://127.0.0.1:9/", &policy).await;
+        let result = validate_seed_url(
+            &url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"),
+            &policy,
+        )
+        .await;
         assert!(result.is_ok(), "loopback must pass when deny_private=false: {result:?}");
     }
 
@@ -142,7 +150,11 @@ mod validate_seed_url_tests {
     async fn allows_a_public_seed_url() {
         // ~keep A literal IP, not a hostname: `validate_url` resolves hostnames via
         // ~keep `tokio::net::lookup_host`, which would make this test depend on live DNS/network.
-        let result = validate_seed_url("https://1.1.1.1/", &SsrfPolicy::default()).await;
+        let result = validate_seed_url(
+            &url::Url::parse("https://1.1.1.1/").expect("test URL must parse"),
+            &SsrfPolicy::default(),
+        )
+        .await;
         assert!(result.is_ok(), "a public IP must pass the default policy: {result:?}");
     }
 }
