@@ -531,6 +531,7 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
             path: None,
             secure: true,
             http_only: true,
+            host_only: false,
         }],
         eval_script: Some(format!("fetch('/api?key={SECRET}')")),
         ..NativeBrowserConfig::default()
@@ -539,6 +540,10 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
         assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
         assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
         assert!(rendered.contains("session"), "cookie name missing: {rendered}");
+        assert!(
+            rendered.contains("host_only: false"),
+            "cookie host-only flag missing: {rendered}"
+        );
     }
     let compact = format!("{config:?}");
     let script = format!(
@@ -608,6 +613,7 @@ fn header_bearing_debug_renderings() -> Vec<(&'static str, String, bool)> {
         eval_result: None,
         network_events: vec![native_event.clone()],
         cookies: Vec::new(),
+        redirects: 0,
     };
     let response = crate::net::client::Response {
         url: url.clone(),

@@ -1863,18 +1863,18 @@ async fn a_cross_origin_fetch_with_a_wildcard_allow_origin_header_succeeds() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
-    let script = fetch_script("/setcookie", "");
+    let script = fetch_script("/api/setcookie", "");
     let html = format!("<html><body><script>{script}</script></body></html>");
     let with_cookie = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: jsfetch=1\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     let base = serve_raw(raw(&[
         ("/", &ok_response("text/html", &html)),
-        ("/setcookie", with_cookie),
+        ("/api/setcookie", with_cookie),
     ]))
     .await;
     let mut page = test_page();
     page.navigate(&base).await.expect("navigate");
 
-    // The cookie is stored against the fetched path, so it is not returned for the page path.
+    // The cookie takes the default path of the fetched URL, so it is not returned for the page path.
     let stored = page.context.cookie_jar.snapshot();
     assert_eq!(
         stored,
@@ -1882,9 +1882,10 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
             "jsfetch".to_string(),
             "1".to_string(),
             "127.0.0.1".to_string(),
-            "/setcookie".to_string(),
+            "/api".to_string(),
             false,
-            false
+            false,
+            true
         )],
         "the fetch op must store Set-Cookie in the jar the page shares"
     );
@@ -1949,7 +1950,7 @@ async fn a_stealth_page_fetches_through_the_context_proxy() {
 
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL")),
+        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"), None),
     )
     .await
     .expect("the fetch must finish")
@@ -2522,4 +2523,120 @@ async fn a_short_classic_script_does_not_wait_out_the_watchdog() {
             "render {render} took {took:?} against a 5 s watchdog budget"
         );
     }
+}
+
+fn moved_to(location: &str) -> String {
+    format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let mut page = test_page();
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!(followed, 1);
+    assert_eq!(page.url_string(), format!("{base}/a"));
+    let status = page
+        .network_events
+        .iter()
+        .rev()
+        .find(|event| event.resource_type == "Document")
+        .map(|event| event.status);
+    assert_eq!(status, Some(301), "the page ends on the redirect at the limit");
+
+    let mut uncounted = test_page();
+    uncounted.navigate(&format!("{base}/")).await.expect("navigate");
+    assert_eq!(
+        uncounted.url_string(),
+        format!("{base}/b"),
+        "an uncounted navigation follows the chain"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_takes_a_script_navigation_only_within_the_limit() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                "<html><body><script>location.replace('/next')</script></body></html>",
+            ),
+        ),
+        ("/next", &ok_response("text/html", "<p>next</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(0, "/", 0), (1, "/next", 1)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_bounds_the_redirects_of_a_form_post() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                r#"<html><body><form id="f" method="post" action="/post"></form><script>document.getElementById('f').submit()</script></body></html>"#,
+            ),
+        ),
+        ("/post", &moved_to("/a")),
+        ("/a", &ok_response("text/html", "<p>a</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(1, "/post", 1), (2, "/a", 2)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}: the form post counts one and its redirect one more"
+        );
+    }
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_stealth_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    assert!(
+        page.stealth_client.is_some(),
+        "a stealth context fetches through the stealth client"
+    );
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!((followed, page.url_string()), (1, format!("{base}/a")));
 }
