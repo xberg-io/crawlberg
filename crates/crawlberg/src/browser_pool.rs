@@ -131,6 +131,42 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder, chrome_args:
     builder
 }
 
+/// Chrome's proxy bypass rule that removes its built-in loopback bypass, so requests to
+/// `localhost` and `127.0.0.1` go through the proxy like every other request.
+///
+/// ~keep Without it Chrome sends loopback requests direct whatever proxy is set, both for
+/// ~keep `--proxy-server` and for a browser context's `proxyServer`.
+pub(crate) const NO_LOOPBACK_BYPASS: &str = "<-loopback>";
+
+/// Set Chrome's WebRTC IP handling in the profile at `user_data_dir` to send UDP only through
+/// a proxy. A one-shot or interact launch calls this before Chrome starts when `deny_private`
+/// is on; a pooled launch always does, as one pooled Chrome serves crawls with either policy.
+///
+/// ~keep WebRTC ignores every proxy and request interception; this preference is the one
+/// ~keep switch that stops its UDP. The SSRF proxy carries no UDP, so no WebRTC UDP leaves.
+pub(crate) fn disable_non_proxied_udp(user_data_dir: &std::path::Path) -> Result<(), CrawlError> {
+    let failed = |e: &dyn std::fmt::Display| {
+        CrawlError::browser_error(format!("failed to write the browser profile's WebRTC preference: {e}"))
+    };
+    let directory = user_data_dir.join("Default");
+    let path = directory.join("Preferences");
+    let mut preferences = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| failed(&e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(failed(&e)),
+    };
+    let Some(root) = preferences.as_object_mut() else {
+        return Err(failed(&"the Preferences file is not a JSON object"));
+    };
+    let webrtc = root.entry("webrtc").or_insert_with(|| serde_json::json!({}));
+    let Some(webrtc) = webrtc.as_object_mut() else {
+        return Err(failed(&"its webrtc entry is not a JSON object"));
+    };
+    webrtc.insert("ip_handling_policy".to_owned(), "disable_non_proxied_udp".into());
+    std::fs::create_dir_all(&directory).map_err(|e| failed(&e))?;
+    std::fs::write(&path, preferences.to_string()).map_err(|e| failed(&e))
+}
+
 /// Whether one of the caller's `chrome_args` names the Chrome switch `name`, byte-exact.
 ///
 /// ~keep Exact comparison is sound because `check_chrome_args` refuses a name with an
@@ -141,8 +177,15 @@ pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
         .any(|arg| crate::types::chrome_switch_name(arg) == name)
 }
 
-/// Point `builder` at the caller's Chrome binary, if one is named, and add the caller's
-/// extra flags. [`apply_default_args`] has already left out any default they replace.
+/// Point `builder` at the caller's Chrome binary, if one is named, add the caller's extra
+/// flags, and route the launched Chrome through `proxy`, when there is one.
+/// [`apply_default_args`] has already left out any default they replace.
+///
+/// The configured proxy wins over the caller's flags, as it does on a pooled or connected
+/// page, whose browser context is made with it: a caller `--proxy-server`,
+/// `--proxy-bypass-list`, `--no-proxy-server`, `--proxy-pac-url` or `--proxy-auto-detect` is
+/// dropped with a warning that names the switch but not its value, and loopback requests always
+/// go through the proxy.
 ///
 /// A named binary that is missing or not executable is an error naming the path, never a
 /// fallback to chromiumoxide's own detection. `chrome_args` that `CrawlConfig::validate` would
@@ -154,6 +197,7 @@ pub(crate) fn apply_launch_overrides(
     section: &str,
     chrome_path: Option<&std::path::Path>,
     chrome_args: &[String],
+    proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
     crate::types::check_chrome_args(section, chrome_args).map_err(CrawlError::browser_error)?;
     if let Some(path) = chrome_path {
@@ -161,10 +205,35 @@ pub(crate) fn apply_launch_overrides(
         builder = builder.chrome_executable(path);
     }
     for arg in chrome_args {
+        let switch = crate::types::chrome_switch_name(arg);
+        if proxy.is_some() && PROXY_SWITCHES.contains(&switch) {
+            tracing::warn!(
+                flag = %format!("--{switch}"),
+                "{section}.chrome_args sets a proxy switch that the configured proxy replaces; the flag is dropped"
+            );
+            continue;
+        }
         builder = builder.arg(chrome_arg_key(arg.as_str()));
+    }
+    if let Some(proxy) = proxy {
+        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+        // ~keep `----proxy-server=...` and the proxy was silently never applied.
+        builder = builder
+            .arg(format!("proxy-server={}", proxy.server))
+            .arg(format!("proxy-bypass-list={NO_LOOPBACK_BYPASS}"));
     }
     Ok(builder)
 }
+
+/// The Chrome switches that choose a launch's proxy. The configured proxy sets the first two;
+/// Chrome reads the other three before `--proxy-server`, so each of them would replace it.
+const PROXY_SWITCHES: [&str; 5] = [
+    "proxy-server",
+    "proxy-bypass-list",
+    "no-proxy-server",
+    "proxy-pac-url",
+    "proxy-auto-detect",
+];
 
 /// How long a [`ScratchProfileDir`]'s teardown waits for the processes it killed to exit.
 const PROFILE_USERS_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -545,6 +614,7 @@ fn build_pool_launch_builder(
         "BrowserPoolConfig",
         config.chrome_path.as_deref(),
         &config.chrome_args,
+        None,
     )
 }
 
@@ -632,6 +702,8 @@ struct BrowserState {
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
+    /// Set once the pool has logged that this browser's sockets go unchecked.
+    remote_warned: std::sync::Once,
 }
 
 /// How a browser left [`close_browser_within`]: under its own steam, or killed.
@@ -871,6 +943,16 @@ impl BrowserPool {
     /// should be closed via [`PooledPage::close`] when done; if dropped
     /// without calling `close`, a best-effort async cleanup is spawned.
     pub async fn acquire_page(&self) -> Result<PooledPage, CrawlError> {
+        self.acquire_page_through(None, None).await
+    }
+
+    /// Acquire a new blank page whose requests go through `proxy`: the page's own browser
+    /// context is made with that proxy, behind the SSRF proxy for `policy` when there is one.
+    pub(crate) async fn acquire_page_through(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+        policy: Option<&crate::net::ssrf::SsrfPolicy>,
+    ) -> Result<PooledPage, CrawlError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
@@ -886,7 +968,7 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        match self.try_new_page().await {
+        match self.try_new_page(proxy, policy).await {
             Ok((page, pending_closes)) => Ok(PooledPage {
                 page: Some(page),
                 _permit: Some(permit),
@@ -894,7 +976,7 @@ impl BrowserPool {
             }),
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let (page, pending_closes) = self.try_new_page().await.map_err(|e| {
+                let (page, pending_closes) = self.try_new_page(proxy, policy).await.map_err(|e| {
                     CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
@@ -945,7 +1027,11 @@ impl BrowserPool {
     ///
     /// Returns the page together with the current browser's pending-close registry, so the
     /// [`PooledPage`] built around it can record a close its `Drop` spawns.
-    async fn try_new_page(&self) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
+    async fn try_new_page(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+        policy: Option<&crate::net::ssrf::SsrfPolicy>,
+    ) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
 
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
@@ -960,7 +1046,10 @@ impl BrowserPool {
         }
 
         let bs = guard.as_ref().expect("browser state was just set above");
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page())
+        let sockets = policy.and_then(|policy| {
+            crate::net::egress::socket_policy(policy, self.config.browser_endpoint.as_deref(), &bs.remote_warned)
+        });
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page(proxy, sockets))
             .await
             .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         Ok((page, Arc::clone(&bs.pending_closes)))
@@ -999,6 +1088,7 @@ impl BrowserPool {
         } else {
             // ~keep Dropped, and so removed, on every early return below, including a launch timeout.
             let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-")?;
+            disable_non_proxied_udp(user_data_dir.path())?;
             let builder = build_pool_launch_builder(user_data_dir.path(), &self.config)?;
             let browser_config = builder
                 .build()
@@ -1045,6 +1135,7 @@ impl BrowserPool {
             handler_handle,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            remote_warned: std::sync::Once::new(),
         })
     }
 }

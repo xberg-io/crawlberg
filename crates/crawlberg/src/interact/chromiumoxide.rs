@@ -145,7 +145,20 @@ async fn run_with_browser(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let page = firewall.handle().new_page().await?;
+    // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
+    // ~keep that flag, so there the page's own browser context is made with the proxy. Under
+    // ~keep `deny_private` the context goes through the SSRF proxy, which leaves through it.
+    let proxy = if config.browser.endpoint.is_some() || config.ssrf.deny_private {
+        crate::proxy::chrome_proxy_for(config)?
+    } else {
+        None
+    };
+    let sockets = crate::net::egress::socket_policy(
+        &config.ssrf,
+        config.browser.endpoint.as_deref(),
+        &std::sync::Once::new(),
+    );
+    let page = firewall.handle().new_page(proxy.as_ref(), sockets).await?;
 
     // ~keep The SSRF check holds for the whole session, not just the first navigation: the
     // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
@@ -161,7 +174,10 @@ async fn run_with_browser(
             }
             .await;
             watch.close().await;
-            result
+            // ~keep The session has one page, so each socket its SSRF proxy refused is that page's.
+            let mut result = result?;
+            crate::net::egress::add_refused(&mut result.ssrf_refused_urls, firewall.handle().egress_refused().await);
+            Ok(result)
         }
         Err(error) => {
             let _ = page.close().await;
@@ -273,7 +289,8 @@ async fn navigate_and_wait(
     let timeout = config.browser.timeout;
 
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
         wait_for_ready(page, config)
@@ -301,6 +318,9 @@ async fn navigate_and_wait(
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
+    // ~keep The redirect limit bounds the navigation to `url`. A navigation an action starts is
+    // ~keep the caller's own, so it is not counted.
+    watch.end_navigation();
 
     Ok(None)
 }
@@ -543,13 +563,11 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
         // ~keep Removed on drop, so a failed or cancelled launch or run removes it too.
         let user_data_dir = ScratchProfileDir::create("crawlberg-interact-")?;
 
-        let proxy_url = config
-            .browser
-            .proxy
-            .as_ref()
-            .or(config.proxy.as_ref())
-            .map(|p| p.url.as_str());
-        let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy_url, &config.browser)?
+        let proxy = crate::proxy::chrome_proxy_for(config)?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::disable_non_proxied_udp(user_data_dir.path())?;
+        }
+        let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy.as_ref(), &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -568,7 +586,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
 /// ~keep path actually passes without spawning a real Chrome process.
 fn build_interact_launch_builder(
     user_data_dir: &std::path::Path,
-    proxy_url: Option<&str>,
+    proxy: Option<&crate::proxy::ChromeProxy>,
     browser: &crate::types::BrowserConfig,
 ) -> Result<chromiumoxide::browser::BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
@@ -577,18 +595,12 @@ fn build_interact_launch_builder(
         .user_data_dir(user_data_dir)
         .disable_default_args();
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
-    if let Some(proxy) = proxy_url
-        && !crate::browser_pool::caller_sets_switch(&browser.chrome_args, "proxy-server")
-    {
-        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
-        // ~keep `----proxy-server=...` and the proxy was silently never applied.
-        builder = builder.arg(format!("proxy-server={proxy}"));
-    }
     crate::browser_pool::apply_launch_overrides(
         builder,
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        proxy,
     )
 }
 
@@ -747,26 +759,53 @@ mod tests {
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
     }
 
+    /// The Chrome proxy of the proxy address `url`.
+    fn test_proxy(url: &str) -> crate::proxy::ChromeProxy {
+        crate::proxy::chrome_proxy(&crate::types::ProxyConfig {
+            url: url.into(),
+            ..Default::default()
+        })
+        .expect("an http proxy is a Chrome proxy")
+    }
+
     #[test]
-    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
-        let builder = build_interact_launch_builder(
-            std::path::Path::new("/tmp/interact-test-profile"),
-            Some("http://127.0.0.1:9"),
-            &crate::types::BrowserConfig {
-                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+    fn the_configured_proxy_replaces_a_caller_proxy_flag() {
+        let proxy = test_proxy("http://127.0.0.1:9");
+        for (caller_flag, caller_value) in [
+            ("--proxy-server=http://127.0.0.1:7", "127.0.0.1:7"),
+            ("--proxy-bypass-list=*.internal", "*.internal"),
+            ("--proxy-pac-url=http://127.0.0.1:7/p.pac", "127.0.0.1:7/p.pac"),
+            ("--no-proxy-server", "no-proxy-server"),
+            ("--proxy-auto-detect", "proxy-auto-detect"),
+        ] {
+            let browser = crate::types::BrowserConfig {
+                chrome_args: vec![caller_flag.to_owned()],
                 ..Default::default()
-            },
-        )
-        .expect("no binary is named, so there is nothing to check");
-        let debug = format!("{builder:?}");
-        assert!(
-            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
-            "the caller's proxy-server flag is missing: {debug}"
-        );
-        assert!(
-            !debug.contains("proxy-server=http://127.0.0.1:9"),
-            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
-        );
+            };
+            let (built, fields) = crate::tracing_capture::capture_events(|| {
+                build_interact_launch_builder(
+                    std::path::Path::new("/tmp/interact-test-profile"),
+                    Some(&proxy),
+                    &browser,
+                )
+            });
+            let debug = format!("{:?}", built.expect("no binary is named, so there is nothing to check"));
+            for configured in ["proxy-server=http://127.0.0.1:9", "proxy-bypass-list=<-loopback>"] {
+                assert!(
+                    debug.contains(&format!("key: \"{configured}\"")),
+                    "{caller_flag}: the configured proxy's {configured} is missing: {debug}"
+                );
+            }
+            assert!(
+                !debug.contains(caller_value),
+                "{caller_flag}: the caller's flag must be dropped: {debug}"
+            );
+            let switch = caller_flag.split('=').next().expect("a switch name");
+            // ~keep A switch with no value has no secret to hide; its name is what the warning prints.
+            if caller_flag.contains('=') {
+                crate::tracing_capture::assert_logged_without_secret(&fields, caller_value, switch);
+            }
+        }
     }
 
     #[test]
@@ -774,7 +813,7 @@ mod tests {
         crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
             build_interact_launch_builder(
                 std::path::Path::new("/tmp/interact-test-profile"),
-                Some("http://127.0.0.1:9"),
+                Some(&test_proxy("http://127.0.0.1:9")),
                 &crate::types::BrowserConfig {
                     chrome_path,
                     chrome_args,
@@ -786,9 +825,10 @@ mod tests {
 
     #[test]
     fn the_interact_launch_builder_still_normalizes_the_proxy_server_flag() {
+        let proxy = test_proxy("http://127.0.0.1:9");
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
-            Some("http://127.0.0.1:9"),
+            Some(&proxy),
             &crate::types::BrowserConfig::default(),
         )
         .expect("the default browser config names no binary to check");
@@ -797,6 +837,34 @@ mod tests {
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
             "proxy-server flag missing or mis-normalized: {debug}"
         );
+    }
+
+    #[test]
+    fn the_interact_launch_takes_the_proxy_as_chrome_can_read_it() {
+        for (raw, server) in [
+            ("127.0.0.1:3128", "http://127.0.0.1:3128"),
+            ("http:proxy.test:1", "http://proxy.test:1"),
+        ] {
+            let config = CrawlConfig {
+                proxy: Some(crate::types::ProxyConfig {
+                    url: raw.into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let proxy = crate::proxy::chrome_proxy_for(&config).expect("a usable proxy");
+            let builder = build_interact_launch_builder(
+                std::path::Path::new("/tmp/interact-test-profile"),
+                proxy.as_ref(),
+                &crate::types::BrowserConfig::default(),
+            )
+            .expect("the default browser config names no binary to check");
+            let debug = format!("{builder:?}");
+            assert!(
+                debug.contains(&format!("key: \"proxy-server={server}\"")),
+                "{raw}: Chrome must get {server}, got {debug}"
+            );
+        }
     }
 
     /// A refused redirect target that carries `user:pass@` userinfo must be reported with its

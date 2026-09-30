@@ -101,7 +101,7 @@ HTML→Markdown conversion runs automatically on every page via [html-to-markdow
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | **Per-domain rate limiting** | Default 200 ms delay per origin; configurable in `CrawlConfig`.              |
 | **HTTP caching**             | ETag and Last-Modified conditional requests with an on-disk cache.           |
-| **Proxy support**            | HTTP, HTTPS, and SOCKS5 via `ProxyConfig`.                                   |
+| **Proxy support**            | HTTP and HTTPS via `ProxyConfig`.                                            |
 | **User-Agent rotation**      | Configurable list rotated across requests.                                   |
 | **Cookie handling**          | Tracking, deduplication, and persistence across requests.                    |
 | **Authentication**           | Basic, Bearer, and custom-header authentication via `AuthConfig`.            |

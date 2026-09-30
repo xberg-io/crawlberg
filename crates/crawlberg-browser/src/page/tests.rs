@@ -67,7 +67,8 @@ fn routes(entries: &[(&str, &str, &str)]) -> StdHashMap<String, (String, String)
 }
 
 fn test_page() -> Page {
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     Page::new("page-1".to_string(), Arc::new(context))
 }
 
@@ -317,7 +318,8 @@ async fn a_module_src_the_ssrf_policy_refuses_is_not_run() {
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(RefuseRefusedJs), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(RefuseRefusedJs), false)
+        .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
     page.navigate(&base).await.expect("navigation must succeed");
 
@@ -955,7 +957,8 @@ async fn robots_txt_disallow_blocks_the_navigation() {
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -980,7 +983,8 @@ async fn a_navigation_to_a_url_with_userinfo_is_refused_before_robots_txt_is_rea
     .await;
     let credentialed = base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1);
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -1019,7 +1023,8 @@ async fn robots_txt_allow_permits_the_navigation() {
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -1053,7 +1058,8 @@ async fn robots_txt_with_a_leading_byte_order_mark_still_blocks_the_navigation()
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -1396,18 +1402,18 @@ async fn a_cross_origin_fetch_with_a_wildcard_allow_origin_header_succeeds() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
-    let script = fetch_script("/setcookie", "");
+    let script = fetch_script("/api/setcookie", "");
     let html = format!("<html><body><script>{script}</script></body></html>");
     let with_cookie = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: jsfetch=1\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     let base = serve_raw(raw(&[
         ("/", &ok_response("text/html", &html)),
-        ("/setcookie", with_cookie),
+        ("/api/setcookie", with_cookie),
     ]))
     .await;
     let mut page = test_page();
     page.navigate(&base).await.expect("navigate");
 
-    // The cookie is stored against the fetched path, so it is not returned for the page path.
+    // The cookie takes the default path of the fetched URL, so it is not returned for the page path.
     let stored = page.context.cookie_jar.snapshot();
     assert_eq!(
         stored,
@@ -1415,9 +1421,10 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
             "jsfetch".to_string(),
             "1".to_string(),
             "127.0.0.1".to_string(),
-            "/setcookie".to_string(),
+            "/api".to_string(),
             false,
-            false
+            false,
+            true
         )],
         "the fetch op must store Set-Cookie in the jar the page shares"
     );
@@ -1445,6 +1452,56 @@ async fn a_non_networkidle_wait_leaves_the_lifecycle_at_loaded() {
         .expect("navigation must succeed");
 
     assert_eq!(page.lifecycle, LifecycleState::Loaded);
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_stealth_page_fetches_through_the_context_proxy() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let proxy = format!("http://{}", listener.local_addr().expect("addr"));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = [0u8; 4096];
+        let read = socket.read(&mut buf).await.unwrap_or(0);
+        log.lock()
+            .expect("lock")
+            .push(String::from_utf8_lossy(&buf[..read]).to_string());
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia-proxy")
+            .await;
+    });
+
+    let context = BrowserContext::with_ssrf("test".to_string(), Some(proxy), true, None, Arc::new(AllowAll), false)
+        .expect("an http proxy must build the context");
+    let context = Arc::new(context);
+    let page = Page::new("page-1".to_string(), context.clone());
+    let (Some(from_page), Some(from_context)) = (&page.stealth_client, &context.stealth_client) else {
+        panic!("a stealth context must give its pages the stealth client");
+    };
+    assert!(
+        Arc::ptr_eq(from_page, from_context),
+        "the page must use the context's stealth client"
+    );
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"), None),
+    )
+    .await
+    .expect("the fetch must finish")
+    .expect("the proxy answers, so the fetch must succeed");
+
+    assert_eq!(response.body, b"via-proxy");
+    let seen = seen.lock().expect("lock");
+    assert!(
+        seen.first()
+            .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
+        "the stealth client must send through the context proxy, got {seen:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1534,7 +1591,8 @@ async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
 #[cfg(feature = "stealth")]
 #[tokio::test(flavor = "current_thread")]
 async fn a_stealth_page_scopes_the_context_credential_like_the_plain_client() {
-    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let credential = crate::net::OriginHeaders {
         host: "example.com".to_owned(),
         headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
@@ -1579,7 +1637,8 @@ async fn script_fetches_and_module_imports_carry_the_credential_only_on_its_host
             ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
         ]),
     );
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     context
         .http_client
         .set_origin_headers(Some(crate::net::OriginHeaders {
@@ -1668,7 +1727,8 @@ async fn a_module_redirect_is_checked_against_the_ssrf_policy() {
         None,
         Arc::new(RefuseHost("localhost")),
         false,
-    );
+    )
+    .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
     page.navigate(&format!("http://{addr}/")).await.expect("navigate");
@@ -1721,7 +1781,8 @@ async fn credentialed_page(
         .map(|(path, response)| ((*path).to_string(), response.clone()))
         .collect();
     let requests = serve_raw_recording(listener, responses);
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     context
         .http_client
         .set_origin_headers(Some(crate::net::OriginHeaders {
@@ -1832,7 +1893,8 @@ async fn script_fetches_and_module_imports_never_reach_a_rebinding_hosts_denied_
     );
     let base = serve(routes(&[("/", "text/html", &html)])).await;
     let policy = Arc::new(RebindingPolicy::default());
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, policy.clone(), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, policy.clone(), false)
+        .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
     page.navigate(&base).await.expect("navigate");
@@ -1891,7 +1953,8 @@ async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
         None,
         policy.clone(),
         false,
-    );
+    )
+    .expect("an http proxy must build the context");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
     page.navigate("http://example.invalid/").await.expect("navigate");
@@ -1920,7 +1983,8 @@ async fn a_navigation_refused_at_connect_time_names_the_policy_reason_once() {
         None,
         Arc::new(RebindingPolicy::default()),
         false,
-    );
+    )
+    .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
     let error = page
@@ -1958,7 +2022,8 @@ async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
         None,
         Arc::new(RebindingPolicy::default()),
         false,
-    );
+    )
+    .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
     page.navigate(&base).await.expect("navigate");
@@ -1975,4 +2040,120 @@ async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
         seen.lock().expect("lock").is_empty(),
         "the denied address must receive no connection"
     );
+}
+
+fn moved_to(location: &str) -> String {
+    format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let mut page = test_page();
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!(followed, 1);
+    assert_eq!(page.url_string(), format!("{base}/a"));
+    let status = page
+        .network_events
+        .iter()
+        .rev()
+        .find(|event| event.resource_type == "Document")
+        .map(|event| event.status);
+    assert_eq!(status, Some(301), "the page ends on the redirect at the limit");
+
+    let mut uncounted = test_page();
+    uncounted.navigate(&format!("{base}/")).await.expect("navigate");
+    assert_eq!(
+        uncounted.url_string(),
+        format!("{base}/b"),
+        "an uncounted navigation follows the chain"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_takes_a_script_navigation_only_within_the_limit() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                "<html><body><script>location.replace('/next')</script></body></html>",
+            ),
+        ),
+        ("/next", &ok_response("text/html", "<p>next</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(0, "/", 0), (1, "/next", 1)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_bounds_the_redirects_of_a_form_post() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                r#"<html><body><form id="f" method="post" action="/post"></form><script>document.getElementById('f').submit()</script></body></html>"#,
+            ),
+        ),
+        ("/post", &moved_to("/a")),
+        ("/a", &ok_response("text/html", "<p>a</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(1, "/post", 1), (2, "/a", 2)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}: the form post counts one and its redirect one more"
+        );
+    }
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_stealth_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    assert!(
+        page.stealth_client.is_some(),
+        "a stealth context fetches through the stealth client"
+    );
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!((followed, page.url_string()), (1, format!("{base}/a")));
 }

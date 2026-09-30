@@ -35,9 +35,11 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// closed or parked, so the requests the page sends during the extra wait, while it is read,
 /// and while it is screenshotted are checked too.
 ///
-/// Chrome follows at most `config.max_redirects` HTTP redirects. A chain longer than
-/// that ends on the redirect response at the limit, the way the HTTP fetch path ends.
-/// A response Chrome does not commit (204, 205, 304) ends the fetch the same way.
+/// Chrome follows at most `config.max_redirects` redirects: HTTP redirects, and the navigations
+/// the page starts (a meta refresh or a script) count one each. A chain of HTTP redirects longer
+/// than that ends on the redirect response at the limit, the way the HTTP fetch path ends. A
+/// navigation the page starts past the limit is dropped, and the page keeps its document. A
+/// response Chrome does not commit (204, 205, 304) ends the fetch on that response.
 pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -92,7 +94,8 @@ async fn render(
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 
@@ -110,7 +113,7 @@ async fn render(
     {
         return Ok(BrowserPage {
             response: stopped_response(stop),
-            redirects: intercepted.redirects_followed,
+            redirects: watch.redirects_followed(),
             refused: Vec::new(),
         });
     }
@@ -136,6 +139,9 @@ async fn render(
 
     let body_bytes = html.as_bytes().to_vec();
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
+    // ~keep Read after the extra wait and the page read: a navigation the page starts during
+    // ~keep them counts too.
+    let redirects = watch.redirects_followed();
 
     Ok(BrowserPage {
         response: HttpResponse {
@@ -148,7 +154,7 @@ async fn render(
             final_url,
             screenshot,
         },
-        redirects: intercepted.redirects_followed,
+        redirects,
         refused: Vec::new(),
     })
 }

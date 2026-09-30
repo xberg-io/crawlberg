@@ -39,6 +39,11 @@ pub fn announce_chrome_skip(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name} because no usable Chrome was found: {reason}");
 }
 
+/// Say that `test_name` did not run on this machine, and why.
+pub fn announce_skip(test_name: &str, reason: &str) {
+    eprintln!("skipping {test_name}: {reason}");
+}
+
 /// Launch a Chrome that stands for another program's browser, reached through `browser.endpoint`,
 /// with the cookie `owner=1` set for `seed` in its own context. Its handler runs until it closes.
 /// `None`, announced, without Chrome.
