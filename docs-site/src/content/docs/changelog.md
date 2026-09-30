@@ -6,6 +6,10 @@ title: "Changelog"
 
 ### Upgrading
 
+- **The bypass provider holds its secrets in a type that never prints.** In `crawlberg-bypass`,
+  the auth scheme's token, user name and header or query value, and each fixed query value, are
+  now a `Secret`. Its `Debug` and `Display` print `***`, so a struct that derives `Debug` over it
+  cannot show the key. Build one with `.into()` from a string, and read it with `expose()`. (#386)
 - **The config check refuses a proxy password that is not percent-encoded.** A `#`, `/` or `?`
   in a proxy user name or password ends the address early, so `http://user:4242#rest@proxy:8080`
   was read as the host `user` on port 4242. Such an address now fails `CrawlConfig::validate`,

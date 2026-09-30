@@ -72,9 +72,9 @@ fn debug_output_keeps_the_non_secret_fields() {
             value: SECRET.into(),
         }
     );
-    assert_eq!(rendered, r#"Header { name: "X-Api-Key", value: Some("***") }"#);
-    let rendered = format!("{:?}", AuthScheme::Bearer { token: String::new() });
-    assert_eq!(rendered, "Bearer { token: None }");
+    assert_eq!(rendered, r#"Header { name: "X-Api-Key", value: *** }"#);
+    let rendered = format!("{:?}", AuthScheme::Bearer { token: "".into() });
+    assert_eq!(rendered, r#"Bearer { token: "" }"#);
 }
 
 #[test]
