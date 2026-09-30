@@ -256,3 +256,38 @@ async fn a_cookie_set_through_one_rotated_proxy_is_sent_through_the_next() {
         "the cookie proxy A's response set must be sent through proxy B: {requests:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_provider_that_keeps_one_address_and_changes_the_user_name_sends_each_session_its_own_credentials() {
+    let site = MockServer::start().await;
+    let gateway = mock_proxy().await;
+    let session = |user: &str| ProxyConfig {
+        url: gateway.uri(),
+        username: Some(user.to_owned()),
+        password: Some("pw".to_owned()),
+    };
+    let provider = StaticProxyProvider::new(vec![session("user-session-1"), session("user-session-2")]);
+    let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+    config.browser.mode = crawlberg::BrowserMode::Never;
+    let engine = crawlberg::CrawlEngine::builder()
+        .config(config)
+        .with_proxy_provider(Arc::new(provider))
+        .build()
+        .expect("a proxy provider is a valid config");
+
+    for _ in 0..4 {
+        engine
+            .scrape(&site.uri())
+            .await
+            .expect("the scrape through the gateway must succeed");
+    }
+
+    let expected: Vec<String> = (0..4)
+        .map(|i| basic(&format!("user-session-{}", i % 2 + 1), "pw"))
+        .collect();
+    assert_eq!(
+        authorizations(&gateway).await,
+        expected,
+        "each request must carry the credentials of the session the provider picked for it"
+    );
+}

@@ -608,8 +608,38 @@ mod tests {
         assert_eq!(*provider.0.lock().expect("hosts lock"), ["page.example.com"]);
     }
 
-    #[test]
-    fn a_proxy_picked_twice_gets_one_client_and_a_second_proxy_gets_its_own() {
+    /// A keep-alive HTTP proxy on a local port that answers every request with `200 ok` and
+    /// counts the connections it accepts.
+    async fn counting_proxy() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = format!("http://{}", listener.local_addr().expect("local address"));
+        let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0_u8; 1024];
+                    while let Ok(read @ 1..) = stream.read(&mut buf).await {
+                        request.extend_from_slice(&buf[..read]);
+                        if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                            request.clear();
+                            let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+                            if stream.write_all(reply).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (address, accepted)
+    }
+
+    #[tokio::test]
+    async fn a_proxy_picked_twice_gets_one_client_and_a_second_proxy_gets_its_own() {
         let config = provider_config(918_278);
         let clients = provider_clients(&config, config.proxy_provider.as_ref().expect("provider set"));
         let admit = |url: &str| {
@@ -619,12 +649,26 @@ mod tests {
             })
             .expect("a plain proxy is admitted")
         };
-        let (a, b) = (admit("http://a.test:8080"), admit("http://b.test:8080"));
+        let ((a_url, at_a), (b_url, at_b)) = (counting_proxy().await, counting_proxy().await);
+        let (a, b) = (admit(&a_url), admit(&b_url));
         for proxy in [&a, &a, &b] {
-            let _client = clients.client(&config, Some(proxy)).expect("client must build");
+            let client = clients.client(&config, Some(proxy)).expect("client must build");
+            let response = client
+                .get("http://site.test/")
+                .send()
+                .await
+                .expect("the request through the proxy must succeed");
+            let _body = response.text().await.expect("the body must read");
         }
         let cached = clients.clients.lock().expect("lock").len();
-        assert_eq!(cached, 2, "one client for each picked proxy, reused on the next pick");
+        assert_eq!(cached, 2, "one client for each picked proxy");
+        let connections = |count: &std::sync::atomic::AtomicUsize| count.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            connections(&at_a),
+            1,
+            "the second pick of proxy A must reuse the first pick's client and its pooled connection"
+        );
+        assert_eq!(connections(&at_b), 1, "proxy B must get its own client");
     }
 
     #[test]
