@@ -71,6 +71,46 @@ async fn test_script_execution() {
     assert_eq!(result, serde_json::json!(["A", "B"]));
 }
 
+#[test]
+fn the_watchdog_sees_a_script_that_finished_before_it_started() {
+    let pair = (std::sync::Mutex::new(true), std::sync::Condvar::new());
+    let start = std::time::Instant::now();
+    assert!(super::script::wait_for_cancel(&pair, std::time::Duration::from_secs(5)));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "a flag set before the wait ends it at once, took {:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn the_watchdog_fires_when_the_script_is_still_running() {
+    let pair = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+    assert!(!super::script::wait_for_cancel(
+        &pair,
+        std::time::Duration::from_millis(50)
+    ));
+}
+
+/// Regression for #566: an evaluation that finishes before its watchdog thread starts returns at once,
+/// not after the whole timeout.
+#[tokio::test(flavor = "current_thread")]
+async fn a_quick_evaluation_does_not_wait_out_the_watchdog() {
+    let mut rt = setup_runtime("<html><body></body></html>");
+    for run in 1..=20 {
+        let start = std::time::Instant::now();
+        let value = rt
+            .evaluate_with_timeout("1", std::time::Duration::from_secs(5))
+            .unwrap();
+        let took = start.elapsed();
+        assert_eq!(value.as_f64(), Some(1.0));
+        assert!(
+            took < std::time::Duration::from_millis(2500),
+            "evaluation {run} took {took:?} against a 5 s watchdog budget"
+        );
+    }
+}
+
 /// Regression: a sub-10KB script with an infinite loop must not wedge
 /// the worker thread forever. `execute_script_guarded` previously skipped
 /// the watchdog for scripts under 10_000 bytes, so a 13-byte
