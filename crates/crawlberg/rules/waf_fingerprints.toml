@@ -1,5 +1,8 @@
 # ~keep A fingerprint fires only when all signals match; any match returns that fingerprint's vendor.
 # ~keep `response_header` checks lowercase header names; `body_substring` patterns use Aho-Corasick.
+# ~keep An optional `statuses` array restricts a fingerprint to the response statuses it may decide;
+# without it a fingerprint decides every status. It exists for the fingerprints whose only signal
+# proves CDN presence rather than a block, which must not decide a 429, a 503 or a 2xx (crawlberg#197).
 
 
 [[fingerprint]]
@@ -221,10 +224,12 @@ weight = 0.9
 kind = "body_substring"
 pattern = "sucuri"
 
+# ~keep `server: Incapsula` is on every response Imperva proxies, so it decides a 403 only.
 [[fingerprint]]
 id = "imperva_server_incapsula"
 vendor = "imperva"
 weight = 1.0
+statuses = [403]
 [[fingerprint.signals]]
 kind = "response_header"
 name = "server"
@@ -264,20 +269,24 @@ kind = "body_substring"
 pattern = "awselb"
 
 
+# ~keep `server: AkamaiGHost` is on every response Akamai serves, so it decides a 403 only.
 [[fingerprint]]
 id = "akamai_server_ghost"
 vendor = "akamai"
 weight = 1.0
+statuses = [403]
 [[fingerprint.signals]]
 kind = "response_header"
 name = "server"
 value_contains = "akamaighost"
 
 
+# ~keep `server: BIG-IP` is on every response the load balancer serves, so it decides a 403 only.
 [[fingerprint]]
 id = "f5_bigip_server"
 vendor = "f5"
 weight = 1.0
+statuses = [403]
 [[fingerprint.signals]]
 kind = "response_header"
 name = "server"

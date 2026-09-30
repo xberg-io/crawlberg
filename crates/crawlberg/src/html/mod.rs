@@ -248,7 +248,9 @@ pub(crate) use links::{effective_base_url, extract_links};
 pub(crate) use metadata::robots_meta_contents;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::{detect_meta_refresh, refresh_target};
-pub(crate) use raw_text::mask_raw_text_markup;
+pub(crate) use raw_text::{MaskedHtml, PageScan, mask_raw_text_markup};
+#[cfg(test)]
+pub(crate) use real_tags::reads;
 
 #[cfg(test)]
 mod tests {

@@ -17,6 +17,7 @@ RUN apt-get update && \
 COPY Cargo.toml Cargo.lock ./
 
 COPY crates/crawlberg/ crates/crawlberg/
+COPY crates/crawlberg-robots/ crates/crawlberg-robots/
 COPY crates/crawlberg-cli/ crates/crawlberg-cli/
 
 RUN sed -i 's|^members = .*|members = ["crates/crawlberg", "crates/crawlberg-cli"]|' Cargo.toml && \

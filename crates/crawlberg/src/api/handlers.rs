@@ -59,7 +59,7 @@ fn validate_url(url: &str) -> Result<(), ApiError> {
     if url.is_empty() {
         return Err(ApiError::bad_request("url is required"));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !crate::net::has_http_scheme(url) {
         return Err(ApiError::bad_request("url must start with http:// or https://"));
     }
     if url.len() > 8192 {
@@ -199,7 +199,7 @@ pub async fn crawl_handler(
     ensure_job_capacity(&state)?;
 
     let mut config = state.engine.config.clone();
-    apply_crawl_overrides(&mut config, &req);
+    apply_crawl_overrides(&mut config, &req)?;
     let crawl_engine = rebuild_engine_with_config(&state.engine, config)?;
 
     let job_id = state.jobs.create_job();
@@ -214,9 +214,26 @@ pub async fn crawl_handler(
     ))
 }
 
+/// Refuse an `include_paths`/`exclude_paths` pattern that needs look-around or a backreference.
+///
+/// ~keep Such a pattern runs on a backtracking engine, and its cost grows faster than linearly
+/// with the URL. A REST caller is not trusted to choose one. Patterns in the server's own config
+/// are not checked here: they come from the operator.
+fn refuse_backtracking_patterns(field: &str, patterns: &[String]) -> Result<(), ApiError> {
+    for pattern in patterns {
+        if crate::helpers::PathPattern::new(pattern).is_ok_and(|compiled| compiled.needs_backtracking()) {
+            return Err(ApiError::bad_request(format!(
+                "{field} pattern \"{pattern}\" uses look-around or a backreference, \
+                 which the REST API does not accept"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Apply `CrawlRequest` overrides to a crawl config. Mirrors the fields
 /// `scrape`/`map` honor so REST exposes the same crawl-shaping knobs consistently.
-fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) {
+fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) -> Result<(), ApiError> {
     if let Some(depth) = req.max_depth {
         config.max_depth = Some(depth);
     }
@@ -227,14 +244,17 @@ fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) {
         config.content.preprocessing_preset = "aggressive".to_owned();
     }
     if let Some(ref includes) = req.include_paths {
+        refuse_backtracking_patterns("includePaths", includes)?;
         config.include_paths = includes.clone();
     }
     if let Some(ref excludes) = req.exclude_paths {
+        refuse_backtracking_patterns("excludePaths", excludes)?;
         config.exclude_paths = excludes.clone();
     }
     if let Some(stay) = req.stay_on_domain {
         config.stay_on_domain = stay;
     }
+    Ok(())
 }
 
 /// Spawn the background task that runs a crawl job to completion and records
@@ -347,19 +367,21 @@ pub async fn map_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let mut result = if let Some(respect_robots_txt) = req.respect_robots_txt {
+    // ~keep `search` becomes `map_search`, so this endpoint matches a term the same way as the
+    // ~keep CLI and the MCP `map` tool.
+    let mut result = if req.respect_robots_txt.is_some() || req.search.is_some() {
         let mut config = state.engine.config.clone();
-        config.respect_robots_txt = respect_robots_txt;
+        if let Some(respect_robots_txt) = req.respect_robots_txt {
+            config.respect_robots_txt = respect_robots_txt;
+        }
+        if let Some(search) = &req.search {
+            config.map_search = Some(search.clone());
+        }
         let engine = rebuild_engine_with_config(&state.engine, config)?;
         engine.map(&req.url).await?
     } else {
         state.engine.map(&req.url).await?
     };
-
-    if let Some(ref search) = req.search {
-        let term = search.to_lowercase();
-        result.urls.retain(|u| u.url.to_lowercase().contains(&term));
-    }
 
     if let Some(limit) = req.limit {
         result.urls.truncate(limit);
@@ -600,4 +622,25 @@ fn rebuild_engine_with_config(
         .config(config)
         .build()
         .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_url;
+
+    #[test]
+    fn accepts_an_upper_case_scheme() {
+        assert!(validate_url("HTTP://example.com/").is_ok());
+        assert!(validate_url("Https://example.com/").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_url() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_http_scheme() {
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
 }

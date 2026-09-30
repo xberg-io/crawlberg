@@ -18,7 +18,7 @@ mod link_scope;
 #[cfg(not(target_arch = "wasm32"))]
 mod page_result;
 #[cfg(not(target_arch = "wasm32"))]
-mod redirect;
+pub(crate) mod redirect;
 #[cfg(not(target_arch = "wasm32"))]
 mod robots_cache;
 mod scrape_page;
@@ -69,9 +69,9 @@ pub struct CrawlEngine {
     /// Optional page budget hook for enforcing per-crawl page allowances.
     #[allow(dead_code)]
     pub(crate) page_budget: Arc<dyn crate::budget::PageBudget>,
-    /// Shared UA rotation layer — preserves rotation counter across service builds.
-    #[cfg(not(target_arch = "wasm32"))]
-    ua_rotation: crate::tower::UaRotationLayer,
+    /// Shared UA rotation state: one counter across every service build and, on wasm32, across
+    /// every page the sequential crawl fetches.
+    ua_rotation: crate::tower::UaRotation,
     #[cfg(not(target_arch = "wasm32"))]
     robots_cache: Arc<robots_cache::RobotsCache>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
@@ -138,9 +138,10 @@ impl CrawlEngine {
     /// ~keep A request the browser tier will fetch never reaches UA rotation at all -- the
     /// browser always sends the configured or custom-header agent (`default_robots_user_agent`),
     /// never a rotated pick -- so robots decisions for it must judge that same agent, not one
-    /// the browser will never send (crawlberg#423).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// the browser will never send (crawlberg#423). wasm32 has no browser tier, so there every
+    /// request takes the rotation pick (crawlberg#483).
     pub(crate) fn choose_request_user_agent(&self) -> String {
+        #[cfg(not(target_arch = "wasm32"))]
         if self.request_will_use_browser() {
             return crate::helpers::default_robots_user_agent(&self.config).to_owned();
         }
@@ -188,7 +189,7 @@ impl CrawlEngine {
     #[tracing::instrument(name = "crawl.engine.map", skip_all, fields(url.full = %seed))]
     async fn map_seed(&self, seed: &SeedUrl) -> Result<MapResult, CrawlError> {
         self.config.validate()?;
-        crate::map::map(seed, &self.config).await
+        crate::map::map(self, seed).await
     }
 }
 
@@ -196,40 +197,61 @@ impl CrawlEngine {
 mod tests {
     use super::*;
 
-    /// Minimal `Subscriber` that captures every field recorded on any span,
-    /// used to assert on `#[tracing::instrument]` field values without adding
-    /// a `tracing-subscriber` dev-dependency.
+    /// Minimal `Subscriber` that captures every field recorded on any span, with the span's
+    /// name, used to assert on `#[tracing::instrument]` field values without adding a
+    /// `tracing-subscriber` dev-dependency. Shared with the sequential-crawl tests.
     #[derive(Default)]
-    struct FieldCapture(std::sync::Mutex<Vec<(String, String)>>);
+    pub(super) struct FieldCapture {
+        spans: std::sync::Mutex<Vec<&'static str>>,
+        fields: std::sync::Mutex<Vec<(&'static str, String, String)>>,
+    }
 
     impl FieldCapture {
-        fn visitor(&self) -> impl tracing::field::Visit + '_ {
-            struct V<'a>(&'a FieldCapture);
+        /// The values of `field` recorded on the spans named `span`, in order.
+        pub(super) fn values(&self, span: &str, field: &str) -> Vec<String> {
+            self.fields
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(s, f, _)| *s == span && f == field)
+                .map(|(_, _, value)| value.clone())
+                .collect()
+        }
+
+        fn visitor(&self, span: &'static str) -> impl tracing::field::Visit + '_ {
+            struct V<'a>(&'a FieldCapture, &'static str);
             impl tracing::field::Visit for V<'_> {
                 fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
                     self.0
-                        .0
+                        .fields
                         .lock()
                         .unwrap()
-                        .push((field.name().to_string(), format!("{value:?}")));
+                        .push((self.1, field.name().to_string(), format!("{value:?}")));
                 }
             }
-            V(self)
+            V(self, span)
         }
     }
 
-    struct CapturingSubscriber(std::sync::Arc<FieldCapture>);
+    pub(super) struct CapturingSubscriber(pub(super) std::sync::Arc<FieldCapture>);
 
     impl tracing::Subscriber for CapturingSubscriber {
         fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
             true
         }
         fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            span.record(&mut self.0.visitor());
-            tracing::span::Id::from_u64(1)
+            let name = span.metadata().name();
+            let id = {
+                let mut spans = self.0.spans.lock().unwrap();
+                spans.push(name);
+                spans.len() as u64
+            };
+            span.record(&mut self.0.visitor(name));
+            tracing::span::Id::from_u64(id)
         }
-        fn record(&self, _span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
-            values.record(&mut self.0.visitor());
+        fn record(&self, span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+            let name = self.0.spans.lock().unwrap()[span.into_u64() as usize - 1];
+            values.record(&mut self.0.visitor(name));
         }
         fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
         fn event(&self, _event: &tracing::Event<'_>) {}
@@ -255,11 +277,10 @@ mod tests {
         let _ = engine.scrape("http://user:hunter2@127.0.0.1:1/").await;
         drop(_guard);
 
-        let fields = captured.0.lock().unwrap();
-        let (_, value) = fields
-            .iter()
-            .find(|(name, _)| name == "url.full")
-            .unwrap_or_else(|| panic!("expected a url.full span field to be recorded, got {fields:?}"));
+        let values = captured.values("crawl.engine.scrape", "url.full");
+        let [value] = values.as_slice() else {
+            panic!("expected one crawl.engine.scrape span with a url.full field, got {values:?}");
+        };
         assert!(
             !value.contains("hunter2"),
             "redacted url.full must not leak the password, got {value}"
@@ -324,6 +345,125 @@ mod tests {
         assert!(
             matches!(err, CrawlError::Dns { .. }),
             "expected CrawlError::Dns, got {err:?}"
+        );
+    }
+
+    /// Serve `body` as HTML at `at` on `mock`.
+    async fn mount_page(mock: &wiremock::MockServer, at: &str, body: String) {
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(at))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(body)
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_crawl_reads_each_page_once_with_the_html_parser() {
+        use crate::html::reads;
+        let mock = wiremock::MockServer::start().await;
+        let seed = "crawl-seed-8c1f";
+        let child = "crawl-child-8c1f";
+        mount_page(
+            &mock,
+            "/",
+            format!(
+                r#"{}<p>{seed}</p><script>x</script><a href="/child">child</a>"#,
+                reads::MARKER
+            ),
+        )
+        .await;
+        mount_page(
+            &mock,
+            "/child",
+            format!("{}<p>{child}</p><script>x</script>", reads::MARKER),
+        )
+        .await;
+        let config = crate::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .max_depth(1)
+            .build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.crawl(&mock.uri()).await.expect("the crawl succeeds");
+
+        assert_eq!(result.pages.len(), 2, "the seed and the page it links to are crawled");
+        assert_eq!(reads::count(seed), 1, "the seed page is read once");
+        assert_eq!(reads::count(child), 1, "a page found by the crawl is read once");
+    }
+
+    #[tokio::test]
+    async fn a_scrape_reads_the_page_once_with_the_html_parser() {
+        use crate::html::reads;
+        let mock = wiremock::MockServer::start().await;
+        let unique = "scrape-page-8c1f";
+        // ~keep An empty SPA mount, so the render hint looks at the page as well.
+        mount_page(
+            &mock,
+            "/",
+            format!(r#"{}<p>{unique}</p><div id="root"></div>"#, reads::MARKER),
+        )
+        .await;
+        let config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.scrape(&mock.uri()).await.expect("the scrape succeeds");
+
+        assert!(result.js_render_hint, "the render hint looks at the page");
+        assert_eq!(reads::count(unique), 1, "the scraped page is read once");
+    }
+
+    /// Serve a windows-1252 page whose link holds the byte 0x80. Read as UTF-8 that byte is
+    /// U+FFFD, read as windows-1252 it is `€`, and both take three bytes, so the two readings of
+    /// the page have the same length.
+    async fn mount_windows_1252_page(mock: &wiremock::MockServer) {
+        let mut body = br#"<p>euro</p><a href="/"#.to_vec();
+        body.push(0x80);
+        body.extend_from_slice(br#"">euro</a>"#);
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(body, "text/html; charset=windows-1252"))
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_crawl_extracts_links_from_the_page_as_its_charset_decodes_it() {
+        let mock = wiremock::MockServer::start().await;
+        mount_windows_1252_page(&mock).await;
+        let config = crate::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .max_depth(0)
+            .build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.crawl(&mock.uri()).await.expect("the crawl succeeds");
+
+        let links: Vec<&str> = result.pages[0].links.iter().map(|link| link.url.as_str()).collect();
+        assert_eq!(
+            links,
+            [format!("{}/%E2%82%AC", mock.uri())],
+            "the link is read as windows-1252"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scrape_extracts_links_from_the_page_as_its_charset_decodes_it() {
+        let mock = wiremock::MockServer::start().await;
+        mount_windows_1252_page(&mock).await;
+        let config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.scrape(&mock.uri()).await.expect("the scrape succeeds");
+
+        let links: Vec<&str> = result.links.iter().map(|link| link.url.as_str()).collect();
+        assert_eq!(
+            links,
+            [format!("{}/%E2%82%AC", mock.uri())],
+            "the link is read as windows-1252"
         );
     }
 }

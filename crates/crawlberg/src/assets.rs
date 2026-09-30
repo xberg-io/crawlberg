@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{effective_base_url, get_url_attr, has_rel, is_fetchable_scheme};
+use crate::html::{get_url_attr, has_rel, is_fetchable_scheme};
 use crate::http::http_fetch;
 use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
@@ -23,10 +23,10 @@ pub(crate) struct AssetRef {
     html_tag: String,
 }
 
-/// Discover downloadable assets from a parsed HTML document, resolved against its base URL.
-pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRef> {
+/// Discover downloadable assets from a parsed HTML document, resolved against `base_url`, the
+/// document's base URL from [`crate::html::effective_base_url`].
+pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
     let parser = dom.parser();
-    let base_url = &effective_base_url(dom, document_url);
     let mut assets = Vec::new();
 
     if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
@@ -181,11 +181,13 @@ pub(crate) async fn download_assets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::html::effective_base_url;
 
     fn discovered(html: &str, document_url: &str) -> Vec<String> {
-        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let page = crate::html::mask_raw_text_markup(html);
+        let dom = crate::html::parse_html(&page.text).expect("valid HTML");
         let document_url = Url::parse(document_url).expect("valid URL");
-        discover_assets(&dom, &document_url)
+        discover_assets(&dom, &effective_base_url(page.base_href.as_deref(), &document_url))
             .into_iter()
             .map(|a| a.url)
             .collect()

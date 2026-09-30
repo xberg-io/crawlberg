@@ -10,7 +10,9 @@ use url::Url;
 
 use crate::net::cookies::CookieJar;
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
+use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::redact::{RedactedHeaders, RedactedValues};
 
@@ -295,11 +297,15 @@ impl HttpClient {
                     .timeout(Duration::from_secs(30))
                     .danger_accept_invalid_certs(false);
 
-                if let Some(ref proxy) = self.proxy_url
-                    && let Ok(p) = reqwest::Proxy::all(proxy.as_str())
-                {
+                let proxy = self
+                    .proxy_url
+                    .as_deref()
+                    .and_then(|proxy| reqwest::Proxy::all(proxy).ok());
+                let proxied = proxy.is_some();
+                if let Some(p) = proxy {
                     builder = builder.proxy(p);
                 }
+                builder = with_policy_resolver(builder, proxied, &self.ssrf);
 
                 builder.build().expect("failed to build HTTP client")
             })
@@ -506,7 +512,7 @@ impl HttpClient {
         self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let response = req_builder.send().await.map_err(|e| {
             self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            NetError::Network(format!("{}: {}", url, e))
+            NetError::Network(format!("{}: {}", url, error_with_causes(&e)))
         })?;
         self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         Ok(response)
@@ -1012,6 +1018,105 @@ mod tests {
             .await
             .expect("fetch must succeed");
         assert_eq!(client.active_requests(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_rebinding_host_never_reaches_the_address_the_policy_denies() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+        use crate::page::PageError;
+
+        let (port, seen) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false);
+
+        let err = client
+            .fetch(&format!("http://localhost:{port}/").parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the connection's lookup answers a denied address");
+
+        let NetError::Network(message) = &err else {
+            panic!("expected a refused connection, got {err:?}");
+        };
+        assert!(
+            message.contains("denied by the test policy: 127.0.0.1"),
+            "the refusal must carry the policy's reason: {message}"
+        );
+        assert!(
+            !PageError::from(err)
+                .to_string()
+                .contains("Network error: Network error"),
+            "a page error names the network once"
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection: {:?}",
+            seen.lock().expect("lock")
+        );
+        assert_eq!(
+            *policy.resolved.lock().expect("lock"),
+            vec!["localhost"],
+            "the connection must use the policy's lookup"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_a_rebinding_host_never_reaches_the_address_the_policy_denies() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+        let (port, seen) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/away\r\nContent-Length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false);
+
+        client
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the redirect target's lookup answers a denied address");
+
+        assert_eq!(
+            start_requests.lock().expect("lock").len(),
+            1,
+            "the first hop is fetched"
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection: {:?}",
+            seen.lock().expect("lock")
+        );
+        assert_eq!(*policy.resolved.lock().expect("lock"), vec!["localhost"]);
+    }
+
+    #[tokio::test]
+    async fn a_proxied_client_leaves_the_target_to_the_proxy() {
+        use crate::net::resolver::tests::RebindingPolicy;
+
+        let (proxy, proxy_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let policy = Arc::new(RebindingPolicy::default());
+        // ~keep A proxy named by host: a client that asked the policy for it would be refused.
+        let proxy = proxy.replacen("127.0.0.1", "localhost", 1);
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone(), false);
+
+        client
+            .fetch(&"http://example.invalid/".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy answers the request");
+
+        let proxy_requests = proxy_requests.lock().expect("lock");
+        assert!(
+            proxy_requests[0].starts_with("GET http://example.invalid/ "),
+            "the request goes to the proxy: {proxy_requests:?}"
+        );
+        assert!(
+            policy.resolved.lock().expect("lock").is_empty(),
+            "the proxy resolves the target, so the client must not"
+        );
     }
 
     const URL_PASSWORD: &str = "s3cret";

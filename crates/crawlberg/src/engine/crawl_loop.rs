@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use regex::Regex;
+use crate::helpers::PathPattern;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use url::Url;
@@ -115,8 +115,8 @@ impl CrawlEngine {
         // ~keep `Arc` rather than `Vec`: every spawned frontier fetch builds its own
         // ~keep task-local `RedirectPolicy` (see `fetch_and_extract`) and needs a cheap,
         // ~keep `'static` clone of these lists to do it.
-        let exclude_regexes: Arc<[Regex]> = compile_regexes(&self.config.exclude_paths)?.into();
-        let include_regexes: Arc<[Regex]> = compile_regexes(&self.config.include_paths)?.into();
+        let exclude_regexes: Arc<[PathPattern]> = compile_regexes(&self.config.exclude_paths)?.into();
+        let include_regexes: Arc<[PathPattern]> = compile_regexes(&self.config.include_paths)?.into();
 
         // ~keep robots.txt is read before anything goes on the wire, and the policy travels
         // into the redirect resolution below rather than bracketing it. A redirect can leave
@@ -159,7 +159,7 @@ impl CrawlEngine {
         // ~keep The seed keeps flowing through the frontier and the loop so that budget,
         // streaming, max_pages and filter accounting stay in exactly one place; only its
         // *fetch* is skipped, by handing the loop the response we already have.
-        let mut preloaded = Some((final_url.clone(), seed.final_response, seed.browser_used));
+        let mut preloaded = Some(seed);
 
         let context = LoopContext {
             exclude_regexes: Arc::clone(&exclude_regexes),
@@ -352,7 +352,7 @@ impl CrawlEngine {
         state: &mut CrawlState,
         policy: &mut RedirectPolicy<'_>,
     ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
-        let resolution = match follow_redirects(self, url, max_redirects, Some(policy)).await {
+        let resolution = match follow_redirects(self, url, max_redirects, Some(policy), None).await {
             Ok(RedirectResolution::Refused {
                 refusal,
                 redirect_count,
@@ -368,7 +368,7 @@ impl CrawlEngine {
                 state.redirect_count = redirect_count;
                 return Err(refusal);
             }
-            Ok(RedirectResolution::Fetched(outcome)) => Ok(outcome),
+            Ok(RedirectResolution::Fetched(outcome)) => Ok(*outcome),
             Err(e) => Err(e),
         };
         Ok(match resolution {
@@ -457,7 +457,7 @@ impl CrawlEngine {
     async fn run_crawl_loop(
         &self,
         state: &mut CrawlState,
-        preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
+        preloaded: &mut Option<RedirectOutcome>,
         context: &LoopContext<'_>,
     ) -> Result<(), CrawlError> {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
@@ -496,7 +496,7 @@ impl CrawlEngine {
         state: &mut CrawlState,
         window: &mut Vec<FrontierEntry>,
         in_flight: &mut Vec<FrontierEntry>,
-        preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
+        preloaded: &mut Option<RedirectOutcome>,
         context: &LoopContext<'_>,
     ) -> Result<(), CrawlError> {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
@@ -559,7 +559,7 @@ impl CrawlEngine {
         &self,
         drive: &mut LoopDrive<'_>,
         state: &mut CrawlState,
-        preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
+        preloaded: &mut Option<RedirectOutcome>,
         context: &LoopContext<'_>,
     ) -> Result<(), CrawlError> {
         while drive.join_set.len() < drive.max_concurrent {
@@ -635,7 +635,7 @@ impl CrawlEngine {
         drive: &mut LoopDrive<'_>,
         engine: CrawlEngine,
         entry: FrontierEntry,
-        preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
+        preloaded_response: Option<RedirectOutcome>,
         permit: tokio::sync::OwnedSemaphorePermit,
         context: &LoopContext<'_>,
     ) {
@@ -732,8 +732,8 @@ impl CrawlEngine {
 
     /// Check whether a URL should be fetched based on path filters and robots.txt.
     fn should_fetch_url(&self, entry: &FrontierEntry, context: &LoopContext<'_>, urls_filtered: &mut usize) -> bool {
-        let exclude_regexes: &[Regex] = &context.exclude_regexes;
-        let include_regexes: &[Regex] = &context.include_regexes;
+        let exclude_regexes: &[PathPattern] = &context.exclude_regexes;
+        let include_regexes: &[PathPattern] = &context.include_regexes;
         let robots = context.robots;
         let page_parsed = match Url::parse(&entry.url) {
             Ok(u) => u,
@@ -749,7 +749,7 @@ impl CrawlEngine {
             exclude_regexes,
             include_regexes,
             entry.depth > 0,
-            self.config.path_patterns_match_query,
+            crate::helpers::PathPatternTarget::from_config(&self.config),
             urls_filtered,
         ) {
             return false;
@@ -840,16 +840,8 @@ fn emit_dequeue_span(entry: &FrontierEntry, window_len: usize, state: &CrawlStat
 /// ~keep The seed was already fetched to resolve its redirect chain. Reusing that response
 /// ~keep is what stops the crawl from issuing a second identical request for it; every other
 /// ~keep URL still fetches normally.
-fn take_preloaded_response(
-    preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
-    url: &str,
-) -> Option<(crate::tower::CrawlResponse, bool)> {
-    match preloaded {
-        Some((preloaded_url, _, _)) if preloaded_url == url => {
-            preloaded.take().map(|(_, resp, browser_used)| (resp, browser_used))
-        }
-        _ => None,
-    }
+fn take_preloaded_response(preloaded: &mut Option<RedirectOutcome>, url: &str) -> Option<RedirectOutcome> {
+    preloaded.take_if(|outcome| outcome.final_url == url)
 }
 
 /// Fetch one URL, following any redirect it answers with, and run HTML extraction off the
@@ -865,28 +857,27 @@ fn take_preloaded_response(
 async fn fetch_and_extract(
     engine: CrawlEngine,
     entry: FrontierEntry,
-    preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
+    preloaded_response: Option<RedirectOutcome>,
     permit: tokio::sync::OwnedSemaphorePermit,
-    exclude_regexes: Arc<[Regex]>,
-    include_regexes: Arc<[Regex]>,
+    exclude_regexes: Arc<[PathPattern]>,
+    include_regexes: Arc<[PathPattern]>,
 ) -> Result<FetchOutcome, (FrontierEntry, CrawlError)> {
     let _permit = permit;
 
-    let (resp, browser_used, final_url, redirect_count) = match preloaded_response {
+    let (outcome, redirect_count) = match preloaded_response {
         // ~keep The seed's redirect chain was already resolved before the loop started; its
-        // ~keep frontier entry URL is already the post-redirect final URL (see `seed_frontier`).
-        Some((resp, browser_used)) => (resp, browser_used, entry.url.clone(), 0),
+        // ~keep frontier entry URL is already the post-redirect final URL (see `seed_frontier`),
+        // ~keep and its hops are already counted in the crawl's own redirect count.
+        Some(outcome) => (outcome, 0),
         None => {
             let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
             let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
             let max_redirects = engine.config.max_redirects;
-            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy)).await {
-                Ok(RedirectResolution::Fetched(outcome)) => (
-                    outcome.final_response,
-                    outcome.browser_used,
-                    outcome.final_url,
-                    outcome.redirect_count,
-                ),
+            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy), None).await {
+                Ok(RedirectResolution::Fetched(outcome)) => {
+                    let redirect_count = outcome.redirect_count;
+                    (*outcome, redirect_count)
+                }
                 // ~keep Refused only by a per-hop policy check (robots, exclude_paths, or a
                 // ~keep dedup collision with a page already claimed elsewhere) -- the same
                 // ~keep silent rejection `should_fetch_url` already applies to a frontier entry
@@ -897,6 +888,13 @@ async fn fetch_and_extract(
         }
     };
 
+    let RedirectOutcome {
+        final_url,
+        final_response: resp,
+        browser_used,
+        page_scan,
+        ..
+    } = outcome;
     let status_code = resp.status;
     let content_type = resp.content_type;
     let headers = resp.headers;
@@ -925,6 +923,7 @@ async fn fetch_and_extract(
             &robots_user_agent,
             body,
             body_bytes,
+            page_scan,
         )
     })
     .await

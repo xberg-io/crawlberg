@@ -30,7 +30,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -38,6 +38,8 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -67,6 +69,7 @@ const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
     "link_local",
     "unspecified",
     "multicast",
+    "private_network",
     "private_network",
     "loopback",
     "unspecified",
@@ -112,6 +115,29 @@ pub const NAMED_SCHEMES: [&str; 19] = [
 pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Return `Ok(())` if `url` may be fetched.
     async fn validate(&self, url: &Url) -> Result<(), String>;
+
+    /// Resolve `host` and return the addresses a connection to it may use.
+    ///
+    /// The native clients connect only to the addresses this returns (see
+    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so a validator that checks
+    /// resolved addresses does it here, on the lookup the connection uses. A check in `validate`
+    /// alone is lost: its lookup is gone by the time the client resolves the host again, and a
+    /// rebinding DNS answer differs.
+    ///
+    /// The default is the system lookup with no check, for a validator that decides by the URL
+    /// alone.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        system_lookup(host).await
+    }
+}
+
+/// Resolve `host` with the system resolver.
+async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
+    Ok(tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
+        .map(|address| address.ip())
+        .collect())
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -144,6 +170,14 @@ impl DefaultSsrfValidator {
     }
 }
 
+#[cfg(test)]
+impl DefaultSsrfValidator {
+    /// Build a validator with an explicit setting, independent of the environment.
+    pub(crate) fn with_deny_private(deny_private: bool) -> Self {
+        Self { deny_private }
+    }
+}
+
 impl Default for DefaultSsrfValidator {
     fn default() -> Self {
         Self::from_env()
@@ -169,9 +203,8 @@ impl SsrfValidator for DefaultSsrfValidator {
             return Ok(());
         }
 
-        // ~keep Localhost names are blocked before DNS to close rebinding gaps between
-        // validation and request time. This validator does not resolve; the injected
-        // crawlberg one does, and closes the gap properly.
+        // ~keep Localhost names are blocked before DNS. `validate` does not resolve; the
+        // connect-time `resolve` checks every address the connection will use.
         match url.host() {
             Some(url::Host::Ipv4(ip)) => match denial_reason(ip.into()) {
                 Some(reason) => Err(format!(
@@ -190,6 +223,19 @@ impl SsrfValidator for DefaultSsrfValidator {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Refuses the host when any address it resolves to is in the deny-list.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        let addresses = system_lookup(host).await?;
+        if self.deny_private
+            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
+        {
+            return Err(format!(
+                "{host} resolves to the private/internal address {ip}, which is not allowed"
+            ));
+        }
+        Ok(addresses)
     }
 }
 
@@ -308,6 +354,11 @@ mod tests {
             // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
             // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
             "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
+            // The reserved range 240.0.0.0/4, which holds the broadcast address
+            // 255.255.255.255, plain and Teredo-embedded (5fe:fdfc inverts to 250.1.2.3).
+            "http://240.0.0.1/",
+            "http://255.255.255.255/",
+            "http://[2001:0:4136:e378:8000:63bf:5fe:fdfc]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -333,6 +384,10 @@ mod tests {
             "http://[64:ff9b:1:0:8:808:a00:0]/",
             "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
             "http://[2001:db8::1]/",
+            // Boundary: the last address below 224.0.0.0/4, plain and 6to4-embedded, stays
+            // permitted; only 224.0.0.0/4 and above (multicast, then 240.0.0.0/4) are denied.
+            "http://223.255.255.1/",
+            "http://[2002:dfff:ff01::]/",
         ] {
             validate(permitted, true)
                 .await

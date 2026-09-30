@@ -38,6 +38,8 @@ The map operation tries multiple strategies in order, returning results from the
    - A regular sitemap XML file
    - An HTML page (extracts all internal and external links)
 
+   The direct fetch follows HTTP redirects and refreshes as a crawl does, and it requests a URL only if a crawl would: `exclude_paths` and, for a redirect or refresh hop, `include_paths` must admit it, and with `respect_robots_txt` on, the robots.txt of the URL's origin must allow it. A refused URL is not requested, and the map returns a forbidden error with the reason (HTTP 403 from the REST API).
+
 4. **Empty result** -- If none of the above produces URLs, returns an empty `MapResult`.
 
 ## Sitemap parsing
@@ -57,6 +59,10 @@ The engine handles the full range of sitemap formats:
   </url>
 </urlset>
 ```
+
+Each `<loc>` is resolved to an absolute, normalized address and deduplicated within the map
+operation: two spellings of one page, such as a default port or an upper-case host, count once,
+and the same page listed in two sitemaps also counts once.
 
 ### Sitemap index files
 
@@ -115,7 +121,9 @@ CrawlConfig {
 }
 ```
 
-The search is case-insensitive and matches against the full URL string. Only URLs containing the search term are included in the result.
+The search is case-insensitive and matches against the full URL string, both as returned and in its decoded form, so `café` finds `https://example.com/caf%C3%A9` and `bücher` finds `https://xn--bcher-kva.example/`. Only URLs containing the search term are included in the result.
+
+The term and the URL are compared after Unicode normalization and default case folding: `café` typed as `e` plus a combining accent matches `é`, and `STRASSE` matches `straße`. Case folding does not use a locale, so the Turkish dotted and dotless `i` do not match their Turkish case partners: `İ` does not match `i`, and `IŞIK` does not match `ışık`.
 
 ## Limit control
 
@@ -144,7 +152,7 @@ CrawlConfig {
 Each pattern is matched against the URL's path component. URLs matching any exclude pattern are removed from the result.
 
 :::caution
-`include_paths` does not apply to map operations. Use `map_search` or `exclude_paths` for filtering map results.
+`include_paths` does not filter map results. It applies only to the redirect and refresh hops of the direct fetch. Use `map_search` or `exclude_paths` for filtering map results.
 :::
 
 ## Filter application order
@@ -157,12 +165,12 @@ Filters are applied in this order:
 
 ## Configuration reference
 
-| Field                | Type             | Default            | Description                                         |
-| -------------------- | ---------------- | ------------------ | --------------------------------------------------- |
-| `map_limit`          | `Option<usize>`  | `None` (unlimited) | Maximum number of URLs to return.                   |
-| `map_search`         | `Option<String>` | `None`             | Case-insensitive substring filter on URLs.          |
-| `exclude_paths`      | `Vec<String>`    | `[]`               | Regex patterns to exclude by URL path.              |
-| `respect_robots_txt` | `bool`           | `false`            | Whether to check robots.txt for sitemap directives. |
+| Field                | Type             | Default            | Description                                                                                |
+| -------------------- | ---------------- | ------------------ | ------------------------------------------------------------------------------------------ |
+| `map_limit`          | `Option<usize>`  | `None` (unlimited) | Maximum number of URLs to return.                                                          |
+| `map_search`         | `Option<String>` | `None`             | Case-insensitive substring filter on URLs.                                                 |
+| `exclude_paths`      | `Vec<String>`    | `[]`               | Regex patterns to exclude by URL path.                                                     |
+| `respect_robots_txt` | `bool`           | `false`            | Whether to read robots.txt for sitemap directives and apply its rules to the direct fetch. |
 
 ## Combining with crawl
 

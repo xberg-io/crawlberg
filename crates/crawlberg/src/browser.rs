@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
-use self::launch::launch_or_connect;
+use self::launch::{UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
 use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
@@ -142,6 +142,10 @@ async fn pooled_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "a shared browser_pool is configured; the pool launches Chrome from its own BrowserPoolConfig",
+    );
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
         // ~keep profile named later cannot retroactively change that process's
@@ -309,7 +313,7 @@ struct OneShotSession {
     /// caller's Chrome even when the fetch never reaches its own cleanup.
     open_tab: Option<TargetId>,
     handler_handle: Option<JoinHandle<()>>,
-    data_dir: Option<std::path::PathBuf>,
+    data_dir: Option<UserDataDir>,
     shutdown_timeout: Duration,
 }
 
@@ -344,17 +348,18 @@ impl Drop for OneShotSession {
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
+                // ~keep The task owns `data_dir`, so a runtime that shuts down before the task
+                // ~keep finishes still removes a scratch directory when it drops the task.
                 handle.spawn(async move {
                     release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
-                    if let Some(dir) = data_dir {
-                        let _ = tokio::fs::remove_dir_all(&dir).await;
-                    }
+                    drop(data_dir);
                 });
             }
             Err(_) => {
                 tracing::warn!(
-                    "dropping a one-shot browser session outside a Tokio runtime; its Chrome \
-                     teardown is left to the process"
+                    "dropping a one-shot browser session outside a Tokio runtime; a launched Chrome \
+                     is killed without closing, a tab opened in a connected Chrome stays open, and \
+                     the profile directory is removed on a background thread"
                 );
             }
         }

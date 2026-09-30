@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::html::is_fetchable_scheme;
+use crate::html::{PageScan, is_fetchable_scheme};
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
@@ -21,8 +21,7 @@ use crate::types::CrawlConfig;
 use headers::build_headers_map;
 
 pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
-    truncate_body_at_char_boundary,
+    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
 };
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::build_client;
@@ -32,7 +31,9 @@ pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
+pub(crate) use status::{HttpStatus, error_status};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
@@ -69,13 +70,13 @@ pub struct HttpResponse {
     /// Optional browser-specific extras (eval result, network events, cookies).
     #[allow(dead_code)]
     pub browser_extras: Option<BrowserExtras>,
-    /// The URL of the final response after any transparent redirect following.
+    /// The URL of the final response after any redirects.
     ///
-    /// On native targets reqwest uses `Policy::none()` so this always equals
-    /// the request URL (redirects are handled manually by `follow_redirects`).
+    /// On native targets reqwest uses `Policy::none()` and `http_fetch` follows each
+    /// redirect hop itself, so this is the URL of the last hop it requested.
     /// On wasm targets the browser's `fetch` follows redirects transparently
-    /// and `reqwest::Response::url()` returns the post-redirect URL — which is
-    /// what the wasm scrape path needs to populate `ScrapeResult::final_url`.
+    /// and `reqwest::Response::url()` returns the post-redirect URL, which the wasm
+    /// scrape path uses to populate `ScrapeResult::final_url`.
     #[allow(dead_code)]
     pub final_url: String,
     /// PNG screenshot bytes captured for this fetch, when the caller requested one
@@ -92,6 +93,18 @@ struct FetchContext<'a> {
     config: &'a CrawlConfig,
     extra_headers: &'a HashMap<String, String>,
     client: &'a reqwest::Client,
+    fetched: Fetched,
+}
+
+/// What a fetch reads its response as, which picks the 2xx WAF decision the response gets.
+#[derive(Clone, Copy)]
+pub(crate) enum Fetched {
+    /// A page or asset: [`waf::waf_2xx_error`].
+    Page,
+    /// A sitemap, or a page `map` reads as one when it is one: [`waf::sitemap_2xx_error`].
+    Sitemap,
+    /// The site's robots.txt: [`waf::robots_2xx_error`].
+    RobotsTxt,
 }
 
 /// What one hop produced: a redirect target still to follow, or a finished response.
@@ -104,6 +117,21 @@ struct FetchContext<'a> {
 enum HopOutcome {
     Redirect(url::Url),
     Complete(HttpResponse),
+}
+
+/// The response a 404 past the first hop of a followed chain stops on: the crawl's chain reports
+/// the same empty 404 at the missing URL.
+fn not_found_response(url: &url::Url) -> HttpResponse {
+    HttpResponse {
+        status: 404,
+        content_type: String::new(),
+        body: String::new(),
+        body_bytes: Vec::new(),
+        headers: HashMap::new(),
+        browser_extras: None,
+        final_url: url.to_string(),
+        screenshot: None,
+    }
 }
 
 /// Where a 3xx response points.
@@ -140,10 +168,6 @@ impl ResponseHead {
         }
     }
 
-    fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-
     fn content_length(&self) -> Option<usize> {
         self.headers
             .get("content-length")
@@ -170,6 +194,35 @@ impl ResponseHead {
     }
 }
 
+/// Whether a fetch follows a `Refresh` header or a `<meta http-equiv="refresh">` the way it
+/// follows an HTTP 3xx.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshRedirects {
+    /// Follow them as the crawl does, and stop the whole chain where the crawl's chain stops.
+    /// The refresh itself is followed on native only: wasm has no refresh reader, and its crawl
+    /// follows no refresh either.
+    Follow,
+    /// Return the response that names them.
+    Ignore,
+}
+
+/// A check every request of a fetch passes before it goes out: the URL the fetch starts from, then
+/// each redirect or refresh hop, after the SSRF policy admits it.
+pub(crate) trait HopPolicy {
+    /// `Err` refuses `url`, which is then never requested, and ends the fetch with that error.
+    /// `is_redirect_hop` is `false` for the URL the fetch starts from and `true` for each hop.
+    async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError>;
+}
+
+/// A fetch with no check beyond the SSRF policy.
+pub(crate) struct AdmitEvery;
+
+impl HopPolicy for AdmitEvery {
+    async fn admit(&mut self, _url: &url::Url, _is_redirect_hop: bool) -> Result<(), CrawlError> {
+        Ok(())
+    }
+}
+
 /// Perform a single HTTP GET request with the given configuration.
 ///
 /// Handles user-agent, authentication, custom headers, error status codes,
@@ -183,6 +236,104 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
+    http_fetch_with(url, config, extra_headers, client, RefreshRedirects::Ignore)
+        .await
+        .map(|page| page.response)
+}
+
+/// A fetched response, with the refresh check's read of its body when that check read one.
+pub(crate) struct FetchedPage {
+    pub(crate) response: HttpResponse,
+    /// The meta refresh check's read of `response`'s body, so the caller does not read the page
+    /// again.
+    pub(crate) page_scan: Option<PageScan>,
+}
+
+impl FetchedPage {
+    fn unread(response: HttpResponse) -> Self {
+        Self {
+            response,
+            page_scan: None,
+        }
+    }
+}
+
+/// [`http_fetch`], following a refresh as well when `refresh` says so, with the refresh check's
+/// read of the last page.
+///
+/// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
+/// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
+/// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
+/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
+pub(crate) async fn http_fetch_with(
+    url: &str,
+    config: &CrawlConfig,
+    extra_headers: &std::collections::HashMap<String, String>,
+    client: &reqwest::Client,
+    refresh: RefreshRedirects,
+) -> Result<FetchedPage, CrawlError> {
+    fetch_as(
+        url,
+        config,
+        extra_headers,
+        client,
+        refresh,
+        Fetched::Page,
+        &mut AdmitEvery,
+    )
+    .await
+}
+
+/// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
+/// without its whole-line comments, at any size up to the classifier's body limit.
+pub(crate) async fn http_fetch_robots_txt(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+) -> Result<HttpResponse, CrawlError> {
+    fetch_as(
+        url,
+        config,
+        &HashMap::new(),
+        client,
+        RefreshRedirects::Ignore,
+        Fetched::RobotsTxt,
+        &mut AdmitEvery,
+    )
+    .await
+    .map(|page| page.response)
+}
+
+/// [`http_fetch`] for a sitemap: a 2xx body that reads as a sitemap document is returned whatever
+/// its URLs say, and any other body gets the page decision.
+pub(crate) async fn http_fetch_sitemap(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+) -> Result<HttpResponse, CrawlError> {
+    fetch_as(
+        url,
+        config,
+        &HashMap::new(),
+        client,
+        RefreshRedirects::Ignore,
+        Fetched::Sitemap,
+        &mut AdmitEvery,
+    )
+    .await
+    .map(|page| page.response)
+}
+
+/// `policy` admits each request before it goes out: the start URL, then every hop.
+async fn fetch_as(
+    url: &str,
+    config: &CrawlConfig,
+    extra_headers: &HashMap<String, String>,
+    client: &reqwest::Client,
+    refresh: RefreshRedirects,
+    fetched: Fetched,
+    policy: &mut impl HopPolicy,
+) -> Result<FetchedPage, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
@@ -194,14 +345,35 @@ pub(crate) async fn http_fetch(
         config,
         extra_headers,
         client,
+        fetched,
     };
+    let mut rules = ChainRules::new(refresh, &initial_url);
     let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
-        let next_url = match fetch_one_hop(&context, &current_url).await? {
-            HopOutcome::Complete(response) => return Ok(response),
+        policy.admit(&current_url, redirects_followed > 0).await?;
+        let hop_left = redirects_followed < config.max_redirects;
+        let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
+        let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
+            Ok(outcome) => outcome,
+            Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
+                return Ok(FetchedPage::unread(not_found_response(&current_url)));
+            }
+            Err(error) => return Err(error),
+        };
+        let next_url = match outcome {
             HopOutcome::Redirect(next_url) => next_url,
+            HopOutcome::Complete(response) => {
+                if !hop_left {
+                    return Ok(FetchedPage::unread(response));
+                }
+                let mut page_scan = None;
+                match rules.refresh_target(&response, &current_url, &mut page_scan) {
+                    Some(next_url) => next_url,
+                    None => return Ok(FetchedPage { response, page_scan }),
+                }
+            }
         };
 
         if let Err(e) = validate_url(&next_url, &config.ssrf).await {
@@ -220,21 +392,109 @@ pub(crate) async fn http_fetch(
             return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
         }
 
+        rules.insert(&next_url);
         current_url = next_url;
     }
 }
 
+/// Statuses whose `Location` header the crawl follows (`engine::redirect::http_redirect_target`
+/// reads this same constant as `crate::http::REDIRECT_STATUSES`; it lives here because
+/// `engine::redirect` is native-only and this module is not).
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
+/// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
+/// has requested.
+///
+/// ~keep The rules are the crawl's (`engine/redirect.rs`'s `follow_redirects` and
+/// ~keep `next_redirect_target`): the limit is checked first, a `Location` is followed only to a
+/// ~keep URL not yet requested and otherwise falls through to the refresh sources, a 3xx that
+/// ~keep leads nowhere new is the response, and a 404 past the first hop is the response. The
+/// ~keep crawl fails none of these chains, so a map of the same chain does not fail either.
+/// ~keep A fetch that ignores refreshes keeps the plain rules: every `Location` is followed and a
+/// ~keep hop past the limit or a 404 is an error.
+///
+/// ~keep A parsed URL's serialization is already the crawl's cycle key for it
+/// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
+/// ~keep serialization is stored and compared directly.
+struct ChainRules(Option<std::collections::HashSet<String>>);
+
+impl ChainRules {
+    fn new(refresh: RefreshRedirects, initial_url: &url::Url) -> Self {
+        let mut visited = Self((refresh == RefreshRedirects::Follow).then(std::collections::HashSet::new));
+        visited.insert(initial_url);
+        visited
+    }
+
+    fn insert(&mut self, url: &url::Url) {
+        if let Some(seen) = self.0.as_mut() {
+            seen.insert(url.as_str().to_owned());
+        }
+    }
+
+    /// Whether the fetch goes on to the `Location` target `target` of a hop that answered with
+    /// `status`, given whether a hop is left. `status` is checked against the crawl's own
+    /// `REDIRECT_STATUSES` so a 300, 304 or 305 naming a `Location` stays unfollowed here too.
+    fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|seen| REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str()))
+    }
+
+    /// Whether `error`, raised past the first hop, ends the chain on a response instead.
+    fn stops_on(&self, error: &CrawlError) -> bool {
+        self.0.is_some() && matches!(error, CrawlError::NotFound { .. })
+    }
+
+    /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
+    /// The meta refresh check leaves its read of the body in `page_scan`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_target(
+        &self,
+        response: &HttpResponse,
+        current_url: &url::Url,
+        page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
+        let seen = self.0.as_ref()?;
+        crate::engine::redirect::refresh_redirect_target(
+            response,
+            current_url.as_str(),
+            |target| (!seen.contains(target)).then(|| target.to_owned()),
+            page_scan,
+        )
+        .map(|(target, _)| target)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn refresh_target(
+        &self,
+        _response: &HttpResponse,
+        _current_url: &url::Url,
+        _page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
+        None
+    }
+}
+
 /// Fetch `current_url` once, without following any redirect it returns.
-async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Result<HopOutcome, CrawlError> {
+///
+/// A 3xx names its `Location` as the next hop when `follows_location` accepts it; otherwise the
+/// 3xx is the response.
+async fn fetch_one_hop(
+    context: &FetchContext<'_>,
+    current_url: &url::Url,
+    follows_location: impl Fn(u16, &url::Url) -> bool,
+) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     let head = ResponseHead::from_response(&resp);
 
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
-            Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
-            Some(RedirectTarget::Unfollowable) => {
+            Some(RedirectTarget::Follow(next_url)) if follows_location(head.status, &next_url) => {
+                return Ok(HopOutcome::Redirect(next_url));
+            }
+            Some(_) => {
                 return Ok(HopOutcome::Complete(
-                    unfollowable_redirect_response(context.config, resp, head).await,
+                    unfollowed_redirect_response(context.config, resp, head).await,
                 ));
             }
             None => {}
@@ -266,30 +526,26 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
         return Err(error);
     }
 
-    // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
-    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
-    if let Some(header_vendor) = header_only_waf_vendor(&head, &mut headers_map_cache) {
-        let config = context.config;
-        return Err(body_confirmed_waf_error(config, resp, &head, header_vendor, &mut headers_map_cache).await);
-    }
-
     let expected_len = head.content_length();
     let body_bytes = read_validated_body(context.config, resp, expected_len).await?;
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
-    // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
-    if let Some(vendor) = body_waf_vendor(&head, &body, &body_bytes, &mut headers_map_cache) {
-        return Err(CrawlError::WafBlocked {
-            message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-            vendor,
-        });
-    }
-
-    // ~keep Reuses the cached header map (built at most once above) instead of walking
-    // `headers` a third time; falls back to a fresh build only for the statuses that
-    // never populated the cache (anything outside 200..300 and not explicitly matched
-    // above, e.g. 206 or an unlisted 4xx/5xx that falls through to no terminal error).
     let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&head.headers));
+
+    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
+    // The body is read before the check rather than after a header match because a header-only
+    // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
+    // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
+    // response this hop returns. A robots.txt gets its own decision, which does not read its
+    // whole-line comments, and a sitemap gets one that reads a sitemap as a sitemap whatever it lists.
+    let refusal = match context.fetched {
+        Fetched::Page => waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map),
+        Fetched::Sitemap => waf::sitemap_2xx_error(head.status, &body_bytes, &body, &headers_map),
+        Fetched::RobotsTxt => waf::robots_2xx_error(head.status, &body_bytes, &body, &headers_map),
+    };
+    if let Some(error) = refusal {
+        return Err(error);
+    }
     Ok(HopOutcome::Complete(head.into_response(body, body_bytes, headers_map)))
 }
 
@@ -302,11 +558,23 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         .get(current_url.to_string())
         .timeout(context.config.request_timeout);
 
-    // ~keep Reads `custom_headers["user-agent"]` ahead of `config.user_agent`, the same
-    // ~keep precedence every other sender uses (crawlberg#423); this hop's own robots.txt,
-    // ~keep sitemap and asset fetches used to read `config.user_agent` only, so a
-    // ~keep custom-header agent never reached them.
-    req = req.header(USER_AGENT, crate::helpers::default_robots_user_agent(context.config));
+    // ~keep `extra_headers["user-agent"]` outranks everything else: on wasm, where every
+    // ~keep request (including the page fetch) goes through this function, it is the crawl
+    // ~keep loop's own per-page rotation pick (crawlberg#483). Falls back to
+    // ~keep `custom_headers["user-agent"]` ahead of `config.user_agent`, the same precedence
+    // ~keep every other sender uses (crawlberg#423); this hop's own robots.txt, sitemap and
+    // ~keep asset fetches used to read `config.user_agent` only, so a custom-header agent
+    // ~keep never reached them. Native's own Tower-routed page fetch never reaches this
+    // ~keep function at all -- it sets its `User-Agent` header in `tower/service.rs` instead.
+    let extra_user_agent = context
+        .extra_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.as_str());
+    req = req.header(
+        USER_AGENT,
+        extra_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(context.config)),
+    );
 
     // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
     // ~keep strip-credentials-on-cross-host behaviour never runs; asking per hop for the
@@ -322,7 +590,14 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(name.as_str(), value.as_str());
     }
 
+    // ~keep `user-agent` is already reflected in the line above (as `extra_user_agent`);
+    // ~keep re-adding it here would append a second, redundant header line instead of
+    // ~keep replacing the first one -- the same duplicate-header bug the loop above already
+    // ~keep guards against for `seed_host_headers` (crawlberg#423, crawlberg#483).
     for (k, v) in context.extra_headers {
+        if k.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -342,8 +617,9 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
     })
 }
 
-/// Return a 3xx whose `Location` names no URL the crawler can fetch as the response itself.
-async fn unfollowable_redirect_response(
+/// Return a 3xx whose `Location` is not followed as the response itself: it names no URL the
+/// crawler can fetch, or the chain's rules stop before it.
+async fn unfollowed_redirect_response(
     config: &CrawlConfig,
     resp: reqwest::Response,
     head: ResponseHead,
@@ -354,50 +630,6 @@ async fn unfollowable_redirect_response(
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let headers_map = build_headers_map(&head.headers);
     head.into_response(body, body_bytes, headers_map)
-}
-
-/// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
-fn header_only_waf_vendor(
-    head: &ResponseHead,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    challenge::header_waf_vendor(head.status, headers_map)
-}
-
-/// Re-run classification over the body of a 2xx its headers already flagged, preferring
-/// the vendor the body names and falling back to the header-derived one.
-async fn body_confirmed_waf_error(
-    config: &CrawlConfig,
-    resp: reqwest::Response,
-    head: &ResponseHead,
-    header_vendor: String,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> CrawlError {
-    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    let vendor = waf::waf_vendor_from_body(head.status, &body, headers_map).unwrap_or(header_vendor);
-    CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (header): {vendor}"),
-        vendor,
-    }
-}
-
-/// The WAF vendor a 2xx's already-read body fingerprints.
-fn body_waf_vendor(
-    head: &ResponseHead,
-    body: &str,
-    body_bytes: &[u8],
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    waf::waf_vendor_from_bytes(head.status, body_bytes, body, headers_map)
 }
 
 /// Shortfall below the declared `content-length` that is read as a truncated transfer
@@ -766,7 +998,7 @@ mod tests {
         }
     }
 
-    /// ~keep Regression coverage for #442: `http_fetch` -> `send_hop_request` is the one
+    /// ~keep Regression coverage for #442: the plain fetch's `send_hop_request` is the one
     /// call site robots.txt (`helpers.rs`), sitemaps (`sitemap.rs`) and asset downloads
     /// (`assets.rs`) all fetch through, and it shares `classify_reqwest_error` with the
     /// page-fetch path `test_transport_error_credential_redaction.rs` already covers. That
@@ -1026,6 +1258,59 @@ mod tests {
         }
     }
 
+    /// A custom retry policy decides on the status of the response that failed, so a plain 403
+    /// and a fingerprinted block must both carry the status they were raised for (crawlberg#133).
+    #[tokio::test]
+    async fn http_fetch_carries_the_response_status_on_a_403_and_on_a_fingerprinted_block() {
+        let plain = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain 403 must carry its status: {plain:?}"
+        );
+
+        let fingerprinted = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
+        assert_eq!(
+            status::error_status(&fingerprinted),
+            Some(403),
+            "a fingerprinted 403 must carry its status: {fingerprinted:?}"
+        );
+
+        for status in [429_u16, 503] {
+            let blocked = fetch_status(
+                status,
+                ResponseTemplate::new(status)
+                    .append_header("x-datadome", "blocked")
+                    .set_body_string("<html>challenge</html>"),
+            )
+            .await;
+            assert!(
+                matches!(&blocked, CrawlError::WafBlocked { .. }),
+                "status {status} must fingerprint as a block: {blocked:?}"
+            );
+            assert_eq!(
+                status::error_status(&blocked),
+                Some(status),
+                "a block fingerprinted from a {status} must carry it: {blocked:?}"
+            );
+        }
+
+        let refused = fetch_status(
+            200,
+            ResponseTemplate::new(200).set_body_string("<html>cf-chl- x</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&refused, CrawlError::WafBlocked { .. }),
+            "a 2xx interstitial must be refused as a block: {refused:?}"
+        );
+        assert_eq!(
+            status::error_status(&refused),
+            Some(200),
+            "a block refused from a 2xx must carry its status: {refused:?}"
+        );
+    }
+
     /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
     #[tokio::test]
     async fn http_fetch_reports_a_plain_403_as_forbidden() {
@@ -1151,19 +1436,24 @@ mod tests {
         }
     }
 
-    /// A 2xx whose headers alone fingerprint is a WAF interstitial, reported before the
-    /// body is treated as page content. ~keep
+    /// A 2xx whose headers name the vendor is reported as a header block rather than treated
+    /// as page content. ~keep
     ///
     /// ~keep Also the regression guard for crawlberg#169: this and the body-block test below
     /// pin the 2xx wording, which the challenge-status work must not reword. Both pass with
     /// and without that change, which is the point of a guard.
+    ///
+    /// ~keep The body carries DataDome's own script tag because a header-only fingerprint no
+    /// longer decides a 2xx on its own (crawlberg#231). That narrowing reaches `x-datadome`,
+    /// `x-px-block` and `x-amzn-waf-action` as well as the CDN-presence headers #231 is about:
+    /// on a 2xx all four now need the interstitial to be visible in the body.
     #[tokio::test]
     async fn http_fetch_reports_a_header_waf_block_on_a_2xx() {
         let error = fetch_status(
             200,
             ResponseTemplate::new(200)
                 .append_header("x-datadome", "protected")
-                .set_body_string("<html></html>"),
+                .set_body_string("<html><script src=\"https://js.datadome.co/tags.js\"></script></html>"),
         )
         .await;
         assert!(
@@ -1198,6 +1488,36 @@ mod tests {
         );
     }
 
+    /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
+    /// `http_fetch`, the decision asset fetches get and sitemap fetches fall back to
+    /// (crawlberg#231).
+    #[tokio::test]
+    async fn http_fetch_returns_a_2xx_with_only_a_cdn_presence_header_as_content() {
+        for (name, value) in [("server", "AkamaiGHost"), ("x-sucuri-id", "18012")] {
+            let mock = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/probe"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .append_header(name, value)
+                        .set_body_string("<html><body><h1>Release notes</h1></body></html>"),
+                )
+                .mount(&mock)
+                .await;
+
+            let config = permissive_config();
+            let client = build_client(&config).expect("client must build");
+            let response = http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|error| panic!("a 200 with only `{name}: {value}` must succeed, got {error:?}"));
+            assert!(
+                response.body.contains("Release notes"),
+                "the real page must reach the caller, got: {}",
+                response.body
+            );
+        }
+    }
+
     /// A 3xx whose `Location` does not resolve to a URL is returned as the response
     /// rather than followed or rejected. ~keep
     #[tokio::test]
@@ -1221,6 +1541,49 @@ mod tests {
 
         assert_eq!(response.status, 302, "the 3xx itself must be returned");
         assert_eq!(response.body, "moved", "its body must be read");
+    }
+
+    #[tokio::test]
+    async fn a_followed_chain_stops_on_a_404_past_the_first_hop_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/here"))
+            .respond_with(ResponseTemplate::new(301).append_header("location", "/missing"))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let fetch = |route: &str, refresh| {
+            let url = format!("{}{route}", mock.uri());
+            let (config, client) = (&config, &client);
+            async move {
+                http_fetch_with(&url, config, &HashMap::new(), client, refresh)
+                    .await
+                    .map(|page| page.response)
+            }
+        };
+
+        let response = fetch("/here", RefreshRedirects::Follow)
+            .await
+            .expect("a 404 past the first hop must not fail a followed chain");
+        assert_eq!(response.status, 404);
+        assert_eq!(response.final_url, format!("{}/missing", mock.uri()));
+        assert!(response.body.is_empty(), "the crawl's chain reports an empty 404");
+
+        assert!(
+            matches!(
+                fetch("/missing", RefreshRedirects::Follow).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a 404 on the first hop still fails, as in the crawl"
+        );
+        assert!(
+            matches!(
+                fetch("/here", RefreshRedirects::Ignore).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a plain fetch keeps failing on a 404 anywhere in the chain"
+        );
     }
 
     #[tokio::test]
@@ -1299,7 +1662,7 @@ mod tests {
         assert_eq!(next.as_str(), "http://example.com/end");
     }
 
-    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of `http_fetch`)
+    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of the plain fetch)
     /// must send the custom-header agent once, not append it alongside the configured one.
     #[tokio::test]
     async fn a_robots_or_asset_fetch_does_not_duplicate_a_custom_header_user_agent() {
@@ -1339,5 +1702,40 @@ mod tests {
             "a custom_headers user-agent must replace the configured default, not duplicate it: {user_agent_values:?}"
         );
         assert_eq!(user_agent_values, ["Custom"]);
+    }
+
+    /// A fetch that names its own `user-agent` (the wasm page fetch, pinning the agent its
+    /// robots decision judged) must send that agent once, in place of the configured one.
+    #[tokio::test]
+    async fn an_extra_header_user_agent_replaces_the_configured_one() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            ..permissive_config()
+        };
+        let client = build_client(&config).expect("client must build");
+        let extra_headers = HashMap::from([("user-agent".to_owned(), "Pinned".to_owned())]);
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &extra_headers, &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values,
+            ["Pinned"],
+            "an extra-header user-agent must replace the configured one, not add a second line"
+        );
     }
 }
