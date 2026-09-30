@@ -764,6 +764,49 @@ async fn a_module_src_awaiting_a_promise_nothing_settles_is_not_recorded_and_doe
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_module_left_waiting_after_it_releases_an_earlier_stalled_module_is_not_recorded() {
+    let html = "<html><body><script type=\"module\" src=\"/first.js\"></script>\
+                <script type=\"module\" src=\"/second.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let first = format!(
+        "{}\nawait new Promise((resolve) => {{ globalThis.releaseFirst = resolve; }});\n{}",
+        push("first-before"),
+        push("first-after")
+    );
+    let second = format!(
+        "{}\nglobalThis.releaseFirst();\nawait new Promise(() => {{}});\n{}",
+        push("second-before"),
+        push("second-after")
+    );
+    let ok = push("ok");
+    let started = std::time::Instant::now();
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/first.js", "text/javascript", &first),
+            ("/second.js", "text/javascript", &second),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+    let took = started.elapsed();
+
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "a module still waiting when the event loop goes idle ends its wait at once: took {took:?}"
+    );
+    assert_eq!(
+        order(&mut page),
+        vec!["first-before", "second-before", "first-after", "ok"]
+    );
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module still waiting when the event loop goes idle is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_module_that_throws_does_not_cut_short_the_next_modules_await() {
     let html = "<html><body><script type=\"module\" src=\"/throws.js\"></script>\
                 <script type=\"module\" src=\"/wait.js\"></script>\
