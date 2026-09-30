@@ -9,7 +9,7 @@ use crate::types::{LinkInfo, LinkType};
 use super::raw_text::MaskedHtml;
 use super::real_tags::{RealTags, StartTag};
 use super::selectors::SEL_A_HREF;
-use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
+use super::{fetchable_address, get_attr, get_url_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -81,14 +81,14 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
 
             // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
             // per the WHATWG URL spec, so no special-casing is needed here.
-            let Some(resolved_url) = crate::net::userinfo::resolve(base_url, href) else {
-                continue;
-            };
             // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
-            if matches!(resolved_url.scheme(), "mailto" | "tel") || INLINE_SCHEMES.contains(&resolved_url.scheme()) {
+            // ~keep Only `http` and `https` are kept: the crawler can fetch neither `mailto:`,
+            // ~keep `tel:` nor the inline schemes, and no more than these two can name a `file:`,
+            // ~keep `blob:` or other address the crawler cannot reach either.
+            let Some(resolved_url) = fetchable_address(href, base_url) else {
                 continue;
-            }
+            };
 
             let link_type = classify_link(href, base_url);
             let rel = get_attr(tag, "rel").map(Cow::into_owned);
@@ -353,6 +353,17 @@ mod tests {
         let html = r#"<a href="JavaScript:alert(1)">a</a><a href="&#74;avascript:alert(1)">b</a>
             <a href="java&#9;script:alert(1)">c</a><a href="MAILTO:x@example.com">d</a>
             <a href="Tel:+1">e</a><a href="&#68;ata:text/html,x">f</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
+    }
+
+    #[test]
+    fn schemes_the_crawler_cannot_fetch_are_skipped() {
+        let html = concat!(
+            r#"<a href="file:///etc/passwd">a</a><a href="blob:https://example.com/x">b</a>"#,
+            r#"<a href="ftp://example.com/f">c</a><a href="ok.html">ok</a>"#,
+        );
         let links = extract(html, "https://example.com/dir/page");
         let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
         assert_eq!(urls, ["https://example.com/dir/ok.html"]);

@@ -467,6 +467,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn crawl_with_a_look_around_path_pattern_is_rejected() {
+        for field in ["includePaths", "excludePaths"] {
+            let router = create_router_with_security(test_engine(), ApiSecurityConfig::default());
+            let response = call(
+                router,
+                json_post(
+                    "/v1/crawl",
+                    serde_json::json!({ "url": "http://127.0.0.1:9/", field: ["^/docs", "^/(?!private/)"] }),
+                ),
+            )
+            .await;
+
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "a look-around pattern in {field} must be refused from a REST caller"
+            );
+            let body = body_json(response).await;
+            let message = body["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains(field) && message.contains("^/(?!private/)") && message.contains("look-around"),
+                "the error must name the field the caller sent, the pattern and why: {body}"
+            );
+        }
+    }
+
+    /// A malformed pattern is not a look-around pattern. As on `main`, the request is accepted and
+    /// the crawl job fails when it compiles the pattern.
+    #[tokio::test]
+    async fn crawl_with_a_malformed_path_pattern_is_not_refused_as_look_around() {
+        let router = create_router_with_security(test_engine(), ApiSecurityConfig::default());
+        let response = call(
+            router,
+            json_post(
+                "/v1/crawl",
+                serde_json::json!({ "url": "http://127.0.0.1:9/", "excludePaths": ["a{2,1}"] }),
+            ),
+        )
+        .await;
+
+        let status = response.status();
+        let body = body_json(response).await;
+        assert_eq!(
+            status,
+            StatusCode::ACCEPTED,
+            "a malformed pattern must not be refused as look-around: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn crawl_with_plain_path_patterns_is_accepted() {
+        let router = create_router_with_security(test_engine(), ApiSecurityConfig::default());
+        let response = call(
+            router,
+            json_post(
+                "/v1/crawl",
+                serde_json::json!({
+                    "url": "http://127.0.0.1:9/",
+                    "includePaths": ["^/docs", r"(?-u)\w"],
+                    "excludePaths": [r"\?p=\d+"],
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::ACCEPTED,
+            "a pattern the regex crate accepts must still be accepted from a REST caller"
+        );
+    }
+
+    #[tokio::test]
     async fn crawl_is_rejected_at_the_concurrent_job_ceiling() {
         let security = ApiSecurityConfig {
             max_concurrent_jobs: 0,
@@ -621,6 +694,46 @@ mod tests {
             urls,
             vec!["https://example.com/keep-1".to_owned()],
             "an ASCII search term must still match case-insensitively, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_endpoint_answers_a_seed_robots_txt_disallows_as_forbidden() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("User-agent: *\nDisallow: /private\n")
+                    .append_header("content-type", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+        let router = create_router_with_security(test_engine_with_config(config), ApiSecurityConfig::default());
+
+        let response = call(
+            router,
+            json_post(
+                "/v1/map",
+                serde_json::json!({ "url": format!("{}/private", mock.uri()) }),
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "a refusal is not a server fault"
+        );
+        let body = body_json(response).await;
+        assert_eq!(body["error"]["code"], "FORBIDDEN", "{body}");
+        assert_eq!(
+            body["error"]["message"], "forbidden: robots.txt disallows /private",
+            "{body}"
         );
     }
 }

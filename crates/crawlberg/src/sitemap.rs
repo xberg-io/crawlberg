@@ -27,6 +27,7 @@ use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesRef, Event};
 use url::Url;
 
+use crate::html::is_fetchable_scheme;
 use crate::http::http_fetch_sitemap;
 use crate::map::MapFilter;
 use crate::normalize::resolve_redirect;
@@ -255,7 +256,6 @@ pub(crate) async fn fetch_sitemap_tree(
             final_url: &resp.final_url,
             body: &resp.body,
             body_bytes: &resp.body_bytes,
-            content_type: &resp.content_type,
         },
         context,
         limit,
@@ -296,7 +296,6 @@ pub(crate) struct SitemapDocument<'a> {
     pub(crate) final_url: &'a str,
     pub(crate) body: &'a str,
     pub(crate) body_bytes: &'a [u8],
-    pub(crate) content_type: &'a str,
 }
 
 /// Maximum sitemap-index nesting depth followed before giving up on a branch.
@@ -340,12 +339,12 @@ pub(crate) async fn process_sitemap_response(
     process_sitemap_response_inner(document, context, limit, 0, &mut visited).await
 }
 
-/// The XML to parse for a fetched document: a gzip payload is inflated, anything
-/// else is the body as received. A gzip payload that fails to inflate falls back
+/// The XML to parse for a fetched document: a body that starts with the gzip magic is
+/// inflated, as [`is_gzip`] decides for `map()`'s direct fetch and for [`reads_as_sitemap`];
+/// anything else is the body as received. A gzip payload that fails to inflate falls back
 /// to the raw body rather than aborting the walk.
 fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, str> {
-    let gzip = document.content_type.contains("gzip") || document.content_type.contains("x-gzip");
-    inflated(gzip, document.body_bytes, document.body)
+    inflated(is_gzip(document.body_bytes), document.body_bytes, document.body)
 }
 
 /// The inflated payload when `gzip` holds and the payload inflates, else `body` as received.
@@ -434,7 +433,8 @@ fn has_sitemap_shape(xml: &str) -> bool {
 /// ~keep is returned in the parser's normalized form, so a relative `<loc>` becomes absolute and
 /// ~keep two spellings of one address become one entry. An address the walk already returned,
 /// ~keep from this document or an earlier one, is skipped before it counts toward `limit`. A
-/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself.
+/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself or
+/// ~keep one whose scheme is not `http` or `https`: map reports only addresses a crawl can fetch.
 pub(crate) fn collect_urlset_entries(
     document_url: &str,
     xml_body: &str,
@@ -452,7 +452,7 @@ pub(crate) fn collect_urlset_entries(
             log_unparseable_loc(document_url, document.is_some(), entry.url.len(), "urlset entry");
             continue;
         };
-        if names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
+        if !is_fetchable_scheme(&resolved) || names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
             continue;
         }
         entry.url = resolved.into();
@@ -527,8 +527,9 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
 }
 
 /// Resolve one child `<loc>` of a sitemap index against the index's own URL, without its
-/// fragment. `None` when `child_url` cannot be resolved against `sitemap_url` at all, which the
-/// caller treats the same as a child it could not fetch. `sitemap_url_parses` says whether
+/// fragment. `None` when `child_url` cannot be resolved against `sitemap_url` at all, or resolves
+/// to a scheme other than `http` or `https`, which the caller treats the same as a child it could
+/// not fetch. `sitemap_url_parses` says whether
 /// `sitemap_url` parsed, which decides how the refusal is logged.
 ///
 /// ~keep `sitemap_url` is the URL that served the index after redirects, so a relative child
@@ -546,6 +547,9 @@ fn resolve_child_sitemap_url(sitemap_url_parses: bool, sitemap_url: &str, child_
         log_unparseable_loc(sitemap_url, sitemap_url_parses, child_url.len(), "sitemap-index child");
         return None;
     };
+    if !is_fetchable_scheme(&resolved) {
+        return None;
+    }
     resolved.set_fragment(None);
     Some(resolved.into())
 }
@@ -572,7 +576,6 @@ async fn fetch_child_sitemap(
             final_url: &child_resp.final_url,
             body: &child_resp.body,
             body_bytes: &child_resp.body_bytes,
-            content_type: &child_resp.content_type,
         },
         context,
         limit,
@@ -698,7 +701,6 @@ mod tests {
             final_url: url,
             body,
             body_bytes: body.as_bytes(),
-            content_type: "application/xml",
         }
     }
 
@@ -860,6 +862,23 @@ mod tests {
         assert!(
             decompress_gzip(b"<urlset><url><loc>/a</loc></url></urlset>").is_err(),
             "a body without the gzip magic must not inflate, whatever its content type or URL"
+        );
+    }
+
+    #[test]
+    fn a_sitemap_index_child_the_crawler_cannot_fetch_is_skipped() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        for child in [
+            "file:///etc/sitemap.xml",
+            "ftp://example.com/sitemap.xml",
+            "blob:https://example.com/x",
+        ] {
+            let resolved = resolve_child_sitemap_url(true, sitemap_url, child);
+            assert!(resolved.is_none(), "for {child}, got {resolved:?}");
+        }
+        assert_eq!(
+            resolve_child_sitemap_url(true, sitemap_url, "child.xml").as_deref(),
+            Some("https://example.com/child.xml")
         );
     }
 
@@ -1331,7 +1350,7 @@ mod tests {
         assert_eq!(urls.len(), 25);
     }
 
-    /// The walk inflates a document whose content type says gzip before it parses it.
+    /// The walk inflates a document that starts with the gzip magic before it parses it.
     #[tokio::test]
     async fn process_sitemap_response_inflates_a_gzip_document() {
         use std::io::Write;
@@ -1350,7 +1369,6 @@ mod tests {
                 final_url: "https://example.com/sitemap.xml.gz",
                 body: &lossy,
                 body_bytes: &gzip,
-                content_type: "application/x-gzip",
             },
             &walk_context(&config, &client, &filter),
             None,
@@ -1358,6 +1376,87 @@ mod tests {
         .await;
 
         assert_eq!(urls.len(), 3, "a gzip urlset of three entries must yield three entries");
+    }
+
+    /// crawlberg#534: the walk must inflate a gzip body on its magic bytes, as `map()`'s direct
+    /// fetch and `reads_as_sitemap` already do (#520), whatever the content type says.
+    #[tokio::test]
+    async fn fetch_sitemap_tree_inflates_a_gzip_walk_target_served_with_the_wrong_content_type() {
+        use std::io::Write;
+        let mock = MockServer::start().await;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(urlset(1).as_bytes()).expect("gzip must encode");
+        let gzip = encoder.finish().expect("gzip must finish");
+        Mock::given(method("GET"))
+            .and(path("/feeds/w.xml.gz"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "application/octet-stream")
+                    .set_body_bytes(gzip),
+            )
+            .mount(&mock)
+            .await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let urls = fetch_sitemap_tree(
+            &format!("{}/feeds/w.xml.gz", mock.uri()),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            urls.len(),
+            1,
+            "a gzip body at a .gz address with content-type application/octet-stream must still \
+             be inflated and read, got {urls:?}"
+        );
+    }
+
+    /// crawlberg#534: a sitemap-index child inflates on its magic bytes too, with no `.gz`
+    /// suffix and a content type that does not say gzip.
+    #[tokio::test]
+    async fn fetch_sitemap_tree_inflates_a_gzip_index_child_served_with_the_wrong_content_type() {
+        use std::io::Write;
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_xml(
+            &mock,
+            "/root.xml",
+            sitemap_index_xml(&[&format!("{base}/kids/child.xml")]),
+        )
+        .await;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(urlset(1).as_bytes()).expect("gzip must encode");
+        let gzip = encoder.finish().expect("gzip must finish");
+        Mock::given(method("GET"))
+            .and(path("/kids/child.xml"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "application/xml")
+                    .set_body_bytes(gzip),
+            )
+            .mount(&mock)
+            .await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/root.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            urls.len(),
+            1,
+            "a gzip index child with no .gz suffix and a content type that does not say gzip \
+             must still be inflated and read, got {urls:?}"
+        );
     }
 
     #[tokio::test]
@@ -1386,6 +1485,38 @@ mod tests {
 
         assert_eq!(urls.len(), 2);
         assert!(urls.iter().all(|entry| entry.url.contains("keep")));
+    }
+
+    /// The walk applies a host-anchored exclude pattern against the full URL before `limit`
+    /// truncates it, so a limited map is not filled with entries the setting was meant to drop.
+    #[tokio::test]
+    async fn process_sitemap_response_applies_full_url_exclude_filter_before_limit() {
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^https://example\.com/private/".to_owned()],
+            path_patterns_match_url: true,
+            ..CrawlConfig::default()
+        };
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = concat!(
+            r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#,
+            "<url><loc>https://example.com/private/one</loc></url>",
+            "<url><loc>https://example.org/private/two</loc></url>",
+            "</urlset>",
+        );
+
+        let urls = process_sitemap_response(
+            &xml_document("https://example.com/sitemap.xml", body),
+            &walk_context(&config, &client, &filter),
+            Some(1),
+        )
+        .await;
+
+        assert_eq!(
+            urls.iter().map(|entry| entry.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.org/private/two".to_owned()],
+            "the excluded example.com entry must not fill the one slot `limit` allows"
+        );
     }
 
     /// A sitemap address whose password must never reach a log field.

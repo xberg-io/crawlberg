@@ -635,7 +635,7 @@ mod tests {
                 BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Launched, PageContext::of(&config))
                     .await
                     .expect("the listener must start");
-            let page = firewall.handle().new_page(None).await.expect("page");
+            let page = firewall.handle().new_page(None, None).await.expect("page");
             let watch = firewall
                 .handle()
                 .watch(&page, &config, 10)
