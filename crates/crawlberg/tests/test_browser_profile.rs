@@ -29,7 +29,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 mod common;
-use common::{announce_chrome_skip, is_missing_chrome_message};
+use common::{announce_chrome_skip, is_missing_chrome_message, is_saved_profile_refusal};
 
 static NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -131,7 +131,7 @@ async fn missing_profile_is_created_and_populated_when_saved() {
     let engine = create_engine(Some(config_with_profile(&name, true))).expect("engine must build");
     let result = scrape(&engine, &format!("{}/", server.base_url)).await;
     if let Err(CrawlError::BrowserError { message, .. }) = &result
-        && is_missing_chrome_message(message)
+        && (is_missing_chrome_message(message) || is_saved_profile_refusal(message))
     {
         announce_chrome_skip("missing_profile_is_created_and_populated_when_saved", message);
         return;
@@ -283,7 +283,9 @@ async fn scrape_with_profile(
         create_engine(Some(config_with_profile(&profile.name, save_browser_profile))).expect("engine must build");
     match scrape(&engine, url).await {
         Ok(result) => Some(result.html),
-        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+        Err(CrawlError::BrowserError { message, .. })
+            if is_missing_chrome_message(&message) || is_saved_profile_refusal(&message) =>
+        {
             announce_chrome_skip(test_name, &message);
             None
         }

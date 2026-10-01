@@ -60,6 +60,10 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
     }
 
     if config.save_browser_profile {
+        crate::browser_pool::check_snap_can_open_profile(
+            &profile.user_data_dir,
+            config.browser.chrome_path.as_deref(),
+        )?;
         Ok(UserDataDir::Persistent(profile.user_data_dir))
     } else {
         let scratch = ScratchProfileDir::create(
@@ -312,12 +316,17 @@ mod user_data_dir_tests {
         assert!(!profile.exists(), "precondition: profile must not exist yet");
         let _guard = ProfileGuard(profile.clone());
 
-        let config = CrawlConfig {
+        // ~keep A Chrome that is not a snap: a snap found on the host cannot open the profile store.
+        let chrome = crate::types::executable_temp_file("create-save");
+        let mut config = CrawlConfig {
             browser_profile: Some(name.clone()),
             save_browser_profile: true,
             ..CrawlConfig::default()
         };
-        let resolved = resolve_user_data_dir(&config).expect("resolve must succeed");
+        config.browser.chrome_path = Some(chrome.clone());
+        let resolved = resolve_user_data_dir(&config);
+        let _ = std::fs::remove_file(&chrome);
+        let resolved = resolved.expect("resolve must succeed");
 
         assert!(
             profile.exists(),

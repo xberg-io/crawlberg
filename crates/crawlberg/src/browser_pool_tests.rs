@@ -2322,3 +2322,50 @@ fn a_chrome_that_is_not_a_snap_gets_its_scratch_profile_in_the_temp_directory() 
         dir.path().display()
     );
 }
+
+#[test]
+fn a_snap_opens_only_the_folders_its_home_interface_grants() {
+    let home = std::path::Path::new("/home/runner");
+    let common = home.join("snap").join("chromium").join("common");
+    for (dir, opens) in [
+        ("/home/runner/.local/share/crawlberg/profiles/work", false),
+        ("/home/runner/.config/work", false),
+        ("/home/runner/snap/firefox/common/work", false),
+        ("/home/runner/snap/chromium/common/crawlberg/profiles/work", true),
+        ("/home/runner/profiles/.hidden/work", true),
+        ("/home/runner/profiles/work", true),
+        ("/media/usb/work", true),
+    ] {
+        assert_eq!(
+            snap_can_open(std::path::Path::new(dir), &common, home),
+            opens,
+            "the chromium snap opening {dir}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_profile_for_a_chrome_that_is_not_a_snap_is_not_refused() {
+    let chrome = crate::types::executable_temp_file("not-a-snap-saved");
+    let hidden = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".local/share/crawlberg/profiles/work");
+    let checked = check_snap_can_open_profile(&hidden, Some(&chrome));
+    let _ = std::fs::remove_file(&chrome);
+    assert!(checked.is_ok(), "only a snap Chrome is refused: {checked:?}");
+}
+
+#[test]
+fn a_saved_profile_a_snap_chrome_cannot_open_is_refused_with_the_cause() {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let hidden = home.join(".local/share/crawlberg/profiles/work");
+    let error = check_snap_can_open_profile(&hidden, Some(std::path::Path::new("/snap/bin/chromium")))
+        .expect_err("a snap Chrome must not be given a profile in a hidden folder");
+    let message = error.to_string();
+    assert!(
+        message.contains("which cannot open the saved browser profile") && message.contains("XDG_DATA_HOME"),
+        "the error must name the cause and the fix: {message}"
+    );
+}
