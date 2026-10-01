@@ -10,9 +10,11 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser};
+use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, page_content, read_one_document};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
     ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, PageContext, StoppedResponse, Watch,
+    listed_refusal,
 };
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -207,15 +209,7 @@ async fn run_session(
 
     let (action_results, screenshot) = run_actions(page, watch, actions).await;
 
-    let final_html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-    let final_url = evaluate_json(page, "location.href")
-        .await
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| url.to_owned());
+    let (final_html, final_url) = final_page(page, &watch.refused_urls().await).await?;
 
     let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
 
@@ -227,6 +221,29 @@ async fn run_session(
         screenshot_base64,
         ssrf_refused_urls: watch.refused_urls().await,
     })
+}
+
+/// The final HTML and URL of the session, both of one committed document.
+///
+/// ~keep Chrome's own error page is never the final HTML. When it shows a navigation the SSRF check
+/// ~keep refused, the refusal already failed the action that caused it and is in `refused`, so the
+/// ~keep session keeps its result, with no HTML and the refused URL as it is listed. Any other error
+/// ~keep page fails the session.
+async fn final_page(page: &chromiumoxide::Page, refused: &[String]) -> Result<(String, String), CrawlError> {
+    let (html, document) = read_page_html(page, "extract final HTML").await?;
+    if let Some(failed_url) = document.unreachable_url {
+        return match listed_refusal(&failed_url, refused) {
+            Some(listed) => Ok((String::new(), listed)),
+            None => Err(error_page_error(&failed_url)),
+        };
+    }
+    Ok((html, document.url))
+}
+
+/// The HTML of `page` and the committed document it was read from, bound by
+/// [`read_one_document`]. `what` names the read in its error.
+async fn read_page_html(page: &chromiumoxide::Page, what: &str) -> Result<(String, CommittedDocument), CrawlError> {
+    read_one_document(|| committed_document(page), || page_content(page, what)).await
 }
 
 /// The result of a navigation that ended on a response without a document: the URL that
@@ -443,10 +460,12 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
                 .format(CaptureScreenshotFormat::Png)
                 .full_page(full_page.unwrap_or(false))
                 .build();
-            let bytes = page
-                .screenshot(params)
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))?;
+            let bytes = fail_if_run_on_error_page(page, async {
+                page.screenshot(params)
+                    .await
+                    .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))
+            })
+            .await?;
             let len = bytes.len();
             Ok(ActionData {
                 data: Some(json!({ "bytes": len, "format": "png" })),
@@ -454,17 +473,40 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             })
         }
         PageAction::ExecuteJs { script } => {
-            let value = evaluate_json(page, script).await?;
+            let value = fail_if_run_on_error_page(page, evaluate_json(page, script)).await?;
             Ok(ActionData::data(value))
         }
         PageAction::Scrape => {
-            let html = page
-                .content()
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))?;
+            // ~keep Chrome's own error page is never the site's content, so a Scrape on it fails.
+            let (html, document) = read_page_html(page, "scrape current page").await?;
+            if let Some(failed_url) = document.unreachable_url {
+                return Err(error_page_error(&failed_url));
+            }
             Ok(ActionData::data(json!({ "html": html })))
         }
     }
+}
+
+/// Run `action` once, and fail when the document committed just before it started was Chrome's
+/// own error page.
+///
+/// ~keep Checks once, not bound to a document the way [`read_page_html`] binds a read: that
+/// ~keep binding repeats the read when the document changes between its own before and after
+/// ~keep check, which is safe for `page.content()` but not here. ExecuteJs and Screenshot can have
+/// ~keep side effects: a script may navigate the page away from the error page, as
+/// ~keep `history.back()` does, and a fast back-navigation can commit inside the round trip of an
+/// ~keep after-check. Repeating the script on that mismatch would run it a second time. The action
+/// ~keep still runs, so a script that leaves the error page can recover the session.
+async fn fail_if_run_on_error_page<T>(
+    page: &chromiumoxide::Page,
+    action: impl std::future::Future<Output = Result<T, CrawlError>>,
+) -> Result<T, CrawlError> {
+    let document = committed_document(page).await?;
+    let value = action.await?;
+    if let Some(failed_url) = &document.unreachable_url {
+        return Err(error_page_error(failed_url));
+    }
+    Ok(value)
 }
 
 async fn evaluate_json(page: &chromiumoxide::Page, script: &str) -> Result<serde_json::Value, CrawlError> {
@@ -952,5 +994,80 @@ mod tests {
             launch_or_connect(&config).await
         })
         .await;
+    }
+
+    /// A Scrape action returns the HTML of the document it checked for Chrome's error page. The
+    /// test starts on Chrome's error page for a refused connection and navigates to a page of the
+    /// site right after the Scrape's HTML read, so the error page's HTML must not be returned as
+    /// the site page's. Launches a real Chrome and skips when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn a_scrape_returns_the_html_of_the_document_it_checked_for_the_error_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let test_name = "a_scrape_returns_the_html_of_the_document_it_checked_for_the_error_page";
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/two"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("<html><body><p>doc/two</p></body></html>", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        let refused = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a local port must bind");
+            format!(
+                "http://127.0.0.1:{}/gone",
+                listener.local_addr().expect("its address").port()
+            )
+        };
+        let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
+        let builder = ChromeBrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(dir);
+        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
+            Ok(config) => Browser::launch(config).await.map_err(|e| e.to_string()),
+            Err(error) => Err(error),
+        };
+        let (mut browser, mut handler) = match launched {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping {test_name}: no usable Chrome: {error}");
+                return;
+            }
+        };
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let page = browser.new_page("about:blank").await.expect("page");
+        // ~keep The refused connection fails the navigation; the error page it commits is the point.
+        let _ = page.goto(refused.as_str()).await;
+        let start = committed_document(&page).await.expect("the committed document");
+        let scraped = crate::chrome_frame::NAVIGATE_AFTER_CONTENT
+            .scope(
+                std::cell::Cell::new(Some(format!("{}/two", site.uri()))),
+                execute_action(&page, &PageAction::Scrape),
+            )
+            .await;
+        let _ = browser.close().await;
+        let _ = browser.wait().await;
+
+        assert!(
+            start.unreachable_url.is_some(),
+            "{test_name}: the page must start on Chrome's error page: {}",
+            start.url
+        );
+        let data = scraped
+            .expect("the Scrape must succeed on the site page")
+            .data
+            .expect("the Scrape must return data");
+        let html = data["html"].as_str().unwrap_or_default();
+        assert!(
+            html.contains("doc/two"),
+            "{test_name}: the Scrape checked /two, so its HTML must be /two's, not the error page's: {html}"
+        );
     }
 }

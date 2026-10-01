@@ -520,3 +520,67 @@ async fn interact_fails_when_the_page_navigates_to_a_denied_address_before_the_a
         other => panic!("{test_name}: the session must fail with the SSRF policy error, got {other:?}"),
     }
 }
+
+/// A session that ends on Chrome's error page for a navigation the policy refused keeps its
+/// result: the refusal fails the click and is listed, the final HTML is empty rather than Chrome's
+/// page, and the final URL is the refused URL.
+#[tokio::test]
+async fn interact_that_ends_on_a_refused_navigation_returns_no_html_and_the_refused_url() {
+    let test_name = "interact_that_ends_on_a_refused_navigation_returns_no_html_and_the_refused_url";
+    let denied = denied_server().await;
+    let (_site, seed) = seed_site(&format!(
+        r#"<p>start</p><a id="go" href="{}">go</a>"#,
+        denied_url(&denied)
+    ))
+    .await;
+    let Some(result) = run(test_name, &seed, vec![click("#go")]).await else {
+        return;
+    };
+    assert_action_refused(test_name, &result, 0);
+    assert_eq!(
+        (result.final_html.as_str(), result.final_url.as_str()),
+        ("", denied_url(&denied).as_str()),
+        "{test_name}: the session ends on the refused navigation"
+    );
+    assert!(
+        result.ssrf_refused_urls.contains(&denied_url(&denied)),
+        "{test_name}: the refused URL must be listed: {:?}",
+        result.ssrf_refused_urls
+    );
+}
+
+/// A session that ends on Chrome's error page for a host the policy allows but that does not
+/// answer fails with a browser error that names the URL: that page is not a refusal.
+#[tokio::test]
+async fn interact_that_ends_on_an_unreachable_allowed_host_fails() {
+    let test_name = "interact_that_ends_on_an_unreachable_allowed_host_fails";
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free local port")
+        .port();
+    let unreachable = format!("http://localhost:{closed_port}/gone");
+    let (_site, seed) = seed_site(&format!(r#"<p>start</p><a id="go" href="{unreachable}">go</a>"#)).await;
+    let engine = create_engine(Some(config())).expect("engine must build");
+    let result = interact(
+        &engine,
+        &seed,
+        vec![
+            click("#go"),
+            PageAction::Wait {
+                milliseconds: Some(1500),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(CrawlError::BrowserError { message, .. }) => assert!(
+            message.contains(&unreachable) && message.contains("error page"),
+            "{test_name}: the error must name the URL Chrome could not show: {message}"
+        ),
+        other => panic!("{test_name}: Chrome's error page for an allowed host must fail the session: {other:?}"),
+    }
+}

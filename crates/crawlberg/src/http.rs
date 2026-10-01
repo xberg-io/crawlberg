@@ -640,19 +640,6 @@ async fn unfollowed_redirect_response(
     head.into_response(body, body_bytes, headers_map)
 }
 
-/// The error for a rendered 403: a WAF block when its headers or body fingerprint, a plain
-/// forbidden otherwise, each carrying the status as the fetch path's `challenge_status_error` does.
-#[cfg(any(feature = "browser", feature = "browser-native"))]
-fn forbidden_body_error(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> CrawlError {
-    match waf::waf_vendor_from_body(status, body, headers_map) {
-        Some(vendor) => {
-            let message = format!("waf/blocked detected: {vendor}");
-            waf::waf_block(status, vendor, message)
-        }
-        None => CrawlError::forbidden_with_source("forbidden", status::HttpStatus(status)),
-    }
-}
-
 /// Apply HTTP mode's status handling to a page a browser rendered. A status the HTTP fetch
 /// raises as an error raises the same error here. Where HTTP mode reports the status as a
 /// page instead (a 404 or 403 under `soft_http_errors`, or a 404 at the end of a redirect),
@@ -664,8 +651,16 @@ pub(crate) fn rendered_status_outcome(
     config: &CrawlConfig,
 ) -> Result<HttpResponse, CrawlError> {
     let status = response.status;
-    let error = if status == 403 {
-        Some(forbidden_body_error(status, &response.body, &response.headers))
+    // ~keep A challenge status is fingerprinted before `status_error` maps it, as in HTTP mode:
+    // ~keep a 429 or 503 WAF challenge is a WAF block, which escalates, not an error the retry
+    // ~keep policy retries (crawlberg#169).
+    let error = if challenge::is_challenge_status(status) {
+        Some(challenge::challenge_body_error(
+            status,
+            &response.final_url,
+            &response.body,
+            &response.headers,
+        ))
     } else {
         status_error(status, &response.final_url)
     };

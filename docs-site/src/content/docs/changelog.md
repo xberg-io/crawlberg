@@ -68,13 +68,16 @@ title: "Changelog"
 - **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
   of such a page returned the rendered HTML with status 200. It now returns the same error that
   HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
-  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
-  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  503 and 504. A 403, 429 or 503 page is a WAF error when its headers or its body name a WAF,
+  as in HTTP mode, so it escalates instead of being retried. A page with another status, such as
+  501, 505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
   scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
   mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
   that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
   response headers of the document the page shows, so a WAF block is found from the headers of a
-  403 page as well as from its body. (#143)
+  403, 429 or 503 page as well as from its body. When Chrome shows its own error page in place of
+  such a response, such as for a download or an empty body, only the headers are checked, because
+  Chrome never rendered the body. (#143)
 
 - **The native browser backend reports an empty body for a 204, 205 or 304.** It reported an
   empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
@@ -264,6 +267,34 @@ title: "Changelog"
   are not. With `deny_private` on, a launched Chrome sends WebRTC UDP only through a proxy, which
   stops it; a pooled Chrome always does, because one pool serves crawls with either setting.
   (#165, #178, #452)
+- **Browser mode returned Chrome's error page as the page.** When the main frame ended on
+  Chrome's own error page, the Chromiumoxide backend returned that page's HTML as content. This
+  happened for a download with a status such as 501, 505 or 599, for an error status with an
+  empty body, and for a navigation that failed at the network, which reported status 200. When
+  the server answered, the fetch now reports its status, headers and URL with no body, and handles
+  the status as HTTP mode does: a 404 or 500 is the same error, and a 400 or 501 is a page. When
+  the server did not answer, the fetch fails with a browser error that names the URL. After a page
+  navigates itself, only the redirects of that navigation make a 404 a page, not the redirects of
+  the requested URL. (#317, #319)
+- **The HTML, status, final URL and screenshot of a browser render come from one document.**
+  They were separate reads, so a navigation that committed between them could pair the HTML of
+  one document with the status, URL or screenshot of the next. The render now reads which
+  document is committed before and after it reads the HTML and takes the screenshot, and reads
+  both again when the document changed. The final URL is the URL of that document. A page that
+  navigates during each of three reads fails with a browser error. (#318)
+- **A browser screenshot of a page that keeps navigating held the fetch until its deadline.**
+  Chrome can leave a screenshot unanswered while the page keeps replacing its document. The
+  screenshot now stops after 5 seconds, and the page is reported without one.
+- **`interact` returned Chrome's error page as the page.** With the Chromiumoxide backend, a
+  Scrape action, and the final HTML of a session, could be Chrome's own error page, for example
+  after a download that Chrome cannot show. Such a Scrape action now fails, and a session that
+  ends on the error page fails with a browser error that names the URL. When the error page is for
+  a navigation the SSRF policy refused, the session keeps its result: the refusal fails the action
+  that caused it and is listed in `ssrf_refused_urls`, the final HTML is empty, and the final URL
+  is the refused URL. An ExecuteJs or Screenshot action that starts on the error page reports a
+  failure. The action still runs once, so a script such as `history.back()` can leave the error
+  page. The final HTML and the final URL of a session, and a Scrape action's HTML, are read from
+  one committed document. (#345, #346, #355)
 - **A secret in an endpoint host label printed in debug output.** A browser endpoint, a bypass
   provider endpoint or a browser session proxy prints as its origin, and a per-account host such
   as `sk-live-abc.api.example.com` printed in full. The host now keeps its last two labels and

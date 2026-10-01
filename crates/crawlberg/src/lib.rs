@@ -18,6 +18,8 @@ pub mod browser_session_pool;
 pub mod budget;
 #[cfg(feature = "browser-chromiumoxide")]
 mod chrome_args;
+#[cfg(feature = "browser-chromiumoxide")]
+mod chrome_frame;
 pub(crate) mod citations;
 // ~keep Gated on `browser-chromiumoxide`, not `browser`: see the module's own `~keep` header
 // ~keep for why nesting it under `browser` would break a `browser-chromiumoxide`-only build
