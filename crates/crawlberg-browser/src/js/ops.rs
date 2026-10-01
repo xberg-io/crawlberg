@@ -38,8 +38,8 @@ pub enum InterceptResolution {
 
 impl std::fmt::Debug for InterceptResolution {
     /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
-    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the four
-    /// well-known credential names.
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the value of
+    /// each sensitive header name.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Continue {
@@ -402,14 +402,19 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
-fn build_request_client(proxy_url: Option<&str>, ssrf: &Arc<dyn SsrfValidator>) -> Result<reqwest::Client, String> {
+fn build_request_client(
+    proxy: Option<&crate::net::proxy::UpstreamProxy>,
+    ssrf: &Arc<dyn SsrfValidator>,
+) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    if let Some(proxy) = proxy_url {
-        let p = crate::net::proxy::reqwest_proxy(proxy).map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
+    if let Some(proxy) = proxy {
+        let p = proxy
+            .reqwest_proxy()
+            .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
         builder = builder.proxy(p);
     }
-    with_policy_resolver(builder, proxy_url.is_some(), ssrf)
+    with_policy_resolver(builder, proxy.is_some(), ssrf)
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -466,7 +471,7 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy_url.as_deref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy.as_ref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -552,7 +557,7 @@ struct FetchContext {
     cookie_jar: Option<Arc<CookieJar>>,
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
-    proxy_url: Option<String>,
+    proxy: Option<crate::net::proxy::UpstreamProxy>,
     origin_headers: Option<OriginHeaders>,
 }
 
@@ -586,10 +591,7 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
         cookie_jar: gs.cookie_jar.clone(),
         in_flight: gs.http_client.as_ref().map(|c| c.in_flight.clone()),
         intercept,
-        proxy_url: gs
-            .http_client
-            .as_ref()
-            .and_then(|c| c.proxy_url().map(|s| s.to_string())),
+        proxy: gs.http_client.as_ref().and_then(|c| c.proxy().cloned()),
         origin_headers: gs.origin_headers(),
     })
 }
@@ -982,27 +984,74 @@ mod tests {
 
     fn client_through(proxy: &str) -> Result<reqwest::Client, String> {
         let ssrf: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::from_env());
-        build_request_client(Some(proxy), &ssrf)
-    }
-
-    #[test]
-    fn a_proxy_scheme_reqwest_would_drop_refuses_the_client() {
-        let err = client_through("ftp://operator:s3cr3t@127.0.0.1:1")
-            .expect_err("an ftp proxy must not build a direct client");
-        assert!(err.contains("'ftp'"), "the error must name the scheme, got {err}");
-        assert!(!err.contains("s3cr3t"), "the error leaked the proxy password: {err}");
-    }
-
-    #[test]
-    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
-        for proxy in crate::net::proxy::credential_urls::URLS {
-            let err = client_through(proxy).expect_err("the proxy must not build a direct client");
-            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err);
-        }
+        let proxy = crate::net::proxy::test_proxy(proxy).map_err(|e| e.to_string())?;
+        build_request_client(Some(&proxy), &ssrf)
     }
 
     #[test]
     fn an_http_proxy_builds_the_client() {
         assert!(client_through("http://proxy.test:8080").is_ok());
+    }
+
+    fn allow_all() -> Arc<dyn SsrfValidator> {
+        #[derive(Debug)]
+        struct AllowAll;
+        #[async_trait::async_trait]
+        impl SsrfValidator for AllowAll {
+            async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        Arc::new(AllowAll)
+    }
+
+    #[tokio::test]
+    async fn a_credentialed_proxy_carries_the_fetch_op_request_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let client = build_request_client(Some(&proxy), &allow_all()).expect("an http proxy must build");
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get("http://origin.test/data").send(),
+        )
+        .await
+        .expect("the fetch must finish")
+        .expect("the proxy answers");
+
+        assert_eq!(response.status(), 200, "the proxy accepts the credentials");
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/data");
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_refuses_the_credentials_fails_the_fetch_op_request_instead_of_connecting_directly() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let direct = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let target = format!("http://{}/data", direct.local_addr().expect("addr"));
+        let client = build_request_client(Some(&credentialed_proxy::with_wrong_password(&proxy)), &allow_all())
+            .expect("an http proxy must build");
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), client.get(&target).send())
+            .await
+            .expect("the fetch must finish");
+
+        assert!(
+            !matches!(result, Ok(ref response) if response.status() == 200),
+            "a refused proxy must not serve the request: {result:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "{result:?}"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), direct.accept())
+                .await
+                .is_err(),
+            "the fetch op connected directly"
+        );
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the request must go to the proxy: {requests:?}");
+        assert!(credentialed_proxy::proxy_authorization(&requests[0]).is_some());
     }
 }

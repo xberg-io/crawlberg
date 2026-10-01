@@ -1119,3 +1119,96 @@ async fn a_rejected_page_link_is_logged_without_its_userinfo() {
         "the link's password leaked: {texts:#?}"
     );
 }
+
+/// A sitemap index that lists three nested indexes and, with the page's userinfo, itself. The
+/// walk reaches the nesting cap, sees the cycle and spends the document budget.
+fn nested_sitemap_index(site: &Site) -> String {
+    let mut entries: String = ["k0/s.xml", "k1/s.xml", "k2/s.xml"]
+        .iter()
+        .map(|child| format!("<sitemap><loc>{child}</loc></sitemap>"))
+        .collect();
+    entries.push_str(&format!(
+        "<sitemap><loc>{}</loc></sitemap>",
+        site.page_supplied("/n/s.xml")
+    ));
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{entries}</sitemapindex>"#
+    )
+}
+
+/// Whether `observed` holds a text that contains `message`.
+fn logged(observed: &Observed, message: &str) -> bool {
+    observed
+        .texts
+        .lock()
+        .expect("lock")
+        .iter()
+        .any(|text| text.contains(message))
+}
+
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn the_three_sitemap_walk_warnings_never_name_a_userinfo() {
+    let site = Site {
+        seed_host: MockServer::start().await,
+        other_host: MockServer::start().await,
+    };
+    let robots = format!("User-agent: *\nAllow: /\nSitemap: {}\n", site.page_supplied("/n/s.xml"));
+    serve(
+        &site.seed_host,
+        "/robots.txt",
+        ResponseTemplate::new(200).set_body_string(robots),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/n/.*s\.xml$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(nested_sitemap_index(&site))
+                .insert_header("content-type", "application/xml"),
+        )
+        .mount(&site.seed_host)
+        .await;
+    let harness = harness(config());
+
+    let result = traced(&harness.observed, harness.engine.map(&site.credentialed("/"))).await;
+    let output = format!("{result:?}");
+
+    for warning in [
+        "max nesting depth exceeded",
+        "cycle detected",
+        "fetched the maximum number of sitemap documents",
+    ] {
+        assert!(logged(&harness.observed, warning), "the walk must log `{warning}`");
+    }
+    assert!(
+        !logged(&harness.observed, "PAGE-PW"),
+        "a page-supplied userinfo reached a sitemap warning"
+    );
+    assert_no_canary(&site, &harness.observed, &output);
+}
+
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_scrape_whose_robots_txt_fails_logs_the_url_without_its_userinfo() {
+    let site = Site {
+        seed_host: MockServer::start().await,
+        other_host: MockServer::start().await,
+    };
+    serve(&site.seed_host, "/robots.txt", ResponseTemplate::new(503)).await;
+    serve(&site.seed_host, "/", html("<html><body>seed</body></html>".to_owned())).await;
+    let harness = harness(config());
+
+    let result = traced(&harness.observed, harness.engine.scrape(&site.credentialed("/"))).await;
+    let output = format!("{result:?}");
+
+    assert!(
+        logged(&harness.observed, "robots.txt unreachable"),
+        "the scrape must log the robots.txt failure: {output}"
+    );
+    assert!(
+        logged(&harness.observed, &site.clean("/")),
+        "the warning must name the URL without its userinfo"
+    );
+    assert_no_canary(&site, &harness.observed, &output);
+}

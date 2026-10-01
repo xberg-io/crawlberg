@@ -160,7 +160,7 @@ impl Page {
         // ~keep Thread the context proxy into ES modules and JS fetch/XHR so page JS honors upstream proxy settings.
         let mut rt = BrowserJsRuntime::with_base_url_proxy_and_ssrf(
             &self.url_string(),
-            self.context.proxy_url.clone(),
+            self.context.proxy.clone(),
             self.http_client.ssrf.clone(),
         );
         rt.set_url(&self.url_string());

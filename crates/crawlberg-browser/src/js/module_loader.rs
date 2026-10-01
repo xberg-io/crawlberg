@@ -16,15 +16,16 @@ use crate::js::ops::{JsOpState, SharedState};
 use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::matches_block_pattern;
+use crate::net::proxy::UpstreamProxy;
 use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
     pub base_url: String,
-    /// Proxy URL threaded through to every dynamic ES-module fetch (#139).
+    /// Proxy threaded through to every dynamic ES-module fetch (#139).
     /// `None` keeps the pre-#139 direct-connection behaviour for callers
     /// that haven't been updated.
-    pub proxy_url: Option<String>,
+    pub proxy: Option<UpstreamProxy>,
     /// SSRF policy applied to every dynamic `import()`. Page JS chooses these URLs,
     /// so they are as untrusted as any other page-initiated fetch.
     pub ssrf: Arc<dyn SsrfValidator>,
@@ -38,10 +39,10 @@ impl BrowserModuleLoader {
         Self::with_proxy(base_url, None)
     }
 
-    pub fn with_proxy(base_url: &str, proxy_url: Option<String>) -> Self {
+    pub fn with_proxy(base_url: &str, proxy: Option<UpstreamProxy>) -> Self {
         Self::with_ssrf(
             base_url,
-            proxy_url,
+            proxy,
             Arc::new(DefaultSsrfValidator::from_env()),
             Rc::new(RefCell::new(JsOpState::new())),
         )
@@ -49,13 +50,13 @@ impl BrowserModuleLoader {
 
     pub fn with_ssrf(
         base_url: &str,
-        proxy_url: Option<String>,
+        proxy: Option<UpstreamProxy>,
         ssrf: Arc<dyn SsrfValidator>,
         op_state: SharedState,
     ) -> Self {
         BrowserModuleLoader {
             base_url: base_url.to_string(),
-            proxy_url,
+            proxy,
             ssrf,
             op_state,
         }
@@ -101,7 +102,7 @@ impl ModuleLoader for BrowserModuleLoader {
         _options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
         let url = module_specifier.to_string();
-        let proxy_url = self.proxy_url.clone();
+        let proxy = self.proxy.clone();
         let ssrf = self.ssrf.clone();
         // ~keep Read before the future: the state is not `Send` and ops borrow it mutably. An
         // ~keep unreadable state refuses the module, so the block list cannot be skipped.
@@ -124,22 +125,22 @@ impl ModuleLoader for BrowserModuleLoader {
             // ~keep scoped headers only on their host. reqwest drops only `Authorization` when a
             // ~keep redirect leaves the host, and a scoped header can have another name.
             let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-            if let Some(ref proxy) = proxy_url {
-                match crate::net::proxy::reqwest_proxy(proxy) {
+            if let Some(ref proxy) = proxy {
+                match proxy.reqwest_proxy() {
                     Ok(p) => builder = builder.proxy(p),
                     Err(e) => {
                         return Err(io_err(format!("Invalid module proxy: {e}")));
                     }
                 }
             }
-            let client = with_policy_resolver(builder, proxy_url.is_some(), &ssrf)
+            let client = with_policy_resolver(builder, proxy.is_some(), &ssrf)
                 .build()
                 .map_err(|e| io_err(format!("HTTP client error: {}", e)))?;
 
             tracing::debug!(
                 "Loading ES module: {} (proxy: {})",
                 url,
-                proxy_url.as_deref().unwrap_or("direct")
+                proxy.as_ref().map_or("direct", |proxy| proxy.address().as_str())
             );
 
             let mut current = parsed;
@@ -218,14 +219,14 @@ mod tests {
         }
     }
 
-    async fn module_fetch_error(proxy: &str) -> String {
+    async fn module_fetch(proxy: UpstreamProxy, specifier: &str) -> Result<String, String> {
         let loader = BrowserModuleLoader::with_ssrf(
-            "http://127.0.0.1:1/",
-            Some(proxy.to_string()),
+            "http://origin.test/",
+            Some(proxy),
             Arc::new(AllowAll),
             Rc::new(RefCell::new(JsOpState::new())),
         );
-        let specifier = ModuleSpecifier::parse("http://127.0.0.1:1/module.js").expect("valid specifier");
+        let specifier = ModuleSpecifier::parse(specifier).expect("valid specifier");
         let options = ModuleLoadOptions {
             is_dynamic_import: true,
             is_synchronous: false,
@@ -234,30 +235,59 @@ mod tests {
         let ModuleLoadResponse::Async(load) = loader.load(&specifier, None, options) else {
             panic!("the loader fetches over the network, so the load must be async");
         };
-        match load.await {
-            Ok(_) => panic!("{proxy} must refuse the module fetch"),
-            Err(e) => e.to_string(),
+        match tokio::time::timeout(std::time::Duration::from_secs(10), load)
+            .await
+            .expect("the module fetch must finish")
+        {
+            Ok(source) => match source.code {
+                ModuleSourceCode::String(code) => Ok(code.as_str().to_string()),
+                ModuleSourceCode::Bytes(_) => Err("the loader returns module text".to_string()),
+            },
+            Err(e) => Err(e.to_string()),
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn an_unusable_proxy_url_refuses_the_module_fetch_without_showing_it() {
-        for proxy in crate::net::proxy::credential_urls::URLS {
-            crate::net::proxy::credential_urls::assert_not_shown(proxy, &module_fetch_error(proxy).await);
-        }
+    async fn a_credentialed_proxy_carries_the_module_fetch_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+
+        let source = module_fetch(proxy, "http://origin.test/module.js")
+            .await
+            .expect("the proxy accepts the credentials, so the module must load");
+
+        assert!(
+            source.contains("via-proxy"),
+            "the module must come from the proxy: {source}"
+        );
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/module.js");
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_proxy_scheme_reqwest_would_drop_refuses_the_module_fetch() {
-        let message = module_fetch_error("ftp://operator:s3cr3t@127.0.0.1:1").await;
+    async fn a_proxy_that_refuses_the_credentials_fails_the_module_fetch_without_showing_them() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let direct = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let target = format!("http://{}/module.js", direct.local_addr().expect("addr"));
+
+        let message = module_fetch(credentialed_proxy::with_wrong_password(&proxy), &target)
+            .await
+            .expect_err("a refused proxy must fail the module fetch");
+
         assert!(
-            message.contains("'ftp'"),
-            "the error must name the scheme, got {message}"
+            message.contains("407"),
+            "the error must name the proxy's answer: {message}"
         );
+        assert!(!message.contains(credentialed_proxy::PASSWORD), "{message}");
         assert!(
-            !message.contains("s3cr3t"),
-            "the error leaked the proxy password: {message}"
+            tokio::time::timeout(std::time::Duration::from_millis(200), direct.accept())
+                .await
+                .is_err(),
+            "the module fetch connected directly"
         );
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the module fetch must go to the proxy: {requests:?}");
+        assert!(credentialed_proxy::proxy_authorization(&requests[0]).is_some());
     }
 
     #[test]

@@ -13,6 +13,9 @@ pub enum ProxyError {
     /// reads as a scheme has no host, so [`check_proxy_url`] reads it as `http://` instead.
     #[error("the proxy URL scheme '{0}' is not supported; use http or https")]
     UnsupportedScheme(String),
+
+    #[error("the proxy address holds a user name or password; pass them as the proxy credentials")]
+    CredentialsInAddress,
 }
 
 /// The proxy schemes both browser HTTP clients can use.
@@ -44,17 +47,95 @@ pub fn check_proxy_url(proxy_url: &str) -> Result<Url, ProxyError> {
     }
 }
 
-/// Build the reqwest proxy for `proxy_url`, refusing any URL [`check_proxy_url`] refuses.
-pub fn reqwest_proxy(proxy_url: &str) -> Result<reqwest::Proxy, ProxyError> {
-    check_proxy_url(proxy_url)?;
-    reqwest::Proxy::all(proxy_url).map_err(|e| ProxyError::Unparseable(e.to_string()))
+/// The user name and password a proxy asks for, kept apart from its address.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProxyCredentials {
+    pub username: String,
+    pub password: String,
 }
 
-/// Build the wreq proxy for `proxy_url`, refusing any URL [`check_proxy_url`] refuses.
-#[cfg(feature = "stealth")]
-pub fn wreq_proxy(proxy_url: &str) -> Result<wreq::Proxy, ProxyError> {
-    let url = check_proxy_url(proxy_url)?;
-    wreq::Proxy::all(url.as_str()).map_err(|e| ProxyError::Unparseable(e.to_string()))
+/// Shows the user name only: the password is the secret.
+impl std::fmt::Debug for ProxyCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyCredentials")
+            .field("username", &self.username)
+            .field("password", &crate::redact::REDACTED)
+            .finish()
+    }
+}
+
+/// A proxy the browser HTTP clients send requests through: an address that holds no user
+/// name or password, and the credentials apart from it.
+///
+/// ~keep The credentials join the address only inside [`Self::reqwest_proxy`] and
+/// ~keep [`Self::wreq_proxy`], where the connection is made, so the address can be logged.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UpstreamProxy {
+    address: Url,
+    credentials: Option<ProxyCredentials>,
+}
+
+impl UpstreamProxy {
+    /// Refuses an address with a scheme the clients cannot use, and an address that holds a
+    /// user name or password: those go in `credentials`.
+    pub fn new(address: Url, credentials: Option<ProxyCredentials>) -> Result<Self, ProxyError> {
+        if !address.username().is_empty() || address.password().is_some() {
+            return Err(ProxyError::CredentialsInAddress);
+        }
+        if !address.has_host() {
+            return Err(ProxyError::Unparseable(
+                "expected an address such as http://proxy:8080".to_string(),
+            ));
+        }
+        if !SUPPORTED_SCHEMES.contains(&address.scheme()) {
+            return Err(ProxyError::UnsupportedScheme(address.scheme().to_string()));
+        }
+        Ok(Self { address, credentials })
+    }
+
+    /// The proxy's address. It never holds a user name or password.
+    pub fn address(&self) -> &Url {
+        &self.address
+    }
+
+    pub fn credentials(&self) -> Option<&ProxyCredentials> {
+        self.credentials.as_ref()
+    }
+
+    /// The reqwest proxy, with the credentials sent as `Proxy-Authorization`.
+    pub fn reqwest_proxy(&self) -> Result<reqwest::Proxy, ProxyError> {
+        let proxy = reqwest::Proxy::all(self.address.as_str()).map_err(|e| ProxyError::Unparseable(e.to_string()))?;
+        Ok(match &self.credentials {
+            Some(credentials) => proxy.basic_auth(&credentials.username, &credentials.password),
+            None => proxy,
+        })
+    }
+
+    /// The wreq proxy, with the credentials sent as `Proxy-Authorization`.
+    #[cfg(feature = "stealth")]
+    pub fn wreq_proxy(&self) -> Result<wreq::Proxy, ProxyError> {
+        let proxy = wreq::Proxy::all(self.address.as_str()).map_err(|e| ProxyError::Unparseable(e.to_string()))?;
+        Ok(match &self.credentials {
+            Some(credentials) => proxy.basic_auth(&credentials.username, &credentials.password),
+            None => proxy,
+        })
+    }
+}
+
+/// Shows the address and whether credentials are set, never the credentials.
+impl std::fmt::Debug for UpstreamProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UpstreamProxy")
+            .field("address", &self.address.as_str())
+            .field("credentials", &self.credentials.is_some())
+            .finish()
+    }
+}
+
+/// The proxy at `raw`, read as [`check_proxy_url`] reads it, for tests.
+#[cfg(test)]
+pub(crate) fn test_proxy(raw: &str) -> Result<UpstreamProxy, ProxyError> {
+    UpstreamProxy::new(check_proxy_url(raw)?, None)
 }
 
 /// Proxy URLs that carry a credential and are refused, and a check that a refusal shows
@@ -75,6 +156,97 @@ pub(crate) mod credential_urls {
                 "the refusal of {url} shows '{credential}': {message}"
             );
         }
+    }
+}
+
+/// A local proxy that asks for credentials, for the tests of each proxy consumer.
+#[cfg(test)]
+pub(crate) mod credentialed_proxy {
+    use std::sync::{Arc, Mutex};
+
+    use base64::Engine as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{ProxyCredentials, UpstreamProxy, check_proxy_url};
+
+    pub(crate) const PASSWORD: &str = "IMPL385-PROXY-PW";
+
+    /// The proxy answers a request with the credentials with this.
+    pub(crate) const ACCEPTED: &str =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia-proxy";
+    /// The proxy answers a request with the wrong credentials, or none, with this.
+    pub(crate) const REFUSED: &str = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    /// Start a server on 127.0.0.1 that records the head of every request it accepts. The
+    /// proxy it returns sends `operator` and [`PASSWORD`] to it.
+    pub(crate) async fn start() -> (UpstreamProxy, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = format!("http://{}", listener.local_addr().expect("addr"));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let log = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 8192];
+                let read = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..read]).to_string();
+                let answer = if proxy_authorization(&request).as_deref() == Some(expected_authorization().as_str()) {
+                    ACCEPTED
+                } else {
+                    REFUSED
+                };
+                log.lock().expect("lock").push(request);
+                let _ = socket.write_all(answer.as_bytes()).await;
+                let _ = socket.flush().await;
+            }
+        });
+        let credentials = ProxyCredentials {
+            username: "operator".to_string(),
+            password: PASSWORD.to_string(),
+        };
+        let proxy = UpstreamProxy::new(check_proxy_url(&address).expect("an http address"), Some(credentials))
+            .expect("a usable proxy");
+        (proxy, requests)
+    }
+
+    /// `proxy` with a password the server refuses.
+    pub(crate) fn with_wrong_password(proxy: &UpstreamProxy) -> UpstreamProxy {
+        let credentials = ProxyCredentials {
+            username: "operator".to_string(),
+            password: format!("{PASSWORD}-WRONG"),
+        };
+        UpstreamProxy::new(proxy.address().clone(), Some(credentials)).expect("a usable proxy")
+    }
+
+    pub(crate) fn expected_authorization() -> String {
+        let token = base64::engine::general_purpose::STANDARD.encode(format!("operator:{PASSWORD}"));
+        format!("Basic {token}")
+    }
+
+    pub(crate) fn proxy_authorization(request: &str) -> Option<String> {
+        request
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("proxy-authorization:"))
+            .map(|line| line.split_once(':').expect("header line").1.trim().to_string())
+    }
+
+    /// Panic unless the proxy received exactly one request for `target`, in absolute form,
+    /// with the configured credentials.
+    pub(crate) fn assert_one_authenticated_request(requests: &Mutex<Vec<String>>, target: &str) {
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the proxy must receive the request: {requests:?}");
+        assert!(
+            requests[0].starts_with(&format!("GET {target} ")),
+            "the proxy must receive the absolute-form request: {requests:?}"
+        );
+        assert_eq!(
+            proxy_authorization(&requests[0]),
+            Some(expected_authorization()),
+            "the proxy must receive the configured credentials"
+        );
     }
 }
 
@@ -147,6 +319,46 @@ mod tests {
             let err = check_proxy_url(url).expect_err("the proxy must be refused");
             credential_urls::assert_not_shown(url, &err.to_string());
         }
+    }
+
+    #[test]
+    fn an_upstream_proxy_refuses_an_address_that_holds_credentials() {
+        for raw in [
+            "http://operator:IMPL385-UP@proxy.test:8080",
+            "http://operator@proxy.test:8080",
+            "http://:IMPL385-UP@proxy.test:8080",
+        ] {
+            let address = Url::parse(raw).expect("the address parses");
+            let err = UpstreamProxy::new(address, None).expect_err("credentials belong apart from the address");
+            assert_eq!(err, ProxyError::CredentialsInAddress, "{raw}");
+            assert!(!err.to_string().contains("IMPL385-UP"), "{err}");
+        }
+        let err = UpstreamProxy::new(Url::parse("ftp://proxy.test:21").expect("parses"), None)
+            .expect_err("a scheme the clients cannot use is refused");
+        assert_eq!(err, ProxyError::UnsupportedScheme("ftp".to_string()));
+        assert!(
+            err.to_string().contains("'ftp'"),
+            "the error must name the scheme: {err}"
+        );
+    }
+
+    #[test]
+    fn an_upstream_proxy_debug_shows_the_address_and_never_the_password() {
+        let proxy = UpstreamProxy::new(
+            Url::parse("http://proxy.test:8080").expect("parses"),
+            Some(ProxyCredentials {
+                username: "operator".to_string(),
+                password: "IMPL385-UP-DBG".to_string(),
+            }),
+        )
+        .expect("a usable proxy");
+        let shown = format!("{proxy:?} {:?}", proxy.credentials());
+        assert!(!shown.contains("IMPL385-UP-DBG"), "{shown}");
+        assert!(
+            shown.contains("proxy.test:8080") && shown.contains("operator"),
+            "{shown}"
+        );
+        assert!(proxy.reqwest_proxy().is_ok());
     }
 
     #[test]

@@ -199,9 +199,9 @@ impl SimpleHttpProvider {
 
         req = match &self.config.auth {
             AuthScheme::None => req,
-            AuthScheme::Bearer { token } => req.bearer_auth(token),
-            AuthScheme::BasicUsername { username } => req.basic_auth(username, Option::<&str>::None),
-            AuthScheme::Header { name, value } => req.header(name.as_str(), value.as_str()),
+            AuthScheme::Bearer { token } => req.bearer_auth(token.expose()),
+            AuthScheme::BasicUsername { username } => req.basic_auth(username.expose(), Option::<&str>::None),
+            AuthScheme::Header { name, value } => req.header(name.as_str(), value.expose()),
             AuthScheme::QueryParam { .. } => req,
         };
 
@@ -218,7 +218,7 @@ impl SimpleHttpProvider {
             full.push(sep);
             full.push_str(k);
             full.push('=');
-            full.push_str(&urlencoding::encode(v));
+            full.push_str(&urlencoding::encode(v.expose()));
             sep = '&';
         }
 
@@ -236,7 +236,7 @@ impl SimpleHttpProvider {
             full.push(sep);
             full.push_str(name);
             full.push('=');
-            full.push_str(&urlencoding::encode(value));
+            full.push_str(&urlencoding::encode(value.expose()));
         }
 
         full

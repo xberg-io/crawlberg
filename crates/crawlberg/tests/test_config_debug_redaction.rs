@@ -36,7 +36,7 @@ fn secret_proxy() -> ProxyConfig {
 
 fn secret_browser_config() -> BrowserConfig {
     BrowserConfig {
-        endpoint: Some(format!("wss://chrome.example.com/devtools?token={SECRET}")),
+        endpoint: Some(format!("wss://{SECRET}.chrome.example.com/devtools?token={SECRET}")),
         proxy: Some(secret_proxy()),
         eval_script: Some(secret_script()),
         ..BrowserConfig::default()
@@ -85,8 +85,8 @@ fn browser_config_debug_prints_only_the_endpoint_origin() {
     assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
     let compact = format!("{config:?}");
     assert!(
-        compact.contains(r#"endpoint: Some("wss://chrome.example.com")"#),
-        "endpoint origin must stay visible and nothing else: {compact}"
+        compact.contains(r#"endpoint: Some("wss://***.***.example.com")"#),
+        "only the endpoint origin may print, with each host label left of the last two hidden: {compact}"
     );
     let script = format!(r#"eval_script: Some("*** ({} bytes)")"#, secret_script().len());
     assert!(
@@ -146,15 +146,15 @@ fn cookie_info_debug_hides_the_value() {
 fn browser_pool_config_debug_prints_only_the_endpoint_origin() {
     let config = crawlberg::browser_pool::BrowserPoolConfig {
         browser_endpoint: Some(format!(
-            "ws://user:{SECRET}@chrome.internal:9222/devtools/browser/{SECRET}?token={SECRET}"
+            "ws://user:{SECRET}@{SECRET}.chrome.internal:9222/devtools/browser/{SECRET}?token={SECRET}"
         )),
         ..Default::default()
     };
     assert_hidden("BrowserPoolConfig", format!("{config:?}"), format!("{config:#?}"));
     let compact = format!("{config:?}");
     assert!(
-        compact.contains(r#"browser_endpoint: Some("ws://chrome.internal:9222")"#),
-        "only the origin may print: {compact}"
+        compact.contains(r#"browser_endpoint: Some("ws://***.chrome.internal:9222")"#),
+        "only the origin may print, with each host label left of the last two hidden: {compact}"
     );
 }
 
@@ -219,13 +219,13 @@ fn browser_pool_config_debug_shows_the_chrome_binary_and_flags() {
 #[cfg(feature = "browser")]
 #[test]
 fn session_key_debug_hides_proxy_credentials() {
-    let proxy = format!("http://user:{SECRET}@proxy.internal:8080/route?token={SECRET}");
+    let proxy = format!("http://user:{SECRET}@{SECRET}.proxy.internal:8080/route?token={SECRET}");
     let key = crawlberg::browser_session_pool::SessionKey::from_url("https://example.com/", Some(&proxy)).unwrap();
     assert_hidden("SessionKey", format!("{key:?}"), format!("{key:#?}"));
     let compact = format!("{key:?}");
     assert!(
-        compact.contains(r#"proxy: Some("http://proxy.internal:8080")"#),
-        "only the proxy URL's origin may print: {compact}"
+        compact.contains(r#"proxy: Some("http://***.proxy.internal:8080")"#),
+        "only the proxy URL's origin may print, with each host label left of the last two hidden: {compact}"
     );
 }
 

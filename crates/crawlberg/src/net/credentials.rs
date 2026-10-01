@@ -127,6 +127,7 @@ pub(crate) fn origin_headers(config: &CrawlConfig) -> Option<crawlberg_browser::
 }
 
 /// Whether a request to `url` carries credentials, which keeps it out of shared caches.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_credentialed(config: &CrawlConfig, url: &Url) -> bool {
     config
         .credential_scope

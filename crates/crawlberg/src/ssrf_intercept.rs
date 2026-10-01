@@ -121,7 +121,6 @@ pub(crate) struct InterceptOutcome {
 ///
 /// ~keep The headers are read by `browser::navigation`, which needs the `browser` feature;
 /// ~keep a `browser-chromiumoxide`-only build has just `interact`, which reads the URL and status.
-#[derive(Debug)]
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
 pub(crate) struct StoppedResponse {
     /// The URL that answered.
@@ -131,8 +130,20 @@ pub(crate) struct StoppedResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
 }
 
+impl std::fmt::Debug for StoppedResponse {
+    /// Redacted: a sensitive header value, such as a `Set-Cookie`, prints as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { url, status, headers } = self;
+        f.debug_struct("StoppedResponse")
+            .field("url", url)
+            .field("status", status)
+            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .finish()
+    }
+}
+
 /// The status and headers of a main-frame document response.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
 pub(crate) struct DocumentResponse {
     pub(crate) status: u16,
@@ -140,6 +151,22 @@ pub(crate) struct DocumentResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
     /// HTTP redirects the navigation that received this response followed before it.
     pub(crate) redirects: usize,
+}
+
+impl std::fmt::Debug for DocumentResponse {
+    /// Redacted: a sensitive header value, such as a `Set-Cookie`, prints as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            status,
+            headers,
+            redirects,
+        } = self;
+        f.debug_struct("DocumentResponse")
+            .field("status", status)
+            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .field("redirects", redirects)
+            .finish()
+    }
 }
 
 /// The SSRF check of one chromiumoxide [`Browser`]: a single listener on the browser session
@@ -2090,6 +2117,38 @@ mod tests {
 
         let other = url::Url::parse("http://other.test/").expect("test URL must parse");
         assert!(headers_with_seed_host_headers(&config, &other, &headers).is_none());
+    }
+
+    /// The interception outcome keeps each main-frame response's headers; its `Debug` must hide
+    /// a session cookie the server sets and keep the other header values.
+    #[test]
+    fn intercept_outcome_debug_hides_a_response_set_cookie() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let headers = std::collections::HashMap::from([
+            ("set-cookie".to_owned(), vec![format!("sid={SECRET}; HttpOnly")]),
+            ("content-type".to_owned(), vec!["text/html".to_owned()]),
+        ]);
+        let outcome = InterceptOutcome {
+            stopped_response: Some(super::StoppedResponse {
+                url: "https://example.com/".to_owned(),
+                status: 204,
+                headers: headers.clone(),
+            }),
+            documents: std::collections::HashMap::from([(
+                "loader-1".to_owned(),
+                super::DocumentResponse {
+                    status: 200,
+                    headers,
+                    redirects: 0,
+                },
+            )]),
+            ..InterceptOutcome::default()
+        };
+        for rendered in [format!("{outcome:?}"), format!("{outcome:#?}")] {
+            assert!(!rendered.contains(SECRET), "a secret printed: {rendered}");
+            assert_eq!(rendered.matches("text/html").count(), 2, "{rendered}");
+            assert_eq!(rendered.matches("set-cookie").count(), 2, "{rendered}");
+        }
     }
 }
 

@@ -19,50 +19,76 @@ pub enum HttpMethod {
     Post,
 }
 
+/// A vendor secret: an API key, a token or a query parameter value.
+///
+/// `Debug` and `Display` print [`REDACTED_PLACEHOLDER`], never the value, so a struct that
+/// derives `Debug` over it cannot print the secret. An empty secret prints as `""`, which shows
+/// that the value is missing without showing anything else. [`Secret::expose`] is the only way to
+/// read the value, for the request builder.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    /// The secret value, for the one place that sends it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Secret {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl PartialEq<str> for Secret {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            f.write_str("\"\"")
+        } else {
+            f.write_str(REDACTED_PLACEHOLDER)
+        }
+    }
+}
+
+impl std::fmt::Display for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            f.write_str(REDACTED_PLACEHOLDER)
+        }
+    }
+}
+
 /// Authentication scheme to apply to every outbound request.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum AuthScheme {
     /// No authentication.
     None,
     /// `Authorization: Bearer <token>`.
-    Bearer { token: String },
+    Bearer { token: Secret },
     /// HTTP Basic Auth with the API key as the username and an empty password.
     /// Used by Zyte.
-    BasicUsername { username: String },
+    // ~keep A secret although `crawlberg`'s `AuthConfig::Basic` prints its username: this one
+    // ~keep carries the vendor API key, not an account name.
+    BasicUsername { username: Secret },
     /// A custom header: `<name>: <value>`.
-    Header { name: String, value: String },
+    Header { name: String, value: Secret },
     /// Append `?<name>=<value>` to the request URL.
-    QueryParam { name: String, value: String },
-}
-
-impl std::fmt::Debug for AuthScheme {
-    /// Redacted: shows which scheme is configured and whether its secret is non-empty,
-    /// never the secret itself. `ProviderConfig`'s `Debug` prints through this.
-    // ~keep `BasicUsername.username` is hidden although `crawlberg`'s `AuthConfig::Basic`
-    // ~keep prints its username in clear. That is deliberate, not an inconsistency: this
-    // ~keep field carries the vendor API key (Zyte sends the key as the Basic username),
-    // ~keep whereas `AuthConfig::Basic.username` is an account name.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let redacted = |secret: &String| (!secret.is_empty()).then_some(REDACTED_PLACEHOLDER);
-        match self {
-            Self::None => f.write_str("None"),
-            Self::Bearer { token } => f.debug_struct("Bearer").field("token", &redacted(token)).finish(),
-            Self::BasicUsername { username } => f
-                .debug_struct("BasicUsername")
-                .field("username", &redacted(username))
-                .finish(),
-            Self::Header { name, value } => f
-                .debug_struct("Header")
-                .field("name", name)
-                .field("value", &redacted(value))
-                .finish(),
-            Self::QueryParam { name, value } => f
-                .debug_struct("QueryParam")
-                .field("name", name)
-                .field("value", &redacted(value))
-                .finish(),
-        }
-    }
+    QueryParam { name: String, value: Secret },
 }
 
 /// Location where the target URL is injected into the outbound request.
@@ -101,32 +127,15 @@ impl std::fmt::Debug for RequestBody {
 }
 
 /// Request construction parameters.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RequestShape {
     /// POST body; `None` for GET requests.
     pub body: Option<RequestBody>,
-    /// Fixed query parameters appended to every request (before `url_param`).
-    pub query: Vec<(String, String)>,
+    /// Fixed query parameters appended to every request (before `url_param`). A value can be
+    /// a vendor key, so it is a [`Secret`].
+    pub query: Vec<(String, Secret)>,
     /// How and where the target URL is placed in the request.
     pub url_param: UrlParamLocation,
-}
-
-impl std::fmt::Debug for RequestShape {
-    /// Redacted: shows each query parameter's name, never its value, which can be a vendor key.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { body, query, url_param } = self;
-        f.debug_struct("RequestShape")
-            .field("body", body)
-            .field(
-                "query",
-                &query
-                    .iter()
-                    .map(|(name, _)| (name, REDACTED_PLACEHOLDER))
-                    .collect::<Vec<_>>(),
-            )
-            .field("url_param", url_param)
-            .finish()
-    }
 }
 
 /// How to interpret the vendor's HTTP response body.
@@ -251,6 +260,58 @@ mod tests {
         );
     }
 
+    /// A secret prints the placeholder through `Debug` and `Display`, and only `expose` reads it.
+    #[test]
+    fn secret_never_prints_its_value() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let secret = Secret::from(SECRET);
+        assert_eq!(format!("{secret:?}"), REDACTED_PLACEHOLDER);
+        assert_eq!(format!("{secret}"), REDACTED_PLACEHOLDER);
+        assert_eq!(secret.expose(), SECRET);
+        let empty = Secret::from("");
+        assert_eq!(format!("{empty:?}"), r#""""#);
+        assert_eq!(format!("{empty}"), "");
+    }
+
+    /// Every auth scheme that holds a secret prints the placeholder, and keeps a header or
+    /// query parameter name visible.
+    #[test]
+    fn auth_scheme_debug_never_prints_a_planted_secret() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        for (auth, visible) in [
+            (AuthScheme::Bearer { token: SECRET.into() }, "Bearer"),
+            (
+                AuthScheme::BasicUsername {
+                    username: SECRET.into(),
+                },
+                "BasicUsername",
+            ),
+            (
+                AuthScheme::Header {
+                    name: "X-Api-Key".into(),
+                    value: SECRET.into(),
+                },
+                "X-Api-Key",
+            ),
+            (
+                AuthScheme::QueryParam {
+                    name: "api_key".into(),
+                    value: SECRET.into(),
+                },
+                "api_key",
+            ),
+        ] {
+            for rendered in [format!("{auth:?}"), format!("{auth:#?}")] {
+                assert!(!rendered.contains(SECRET), "a secret printed: {rendered}");
+                assert!(
+                    rendered.contains(REDACTED_PLACEHOLDER),
+                    "the placeholder is missing: {rendered}"
+                );
+                assert!(rendered.contains(visible), "{visible} must stay visible: {rendered}");
+            }
+        }
+    }
+
     /// A body template prints its length and whether it holds `{{url}}`, never its text.
     #[test]
     fn request_body_debug_shows_the_length_and_the_url_placeholder() {
@@ -274,7 +335,7 @@ mod tests {
         const SECRET: &str = "sk-live-9f8e7d6c5b4a";
         let config = ProviderConfig {
             vendor_name: "querykey".into(),
-            endpoint: format!("https://api.vendor.example:8443/v1/{SECRET}?key={SECRET}"),
+            endpoint: format!("https://{SECRET}.vendor.example:8443/v1/{SECRET}?key={SECRET}"),
             method: HttpMethod::Post,
             auth: AuthScheme::BasicUsername {
                 username: SECRET.into(),
@@ -301,7 +362,7 @@ mod tests {
                 "the placeholder is missing: {rendered}"
             );
             assert!(
-                rendered.contains("https://api.vendor.example:8443"),
+                rendered.contains("https://***.vendor.example:8443"),
                 "the endpoint origin must stay visible: {rendered}"
             );
             assert!(
