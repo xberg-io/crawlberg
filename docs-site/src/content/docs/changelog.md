@@ -368,6 +368,15 @@ title: "Changelog"
   action now fails with the SSRF policy error that names the refused URL. A refused request counts
   for the action that was running when the check received it from Chrome, so on a busy host it can
   count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A scrape on a `browser_profile` could fail right after another one on the same profile.** A
+  scrape returns before its Chrome has exited, and Chrome writes the profile until it exits. A
+  scrape that started then copied the profile while Chrome renamed files in it, and failed with
+  "failed to copy profile file". A session on a saved profile now holds the profile until its
+  Chrome has exited, or has been killed after `shutdown_timeout`. A session on an unsaved profile
+  copies the profile only while no Chrome writes it, and two saved sessions on one profile no
+  longer run at the same time. A session that waits for the profile counts the wait against its
+  `overall_timeout`. This applies to sessions in one process. A symlink to a profile directory
+  shares the hold of the directory it points to. (#524)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of

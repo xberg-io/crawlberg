@@ -127,6 +127,7 @@ uuid = { workspace = true, optional = true }
 # which fails to compile on wasm32; restore them for native builds only.
 reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "signal", "process", "io-util"] }
+same-file = "1"
 
 # ~keep wasm32 needs JS getrandom backends for both the direct v0.4 API and transitive v0.3 API.
 # ~keep The `getrandom03` alias forces `wasm_js` into the v0.3 line pulled transitively by `ahash`.
