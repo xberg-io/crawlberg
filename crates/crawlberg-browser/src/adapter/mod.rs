@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use crate::net::OriginHeaders;
-pub use crate::net::proxy::{ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, check_proxy_url};
+pub use crate::net::proxy::{
+    ProxyCredentials, ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, UpstreamProxy, check_proxy_url,
+};
 pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
@@ -111,8 +113,8 @@ pub struct NativeBrowserConfig {
     pub respect_robots_txt: bool,
     /// Use Chrome 145 TLS fingerprint via wreq stealth client.
     pub stealth: bool,
-    /// Proxy URL (http/https only). No SOCKS5 — use chromiumoxide for that.
-    pub proxy_url: Option<String>,
+    /// Proxy (http/https only). No SOCKS5 — use chromiumoxide for that.
+    pub proxy: Option<UpstreamProxy>,
     /// Cookies pre-populated into the jar before navigation.
     pub prior_cookies: Vec<NativeCookie>,
     /// URL patterns to block (supports `*` wildcards).
@@ -149,7 +151,7 @@ pub struct NativeBrowserConfig {
 
 impl std::fmt::Debug for NativeBrowserConfig {
     /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
-    /// auth config, `proxy_url` can carry `user:pass@` credentials, and `prior_cookies`
+    /// auth config, and `prior_cookies`
     /// are session cookies. `eval_script` can embed a token, so it prints as `***` with its
     /// length. Header names stay visible; secret values print as `***`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -160,7 +162,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             extra_headers,
             respect_robots_txt,
             stealth,
-            proxy_url,
+            proxy,
             prior_cookies,
             block_url_patterns,
             eval_script,
@@ -179,7 +181,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("extra_headers", &RedactedValues(extra_headers))
             .field("respect_robots_txt", respect_robots_txt)
             .field("stealth", stealth)
-            .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
+            .field("proxy", proxy)
             .field("prior_cookies", prior_cookies)
             .field("block_url_patterns", block_url_patterns)
             .field(
@@ -208,7 +210,7 @@ impl Default for NativeBrowserConfig {
             extra_headers: HashMap::new(),
             respect_robots_txt: false,
             stealth: false,
-            proxy_url: None,
+            proxy: None,
             prior_cookies: Vec::new(),
             block_url_patterns: Vec::new(),
             eval_script: None,
@@ -471,7 +473,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserConte
         .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
     let mut context = BrowserContext::with_ssrf(
         "crawlberg".to_string(),
-        config.proxy_url.clone(),
+        config.proxy.clone(),
         config.stealth,
         config.user_agent.clone(),
         ssrf,

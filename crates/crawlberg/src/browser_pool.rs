@@ -643,7 +643,8 @@ pub struct BrowserPoolConfig {
 
 impl std::fmt::Debug for BrowserPoolConfig {
     /// Redacted: a CDP `browser_endpoint` is itself the capability, so only its scheme, host
-    /// and port print. See `crate::net::redact::redact_url_to_origin`.
+    /// and port print. See `crate::net::redact::redact_url_to_origin`. A Chrome flag can carry
+    /// a proxy password, so `chrome_args` print through `RedactedChromeArgs`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             max_pages,
@@ -661,7 +662,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
                     .map(crate::net::redact::redact_url_to_origin),
             )
             .field("chrome_path", chrome_path)
-            .field("chrome_args", chrome_args)
+            .field("chrome_args", &crate::chrome_args::RedactedChromeArgs(chrome_args))
             .field("launch_timeout", launch_timeout)
             .finish()
     }

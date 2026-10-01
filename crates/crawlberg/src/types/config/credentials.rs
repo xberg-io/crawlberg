@@ -26,7 +26,7 @@ impl std::fmt::Debug for ProxyConfig {
     #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProxyConfig")
-            .field("url", &crate::net::redact::redact_url_to_origin(&self.url))
+            .field("url", &crate::proxy::redacted_proxy_address(self))
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "***"))
             .finish()

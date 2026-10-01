@@ -10,7 +10,7 @@ use crate::types::{ArticleMetadata, PageMetadata};
 use super::selectors::{
     META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, ROBOTS_META_NAME, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE,
 };
-use super::{attr_eq, clean_url, decode_attr_value, fetchable_address, get_attr, get_url_attr, has_rel};
+use super::{clean_url, decode_attr_value, fetchable_address, get_attr, get_url_attr, has_rel};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -341,7 +341,7 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        if !attr_eq(tag, "http-equiv", "refresh") {
+        if !super::attr_eq(tag, "http-equiv", "refresh") {
             continue;
         }
         let Some(content) = get_attr(tag, "content") else {
