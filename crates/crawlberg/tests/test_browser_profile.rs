@@ -269,37 +269,10 @@ impl CookieServer {
     }
 }
 
-/// The newest modification time of a file under `dir`, if there is one.
-fn newest_mtime(dir: &std::path::Path) -> Option<std::time::SystemTime> {
-    let mut newest = None;
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        let candidate = if metadata.is_dir() {
-            newest_mtime(&entry.path())
-        } else {
-            metadata.modified().ok()
-        };
-        if let Some(candidate) = candidate
-            && newest.is_none_or(|newest| candidate > newest)
-        {
-            newest = Some(candidate);
-        }
-    }
-    newest
-}
-
-/// Scrape `url` with the profile and return the page, then wait until its Chrome has left the
-/// profile: its `SingletonLock` is gone and nothing under the profile changed for half a second.
-/// `None` without Chrome.
+/// Scrape `url` with the profile and return the page. `None` without Chrome.
 ///
-/// ~keep The one-shot session returns before its Chrome has exited. A second session on the same
-/// ~keep profile before that races the exit: with `save_browser_profile: false` the copy of the
-/// ~keep profile fails on a file Chrome renames meanwhile ("failed to copy profile file
-/// ~keep .../Default/.com.google.Chrome.TransportSecurity.hp1rB0: No such file or directory",
-/// ~keep 3 of 3 runs; Chrome removes the lock before its last profile writes). That is the
-/// ~keep session's defect, reported separately; these tests wait so they measure cookies.
+/// ~keep No wait for the session's Chrome to exit: the next session on the same profile waits
+/// ~keep until that Chrome is reaped (crawlberg#524), and `test_browser_profile_session` asserts it.
 async fn scrape_with_profile(
     test_name: &str,
     profile: &BrowserProfile,
@@ -309,25 +282,7 @@ async fn scrape_with_profile(
     let engine =
         create_engine(Some(config_with_profile(&profile.name, save_browser_profile))).expect("engine must build");
     match scrape(&engine, url).await {
-        Ok(result) => {
-            let lock = profile.user_data_dir.join("SingletonLock");
-            let quiet = Duration::from_millis(500);
-            let mut left = false;
-            for _ in 0..100 {
-                left = std::fs::symlink_metadata(&lock).is_err()
-                    && newest_mtime(&profile.user_data_dir)
-                        .is_none_or(|newest| newest.elapsed().is_ok_and(|since| since > quiet));
-                if left {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            assert!(
-                left,
-                "{test_name}: the session's Chrome must leave the profile within ten seconds"
-            );
-            Some(result.html)
-        }
+        Ok(result) => Some(result.html),
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
             None

@@ -424,9 +424,10 @@ async fn webrtc_sends_in_interact_with_deny_private_off() {
     webrtc_row("webrtc_interact_off", Via::Interact, false).await;
 }
 
-/// This machine's name, the IPv4 address off loopback it resolves to, and every address it
-/// resolves to. The proxy refuses a name when any answer fails the policy, and a macOS name
-/// also answers with its interfaces' other addresses, such as IPv6 link-local.
+/// This machine's name, the IPv4 address it resolves to, and every address it resolves to.
+/// `None` when any answer is loopback: the proxy refuses a name when any answer fails the
+/// policy, and loopback stays denied here, so such a name never reaches its address. A macOS
+/// name answers with its interfaces' other addresses, such as `::1` and IPv6 link-local.
 async fn host_name_and_ip() -> Option<(String, IpAddr, Vec<IpAddr>)> {
     let name = match std::env::var("CRAWLBERG_TEST_HOST_NAME") {
         Ok(name) => name,
@@ -438,7 +439,10 @@ async fn host_name_and_ip() -> Option<(String, IpAddr, Vec<IpAddr>)> {
         .ok()?
         .map(|address| address.ip())
         .collect();
-    let ip = answers.iter().copied().find(|ip| ip.is_ipv4() && !ip.is_loopback())?;
+    if answers.iter().any(IpAddr::is_loopback) {
+        return None;
+    }
+    let ip = answers.iter().copied().find(IpAddr::is_ipv4)?;
     Some((name, ip, answers))
 }
 
@@ -447,7 +451,7 @@ async fn host_name_and_ip() -> Option<(String, IpAddr, Vec<IpAddr>)> {
 /// as a second DNS answer would. Without `remap` it is the twin.
 async fn rebinding_row(test_name: &str, remap: bool) {
     let Some((name, ip, answers)) = host_name_and_ip().await else {
-        announce_skip(test_name, "this machine's name does not resolve off loopback");
+        announce_skip(test_name, "this machine's name does not resolve only off loopback");
         return;
     };
     let (allowed, reached_allowed) = counting_tcp(SocketAddr::new(ip, 0)).await;
@@ -457,7 +461,6 @@ async fn rebinding_row(test_name: &str, remap: bool) {
     let script = format!("fetch('http://{name}:{port}/rebind', {{ mode: 'no-cors' }}).catch(() => {{}});{fetch}");
     let allowlist = answers
         .iter()
-        .filter(|answer| !answer.is_loopback())
         .map(|answer| {
             let prefix = if answer.is_ipv4() { 32 } else { 128 };
             HostMatcher::cidr(format!("{answer}/{prefix}")).expect("a valid CIDR")
