@@ -45,12 +45,12 @@ impl BrowserJsRuntime {
     }
 
     /// Construct a runtime whose ES-module loader routes dynamic imports
-    /// through `proxy_url` (#139). `None` is equivalent to `with_base_url`
+    /// through `proxy` (#139). `None` is equivalent to `with_base_url`
     /// (direct connection).
-    pub fn with_base_url_and_proxy(base_url: &str, proxy_url: Option<String>) -> Self {
+    pub fn with_base_url_and_proxy(base_url: &str, proxy: Option<crate::net::proxy::UpstreamProxy>) -> Self {
         Self::with_base_url_proxy_and_ssrf(
             base_url,
-            proxy_url,
+            proxy,
             std::sync::Arc::new(crate::net::ssrf::DefaultSsrfValidator::from_env()),
         )
     }
@@ -61,14 +61,14 @@ impl BrowserJsRuntime {
     /// [`Self::set_ssrf_validator`] would not reach dynamic `import()`.
     pub fn with_base_url_proxy_and_ssrf(
         base_url: &str,
-        proxy_url: Option<String>,
+        proxy: Option<crate::net::proxy::UpstreamProxy>,
         ssrf: std::sync::Arc<dyn crate::net::ssrf::SsrfValidator>,
     ) -> Self {
         let state = Rc::new(RefCell::new(JsOpState::new()));
         state.borrow_mut().ssrf = ssrf.clone();
         let state_clone = state.clone();
 
-        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf, state.clone()));
+        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy, ssrf, state.clone()));
 
         // ~keep deno_core captures `Handle::try_current().ok()` when it registers the isolate
         // ~keep and, if that handle is `None`, calls `std::process::abort()` from a V8

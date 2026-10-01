@@ -12,6 +12,44 @@ All notable changes to crawlberg are documented here.
   such as a challenge page, needs a higher limit. In `crawlberg-browser`, `NativeBrowserConfig`
   gains `max_redirects` and `RenderedPage` gains `redirects`, so a struct literal of either needs
   the new field; `NativeBrowserConfig::default()` sets no limit. (#117, #193, #115)
+- **The bypass provider holds its secrets in a type that never prints.** In `crawlberg-bypass`,
+  the auth scheme's token, user name and header or query value, and each fixed query value, are
+  now a `Secret`. Its `Debug` and `Display` print `***`, so a struct that derives `Debug` over it
+  cannot show the key. Build one with `.into()` from a string, and read it with `expose()`. (#386)
+- **The config check refuses a proxy password that is not percent-encoded.** A `#`, `/` or `?`
+  in a proxy user name or password ends the address early, so `http://user:4242#rest@proxy:8080`
+  was read as the host `user` on port 4242. Such an address now fails `CrawlConfig::validate`,
+  and the error asks to percent-encode the credential or to set it in `username` and `password`.
+  The error never shows the address. An address with no credentials and an `@` in its path,
+  query or fragment is refused too, and its error says that a proxy address takes no path,
+  query or fragment.
+- **The config check refuses proxy credentials set in two places.** A proxy URL that holds a user
+  name or password, together with `username` or `password`, now fails `CrawlConfig::validate`.
+  Set the credentials in the URL or in the two fields, not both.
+- **A proxy with only `username` set now sends its credentials.** The HTTP client sends
+  `Proxy-Authorization` with the user name and an empty password. Before, it sent credentials
+  only when both `username` and `password` were set.
+- **A proxy that a `ProxyProvider` returns gets the same check as the configured proxy.** A
+  provider proxy that the check refuses is not used: the request goes direct, and an ERROR line
+  names the target host and the reason, never the proxy URL. Its credentials reach the proxy as
+  `Proxy-Authorization`. The provider is asked once for each request, redirect hops included,
+  so a rotating provider no longer sends one proxy's credentials to another, and a refused proxy
+  logs one ERROR line for each request. Each provider proxy has its own connection pool.
+- **A native browser render goes through the proxy that a `ProxyProvider` picks.** Before, a
+  render ignored the provider and connected directly. Now the render asks the provider once for
+  the page's host, and the page load and every request the page makes go through that proxy with
+  its credentials. If the provider returns no proxy, the render goes direct, as an HTTP fetch
+  does. `browser.proxy`, if set, still wins over the provider for renders. (#248)
+- **A Chrome render with a `ProxyProvider` fails instead of going direct.** The Chrome backend
+  cannot render through a provider, so a Chrome render with a provider and no `browser.proxy`
+  now fails with an error that names the fix: use the native backend, or set `browser.proxy`.
+  HTTP fetches with the provider are not affected. (#248)
+- **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
+  `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
+  user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address
+  that holds credentials. The same type replaces the proxy URL string in the browser context, the
+  HTTP clients, the module loader and the JS runtime constructors.
+
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
   supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
@@ -30,13 +68,16 @@ All notable changes to crawlberg are documented here.
 - **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
   of such a page returned the rendered HTML with status 200. It now returns the same error that
   HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
-  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
-  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  503 and 504. A 403, 429 or 503 page is a WAF error when its headers or its body name a WAF,
+  as in HTTP mode, so it escalates instead of being retried. A page with another status, such as
+  501, 505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
   scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
   mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
   that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
   response headers of the document the page shows, so a WAF block is found from the headers of a
-  403 page as well as from its body. (#143)
+  403, 429 or 503 page as well as from its body. When Chrome shows its own error page in place of
+  such a response, such as for a download or an empty body, only the headers are checked, because
+  Chrome never rendered the body. (#143)
 
 - **The native browser backend reports an empty body for a 204, 205 or 304.** It reported an
   empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
@@ -226,6 +267,55 @@ All notable changes to crawlberg are documented here.
   are not. With `deny_private` on, a launched Chrome sends WebRTC UDP only through a proxy, which
   stops it; a pooled Chrome always does, because one pool serves crawls with either setting.
   (#165, #178, #452)
+- **Browser mode returned Chrome's error page as the page.** When the main frame ended on
+  Chrome's own error page, the Chromiumoxide backend returned that page's HTML as content. This
+  happened for a download with a status such as 501, 505 or 599, for an error status with an
+  empty body, and for a navigation that failed at the network, which reported status 200. When
+  the server answered, the fetch now reports its status, headers and URL with no body, and handles
+  the status as HTTP mode does: a 404 or 500 is the same error, and a 400 or 501 is a page. When
+  the server did not answer, the fetch fails with a browser error that names the URL. After a page
+  navigates itself, only the redirects of that navigation make a 404 a page, not the redirects of
+  the requested URL. (#317, #319)
+- **The HTML, status, final URL and screenshot of a browser render come from one document.**
+  They were separate reads, so a navigation that committed between them could pair the HTML of
+  one document with the status, URL or screenshot of the next. The render now reads which
+  document is committed before and after it reads the HTML and takes the screenshot, and reads
+  both again when the document changed. The final URL is the URL of that document. A page that
+  navigates during each of three reads fails with a browser error. (#318)
+- **A browser screenshot of a page that keeps navigating held the fetch until its deadline.**
+  Chrome can leave a screenshot unanswered while the page keeps replacing its document. The
+  screenshot now stops after 5 seconds, and the page is reported without one.
+- **`interact` returned Chrome's error page as the page.** With the Chromiumoxide backend, a
+  Scrape action, and the final HTML of a session, could be Chrome's own error page, for example
+  after a download that Chrome cannot show. Such a Scrape action now fails, and a session that
+  ends on the error page fails with a browser error that names the URL. When the error page is for
+  a navigation the SSRF policy refused, the session keeps its result: the refusal fails the action
+  that caused it and is listed in `ssrf_refused_urls`, the final HTML is empty, and the final URL
+  is the refused URL. An ExecuteJs or Screenshot action that starts on the error page reports a
+  failure. The action still runs once, so a script such as `history.back()` can leave the error
+  page. The final HTML and the final URL of a session, and a Scrape action's HTML, are read from
+  one committed document. (#345, #346, #355)
+- **A secret in an endpoint host label printed in debug output.** A browser endpoint, a bypass
+  provider endpoint or a browser session proxy prints as its origin, and a per-account host such
+  as `sk-live-abc.api.example.com` printed in full. The host now keeps its last two labels and
+  prints `***` for each label to their left: `***.***.example.com`. An IP address prints as
+  before. (#175)
+- **The Chrome backend's record of a main-frame response printed its `Set-Cookie`.** The SSRF
+  interception keeps the headers of each main-frame response, and its debug output printed every
+  value. It now prints `***` for each credential header on the shared list, as the other response
+  header maps do. (#141, #386)
+- **The native browser backend logged the proxy password.** The backend put the proxy user
+  name and password back into the proxy URL, and every module import logged that URL at debug
+  level. The credentials now stay apart from the proxy address from the config check to the
+  connection, where the HTTP clients send them as `Proxy-Authorization`. No proxy URL that a log
+  line or an error can show holds a password. (#238, #385)
+- **The `Debug` text of a proxy showed part of an unencoded password.** For
+  `http://user:4242#rest@proxy:8080`, the `Debug` text of `ProxyConfig` and of
+  `StaticProxyProvider` showed `http://user:4242`. It now shows `***` for an address that the
+  config check refuses. (#285)
+- **The `Debug` text of `BrowserPoolConfig` showed a credential in a Chrome flag.** A flag value
+  that holds an `@`, such as `--proxy-server=http://user:pass@proxy:8080`, now prints as
+  `--proxy-server=***`. The flag name stays.
 - **The native browser backend could ignore its proxy and connect directly.** A proxy URL that
   did not parse, or one whose scheme the HTTP client cannot speak, such as `ftp://`, was dropped
   without an error, and every request of the render then went direct. A caller who relied on the

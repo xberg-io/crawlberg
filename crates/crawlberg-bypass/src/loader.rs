@@ -88,21 +88,29 @@ fn parse_auth(node: &YamlOwned, env_vars: &HashMap<String, String>) -> Result<Au
         "none" => Ok(AuthScheme::None),
         "bearer" => {
             let token = interp("auth.token", req_str(node, "token")?, env_vars)?;
-            Ok(AuthScheme::Bearer { token })
+            Ok(AuthScheme::Bearer { token: token.into() })
         }
         "basic_username" => {
             let username = interp("auth.username", req_str(node, "username")?, env_vars)?;
-            Ok(AuthScheme::BasicUsername { username })
+            Ok(AuthScheme::BasicUsername {
+                username: username.into(),
+            })
         }
         "header" => {
             let name = interp("auth.name", req_str(node, "name")?, env_vars)?;
             let value = interp("auth.value", req_str(node, "value")?, env_vars)?;
-            Ok(AuthScheme::Header { name, value })
+            Ok(AuthScheme::Header {
+                name,
+                value: value.into(),
+            })
         }
         "query_param" => {
             let name = interp("auth.name", req_str(node, "name")?, env_vars)?;
             let value = interp("auth.value", req_str(node, "value")?, env_vars)?;
-            Ok(AuthScheme::QueryParam { name, value })
+            Ok(AuthScheme::QueryParam {
+                name,
+                value: value.into(),
+            })
         }
         other => Err(ConfigError::UnknownValue {
             field: "auth.kind".into(),
@@ -142,7 +150,7 @@ fn parse_request(node: &YamlOwned, env_vars: &HashMap<String, String>) -> Result
             for item in items {
                 let name = req_str(item, "name")?;
                 let value = interp("request.query[].value", req_str(item, "value")?, env_vars)?;
-                pairs.push((name.to_owned(), value));
+                pairs.push((name.to_owned(), value.into()));
             }
             pairs
         }

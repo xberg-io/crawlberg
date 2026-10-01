@@ -161,13 +161,10 @@ async fn fetch_sends_post_with_url_in_body() {
 }
 
 #[tokio::test]
-async fn fetch_includes_bearer_auth_header() {
-    use wiremock::matchers::header_regex;
-
+async fn fetch_sends_the_configured_bearer_token() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/request"))
-        .and(header_regex("authorization", "Bearer .*"))
         .respond_with(ResponseTemplate::new(200).set_body_string("<html>auth ok</html>"))
         .mount(&mock)
         .await;
@@ -178,4 +175,19 @@ async fn fetch_includes_bearer_auth_header() {
 
     let response = provider.fetch("https://example.com").await.unwrap();
     assert_eq!(response.status, 200);
+    let requests = mock.received_requests().await.expect("the mock records requests");
+    let sent: Vec<_> = requests
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [Some("Bearer test-token")],
+        "the request must carry the token value, not its printed form"
+    );
 }

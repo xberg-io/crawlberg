@@ -351,9 +351,12 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub browser_pool: Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
-    /// Optional [`crate::ProxyProvider`] for per-request proxy rotation on the
-    /// reqwest HTTP path. Takes precedence over the static [`ProxyConfig`] in
-    /// `proxy` when set. Not serializable — Rust callers inject at runtime.
+    /// Optional [`crate::ProxyProvider`] for per-request proxy rotation. Takes
+    /// precedence over the static [`ProxyConfig`] in `proxy` when set. A native
+    /// browser render goes through the proxy it picks for the page, unless
+    /// `browser.proxy` is set. The Chrome backend refuses to render with a
+    /// provider unless `browser.proxy` is set. Not serializable — Rust callers
+    /// inject at runtime.
     #[serde(skip)]
     pub proxy_provider: Option<std::sync::Arc<dyn crate::ProxyProvider>>,
     /// Shared browser session pool for session affinity (not serializable).
@@ -529,11 +532,11 @@ impl CrawlConfig {
     }
 
     fn validate_proxy(&self) -> Result<(), CrawlError> {
-        use crate::proxy::{chrome_proxy, ensure_supported_scheme, has_credentials, parse_proxy_url};
+        use crate::proxy::{admit_proxy, chrome_proxy, ensure_supported_scheme};
         if let Some(proxy) = &self.proxy {
-            let parsed = parse_proxy_url(&proxy.url)?;
-            ensure_supported_scheme(&parsed)?;
-            if self.chrome_renders_through_the_crawl_proxy() && has_credentials(proxy, &parsed) {
+            let admitted = admit_proxy(proxy)?;
+            ensure_supported_scheme(admitted.address())?;
+            if self.chrome_renders_through_the_crawl_proxy() && admitted.credentials().is_some() {
                 return Err(CrawlError::invalid_config(
                     "the Chrome backend cannot use a proxy with a username or password, and a Chrome \
                      render uses proxy when browser.proxy is not set; set browser.proxy to a proxy \
@@ -543,7 +546,7 @@ impl CrawlConfig {
         }
         if let Some(proxy) = &self.browser.proxy {
             match self.browser.backend {
-                BrowserBackend::Native => ensure_supported_scheme(&parse_proxy_url(&proxy.url)?)?,
+                BrowserBackend::Native => ensure_supported_scheme(admit_proxy(proxy)?.address())?,
                 BrowserBackend::Chromiumoxide => {
                     chrome_proxy(proxy)?;
                 }

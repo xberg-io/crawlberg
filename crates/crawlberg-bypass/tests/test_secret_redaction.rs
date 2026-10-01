@@ -72,9 +72,9 @@ fn debug_output_keeps_the_non_secret_fields() {
             value: SECRET.into(),
         }
     );
-    assert_eq!(rendered, r#"Header { name: "X-Api-Key", value: Some("***") }"#);
-    let rendered = format!("{:?}", AuthScheme::Bearer { token: String::new() });
-    assert_eq!(rendered, "Bearer { token: None }");
+    assert_eq!(rendered, r#"Header { name: "X-Api-Key", value: *** }"#);
+    let rendered = format!("{:?}", AuthScheme::Bearer { token: "".into() });
+    assert_eq!(rendered, r#"Bearer { token: "" }"#);
 }
 
 #[test]
@@ -145,7 +145,7 @@ response:
     let config = load_with_env(&path, &env).unwrap();
     for rendered in [format!("{config:?}"), format!("{config:#?}")] {
         assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
-        for kept in ["https://api.example.com", "\"api_key\"", "vendor_name: \"test\""] {
+        for kept in ["https://***.example.com", "\"api_key\"", "vendor_name: \"test\""] {
             assert!(rendered.contains(kept), "{kept} missing from: {rendered}");
         }
     }
@@ -160,19 +160,19 @@ fn debug_output_prints_only_the_origin_of_the_endpoint() {
     for (endpoint, printed) in [
         (
             format!("https://api.example.com/v1/{SECRET}/extract"),
-            "https://api.example.com",
+            "https://***.example.com",
         ),
         (
             format!("https://api.example.com/v1/extract#{SECRET}"),
-            "https://api.example.com",
+            "https://***.example.com",
         ),
         (
             format!("https://{SECRET}@api.example.com:8443/v1?key={SECRET}"),
-            "https://api.example.com:8443",
+            "https://***.example.com:8443",
         ),
         (
             format!("https://api.example.com:443/v1/{SECRET}"),
-            "https://api.example.com",
+            "https://***.example.com",
         ),
         (format!("api.example.com/v1?key={SECRET}"), "***"),
         (format!("unix:/run/{SECRET}.sock"), "***"),

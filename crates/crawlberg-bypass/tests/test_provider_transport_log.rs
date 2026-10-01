@@ -131,4 +131,17 @@ async fn transport_failures_log_the_endpoint_origin_and_the_cause() {
         "the log must name the endpoint's origin: {logged}"
     );
     assert!(!logged.contains(API_KEY), "API key leaked into the log: {logged}");
+
+    // A per-account endpoint host carries the key in a label; the `.invalid` name never resolves.
+    logs.0.lock().unwrap().clear();
+    let endpoint = format!("http://{API_KEY}.vendor.invalid/v1/");
+    let provider = SimpleHttpProvider::new(query_key_config(&endpoint)).unwrap();
+    provider.fetch(TARGET).await.unwrap_err();
+
+    let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        logged.contains("endpoint=http://***.vendor.invalid "),
+        "the log must name the endpoint's origin with the key label hidden: {logged}"
+    );
+    assert!(!logged.contains(API_KEY), "API key leaked into the log: {logged}");
 }

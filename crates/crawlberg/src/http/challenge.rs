@@ -56,7 +56,19 @@ pub(crate) async fn challenge_status_error(
     }
 
     let body = read_text_bounded(resp, max_body_size).await;
-    if let Some(vendor) = waf::waf_vendor_from_body(status, &body, headers) {
+    challenge_body_error(status, url, &body, headers)
+}
+
+/// Classify a challenge status whose body is in hand: a [`CrawlError::WafBlocked`] when the
+/// headers or the body fingerprint, otherwise the plain error the status carries on its own.
+/// A browser-rendered page is classified here, with the body the browser rendered.
+pub(crate) fn challenge_body_error(
+    status: u16,
+    url: &str,
+    body: &str,
+    headers: &HashMap<String, Vec<String>>,
+) -> CrawlError {
+    if let Some(vendor) = waf::waf_vendor_from_body(status, body, headers) {
         return waf_blocked(status, vendor);
     }
 

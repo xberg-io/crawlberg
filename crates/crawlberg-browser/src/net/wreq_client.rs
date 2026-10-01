@@ -45,12 +45,15 @@ impl StealthHttpClient {
         Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()))
     }
 
-    /// Build a stealth client that sends every request through `proxy_url`, if given.
+    /// Build a stealth client that sends every request through `proxy`, if given.
     ///
     /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used, rather than
     /// building a client that silently connects directly.
-    pub fn with_proxy(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Result<Self, NetError> {
-        Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()))
+    pub fn with_proxy(
+        cookie_jar: Arc<CookieJar>,
+        proxy: Option<&crate::net::proxy::UpstreamProxy>,
+    ) -> Result<Self, NetError> {
+        Self::with_ssrf(cookie_jar, proxy, Arc::new(DefaultSsrfValidator::from_env()))
     }
 
     /// Build a stealth client with an explicit SSRF policy.
@@ -58,10 +61,10 @@ impl StealthHttpClient {
     /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used.
     pub fn with_ssrf(
         cookie_jar: Arc<CookieJar>,
-        proxy_url: Option<&str>,
+        proxy: Option<&crate::net::proxy::UpstreamProxy>,
         ssrf: Arc<dyn SsrfValidator>,
     ) -> Result<Self, NetError> {
-        let proxy = proxy_url.map(crate::net::proxy::wreq_proxy).transpose()?;
+        let proxy = proxy.map(crate::net::proxy::UpstreamProxy::wreq_proxy).transpose()?;
         Ok(Self::build(cookie_jar, proxy, ssrf))
     }
 
@@ -280,6 +283,7 @@ mod tests {
         let policy = Arc::new(RebindingPolicy::default());
         // ~keep A proxy named by host: a client that asked the policy for it would be refused.
         let proxy = format!("http://localhost:{}", proxy.port());
+        let proxy = crate::net::proxy::test_proxy(&proxy).expect("an http proxy");
         let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone())
             .expect("an http proxy must build");
 
@@ -310,31 +314,70 @@ mod tests {
     }
 
     fn proxied_client(proxy: &str) -> Result<StealthHttpClient, NetError> {
-        StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(proxy), Arc::new(AllowAll))
+        let proxy = crate::net::proxy::test_proxy(proxy)?;
+        StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), Arc::new(AllowAll))
     }
 
-    #[test]
-    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
-        for proxy in crate::net::proxy::credential_urls::URLS {
-            let Err(err) = proxied_client(proxy) else {
-                panic!("{proxy} must refuse the client, not build one that connects directly");
-            };
-            assert!(matches!(err, NetError::InvalidProxy(_)), "{proxy}: got {err:?}");
-            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err.to_string());
-        }
+    #[tokio::test]
+    async fn a_credentialed_proxy_carries_the_request_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), Arc::new(AllowAll))
+            .expect("an http proxy must build");
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL")),
+        )
+        .await
+        .expect("the fetch must finish")
+        .expect("the proxy accepts the credentials, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/page");
     }
 
-    #[test]
-    fn a_socks5_or_other_unsupported_proxy_scheme_refuses_the_client() {
-        for (proxy, scheme) in [("socks5://proxy.test:1080", "socks5"), ("ftp://proxy.test:21", "ftp")] {
-            let Err(err) = proxied_client(proxy) else {
-                panic!("{proxy} must refuse the client");
-            };
-            assert!(
-                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref s)) if s == scheme),
-                "{proxy}: got {err:?}"
-            );
-        }
+    #[tokio::test]
+    async fn a_proxy_that_refuses_the_credentials_fails_the_fetch_instead_of_connecting_directly() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let direct = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let target = format!("http://{}/page", direct.local_addr().expect("addr"));
+        let client = StealthHttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&credentialed_proxy::with_wrong_password(&proxy)),
+            Arc::new(AllowAll),
+        )
+        .expect("an http proxy must build");
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.fetch(&target.parse::<Url>().expect("valid URL")),
+        )
+        .await
+        .expect("the fetch must finish");
+
+        assert!(
+            !matches!(result, Ok(ref response) if response.status == 200),
+            "a refused proxy must not serve the page: {result:?}"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), direct.accept())
+                .await
+                .is_err(),
+            "the fetch connected directly"
+        );
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the fetch must go to the proxy: {requests:?}");
+        let sent = credentialed_proxy::proxy_authorization(&requests[0]);
+        assert!(
+            sent.is_some() && sent != Some(credentialed_proxy::expected_authorization()),
+            "the configured wrong credentials must be sent: {sent:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]

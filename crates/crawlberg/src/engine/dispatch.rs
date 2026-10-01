@@ -413,6 +413,7 @@ mod tests {
         let page = crate::browser::BrowserPage {
             response,
             redirects: 0,
+            redirected: false,
             refused: vec!["http://127.0.0.1/secret".to_owned()],
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);

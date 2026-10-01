@@ -299,54 +299,73 @@ async fn hung_render_path_eval_script_is_terminated_and_the_native_worker_recove
 }
 
 #[tokio::test]
-async fn render_refuses_a_proxy_the_clients_cannot_use_instead_of_connecting_directly() {
+async fn render_through_a_proxy_that_refuses_the_credentials_never_connects_directly() {
+    use crate::net::proxy::credentialed_proxy;
     let server = TestServer::start().await;
-    let named = [
-        ("socks5://127.0.0.1:1", Some("socks5")),
-        ("ftp://127.0.0.1:1", Some("ftp")),
-    ];
-    let unnamed = crate::net::proxy::credential_urls::URLS.map(|proxy| (proxy, None));
-    for (proxy, scheme) in named.into_iter().chain(unnamed) {
-        for stealth in [false, true] {
-            let config = NativeBrowserConfig {
-                proxy_url: Some(proxy.to_string()),
-                stealth,
-                ..test_config()
-            };
-            let result = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
-                .await
-                .expect("a refused render must return, not hang");
-            assert_eq!(
-                server.accepted.load(Ordering::SeqCst),
-                0,
-                "{proxy} stealth={stealth}: a refused render must not reach the target server"
+    let (proxy, requests) = credentialed_proxy::start().await;
+    let refused = credentialed_proxy::with_wrong_password(&proxy);
+    for stealth in [false, true] {
+        let config = NativeBrowserConfig {
+            proxy: Some(refused.clone()),
+            stealth,
+            ..test_config()
+        };
+        let result = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+            .await
+            .expect("a refused render must return, not hang")
+            .map(|page| (page.final_url, page.html));
+        assert!(
+            !matches!(result, Ok((_, ref html)) if html.contains("Native executor")),
+            "stealth={stealth}: a refused proxy must not serve the page: {result:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "stealth={stealth}: {result:?}"
+        );
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a render through a refusing proxy must not reach the target server"
+    );
+    {
+        let requests = requests.lock().expect("lock");
+        assert!(
+            requests.len() >= 2,
+            "both clients must send the page request to the proxy: {requests:?}"
+        );
+        for request in requests.iter() {
+            let sent = credentialed_proxy::proxy_authorization(request);
+            assert!(
+                sent.is_some() && sent != Some(credentialed_proxy::expected_authorization()),
+                "the configured credentials must be sent: {sent:?}"
             );
-            let message = match result.map(|page| page.final_url) {
-                Err(PageError::InvalidConfig(message)) => message,
-                other => panic!("{proxy} stealth={stealth}: expected a configuration error, got {other:?}"),
-            };
-            match scheme {
-                Some(scheme) => assert!(
-                    message.contains(&format!("'{scheme}'")),
-                    "{proxy} stealth={stealth}: the error must name the scheme, got {message}"
-                ),
-                None => crate::net::proxy::credential_urls::assert_not_shown(proxy, &message),
-            }
         }
     }
 
-    let page = render_url(&server.base_url, &test_config())
-        .await
-        .expect("a render with no proxy must succeed");
-    assert!(page.html.contains("Native executor"));
+    let page = render_url(
+        &server.base_url,
+        &NativeBrowserConfig {
+            proxy: Some(proxy),
+            ..test_config()
+        },
+    )
+    .await
+    .expect("the proxy accepts the credentials, so the render must succeed");
     assert!(
-        server.accepted.load(Ordering::SeqCst) > 0,
-        "a successful render must be counted, or the zero above proves nothing"
+        page.html.contains("via-proxy"),
+        "the page must come from the proxy: {}",
+        page.html
+    );
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "the accepted render must also go through the proxy"
     );
 }
 
 #[tokio::test]
-async fn render_uses_a_scheme_less_proxy_as_an_http_proxy() {
+async fn render_uses_a_scheme_less_proxy_as_an_http_proxy_with_its_credentials() {
     let proxy = TestServer::start().await;
     let address = proxy
         .base_url
@@ -355,15 +374,21 @@ async fn render_uses_a_scheme_less_proxy_as_an_http_proxy() {
     let port = address.rsplit(':').next().expect("the address has a port");
     // ~keep reqwest reads each of these as an HTTP proxy; `localhost` and `operator` are read
     // ~keep by the url crate as a scheme, so they also need the retry on a missing host.
-    for bare in [
-        address.to_string(),
-        format!("localhost:{port}"),
-        format!("operator:s3cr3t@{address}"),
+    let credentials = ProxyCredentials {
+        username: "operator".to_string(),
+        password: "s3cr3t".to_string(),
+    };
+    for (bare, credentials) in [
+        (address.to_string(), None),
+        (format!("localhost:{port}"), None),
+        (address.to_string(), Some(credentials)),
     ] {
+        let upstream =
+            UpstreamProxy::new(check_proxy_url(&bare).expect("a usable address"), credentials).expect("a usable proxy");
         for stealth in [false, true] {
             let before = proxy.accepted.load(Ordering::SeqCst);
             let config = NativeBrowserConfig {
-                proxy_url: Some(bare.clone()),
+                proxy: Some(upstream.clone()),
                 stealth,
                 ..test_config()
             };
@@ -523,7 +548,16 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
     const SECRET: &str = "sk-live-9f8e7d6c5b4a";
     let config = NativeBrowserConfig {
         extra_headers: HashMap::from([("Authorization".to_owned(), format!("Bearer {SECRET}"))]),
-        proxy_url: Some(format!("http://user:{SECRET}@proxy.internal:8080")),
+        proxy: Some(
+            UpstreamProxy::new(
+                Url::parse("http://proxy.internal:8080").expect("parses"),
+                Some(ProxyCredentials {
+                    username: "user".to_owned(),
+                    password: SECRET.to_owned(),
+                }),
+            )
+            .expect("a usable proxy"),
+        ),
         prior_cookies: vec![NativeCookie {
             name: "session".into(),
             value: SECRET.into(),
@@ -534,12 +568,20 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
             host_only: false,
         }],
         eval_script: Some(format!("fetch('/api?key={SECRET}')")),
+        origin_headers: Some(OriginHeaders {
+            host: "api.example.com".to_owned(),
+            headers: vec![("X-Origin-Token".to_owned(), SECRET.to_owned())],
+        }),
         ..NativeBrowserConfig::default()
     };
     for rendered in [format!("{config:?}"), format!("{config:#?}")] {
         assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
         assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
         assert!(rendered.contains("session"), "cookie name missing: {rendered}");
+        assert!(
+            rendered.contains("X-Origin-Token") && rendered.contains("api.example.com"),
+            "origin header name or host missing: {rendered}"
+        );
         assert!(
             rendered.contains("host_only: false"),
             "cookie host-only flag missing: {rendered}"
