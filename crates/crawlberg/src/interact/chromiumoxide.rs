@@ -10,7 +10,9 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, kill_browser, release_browser};
-use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, page_content, read_one_document};
+use crate::chrome_frame::{
+    CommittedDocument, committed_document, error_page_error, page_content, read_one_document, read_one_document_within,
+};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
     ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, PageContext, StoppedResponse, Watch,
@@ -218,7 +220,7 @@ async fn run_session(
 
     let (action_results, screenshot) = run_actions(page, watch, actions).await;
 
-    let (final_html, final_url) = final_page(page, &watch.refused_urls().await).await?;
+    let (final_html, final_url) = final_page(page, &watch.refused_urls().await, config.browser.timeout).await?;
 
     let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
 
@@ -238,8 +240,19 @@ async fn run_session(
 /// ~keep refused, the refusal already failed the action that caused it and is in `refused`, so the
 /// ~keep session keeps its result, with no HTML and the refused URL as it is listed. Any other error
 /// ~keep page fails the session.
-async fn final_page(page: &chromiumoxide::Page, refused: &[String]) -> Result<(String, String), CrawlError> {
-    let (html, document) = read_page_html(page, "extract final HTML").await?;
+///
+/// ~keep The page's reads share one `budget`, the session's `browser.timeout`.
+async fn final_page(
+    page: &chromiumoxide::Page,
+    refused: &[String],
+    budget: Duration,
+) -> Result<(String, String), CrawlError> {
+    let (html, document) = read_one_document_within(
+        budget,
+        || committed_document(page),
+        || page_content(page, "extract final HTML"),
+    )
+    .await?;
     if let Some(failed_url) = document.unreachable_url {
         return match listed_refusal(&failed_url, refused) {
             Some(listed) => Ok((String::new(), listed)),

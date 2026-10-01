@@ -12,7 +12,7 @@ use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
-use crate::chrome_frame::{committed_document, error_page_error, page_content, read_one_document};
+use crate::chrome_frame::{committed_document, error_page_error, page_content, read_one_document_within};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
@@ -141,7 +141,8 @@ async fn render(
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
-    let ((html, screenshot), document) = read_one_document(
+    let ((html, screenshot), document) = read_one_document_within(
+        timeout,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
