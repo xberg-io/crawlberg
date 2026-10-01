@@ -1,9 +1,11 @@
 //! Regression coverage for xberg-io/crawlberg#567: `browser.timeout` bounded only the
-//! navigation block (`goto` + `wait_for_ready`); the post-navigation reads of the committed
-//! document (`page.content()`, `page.url()`) inherited chromiumoxide's fixed 30 s CDP timeout.
-//! Chrome holds renderer commands while a main-frame navigation is in flight, so a
-//! self-replacing page stalled every read for the full 30 s. Both fetch paths must now fail
-//! within a fresh `browser.timeout` budget, with a `BrowserTimeout` naming the read.
+//! navigation block (`goto` + `wait_for_ready`); the post-navigation committed-document HTML
+//! read (`page.content()`, a renderer-answered CDP command) inherited chromiumoxide's fixed
+//! 30 s timeout. On a page whose renderer main thread never goes idle, the read queues behind
+//! main-thread work and is held for that full 30 s — the same stall measured at 65-66 s
+//! end-to-end in `page_fetch` on the #481 stress page (CI run 36837530522). Both fetch paths
+//! must now fail within a fresh `browser.timeout` budget, with a `BrowserTimeout` naming the
+//! read.
 //!
 //! Requires a real Chrome binary (found at `/Applications/Google Chrome.app` in this
 //! environment; chromiumoxide auto-detects it) and is gated behind the `browser` feature;
@@ -24,13 +26,24 @@ use crawlberg::{
 mod common;
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
-/// Serves the #526 page shape: the initial document commits normally, then replaces itself
-/// every 40 ms with a target this server accepts and NEVER answers -- so a main-frame
-/// navigation is always in flight and Chrome holds every renderer command. Deterministic:
-/// there is no window in which a document read would answer, so neither a sleep nor a race
-/// decides the outcome. Connections are answered (if the document) and then held open for
-/// hours, never dropped with unread bytes in flight: dropping in that state can send a TCP
-/// RST, which would fail a navigation fast instead of leaving one in flight forever -- see
+/// Serves the renderer-saturating page shape: the document commits and loads immediately,
+/// then a `setTimeout` at 300 ms starts repeating 5 s busy loops on the main thread, so every
+/// renderer-answered CDP command issued after ~300 ms queues behind main-thread work.
+///
+/// ~keep Timing, so the READ bound fires and not the pre-existing NAV bound: `load` fires at
+/// ~keep ~0 ms and `page_fetch`'s navigation+ready block (goto + ~1 s settle, plain sleeps, no
+/// ~keep CDP round-trip) completes well inside `browser.timeout`; the `page.content()` read is
+/// ~keep therefore issued ~1.1-1.5 s, inside a busy block, so the fresh 3 s read bound fires —
+/// ~keep BrowserTimeout naming "reading the committed document" and "3s", total elapsed ~4-8 s.
+///
+/// ~keep This replaces an earlier never-answered-`location.replace` fixture: a navigation
+/// ~keep merely accepted-but-never-answered stays pending in Chrome's BROWSER-process network
+/// ~keep stack while the committed document's renderer keeps answering CDP, so the read
+/// ~keep answered and the fetch returned `Ok(ScrapeResult)` (CI run 36913385526). The stall
+/// ~keep #567 is about needs a saturated renderer main thread, not an in-flight navigation.
+///
+/// Connections are answered (if the document) and then held open for hours, never dropped
+/// with unread bytes in flight: dropping in that state can send a TCP RST -- see
 /// `test_browser_overall_deadline.rs::spawn_stalling_server` for why holding is load-bearing.
 fn spawn_document_never_settles_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
@@ -58,7 +71,8 @@ fn spawn_document_never_settles_server() -> String {
                 }
                 if request_line.split_whitespace().nth(1) == Some("/") {
                     let body = "<!doctype html><html><head><title>never-settles</title></head><body><p>committed</p>\
-                                <script>setInterval(function () { location.replace('/hang'); }, 40);</script>\
+                                <script>setTimeout(function(){ setInterval(function(){ \
+                                const until = Date.now() + 5000; while (Date.now() < until) {} }, 1); }, 300);</script>\
                                 </body></html>";
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{body}",
@@ -100,7 +114,7 @@ fn assert_bounded_read_error(test_name: &str, result: Result<ScrapeResult, Crawl
             announce_chrome_skip(test_name, &message);
         }
         Ok(response) => panic!(
-            "a page whose document reads are held behind an always in-flight navigation must not succeed: {response:?}"
+            "a page whose renderer main thread never goes idle must not let the document read succeed: {response:?}"
         ),
         Err(error @ CrawlError::BrowserTimeout { .. }) => {
             let message = error.to_string();
