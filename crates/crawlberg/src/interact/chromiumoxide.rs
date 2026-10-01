@@ -117,13 +117,27 @@ async fn run_with_browser(
 
         let (action_results, screenshot) = run_actions(&page, actions).await;
 
-        let final_html = page
-            .content()
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-        let final_url = evaluate_json(&page, "location.href")
+        // ~keep Chrome holds renderer commands while a main-frame navigation is in flight, so
+        // ~keep the committed-document reads after the actions would otherwise inherit
+        // ~keep chromiumoxide's fixed 30 s CDP timeout on a self-replacing page. Each read gets
+        // ~keep a fresh `browser.timeout` budget; the URL read keeps its non-fatal fallback.
+        // ~keep xberg-io/crawlberg#567.
+        let timeout = config.browser.timeout;
+        let final_html = match tokio::time::timeout(timeout, page.content()).await {
+            Ok(result) => {
+                result.map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?
+            }
+            Err(_) => {
+                return Err(CrawlError::browser_timeout(format!(
+                    "browser timed out after {timeout:?} reading the committed document \
+                     after the interaction actions"
+                )));
+            }
+        };
+        let final_url = tokio::time::timeout(timeout, evaluate_json(&page, "location.href"))
             .await
             .ok()
+            .flatten()
             .and_then(|value| value.as_str().map(str::to_owned))
             .unwrap_or_else(|| url.to_owned());
 

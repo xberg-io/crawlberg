@@ -73,14 +73,28 @@ pub(super) async fn page_fetch(
         tokio::time::sleep(extra).await;
     }
 
-    let html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
+    // ~keep Chrome holds renderer commands while a main-frame navigation is in flight, so an
+    // ~keep unbounded read of the committed document stalls for chromiumoxide's fixed 30 s CDP
+    // ~keep timeout on a self-replacing page. Each read gets a fresh `browser.timeout` budget.
+    // ~keep xberg-io/crawlberg#567.
+    let html = match tokio::time::timeout(timeout, page.content()).await {
+        Ok(result) => result.map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?,
+        Err(_) => {
+            return Err(CrawlError::browser_timeout(format!(
+                "browser timed out after {timeout:?} reading the committed document"
+            )));
+        }
+    };
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
-    // ~keep resolve against. An unreadable URL falls back to the requested one.
-    let final_url = page.url().await.ok().flatten().unwrap_or_else(|| url.to_owned());
+    // ~keep resolve against. An unreadable URL falls back to the requested one; a URL read that
+    // ~keep times out falls back the same non-fatal way (#567).
+    let final_url = tokio::time::timeout(timeout, page.url())
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_else(|| url.to_owned());
 
     let body_bytes = html.as_bytes().to_vec();
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
