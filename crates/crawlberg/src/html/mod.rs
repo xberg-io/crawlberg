@@ -82,6 +82,7 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
 
 /// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
 /// lower case, without the colon). An address that does not parse has no scheme.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
     Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
 }
