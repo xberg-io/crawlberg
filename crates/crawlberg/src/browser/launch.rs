@@ -60,10 +60,7 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
     }
 
     if config.save_browser_profile {
-        crate::browser_pool::check_snap_can_open_profile(
-            &profile.user_data_dir,
-            config.browser.chrome_path.as_deref(),
-        )?;
+        check_snap_can_open_profile(&profile.user_data_dir, config.browser.chrome_path.as_deref())?;
         Ok(UserDataDir::Persistent(profile.user_data_dir))
     } else {
         let scratch = ScratchProfileDir::create(
@@ -502,6 +499,48 @@ mod user_data_dir_tests {
     }
 }
 
+/// Refuse the saved profile directory `dir` when the Chrome at `chrome_path` (`None` for the one
+/// found on the machine) is a snap that cannot open it. Chrome would exit at once on a
+/// `SingletonLock` it may not create, with an error that does not name the cause.
+fn check_snap_can_open_profile(dir: &std::path::Path, chrome_path: Option<&std::path::Path>) -> Result<(), CrawlError> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(());
+    };
+    let Some(common) = crate::browser_pool::chrome_executable(chrome_path)
+        .and_then(|executable| crate::browser_pool::snap_common_dir(&executable, &home))
+    else {
+        return Ok(());
+    };
+    if snap_can_open(dir, &common, &home) {
+        return Ok(());
+    }
+    Err(CrawlError::browser_error(format!(
+        "the browser is a snap, which cannot open the saved browser profile at {}: a snap opens only \
+         the folders in your home directory whose names do not start with a dot. Set XDG_DATA_HOME to \
+         such a folder to keep saved profiles there, set chrome_path to a Chrome that is not a snap, \
+         or turn off save_browser_profile",
+        dir.display()
+    )))
+}
+
+/// Whether the snap whose own directory is `common` (`home/snap/<name>/common`) can open `dir`.
+///
+/// ~keep The snap `home` interface grants `home/[^.]**` but not `home/snap/**`, where the snap
+/// ~keep sees only its own `home/snap/<name>`. Only the first name below `home` decides. A path
+/// ~keep outside `home` is not judged here: removable-media and other interfaces can grant it.
+fn snap_can_open(dir: &std::path::Path, common: &std::path::Path, home: &std::path::Path) -> bool {
+    let Ok(rest) = dir.strip_prefix(home) else {
+        return true;
+    };
+    match rest.components().next() {
+        Some(std::path::Component::Normal(first)) if first == "snap" => {
+            common.parent().is_some_and(|own| dir.starts_with(own))
+        }
+        Some(std::path::Component::Normal(first)) => !first.to_string_lossy().starts_with('.'),
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -902,5 +941,52 @@ mod tests {
             return;
         };
         crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path);
+    }
+
+    #[test]
+    fn a_snap_opens_only_the_folders_its_home_interface_grants() {
+        let home = std::path::Path::new("/home/runner");
+        let common = home.join("snap").join("chromium").join("common");
+        for (dir, opens) in [
+            ("/home/runner/.local/share/crawlberg/profiles/work", false),
+            ("/home/runner/.config/work", false),
+            ("/home/runner/snap/firefox/common/work", false),
+            ("/home/runner/snap/chromium/common/crawlberg/profiles/work", true),
+            ("/home/runner/profiles/.hidden/work", true),
+            ("/home/runner/profiles/work", true),
+            ("/media/usb/work", true),
+        ] {
+            assert_eq!(
+                snap_can_open(std::path::Path::new(dir), &common, home),
+                opens,
+                "the chromium snap opening {dir}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_profile_for_a_chrome_that_is_not_a_snap_is_not_refused() {
+        let chrome = crate::types::executable_temp_file("not-a-snap-saved");
+        let hidden = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".local/share/crawlberg/profiles/work");
+        let checked = check_snap_can_open_profile(&hidden, Some(&chrome));
+        let _ = std::fs::remove_file(&chrome);
+        assert!(checked.is_ok(), "only a snap Chrome is refused: {checked:?}");
+    }
+
+    #[test]
+    fn a_saved_profile_a_snap_chrome_cannot_open_is_refused_with_the_cause() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let hidden = home.join(".local/share/crawlberg/profiles/work");
+        let error = check_snap_can_open_profile(&hidden, Some(std::path::Path::new("/snap/bin/chromium")))
+            .expect_err("a snap Chrome must not be given a profile in a hidden folder");
+        let message = error.to_string();
+        assert!(
+            message.contains("which cannot open the saved browser profile") && message.contains("XDG_DATA_HOME"),
+            "the error must name the cause and the fix: {message}"
+        );
     }
 }

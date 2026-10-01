@@ -230,59 +230,16 @@ fn scratch_profile_parent(chrome_path: Option<&std::path::Path>) -> std::path::P
 
 /// The Chrome crawlberg launches for `chrome_path`: that path, or for `None` the one
 /// chromiumoxide finds for itself.
-fn chrome_executable(chrome_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+pub(crate) fn chrome_executable(chrome_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     match chrome_path {
         Some(path) => Some(path.to_path_buf()),
         None => chromiumoxide::detection::default_executable(Default::default()).ok(),
     }
 }
 
-/// Refuse the saved profile directory `dir` when the Chrome at `chrome_path` (`None` for the one
-/// found on the machine) is a snap that cannot open it. Chrome would exit at once on a
-/// `SingletonLock` it may not create, with an error that does not name the cause.
-pub(crate) fn check_snap_can_open_profile(
-    dir: &std::path::Path,
-    chrome_path: Option<&std::path::Path>,
-) -> Result<(), CrawlError> {
-    let Some(home) = dirs::home_dir() else {
-        return Ok(());
-    };
-    let Some(common) = chrome_executable(chrome_path).and_then(|executable| snap_common_dir(&executable, &home)) else {
-        return Ok(());
-    };
-    if snap_can_open(dir, &common, &home) {
-        return Ok(());
-    }
-    Err(CrawlError::browser_error(format!(
-        "the browser is a snap, which cannot open the saved browser profile at {}: a snap opens only \
-         the folders in your home directory whose names do not start with a dot. Set XDG_DATA_HOME to \
-         such a folder to keep saved profiles there, set chrome_path to a Chrome that is not a snap, \
-         or turn off save_browser_profile",
-        dir.display()
-    )))
-}
-
-/// Whether the snap whose own directory is `common` (`home/snap/<name>/common`) can open `dir`.
-///
-/// ~keep The snap `home` interface grants `home/[^.]**` but not `home/snap/**`, where the snap
-/// ~keep sees only its own `home/snap/<name>`. Only the first name below `home` decides. A path
-/// ~keep outside `home` is not judged here: removable-media and other interfaces can grant it.
-fn snap_can_open(dir: &std::path::Path, common: &std::path::Path, home: &std::path::Path) -> bool {
-    let Ok(rest) = dir.strip_prefix(home) else {
-        return true;
-    };
-    match rest.components().next() {
-        Some(std::path::Component::Normal(first)) if first == "snap" => {
-            common.parent().is_some_and(|own| dir.starts_with(own))
-        }
-        Some(std::path::Component::Normal(first)) => !first.to_string_lossy().starts_with('.'),
-        _ => true,
-    }
-}
-
 /// `home/snap/<name>/common` when `executable` runs the snap `<name>`: it lies under `/snap/`,
 /// as `/snap/bin/<name>` does, or a chain of symlinks from it leads there.
-fn snap_common_dir(executable: &std::path::Path, home: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn snap_common_dir(executable: &std::path::Path, home: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut path = executable.to_path_buf();
     for _ in 0..16 {
         if let Ok(rest) = path.strip_prefix("/snap") {
