@@ -329,6 +329,12 @@ async fn release_pooled_page(
 ///
 /// Teardown is owned by [`OneShotSession`]'s `Drop`, so a caller that drops this future while
 /// the fetch runs gets the same teardown as a fetch that ran to completion.
+// fix6 probe: per-fetch tag for step timing. Diagnostics only; never merge.
+static PROBE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+// The probe below writes step timings to stderr. This attribute exists only on the
+// ci-diag/0927-fix6 diagnostic branch and never merges.
+#[allow(clippy::print_stderr, clippy::unused_async)]
 async fn one_shot_fetch(
     url: &str,
     config: &CrawlConfig,
