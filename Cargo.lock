@@ -1267,6 +1267,7 @@ version = "1.8.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "cookie_store",
  "crawlberg-robots",
  "cssparser",
  "deno_core",
@@ -1276,6 +1277,7 @@ dependencies = [
  "ipnet",
  "png",
  "precomputed-hash",
+ "psl",
  "reqwest",
  "selectors",
  "serde",
@@ -4496,6 +4498,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "psl"
+version = "2.1.238"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e6aa2cd4e8e062e78ac5d7df6206e2f8e39b624f658efd6f34f9aa1928ac5da"
+dependencies = [
+ "psl-types",
 ]
 
 [[package]]

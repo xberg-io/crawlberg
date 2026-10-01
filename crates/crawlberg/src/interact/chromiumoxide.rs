@@ -289,7 +289,8 @@ async fn navigate_and_wait(
     let timeout = config.browser.timeout;
 
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
         wait_for_ready(page, config)
@@ -317,6 +318,9 @@ async fn navigate_and_wait(
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
+    // ~keep The redirect limit bounds the navigation to `url`. A navigation an action starts is
+    // ~keep the caller's own, so it is not counted.
+    watch.end_navigation();
 
     Ok(None)
 }

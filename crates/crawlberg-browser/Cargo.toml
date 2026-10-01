@@ -15,6 +15,7 @@ stealth = ["wreq", "wreq-util"]
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
+cookie_store = { workspace = true }
 crawlberg-robots = { workspace = true }
 cssparser = { workspace = true }
 deno_core = { workspace = true }
@@ -24,6 +25,7 @@ html5ever = { workspace = true }
 ipnet = { workspace = true }
 png = { workspace = true }
 precomputed-hash = { workspace = true }
+psl = { workspace = true }
 reqwest = { workspace = true }
 selectors = { workspace = true }
 serde = { workspace = true }
