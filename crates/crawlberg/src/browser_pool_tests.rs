@@ -226,7 +226,8 @@ where
 #[cfg(unix)]
 #[test]
 fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zombie() {
-    let dir = ScratchProfileDir::create("crawlberg-profile-users-test-").expect("the directory must be creatable");
+    let dir =
+        ScratchProfileDir::create("crawlberg-profile-users-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
     let mut helper = std::process::Command::new("sh")
         .arg("-c")
@@ -477,7 +478,7 @@ fn the_teardown_removes_the_profile_only_after_every_thread_of_a_killed_process_
 /// finalizer thread that drops the last owner is not held for up to the five-second wait.
 #[test]
 fn a_profile_directory_dropped_outside_a_runtime_is_torn_down_on_another_thread() {
-    let dir = ScratchProfileDir::create("crawlberg-no-runtime-test-").expect("the directory must be creatable");
+    let dir = ScratchProfileDir::create("crawlberg-no-runtime-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
     let before = profile_drops_here();
 
@@ -563,7 +564,7 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
 #[test]
 fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
     let mut dir =
-        ScratchProfileDir::create("crawlberg-profile-bystander-test-").expect("the directory must be creatable");
+        ScratchProfileDir::create("crawlberg-profile-bystander-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
     let flag = user_data_dir_flag(&path);
     let mut chrome = std::process::Command::new("cat")
@@ -798,7 +799,8 @@ fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
-    let dir = ScratchProfileDir::create("crawlberg-running-chrome-test-").expect("the directory must be creatable");
+    let dir =
+        ScratchProfileDir::create("crawlberg-running-chrome-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
     let config = match build_pool_launch_builder(&path, &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
@@ -893,7 +895,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
     write_launcher(&child_launcher, &chrome, false);
 
     for launcher in [chrome.clone(), exec_launcher, child_launcher] {
-        let dir = ScratchProfileDir::create("crawlberg-launcher-test-").expect("the directory must be creatable");
+        let dir = ScratchProfileDir::create("crawlberg-launcher-test-", None).expect("the directory must be creatable");
         let path = dir.path().to_path_buf();
         let config = build_pool_launch_builder(&path, &BrowserPoolConfig::default())
             .expect("the default pool config names no binary to check")
@@ -1071,7 +1073,8 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
 /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome runs.
 #[tokio::test]
 async fn a_failed_launch_removes_its_profile_directory() {
-    let dir = ScratchProfileDir::create("crawlberg-failed-launch-test-").expect("the directory must be creatable");
+    let dir =
+        ScratchProfileDir::create("crawlberg-failed-launch-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
     let config = build_pool_launch_builder(&path, &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
@@ -1128,7 +1131,8 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
         return;
     }
 
-    let user_data_dir = ScratchProfileDir::create("crawlberg-pool-test-").expect("a profile directory must be created");
+    let user_data_dir =
+        ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
     let browser_config = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
         .build()
@@ -1226,7 +1230,8 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
         eprintln!("skipping {TEST_NAME}: not unix");
         return;
     }
-    let user_data_dir = ScratchProfileDir::create("crawlberg-pool-test-").expect("a profile directory must be created");
+    let user_data_dir =
+        ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
     let launched = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
         .build()
@@ -1307,7 +1312,8 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
-    let user_data_dir = ScratchProfileDir::create("crawlberg-pool-test-").expect("a profile directory must be created");
+    let user_data_dir =
+        ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
     let launched = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
         .build()
@@ -2228,4 +2234,91 @@ fn a_preference_file_that_is_not_a_json_object_is_refused_and_left_alone() {
             "a refused preference file must be left as it was"
         );
     }
+}
+
+/// The DevTools websocket address chromiumoxide reads from a launched Chrome's stderr.
+const WEBSOCKET: &str = "ws://127.0.0.1:41235/devtools/browser/5c1e0f6a-6a43-4f4a-9d0b-2b7b0f0e3a11";
+
+#[test]
+fn a_profile_chrome_wrote_its_devtools_port_into_is_confirmed() {
+    let dir = tempfile::tempdir().expect("a temp profile directory");
+    std::fs::write(
+        dir.path().join("DevToolsActivePort"),
+        "41235\n/devtools/browser/5c1e0f6a-6a43-4f4a-9d0b-2b7b0f0e3a11",
+    )
+    .expect("the port file must be written");
+    assert!(wrote_devtools_port(dir.path(), WEBSOCKET));
+}
+
+#[test]
+fn a_profile_chrome_did_not_write_is_refused() {
+    let dir = tempfile::tempdir().expect("a temp profile directory");
+    disable_non_proxied_udp(dir.path()).expect("the preference must be written");
+    assert!(
+        !wrote_devtools_port(dir.path(), WEBSOCKET),
+        "a profile with no DevToolsActivePort was not opened by the launched Chrome"
+    );
+    for stale in [
+        "41236\n/devtools/browser/5c1e0f6a-6a43-4f4a-9d0b-2b7b0f0e3a11",
+        "41235\n/devtools/browser/00000000-6a43-4f4a-9d0b-2b7b0f0e3a11",
+        "41235",
+        "",
+    ] {
+        std::fs::write(dir.path().join("DevToolsActivePort"), stale).expect("the port file must be written");
+        assert!(
+            !wrote_devtools_port(dir.path(), WEBSOCKET),
+            "a port file another Chrome wrote must be refused: {stale:?}"
+        );
+    }
+}
+
+#[test]
+fn a_snap_chrome_gets_its_scratch_profile_in_the_snaps_common_directory() {
+    let home = std::path::Path::new("/home/runner");
+    let common = home.join("snap").join("chromium").join("common");
+    for executable in [
+        "/snap/bin/chromium",
+        "/snap/bin/chromium.chromedriver",
+        "/snap/chromium/current/usr/lib/chromium-browser/chrome",
+    ] {
+        assert_eq!(
+            snap_common_dir(std::path::Path::new(executable), home),
+            Some(common.clone()),
+            "{executable} runs the chromium snap"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_snap_chrome_gets_the_snaps_common_directory() {
+    let home = std::path::Path::new("/home/runner");
+    let dir = tempfile::tempdir().expect("a temp directory");
+    // ~keep The second target is the link setup-chrome made on CI, whose binary does not exist.
+    for (index, target) in ["/snap/bin/chromium", "/snap/chromium/current/usr/bin/chromium"]
+        .into_iter()
+        .enumerate()
+    {
+        let link = dir.path().join(format!("chromium-{index}"));
+        std::os::unix::fs::symlink(target, &link).expect("the link must be made");
+        assert_eq!(
+            snap_common_dir(&link, home),
+            Some(home.join("snap").join("chromium").join("common")),
+            "a link to {target} runs the chromium snap"
+        );
+    }
+}
+
+#[test]
+fn a_chrome_that_is_not_a_snap_gets_its_scratch_profile_in_the_temp_directory() {
+    let chrome = crate::types::executable_temp_file("not-a-snap");
+    assert_eq!(snap_common_dir(&chrome, std::path::Path::new("/home/runner")), None);
+    let dir = ScratchProfileDir::create("crawlberg-not-a-snap-test-", Some(&chrome))
+        .expect("the directory must be creatable");
+    let _ = std::fs::remove_file(&chrome);
+    assert!(
+        dir.path().starts_with(std::env::temp_dir()),
+        "a scratch profile for a Chrome that is not a snap must be in the temp directory: {}",
+        dir.path().display()
+    );
 }

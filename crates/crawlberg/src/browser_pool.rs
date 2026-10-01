@@ -168,6 +168,93 @@ pub(crate) fn disable_non_proxied_udp(user_data_dir: &std::path::Path) -> Result
     std::fs::write(&path, preferences.to_string()).map_err(|e| failed(&e))
 }
 
+/// How long [`confirm_profile_in_use`] waits for Chrome's `DevToolsActivePort` file.
+const PROFILE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Confirm that `browser`, just launched on `user_data_dir`, opened that directory, so the
+/// WebRTC preference [`disable_non_proxied_udp`] wrote there is in effect. If it did not, kill
+/// the browser and return an error: the crawl never runs with the policy off.
+///
+/// ~keep Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
+/// ~keep path into `<user-data-dir>/DevToolsActivePort` as it prints them on stderr, where
+/// ~keep chromiumoxide reads the websocket address. A sandboxed Chrome, such as a strictly
+/// ~keep confined snap with a private /tmp, opens another directory at the same path and writes
+/// ~keep the file there instead. The browser path carries a guid unique to the launch, so a
+/// ~keep stale file copied in with a saved profile never matches.
+pub(crate) async fn confirm_profile_in_use(
+    browser: &mut Browser,
+    user_data_dir: &std::path::Path,
+) -> Result<(), CrawlError> {
+    let deadline = tokio::time::Instant::now() + PROFILE_CONFIRM_TIMEOUT;
+    while !wrote_devtools_port(user_data_dir, browser.websocket_address()) {
+        if tokio::time::Instant::now() >= deadline {
+            let _ = browser.kill().await;
+            return Err(CrawlError::browser_error(format!(
+                "the browser did not use crawlberg's profile directory {}, so its WebRTC policy is not \
+                 in effect; a sandboxed browser such as a confined Chromium snap opens its own copy of \
+                 that path. Use a Chrome that is not sandboxed this way, or set chrome_path to the \
+                 snap's /snap/bin/<name> command so crawlberg puts the profile where the snap reads it",
+                user_data_dir.display()
+            )));
+        }
+        tokio::time::sleep(PROFILE_USERS_POLL_INTERVAL).await;
+    }
+    Ok(())
+}
+
+/// Whether the `DevToolsActivePort` file in `user_data_dir` names the Chrome whose DevTools
+/// websocket is at `websocket_address`.
+fn wrote_devtools_port(user_data_dir: &std::path::Path, websocket_address: &str) -> bool {
+    let Ok(contents) = std::fs::read_to_string(user_data_dir.join("DevToolsActivePort")) else {
+        return false;
+    };
+    let mut lines = contents.lines().map(str::trim);
+    match (lines.next(), lines.next()) {
+        (Some(port), Some(path)) if !port.is_empty() && path.starts_with('/') => {
+            websocket_address.ends_with(&format!(":{port}{path}"))
+        }
+        _ => false,
+    }
+}
+
+/// The directory a scratch profile for the Chrome at `chrome_path` is made in. `None` is the
+/// Chrome chromiumoxide finds for itself, by the same search.
+///
+/// ~keep A snap gets a private /tmp, so a profile in the system temp directory is invisible to
+/// ~keep it; `$HOME/snap/<name>/common` is the one place it sees at the same path.
+fn scratch_profile_parent(chrome_path: Option<&std::path::Path>) -> std::path::PathBuf {
+    let executable = match chrome_path {
+        Some(path) => Some(path.to_path_buf()),
+        None => chromiumoxide::detection::default_executable(Default::default()).ok(),
+    };
+    executable
+        .and_then(|executable| snap_common_dir(&executable, &dirs::home_dir()?))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// `home/snap/<name>/common` when `executable` runs the snap `<name>`: it lies under `/snap/`,
+/// as `/snap/bin/<name>` does, or a chain of symlinks from it leads there.
+fn snap_common_dir(executable: &std::path::Path, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut path = executable.to_path_buf();
+    for _ in 0..16 {
+        if let Ok(rest) = path.strip_prefix("/snap") {
+            let mut parts = rest.iter().filter_map(|part| part.to_str());
+            let name = match parts.next()? {
+                // ~keep `/snap/bin/<name>` or the alias `/snap/bin/<name>.<app>`.
+                "bin" => parts.next()?.split('.').next()?,
+                name => name,
+            };
+            return (!name.is_empty()).then(|| home.join("snap").join(name).join("common"));
+        }
+        let target = std::fs::read_link(&path).ok()?;
+        path = match path.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+    }
+    None
+}
+
 /// Whether one of the caller's `chrome_args` names the Chrome switch `name`, byte-exact.
 ///
 /// ~keep Exact comparison is sound because `check_chrome_args` refuses a name with an
@@ -240,7 +327,8 @@ const PROXY_SWITCHES: [&str; 5] = [
 const PROFILE_USERS_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// A Chrome `--user-data-dir` in the system temp directory, removed when dropped.
+/// A Chrome `--user-data-dir` in the system temp directory, or in a snap's own directory for a
+/// snap Chrome, removed when dropped.
 ///
 /// ~keep The removal first kills every Chrome process still using the directory. Chrome's
 /// ~keep helper processes (renderers, the GPU process, the network and storage services) outlive
@@ -259,18 +347,24 @@ const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 pub(crate) struct ScratchProfileDir(Option<ProfileTeardown>);
 
 impl ScratchProfileDir {
-    /// Create a fresh directory. The random suffix avoids Chrome `SingletonLock` collisions.
-    pub(crate) fn create(prefix: &str) -> Result<Self, CrawlError> {
+    /// Create a fresh directory for the Chrome at `chrome_path` (`None` for the one found on the
+    /// machine), where that Chrome can read it. The random suffix avoids Chrome `SingletonLock`
+    /// collisions.
+    pub(crate) fn create(prefix: &str, chrome_path: Option<&std::path::Path>) -> Result<Self, CrawlError> {
+        let failed =
+            |e: std::io::Error| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}"));
+        let parent = scratch_profile_parent(chrome_path);
+        std::fs::create_dir_all(&parent).map_err(failed)?;
         tempfile::Builder::new()
             .prefix(prefix)
-            .tempdir()
+            .tempdir_in(&parent)
             .map(|dir| {
                 Self(Some(ProfileTeardown {
                     dir: dir.keep(),
                     chrome: None,
                 }))
             })
-            .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
+            .map_err(failed)
     }
 
     pub(crate) fn path(&self) -> &std::path::Path {
@@ -1322,18 +1416,19 @@ impl BrowserPool {
             (browser, handler, None)
         } else {
             // ~keep Dropped, and so removed, on every early return below, including a launch timeout.
-            let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-")?;
+            let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-", self.config.chrome_path.as_deref())?;
             disable_non_proxied_udp(user_data_dir.path())?;
             let builder = build_pool_launch_builder(user_data_dir.path(), &self.config)?;
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-            let (browser, handler, user_data_dir) =
+            let (mut browser, handler, user_data_dir) =
                 tokio::time::timeout(self.config.launch_timeout, user_data_dir.launch(browser_config))
                     .await
                     .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
                     .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
+            confirm_profile_in_use(&mut browser, user_data_dir.path()).await?;
             (browser, handler, Some(user_data_dir))
         };
 

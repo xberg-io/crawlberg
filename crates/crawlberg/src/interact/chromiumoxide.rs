@@ -612,7 +612,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
         Ok((browser, handler, None))
     } else {
         // ~keep Removed on drop, so a failed or cancelled launch or run removes it too.
-        let user_data_dir = ScratchProfileDir::create("crawlberg-interact-")?;
+        let user_data_dir = ScratchProfileDir::create("crawlberg-interact-", config.browser.chrome_path.as_deref())?;
 
         let proxy = crate::proxy::chrome_proxy_for(config)?;
         if config.ssrf.deny_private {
@@ -622,10 +622,13 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-        let (browser, handler, user_data_dir) = user_data_dir
+        let (mut browser, handler, user_data_dir) = user_data_dir
             .launch(browser_config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::confirm_profile_in_use(&mut browser, user_data_dir.path()).await?;
+        }
         Ok((browser, handler, Some(user_data_dir)))
     }
 }

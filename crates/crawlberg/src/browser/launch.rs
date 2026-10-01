@@ -48,7 +48,10 @@ impl UserDataDir {
 ///   the session are discarded rather than written back.
 fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError> {
     let Some(name) = config.browser_profile.as_deref() else {
-        return Ok(UserDataDir::Scratch(ScratchProfileDir::create("crawlberg-browser-")?));
+        return Ok(UserDataDir::Scratch(ScratchProfileDir::create(
+            "crawlberg-browser-",
+            config.browser.chrome_path.as_deref(),
+        )?));
     };
 
     let profile = crate::browser_profile::BrowserProfile::new(name)?;
@@ -59,7 +62,10 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
     if config.save_browser_profile {
         Ok(UserDataDir::Persistent(profile.user_data_dir))
     } else {
-        let scratch = ScratchProfileDir::create(&format!("crawlberg-profile-{name}-"))?;
+        let scratch = ScratchProfileDir::create(
+            &format!("crawlberg-profile-{name}-"),
+            config.browser.chrome_path.as_deref(),
+        )?;
         copy_dir_recursive(&profile.user_data_dir, scratch.path())?;
         Ok(UserDataDir::Scratch(scratch))
     }
@@ -212,8 +218,11 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
                 .await
                 .map(|(browser, handler)| (browser, handler, UserDataDir::Persistent(path))),
         };
-        let (browser, handler, user_data) =
+        let (mut browser, handler, user_data) =
             launched.map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
+        if config.ssrf.deny_private {
+            crate::browser_pool::confirm_profile_in_use(&mut browser, user_data.path()).await?;
+        }
         Ok((browser, handler, Some(user_data), egress, hold))
     }
 }
