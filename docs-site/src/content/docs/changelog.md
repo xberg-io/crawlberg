@@ -6,6 +6,27 @@ title: "Changelog"
 
 ### Upgrading
 
+- **In browser mode, `max_redirects` now counts the navigations a page starts.** A meta refresh
+  or a script navigation counts as one redirect, and past the limit the page stays where it is.
+  A crawl with a low `max_redirects` that relied on a page's script to move it to the real page,
+  such as a challenge page, needs a higher limit. In `crawlberg-browser`, `NativeBrowserConfig`
+  gains `max_redirects` and `RenderedPage` gains `redirects`, so a struct literal of either needs
+  the new field; `NativeBrowserConfig::default()` sets no limit. (#117, #193, #115)
+- **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
+  `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
+  supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
+  through such a proxy failed at connect time. The same holds for `browser.proxy` with the native
+  backend. Chrome speaks SOCKS, so with the Chrome backend `browser.proxy` still takes `socks4://`
+  and `socks5://`. Chrome has no `socks5h` scheme. Use an `http` or `https` proxy everywhere else.
+- **With the Chrome backend, the config check refuses a crawl-wide proxy with credentials.** A
+  Chrome render uses `proxy` when `browser.proxy` is not set, and Chrome cannot use a proxy with a
+  username or password. Such a config now fails `CrawlConfig::validate` instead of every browser
+  render. The HTTP client still takes the proxy. To keep it, set `browser.proxy` to a proxy that
+  needs no credentials, use the native backend, or set `browser.mode` to `never`. A build without
+  the Chrome backend is not affected.
+- **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the browser
+  cannot use, such as `gopher://`, now fails the config check instead of the render. (#249)
+
 - **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
   of such a page returned the rendered HTML with status 200. It now returns the same error that
   HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
@@ -21,10 +42,11 @@ title: "Changelog"
   empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
   your code reads the body of such a page, expect an empty string. (#121)
 
-- **`interact` on the Chromiumoxide backend now follows at most `max_redirects` redirects.** The
-  default is 10. It followed every redirect a chain offered. For a longer chain, `interact`
-  returns the URL of the redirect at the limit, empty HTML, and a failed result for each action.
-  If an `interact` call must follow a longer chain, raise `max_redirects`. (#116)
+- **`interact` now follows at most `max_redirects` redirects.** The default is 10. The
+  Chromiumoxide backend followed every redirect a chain offered, and the native backend followed
+  up to 20. For a longer chain, `interact` returns the URL of the redirect at the limit. On the
+  Chromiumoxide backend it also returns empty HTML and a failed result for each action. If an
+  `interact` call must follow a longer chain, raise `max_redirects`. (#116, #115)
 
 - **A Chromiumoxide browser fetch or `interact` session fails when Chrome reports no main
   frame.** The redirect limit counts only the redirects of the page's main frame, so crawlberg
@@ -165,6 +187,88 @@ title: "Changelog"
 
 ### Fixed
 
+- **A stalled module script cost 10 seconds for every module script after it.** The native browser
+  backend waited, after each module script, until nothing at all was pending on the page. A module
+  whose top-level `await` never settled left work pending forever, so each later module script also
+  waited out its full 10-second budget: a page with one stalled module and two after it took 30
+  seconds to render. Each module script now waits only for its own evaluation, so the stalled module
+  costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
+  after the next module script runs. (#486)
+
+- **An awaited script evaluation waited for the whole page to go idle.** The native browser backend
+  ran an awaited evaluation or function call until nothing at all was pending on the page. A page
+  with a fetch that never answers made every awaited evaluation wait out a 5-second budget, even
+  for `Promise.resolve(1)`: two such evaluations took 10 seconds. Each awaited evaluation now waits
+  only for its own promise, for at most 5 seconds, and an error from other work on the page no
+  longer ends the wait early. An evaluation that did not settle in time used to return the result
+  of the evaluation before it; it now comes back as `undefined`. (#541)
+
+- **A classic script could hold its page for 5 seconds after it finished.** The native browser
+  backend runs each classic script under a 5-second watchdog. When the script finished before the
+  watchdog thread started, which happens on a loaded host, the watchdog missed the signal and slept
+  out its full budget while the page waited for it. The watchdog now checks whether the script is
+  done before it starts to wait. (#566)
+
+- **Chrome's WebSocket, WebTransport and WebRTC traffic, and a second DNS answer, reached addresses
+  the SSRF policy refuses.** The request check sees only HTTP requests, so a WebSocket opened a
+  connection to a denied address, WebTransport and WebRTC sent UDP datagrams to one, and Chrome
+  could resolve a checked host name again to a different address. With `deny_private` on, Chrome
+  now sends every connection through a small proxy inside crawlberg. The proxy resolves each host
+  once, checks the addresses against the SSRF policy, and connects only to an address that passed,
+  so Chrome never resolves a name itself. This covers scrape, crawl, `interact`, pooled browsers,
+  a `browser_profile` session and a `browser.endpoint` Chrome on this machine. A refused
+  connection is listed as `host:port` in the result's refused URLs for a one-shot scrape and for
+  `interact`; in a browser pool it is logged with its host and port. With an upstream proxy, the
+  proxy sends a host name to the upstream unresolved and checks only address literals, as the
+  HTTP client does, so the upstream resolves the name. Chrome's requests reach an `http` or
+  `https` upstream as they did before. A `browser.endpoint` Chrome on another machine cannot use
+  the proxy: its HTTP requests are still checked, and crawlberg logs one warning that its sockets
+  are not. With `deny_private` on, a launched Chrome sends WebRTC UDP only through a proxy, which
+  stops it; a pooled Chrome always does, because one pool serves crawls with either setting.
+  (#165, #178, #452)
+- **The native browser backend could ignore its proxy and connect directly.** A proxy URL that
+  did not parse, or one whose scheme the HTTP client cannot speak, such as `ftp://`, was dropped
+  without an error, and every request of the render then went direct. A caller who relied on the
+  proxy for egress control got neither the proxy nor a failure. The backend now checks the proxy
+  URL when it builds its clients and fails the render with a configuration error that names the
+  reason. The error never contains the URL, so credentials in it cannot leak. The same check
+  covers page-initiated fetches and dynamic module imports, whose errors printed the proxy URL,
+  credentials included. (#237)
+- **A proxy address without a scheme works everywhere the HTTP client takes it.** An address
+  such as `127.0.0.1:3128`, `localhost:3128` or `user:pass@proxy:3128` is read as an `http://`
+  proxy, exactly as the HTTP client reads it. The config check refused it for `proxy` (#420),
+  the native backend refused it in `browser.proxy` once a username or password was set (#421),
+  and the stealth mode ignored it and connected directly.
+- **Chrome renders ignored the proxy and connected directly.** With the Chrome backend, a render
+  launched Chrome without the proxy, so a caller who relied on `browser.proxy` or `proxy` for
+  egress control got direct connections with no error. Only the interact path passed it. Every
+  Chrome launch now takes the proxy, read the same way as the HTTP client reads it. A shared
+  browser pool, or a Chrome reached through `browser.endpoint`, opens each page in a browser
+  context made with that crawl's proxy, so crawls with different proxies share one Chrome and
+  each goes through its own proxy. Requests to a loopback address go through the proxy too;
+  Chrome sends them direct by default. (#434)
+- **A proxy flag in `chrome_args` replaced the configured proxy on a launched Chrome.** With
+  `browser.proxy` or `proxy` set, a `--proxy-server` in `browser.chrome_args` sent a one-shot
+  render or an interact session through the caller's proxy, and a `--proxy-bypass-list` sent
+  loopback requests direct. `--no-proxy-server`, `--proxy-pac-url` and `--proxy-auto-detect` did
+  the same, because Chrome reads them before `--proxy-server`. A pooled or connected Chrome used
+  the configured proxy. Every Chrome now uses the configured proxy. Crawlberg drops each of these
+  flags with a warning that names the flag but not its value, and loopback requests still go
+  through the proxy.
+- **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
+  launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
+  proxy with `username` and `password` made no connection and failed without saying why. The
+  Chrome backend now refuses a proxy with credentials, with an error that says so and does not
+  show them. Chrome gets the address as the HTTP client reads it, so `127.0.0.1:3128` and
+  `http:proxy:3128` now work. (#435)
+- **An `interact` action reported success while a request it sent was refused.** A paused
+  request counted toward its page only once the check had matched it to the page. For a frame the
+  check does not know yet, that match reads the frame tree of every live page, and it can take
+  longer than the 25 ms grace after an action. The action then ended with nothing in flight and
+  reported success, and the refusal was charged to no action at all. A result's
+  `ssrf_refused_urls` could miss such a request for the same reason. The request itself was always
+  refused. A paused request now counts from the moment the check receives the pause. (#192)
+
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
   a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
   then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
@@ -180,23 +284,60 @@ title: "Changelog"
   chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
   refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
   redirect response at the limit, with the same redirect count, status and final URL that HTTP
-  mode reports, and the next hop is never requested. Only the redirects of the requested page
-  count, and this applies to the Chromiumoxide backend. (#90)
+  mode reports, and the next hop is never requested. This applies to both browser backends.
+  (#90, #115)
 
-  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
-  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
-  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
-  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
-  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
-  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
-  mode does not. (#117)
+  A navigation the page starts itself also counts: a meta refresh Chrome acts on counts as one
+  redirect, as it does in HTTP mode, and so does a script navigation such as `location.replace`.
+  Each redirect such a navigation follows counts too. The limit covers every navigation of the
+  page until the crawl reads it, and past the limit the page keeps the document it has. Before,
+  only the redirects before the first document counted, so a page could lead Chrome through any
+  number of refreshes or script navigations. A redirect inside an iframe does not count.
+  (#117, #193)
+
+- **A native browser scrape skipped the redirect chain.** It did not follow a meta refresh, so
+  it returned the refresh page where HTTP mode returns the page the refresh points at. It also
+  reported a seed that answers 404 as a page with status 404 when the seed had no trailing
+  slash, where HTTP mode fails with `not_found`. A native scrape now takes the same redirect
+  chain as HTTP mode and uses the redirect count the backend reports. (#529, #530)
+
+- **A native browser scrape lost the cookies a meta refresh page set.** Each hop of the redirect
+  chain is its own native render, and each render started with an empty cookie jar, so the request
+  to the refresh target did not carry the refresh page's cookies and the result did not list them.
+  The chain now carries the jar from one hop to the next, with the Secure and HttpOnly flags of
+  each cookie.
+
+- **The native browser stored cookies that a page had no right to set.** A page could set a
+  cookie for another host with a `Domain` attribute, for example a page on `127.0.0.1` for
+  `localhost`, and the native browser then sent that cookie to the other host, after a 302 or a
+  meta refresh. It also stored a Secure cookie that a page set over plain http. The native
+  browser now ignores a cookie whose `Domain` does not match the host that set it, and a Secure
+  cookie set over http.
+  It also ignores a cookie whose `Domain` is a public suffix, such as `co.uk`, `github.io` or
+  `localhost`, unless the host that set it has that exact name.
+  A cookie set without a `Domain` attribute now goes back to the host that set it only, not to
+  that host's subdomains. In `crawlberg-browser`, `NativeCookie` gains `host_only`, so a struct
+  literal of it needs the new field.
+
+- **The native browser matched a cookie by its name alone.** A cookie with the same name but
+  another path, or another `Domain` setting, replaced the first cookie. A deletion for one path
+  removed the cookie at every path. A cookie set without a `Path` took the whole request path, a
+  `Path` that did not start with `/` was kept as given, and the path `/only` also matched
+  `/onlyfoo`. The native browser now identifies a cookie by its name, its path and whether it
+  has a `Domain`. A missing or relative `Path` gives the directory of the request path, and a
+  path matches only at a `/` boundary. A page over plain http can no longer overwrite or delete
+  a Secure cookie, and a `__Secure-` or `__Host-` cookie that breaks its prefix rules is ignored.
+
+- **A native scrape through a meta refresh listed only the last page's refused addresses.**
+  `ssrf_refused_urls` now lists the addresses the SSRF policy refused on every page of the chain.
+
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports
   the URL that answered, empty HTML, and a failed result for each action that names the status.
-  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
-  on the native backend `interact` still follows every redirect a chain offers, up to the
-  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+  The SSRF check still applies to every request. On the native backend `interact` follows at most
+  `max_redirects` redirects too, and stops on the redirect response at the limit. The limit covers
+  the navigation to the page, not the navigations the actions start. (#116, #140, #115)
 - **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
   stopped checking requests against the SSRF policy when the page finished loading, so a script
   that navigated during `extra_wait` reached any address. The check now stays on until the HTML
@@ -247,6 +388,15 @@ title: "Changelog"
   that context, which takes the page, its popups and their pending requests before the check
   turns interception off. The browser and its other tabs stay open. This applies to the
   Chromiumoxide backend. (#484)
+- **A scrape on a `browser_profile` could fail right after another one on the same profile.** A
+  scrape returns before its Chrome has exited, and Chrome writes the profile until it exits. A
+  scrape that started then copied the profile while Chrome renamed files in it, and failed with
+  "failed to copy profile file". A session on a saved profile now holds the profile until its
+  Chrome has exited, or has been killed after `shutdown_timeout`. A session on an unsaved profile
+  copies the profile only while no Chrome writes it, and two saved sessions on one profile no
+  longer run at the same time. A session that waits for the profile counts the wait against its
+  `overall_timeout`. This applies to sessions in one process. A symlink to a profile directory
+  shares the hold of the directory it points to. (#524)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of

@@ -339,3 +339,43 @@ async fn interact_follows_a_redirect_a_click_starts_after_the_page_loaded() {
     assert_eq!(result.final_url.trim_start_matches(&site.uri()), "/landed");
     assert!(result.final_html.contains("landed"), "{}", result.final_html);
 }
+
+/// A script that navigates while the seed is still parsing is the seed's own navigation, so it
+/// counts against `max_redirects`. Past the limit `interact` runs its actions on the seed's
+/// document, as far as Chrome parsed it.
+#[tokio::test]
+async fn interact_keeps_the_seed_when_its_script_navigates_past_the_limit_while_parsing() {
+    let test_name = "interact_keeps_the_seed_when_its_script_navigates_past_the_limit_while_parsing";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><p id="seed">seed</p><script>location.replace('/n')</script></body></html>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    mount_page(&site, "/n").await;
+
+    let Some((result, elapsed)) =
+        timed_interact(test_name, config(BrowserMode::Always, 0), &format!("{}/", site.uri())).await
+    else {
+        return;
+    };
+    assert!(
+        elapsed < PROMPT,
+        "interact must not wait for the browser timeout, took {elapsed:?}"
+    );
+    assert_eq!(result.final_url.trim_start_matches(&site.uri()), "/");
+    assert!(result.final_html.contains("id=\"seed\""), "{}", result.final_html);
+    assert!(
+        result.action_results.iter().all(|action| action.success),
+        "{:?}",
+        result.action_results
+    );
+    let requested = requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| p == "/n"),
+        "Chrome must not follow the navigation past the limit, requested: {requested:?}"
+    );
+}

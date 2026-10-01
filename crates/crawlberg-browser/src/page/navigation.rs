@@ -22,13 +22,16 @@ const NETWORK_IDLE_POLL_WITHOUT_JS: std::time::Duration = std::time::Duration::f
 const NETWORK_IDLE0_THRESHOLD: u32 = 0;
 const NETWORK_IDLE2_THRESHOLD: u32 = 2;
 impl Page {
+    /// Load one document, following at most `max_redirects` HTTP redirects to it (the client's
+    /// cap when `None`), and return how many it followed.
     pub(super) async fn navigate_single(
         &mut self,
         url_str: &str,
         wait_until: crate::lifecycle::WaitUntil,
         method: &str,
         body: &str,
-    ) -> Result<(), PageError> {
+        max_redirects: Option<usize>,
+    ) -> Result<usize, PageError> {
         let url = Url::parse(url_str).map_err(|e| PageError::InvalidUrl(e.to_string()))?;
         // ~keep Refused before robots.txt or the document is fetched, and before the URL is
         // ~keep recorded as the page's own, so nothing downstream sees the userinfo.
@@ -39,7 +42,8 @@ impl Page {
         self.network_events.clear();
 
         self.enforce_robots(&url).await?;
-        let response = self.fetch_document(&url, method, body).await?;
+        let response = self.fetch_document(&url, method, body, max_redirects).await?;
+        let redirects = response.redirected_from.len();
 
         self.record_network_event(
             url.as_str(),
@@ -70,7 +74,7 @@ impl Page {
 
         if wait_until == crate::lifecycle::WaitUntil::DomContentLoaded {
             self.init_js();
-            return Ok(());
+            return Ok(redirects);
         }
 
         self.init_js();
@@ -89,7 +93,7 @@ impl Page {
         self.lifecycle = LifecycleState::Loaded;
         self.wait_for_network_idle(wait_until).await;
 
-        Ok(())
+        Ok(redirects)
     }
 
     /// Apply the context's `robots.txt` policy, fetching and caching the file on first use.
@@ -124,11 +128,24 @@ impl Page {
         Ok(())
     }
 
-    async fn fetch_document(&mut self, url: &Url, method: &str, body: &str) -> Result<Response, PageError> {
+    async fn fetch_document(
+        &mut self,
+        url: &Url,
+        method: &str,
+        body: &str,
+        max_redirects: Option<usize>,
+    ) -> Result<Response, PageError> {
         let result = if method == "POST" {
-            self.http_client.post_form(url, body).await
+            self.http_client
+                .fetch_following(
+                    reqwest::Method::POST,
+                    url,
+                    Some(body.as_bytes().to_vec()),
+                    max_redirects,
+                )
+                .await
         } else {
-            self.do_fetch(url).await
+            self.do_fetch(url, max_redirects).await
         };
         result.map_err(|e| {
             self.lifecycle = LifecycleState::Failed;

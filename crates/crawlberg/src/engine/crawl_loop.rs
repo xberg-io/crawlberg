@@ -31,7 +31,9 @@ use super::CrawlEngine;
 use super::crawl_state::{
     CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page, receiver_closed, receiver_gone,
 };
-use super::redirect::{PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host};
+use super::redirect::{
+    Hop, PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host,
+};
 
 /// Map [`BrowserMode`] to a stable string label for telemetry.
 fn browser_mode_label(mode: &BrowserMode) -> &'static str {
@@ -352,7 +354,7 @@ impl CrawlEngine {
         state: &mut CrawlState,
         policy: &mut RedirectPolicy<'_>,
     ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
-        let resolution = match follow_redirects(self, url, max_redirects, Some(policy), None).await {
+        let resolution = match follow_redirects(self, url, max_redirects, Some(policy), None, Hop::Fetch).await {
             Ok(RedirectResolution::Refused {
                 refusal,
                 redirect_count,
@@ -873,7 +875,7 @@ async fn fetch_and_extract(
             let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
             let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
             let max_redirects = engine.config.max_redirects;
-            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy), None).await {
+            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy), None, Hop::Fetch).await {
                 Ok(RedirectResolution::Fetched(outcome)) => {
                     let redirect_count = outcome.redirect_count;
                     (*outcome, redirect_count)

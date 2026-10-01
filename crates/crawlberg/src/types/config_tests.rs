@@ -623,17 +623,17 @@ fn validate_accepts_an_executable_chrome_path_and_non_empty_chrome_args() {
 }
 
 #[test]
-fn validate_rejects_a_scheme_less_proxy_url_without_naming_the_embedded_username() {
+fn validate_rejects_an_unusable_scheme_less_proxy_url_without_naming_the_embedded_username() {
     let config = CrawlConfig {
         proxy: Some(ProxyConfig {
-            url: "alice:s3cr3t@proxy.internal:8080".into(),
+            url: "alice:s3cr3t@proxy.internal:99999".into(),
             ..Default::default()
         }),
         ..Default::default()
     };
     let error = config
         .validate()
-        .expect_err("a scheme-less proxy URL must be rejected")
+        .expect_err("a proxy address with an out-of-range port must be rejected")
         .to_string();
     assert!(
         !error.contains("alice"),
@@ -643,4 +643,192 @@ fn validate_rejects_a_scheme_less_proxy_url_without_naming_the_embedded_username
         !error.contains("s3cr3t"),
         "error must not leak the embedded password, got: {error}"
     );
+}
+
+fn proxied_config(proxy: Option<&str>, browser_proxy: Option<&str>, backend: BrowserBackend) -> CrawlConfig {
+    let proxy_config = |url: &str| ProxyConfig {
+        url: url.into(),
+        ..Default::default()
+    };
+    CrawlConfig {
+        proxy: proxy.map(proxy_config),
+        browser: BrowserConfig {
+            backend,
+            proxy: browser_proxy.map(proxy_config),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn socks_is_refused_in_the_crawl_wide_proxy_for_every_backend() {
+    for backend in [BrowserBackend::Chromiumoxide, BrowserBackend::Native] {
+        for url in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
+            let err = proxied_config(Some(url), None, backend.clone())
+                .validate()
+                .expect_err("the HTTP clients cannot use a SOCKS proxy")
+                .to_string();
+            assert!(
+                err.contains("SOCKS proxies are not supported"),
+                "{url} {backend:?}: the error must say SOCKS is not supported, got {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn socks_is_refused_in_the_browser_proxy_of_the_native_backend() {
+    for url in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
+        let err = proxied_config(Some("http://proxy.test:8080"), Some(url), BrowserBackend::Native)
+            .validate()
+            .expect_err("the native browser's clients cannot use a SOCKS proxy")
+            .to_string();
+        assert!(err.contains("SOCKS proxies are not supported"), "{url}: got {err}");
+    }
+}
+
+#[test]
+fn chrome_takes_a_socks_or_scheme_less_browser_proxy_beside_an_http_crawl_proxy() {
+    for url in [
+        "socks5://proxy.test:1080",
+        "socks4://proxy.test:1080",
+        "127.0.0.1:3128",
+        "localhost:3128",
+    ] {
+        let result =
+            proxied_config(Some("http://proxy.test:8080"), Some(url), BrowserBackend::Chromiumoxide).validate();
+        assert!(result.is_ok(), "{url}: Chrome can use this proxy, got {result:?}");
+    }
+}
+
+#[test]
+fn a_chrome_proxy_chrome_cannot_use_is_refused() {
+    for (url, expected) in [
+        ("socks5h://proxy.test:1080", "'socks5h'"),
+        ("gopher://proxy.test:70", "'gopher'"),
+        ("operator:s3cr3t@proxy.test:8080", "username or password"),
+        ("socks5://operator:s3cr3t@proxy.test:1080", "username or password"),
+    ] {
+        let err = proxied_config(None, Some(url), BrowserBackend::Chromiumoxide)
+            .validate()
+            .expect_err("Chrome cannot use this proxy")
+            .to_string();
+        assert!(err.contains(expected), "{url}: got {err}");
+        assert!(
+            !err.contains("s3cr3t"),
+            "{url}: the password must not be shown, got {err}"
+        );
+    }
+}
+
+#[test]
+fn a_scheme_less_proxy_is_accepted_in_either_field() {
+    for url in ["127.0.0.1:3128", "localhost:3128", "operator:s3cr3t@proxy:8080"] {
+        for config in [
+            proxied_config(Some(url), None, BrowserBackend::Native),
+            proxied_config(None, Some(url), BrowserBackend::Native),
+        ] {
+            assert!(
+                config.validate().is_ok(),
+                "{url}: reqwest uses this as an HTTP proxy, so the config check must accept it"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_browser_proxy_is_checked_even_when_the_crawl_proxy_is_valid() {
+    let err = proxied_config(
+        Some("http://proxy.test:8080"),
+        Some("gopher://proxy.test:70"),
+        BrowserBackend::Native,
+    )
+    .validate()
+    .expect_err("the browser proxy is a proxy the browser uses")
+    .to_string();
+    assert!(err.contains("'gopher'"), "got {err}");
+}
+
+fn credentialed_crawl_proxy(url: &str, fields: bool) -> CrawlConfig {
+    let mut config = proxied_config(Some(url), None, BrowserBackend::Chromiumoxide);
+    if fields {
+        let proxy = config.proxy.as_mut().expect("a crawl-wide proxy");
+        proxy.username = Some("operator".into());
+        proxy.password = Some("s3cr3t".into());
+    }
+    config
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+#[test]
+fn a_crawl_proxy_with_credentials_is_refused_when_chrome_renders_through_it() {
+    for mode in [BrowserMode::Auto, BrowserMode::Always, BrowserMode::Stealth] {
+        for (url, fields) in [
+            ("http://proxy.test:8080", true),
+            ("http://operator:s3cr3t@proxy.test:8080", false),
+            ("operator:s3cr3t@proxy.test:8080", false),
+        ] {
+            let mut config = credentialed_crawl_proxy(url, fields);
+            config.browser.mode = mode.clone();
+            let err = config
+                .validate()
+                .expect_err("a Chrome render would use this proxy and cannot")
+                .to_string();
+            for way_out in ["browser.proxy", "native backend", "browser.mode to never"] {
+                assert!(
+                    err.contains(way_out),
+                    "{mode:?} {url}: the error must name {way_out}, got {err}"
+                );
+            }
+            assert!(
+                !err.contains("s3cr3t"),
+                "{mode:?} {url}: the password must not be shown, got {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_crawl_proxy_with_credentials_is_accepted_where_chrome_never_uses_it() {
+    let never = |mut config: CrawlConfig| {
+        config.browser.mode = BrowserMode::Never;
+        config
+    };
+    let native = |mut config: CrawlConfig| {
+        config.browser.backend = BrowserBackend::Native;
+        config
+    };
+    let own_browser_proxy = |mut config: CrawlConfig| {
+        config.browser.proxy = Some(ProxyConfig {
+            url: "http://browser-proxy.test:3128".into(),
+            ..Default::default()
+        });
+        config
+    };
+    for (label, adjust) in [
+        ("mode never", &never as &dyn Fn(CrawlConfig) -> CrawlConfig),
+        ("native backend", &native),
+        ("a browser.proxy without credentials", &own_browser_proxy),
+    ] {
+        for (url, fields) in [
+            ("http://proxy.test:8080", true),
+            ("http://operator:s3cr3t@proxy.test:8080", false),
+        ] {
+            let result = adjust(credentialed_crawl_proxy(url, fields)).validate();
+            assert!(result.is_ok(), "{label} {url}: HTTP can use this proxy, got {result:?}");
+        }
+    }
+    let result = credentialed_crawl_proxy("http://proxy.test:8080", false).validate();
+    assert!(
+        result.is_ok(),
+        "a crawl proxy without credentials suits Chrome, got {result:?}"
+    );
+}
+
+#[cfg(not(feature = "browser-chromiumoxide"))]
+#[test]
+fn a_crawl_proxy_with_credentials_is_accepted_in_a_build_without_chrome() {
+    let result = credentialed_crawl_proxy("http://proxy.test:8080", true).validate();
+    assert!(result.is_ok(), "this build never renders in Chrome, got {result:?}");
 }

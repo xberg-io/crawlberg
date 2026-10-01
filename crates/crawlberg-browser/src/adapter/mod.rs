@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use crate::net::OriginHeaders;
+pub use crate::net::proxy::{ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, check_proxy_url};
 pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
@@ -31,6 +32,8 @@ pub struct NativeCookie {
     pub path: Option<String>,
     pub secure: bool,
     pub http_only: bool,
+    /// Sent to `domain` only, not to its subdomains: the page set it without a `Domain` attribute.
+    pub host_only: bool,
 }
 
 impl std::fmt::Debug for NativeCookie {
@@ -44,6 +47,7 @@ impl std::fmt::Debug for NativeCookie {
             path,
             secure,
             http_only,
+            host_only,
         } = self;
         f.debug_struct("NativeCookie")
             .field("name", name)
@@ -52,6 +56,7 @@ impl std::fmt::Debug for NativeCookie {
             .field("path", path)
             .field("secure", secure)
             .field("http_only", http_only)
+            .field("host_only", host_only)
             .finish()
     }
 }
@@ -135,6 +140,11 @@ pub struct NativeBrowserConfig {
     /// Unlike `extra_headers`, which every host receives, these never reach a third-party
     /// subresource or a cross-host redirect target.
     pub origin_headers: Option<OriginHeaders>,
+    /// The most redirects the navigation to the page follows: HTTP redirects, and the
+    /// navigations the page's script starts, one each. A chain of HTTP redirects past it ends on
+    /// the redirect response at the limit; a script navigation past it is not taken. `None`
+    /// keeps the backend's own caps. Navigations an interact action starts are not counted.
+    pub max_redirects: Option<usize>,
 }
 
 impl std::fmt::Debug for NativeBrowserConfig {
@@ -160,6 +170,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             ssrf,
             allow_file_access,
             origin_headers,
+            max_redirects,
         } = self;
         f.debug_struct("NativeBrowserConfig")
             .field("user_agent", user_agent)
@@ -183,6 +194,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("ssrf", ssrf)
             .field("allow_file_access", allow_file_access)
             .field("origin_headers", origin_headers)
+            .field("max_redirects", max_redirects)
             .finish()
     }
 }
@@ -206,6 +218,7 @@ impl Default for NativeBrowserConfig {
             ssrf: None,
             allow_file_access: false,
             origin_headers: None,
+            max_redirects: None,
         }
     }
 }
@@ -230,6 +243,9 @@ pub struct RenderedPage {
     pub network_events: Vec<NativeNetworkEvent>,
     /// All non-expired cookies from the jar after navigation.
     pub cookies: Vec<NativeCookie>,
+    /// Redirects the navigation followed when `max_redirects` was set: HTTP redirects, and the
+    /// navigations the page's script started, one each. 0 when it was not set.
+    pub redirects: usize,
 }
 
 impl std::fmt::Debug for RenderedPage {
@@ -244,6 +260,7 @@ impl std::fmt::Debug for RenderedPage {
             eval_result,
             network_events,
             cookies,
+            redirects,
         } = self;
         f.debug_struct("RenderedPage")
             .field("final_url", final_url)
@@ -253,6 +270,7 @@ impl std::fmt::Debug for RenderedPage {
             .field("eval_result", eval_result)
             .field("network_events", network_events)
             .field("cookies", cookies)
+            .field("redirects", redirects)
             .finish()
     }
 }
@@ -375,7 +393,7 @@ pub async fn interact_url(
 }
 
 async fn render_url_local(url: &str, config: &NativeBrowserConfig) -> Result<RenderedPage, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     render_with_context(url, config, context).await
 }
 
@@ -385,7 +403,7 @@ async fn interact_url_local(
     actions: &[NativePageAction],
     post_navigation_wait: Option<Duration>,
 ) -> Result<NativeInteractionResult, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     let mut page = Page::new("page-1".to_string(), context);
     configure_page_interception(&mut page, config);
     navigate_configured(&mut page, url, config).await?;
@@ -446,7 +464,7 @@ async fn interact_url_local(
     })
 }
 
-async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
+async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserContext>, PageError> {
     let ssrf: Arc<dyn SsrfValidator> = config
         .ssrf
         .clone()
@@ -458,7 +476,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         config.user_agent.clone(),
         ssrf,
         config.allow_file_access,
-    );
+    )?;
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {
         context.user_agent = robots_ua.clone();
@@ -474,17 +492,10 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         .await;
 
     for cookie in &config.prior_cookies {
-        context.cookie_jar.set_parsed_cookie(
-            &cookie.name,
-            &cookie.value,
-            cookie.domain.as_deref(),
-            cookie.path.as_deref(),
-            cookie.secure,
-            cookie.http_only,
-        );
+        context.cookie_jar.set_parsed_cookie(cookie);
     }
 
-    context
+    Ok(context)
 }
 
 async fn render_with_context(
@@ -494,7 +505,7 @@ async fn render_with_context(
 ) -> Result<RenderedPage, PageError> {
     let mut page = Page::new("page-1".to_string(), context.clone());
     configure_page_interception(&mut page, config);
-    navigate_configured(&mut page, url, config).await?;
+    let redirects = navigate_configured(&mut page, url, config).await?;
 
     let final_url = page.url_string();
     let status = page
@@ -518,14 +529,17 @@ async fn render_with_context(
         .cookie_jar
         .snapshot()
         .into_iter()
-        .map(|(name, value, domain, path, secure, http_only)| NativeCookie {
-            name,
-            value,
-            domain: Some(domain),
-            path: Some(path),
-            secure,
-            http_only,
-        })
+        .map(
+            |(name, value, domain, path, secure, http_only, host_only)| NativeCookie {
+                name,
+                value,
+                domain: Some(domain),
+                path: Some(path),
+                secure,
+                http_only,
+                host_only,
+            },
+        )
         .collect();
 
     let html = rendered_html(&page)
@@ -539,6 +553,7 @@ async fn render_with_context(
         eval_result,
         network_events,
         cookies,
+        redirects,
     })
 }
 
@@ -580,13 +595,21 @@ fn configure_page_interception(page: &mut Page, config: &NativeBrowserConfig) {
     }
 }
 
-async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserConfig) -> Result<(), PageError> {
+/// Navigate `page` to `url` as `config` asks, and return the redirects followed on the way
+/// (0 without `max_redirects`).
+async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserConfig) -> Result<usize, PageError> {
     let wait_until = match config.wait_until {
         NativeBrowserWait::Load => WaitUntil::Load,
         NativeBrowserWait::NetworkIdle | NativeBrowserWait::Selector => WaitUntil::NetworkIdle0,
     };
 
-    tokio::time::timeout(config.timeout, page.navigate_with_wait(url, wait_until))
+    let navigation = async {
+        match config.max_redirects {
+            Some(limit) => page.navigate_counting(url, wait_until, limit).await,
+            None => page.navigate_with_wait(url, wait_until).await.map(|()| 0),
+        }
+    };
+    let redirects = tokio::time::timeout(config.timeout, navigation)
         .await
         .map_err(|_| PageError::NetworkError(format!("browser timed out after {:?}", config.timeout)))??;
 
@@ -611,7 +634,7 @@ async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserC
         }
     }
 
-    Ok(())
+    Ok(redirects)
 }
 
 struct NativeActionData {

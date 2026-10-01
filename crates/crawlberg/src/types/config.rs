@@ -529,11 +529,36 @@ impl CrawlConfig {
     }
 
     fn validate_proxy(&self) -> Result<(), CrawlError> {
-        let Some(ref proxy) = self.proxy else {
-            return Ok(());
-        };
-        let parsed = crate::proxy::parse_proxy_url(&proxy.url)?;
-        crate::proxy::ensure_supported_scheme(&parsed)
+        use crate::proxy::{chrome_proxy, ensure_supported_scheme, has_credentials, parse_proxy_url};
+        if let Some(proxy) = &self.proxy {
+            let parsed = parse_proxy_url(&proxy.url)?;
+            ensure_supported_scheme(&parsed)?;
+            if self.chrome_renders_through_the_crawl_proxy() && has_credentials(proxy, &parsed) {
+                return Err(CrawlError::invalid_config(
+                    "the Chrome backend cannot use a proxy with a username or password, and a Chrome \
+                     render uses proxy when browser.proxy is not set; set browser.proxy to a proxy \
+                     that needs no credentials, use the native backend, or set browser.mode to never",
+                ));
+            }
+        }
+        if let Some(proxy) = &self.browser.proxy {
+            match self.browser.backend {
+                BrowserBackend::Native => ensure_supported_scheme(&parse_proxy_url(&proxy.url)?)?,
+                BrowserBackend::Chromiumoxide => {
+                    chrome_proxy(proxy)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a Chrome render can take the crawl-wide `proxy`: this build has Chrome, the
+    /// backend is Chrome, `browser.proxy` is not set and the mode allows a render.
+    fn chrome_renders_through_the_crawl_proxy(&self) -> bool {
+        cfg!(feature = "browser-chromiumoxide")
+            && self.browser.backend == BrowserBackend::Chromiumoxide
+            && self.browser.proxy.is_none()
+            && self.browser.mode != BrowserMode::Never
     }
 
     fn validate_auth(&self) -> Result<(), CrawlError> {
