@@ -15,6 +15,28 @@ on:
   #   branches: [main]
   #   paths: *script-paths
   workflow_dispatch:
+    inputs:
+      takeover:
+        description: Run the isolated document-read proof and banking job
+        type: boolean
+        default: false
+      takeover_phase:
+        description: The fixed proof phase to run
+        type: choice
+        options: [candidate, controls, bank]
+        default: candidate
+      patch_commit:
+        description: Immutable commit containing the reviewed patch manifest
+        type: string
+        default: ""
+      patch_payload:
+        description: Base64 compressed reviewed manifest and patch data
+        type: string
+        default: ""
+      patch_digest:
+        description: SHA-256 of the reviewed manifest or decoded payload
+        type: string
+        default: ""
 
 concurrency:
   group: ci-scripts-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
@@ -102,3 +124,153 @@ jobs:
 
       - name: Check shell formatting
         run: task lint:shell
+
+  takeover-proof:
+    name: Document-read ${{ inputs.takeover_phase }} (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' && inputs.takeover && github.repository == 'xberg-io/crawlberg' && github.actor == 'tobocop2' && startsWith(github.ref, 'refs/heads/ci/pr568-actions-proof')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-latest]
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      RUST_BACKTRACE: full
+      RUST_MIN_STACK: 16777216
+      BUILD_PROFILE: ci
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        uses: xberg-io/actions/free-disk-space-linux@4585566683ea8da59f427faeb69406947da59f8f
+        with:
+          show-initial: "false"
+          show-final: "true"
+
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@4585566683ea8da59f427faeb69406947da59f8f
+        with:
+          toolchain: "1.95"
+          cache-key-prefix: pr568-proof-${{ matrix.os }}
+          use-sccache: "true"
+
+      - name: Install Task
+        uses: xberg-io/actions/install-task@4585566683ea8da59f427faeb69406947da59f8f
+
+      - name: Setup Chrome
+        uses: xberg-io/actions/setup-chrome@4585566683ea8da59f427faeb69406947da59f8f
+
+      - name: Setup PHP
+        uses: xberg-io/actions/setup-php@4585566683ea8da59f427faeb69406947da59f8f
+        with:
+          php-version: "8.4"
+          tools: composer
+          extensions: "dom, json, libxml, mbstring, tokenizer, xml, xmlwriter, ctype"
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: packages/go/go.mod
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+          working-directory: packages/ruby
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.13.3"
+
+      - name: Setup Elixir
+        uses: xberg-io/actions/setup-elixir@4585566683ea8da59f427faeb69406947da59f8f
+        with:
+          elixir-version: "1.19"
+          otp-version: "28"
+
+      - name: Setup formatting tools
+        uses: xberg-io/actions/setup-c-cpp-tools@4585566683ea8da59f427faeb69406947da59f8f
+
+      - name: Install poly
+        uses: Goldziher/poly@029a0490abe5e68d264d70714f296b3a3f1c2f85
+        with:
+          version: "0.28.1"
+
+      - name: Install mutation and normal Cargo hook tools
+        run: |
+          set -euo pipefail
+          cargo install cargo-mutants --version 27.1.0 --locked
+          cargo install cargo-sort --locked
+          cargo install cargo-machete --locked
+          cargo install cargo-deny --locked
+
+      - name: Install the Go hook tool
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/golangci/golangci-lint/c0d3ddc9cf3faa61a4e378e879ece580256d76e5/install.sh -o "$RUNNER_TEMP/pr568-golangci-install.sh"
+          sh "$RUNNER_TEMP/pr568-golangci-install.sh" -b "$(go env GOPATH)/bin" v2.13.1
+
+      - name: Resolve normal hook dependencies
+        run: |
+          set -euo pipefail
+          uv sync --no-install-workspace
+          uv pip install pyrefly
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          (cd packages/dart && dart pub get)
+          (cd packages/elixir && mix deps.get)
+
+      - name: Configure the approved ordinary Git identity
+        if: inputs.takeover_phase == 'bank' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          git config --global user.name "Tobias Perelstein"
+          git config --global user.email "5562156+tobocop2@users.noreply.github.com"
+
+      - name: Run the fixed proof phase
+        if: inputs.takeover_phase != 'bank' || runner.os == 'Linux'
+        env:
+          PATCH_COMMIT: ${{ inputs.patch_commit }}
+          PATCH_PAYLOAD: ${{ inputs.patch_payload }}
+          PATCH_DIGEST: ${{ inputs.patch_digest }}
+          TAKEOVER_PHASE: ${{ inputs.takeover_phase }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/pr568_proof.py
+
+      - name: Retain proof and hook evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr568-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.takeover_phase }}-${{ matrix.os }}
+          path: takeover-evidence/
+          retention-days: 7
+          if-no-files-found: error
