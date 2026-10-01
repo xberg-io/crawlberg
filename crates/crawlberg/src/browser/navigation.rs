@@ -92,8 +92,7 @@ pub(super) async fn page_fetch(
     let final_url = tokio::time::timeout(timeout, page.url())
         .await
         .ok()
-        .flatten()
-        .flatten()
+        .and_then(|result| result.ok().flatten())
         .unwrap_or_else(|| url.to_owned());
 
     let body_bytes = html.as_bytes().to_vec();

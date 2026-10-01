@@ -137,7 +137,7 @@ async fn run_with_browser(
         let final_url = tokio::time::timeout(timeout, evaluate_json(&page, "location.href"))
             .await
             .ok()
-            .flatten()
+            .and_then(|result| result.ok())
             .and_then(|value| value.as_str().map(str::to_owned))
             .unwrap_or_else(|| url.to_owned());
 
