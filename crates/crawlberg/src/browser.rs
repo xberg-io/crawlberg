@@ -337,13 +337,36 @@ async fn one_shot_fetch(
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
+    // fix6 probe: per-step timing to name the step that eats the overall deadline. Diagnostics
+    // only; this branch must never merge.
+    static PROBE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let probe_id = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let probe_t0 = tokio::time::Instant::now();
+    eprintln!("[fix6-probe {probe_id}] fetch start, budget {overall_timeout:?}");
 
     let (browser, mut handler, data_dir, egress, profile_hold) =
         match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
             Ok(Ok(launched)) => launched,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => return Err(overall_deadline_error(overall_timeout)),
+            Ok(Err(error)) => {
+                eprintln!(
+                    "[fix6-probe {probe_id}] launch_or_connect ERROR after +{:?}",
+                    probe_t0.elapsed()
+                );
+                return Err(error);
+            }
+            Err(_) => {
+                eprintln!(
+                    "[fix6-probe {probe_id}] launch_or_connect DEADLINE after +{:?}",
+                    probe_t0.elapsed()
+                );
+                return Err(overall_deadline_error(overall_timeout));
+            }
         };
+    eprintln!(
+        "[fix6-probe {probe_id}] launch_or_connect done +{:?}",
+        probe_t0.elapsed()
+    );
+    let probe_t1 = tokio::time::Instant::now();
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
     let origin = BrowserOrigin::of_session(
@@ -365,13 +388,34 @@ async fn one_shot_fetch(
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     let fetch_outcome = tokio::time::timeout(remaining, async {
         let (page, watch) = session.open_watched_page(config).await?;
+        eprintln!(
+            "[fix6-probe {probe_id}] open_watched_page done +{:?}",
+            probe_t1.elapsed()
+        );
+        let probe_t2 = tokio::time::Instant::now();
         let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot).await;
+        eprintln!(
+            "[fix6-probe {probe_id}] page_fetch done +{:?} ok={}",
+            probe_t2.elapsed(),
+            result.is_ok()
+        );
+        let probe_t3 = tokio::time::Instant::now();
         watch.close().await;
+        eprintln!("[fix6-probe {probe_id}] watch.close done +{:?}", probe_t3.elapsed());
         let mut result = result?;
+        let probe_t4 = tokio::time::Instant::now();
         crate::net::egress::add_refused(&mut result.refused, session.egress_refused().await);
+        eprintln!(
+            "[fix6-probe {probe_id}] egress_refused done +{:?}, total +{:?}",
+            probe_t4.elapsed(),
+            probe_t0.elapsed()
+        );
         Ok(result)
     })
     .await;
+    if fetch_outcome.is_err() {
+        eprintln!("[fix6-probe {probe_id}] fetch DEADLINE after +{:?}", probe_t0.elapsed());
+    }
 
     // ~keep `session` is dropped as this function returns, after the result below is computed,
     // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
