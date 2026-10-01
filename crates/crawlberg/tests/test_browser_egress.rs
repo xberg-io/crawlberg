@@ -424,26 +424,29 @@ async fn webrtc_sends_in_interact_with_deny_private_off() {
     webrtc_row("webrtc_interact_off", Via::Interact, false).await;
 }
 
-/// This machine's name and the address it resolves to, off loopback.
-async fn host_name_and_ip() -> Option<(String, IpAddr)> {
+/// This machine's name, the IPv4 address off loopback it resolves to, and every address it
+/// resolves to. The proxy refuses a name when any answer fails the policy, and a macOS name
+/// also answers with its interfaces' other addresses, such as IPv6 link-local.
+async fn host_name_and_ip() -> Option<(String, IpAddr, Vec<IpAddr>)> {
     let name = match std::env::var("CRAWLBERG_TEST_HOST_NAME") {
         Ok(name) => name,
         Err(_) => String::from_utf8(std::process::Command::new("hostname").output().ok()?.stdout).ok()?,
     };
     let name = name.trim().to_owned();
-    let ip = tokio::net::lookup_host((name.as_str(), 80))
+    let answers: Vec<IpAddr> = tokio::net::lookup_host((name.as_str(), 80))
         .await
         .ok()?
         .map(|address| address.ip())
-        .find(|ip| ip.is_ipv4() && !ip.is_loopback())?;
-    Some((name, ip))
+        .collect();
+    let ip = answers.iter().copied().find(|ip| ip.is_ipv4() && !ip.is_loopback())?;
+    Some((name, ip, answers))
 }
 
 /// A fetch by host name in a pooled page. The check resolves the name to this machine's
 /// allowlisted address; `remap` makes Chrome's own lookup answer the denied loopback address,
 /// as a second DNS answer would. Without `remap` it is the twin.
 async fn rebinding_row(test_name: &str, remap: bool) {
-    let Some((name, ip)) = host_name_and_ip().await else {
+    let Some((name, ip, answers)) = host_name_and_ip().await else {
         announce_skip(test_name, "this machine's name does not resolve off loopback");
         return;
     };
@@ -452,13 +455,21 @@ async fn rebinding_row(test_name: &str, remap: bool) {
     let (_denied, reached_denied) = counting_tcp(SocketAddr::from(([127, 0, 0, 1], port))).await;
     let (refused, fetch) = control().await;
     let script = format!("fetch('http://{name}:{port}/rebind', {{ mode: 'no-cors' }}).catch(() => {{}});{fetch}");
-    let mut config = config(vec![HostMatcher::cidr(format!("{ip}/32")).expect("a valid CIDR")]);
+    let allowlist = answers
+        .iter()
+        .filter(|answer| !answer.is_loopback())
+        .map(|answer| {
+            let prefix = if answer.is_ipv4() { 32 } else { 128 };
+            HostMatcher::cidr(format!("{answer}/{prefix}")).expect("a valid CIDR")
+        })
+        .collect();
+    let mut config = config(allowlist);
     if remap {
         config.browser.chrome_args = vec![format!("--host-resolver-rules=MAP {name} 127.0.0.1")];
     }
-    if run(test_name, Via::Pooled, &script, config).await.is_none() {
+    let Some(refused_urls) = run(test_name, Via::Pooled, &script, config).await else {
         return;
-    }
+    };
     let (denied, allowed, refused) = (
         reached_denied.load(Ordering::SeqCst),
         reached_allowed.load(Ordering::SeqCst),
@@ -474,7 +485,7 @@ async fn rebinding_row(test_name: &str, remap: bool) {
     );
     assert!(
         allowed >= 1,
-        "{test_name}: the address the check passed must be reached"
+        "{test_name}: the address the check passed must be reached; {name} resolves to {answers:?}, refused {refused_urls:?}"
     );
 }
 

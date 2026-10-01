@@ -1,10 +1,10 @@
 {
 	"id": "validation_invalid_proxy_url",
-	"description": "proxy with invalid URL like 'not-a-url' is rejected",
+	"description": "proxy with invalid URL like 'http://' is rejected",
 	"docs": {
 		"topic": "validation",
 		"stem": "validation-invalid-proxy-url",
-		"title": "proxy with invalid URL like 'not-a-url' is rejected"
+		"title": "proxy with invalid URL like 'http://' is rejected"
 	},
 	"tags": ["validation"],
 	"input": {
@@ -16,7 +16,7 @@
 		],
 		"config": {
 			"proxy": {
-				"url": "not-a-url"
+				"url": "http://"
 			}
 		}
 	},
