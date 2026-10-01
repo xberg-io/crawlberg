@@ -458,6 +458,26 @@ title: "Changelog"
   action now fails with the SSRF policy error that names the refused URL. A refused request counts
   for the action that was running when the check received it from Chrome, so on a busy host it can
   count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **An `interact` session or a scrape could send requests to a refused address as it ended, on a
+  busy host.** Under load Chrome can take longer than the close limit to destroy a page or a popup,
+  and a page can still send just after Chrome reports it destroyed. The check then turned
+  interception off, or closed the browser, while they were still sending, and their requests went
+  out. A browser crawlberg launches with a throwaway profile, for one `interact` session or one
+  scrape, now keeps interception on until it is killed, so its requests stay paused until the
+  process is gone. crawlberg then ends every process of that Chrome, waits until none of them and
+  none of their threads is left, for at most what is left of `browser.shutdown_timeout`, and then
+  removes the profile. Ending the processes and removing the profile are not bounded by that
+  timeout, so on a busy host an `interact` call can return later than `browser.shutdown_timeout`
+  after its last action. A scrape returns its result before the kill. A scrape with a saved
+  `browser_profile` and a scrape through a `BrowserPool` end as before. This applies to the
+  Chromiumoxide backend. (#468)
+- **The SSRF check on a `browser.endpoint` browser turned interception off while the page of an
+  `interact` session or a scrape, or a popup of it, was still open, on a busy host.** crawlberg
+  cannot kill a browser it does not own, and the check stopped waiting for the close after a time
+  limit. Each page of the check now has a browser context of its own. Closing the page disposes
+  that context, which takes the page, its popups and their pending requests before the check
+  turns interception off. The browser and its other tabs stay open. This applies to the
+  Chromiumoxide backend. (#484)
 - **A scrape on a `browser_profile` could fail right after another one on the same profile.** A
   scrape returns before its Chrome has exited, and Chrome writes the profile until it exits. A
   scrape that started then copied the profile while Chrome renamed files in it, and failed with

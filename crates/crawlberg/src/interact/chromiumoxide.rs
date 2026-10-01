@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser};
+use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, kill_browser, release_browser};
 use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, page_content, read_one_document};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
@@ -37,9 +37,16 @@ async fn run_launched(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let browser = Arc::new(browser);
+    // ~keep A launched browser (always with a throwaway profile here) is killed with interception
+    // ~keep still on, never turned off, not even once the page is closed. Under load Chrome can
+    // ~keep take longer than the watch's close bound to destroy a page or popup, and a page can
+    // ~keep still send just after Chrome reports it destroyed. Turning interception off, or a
+    // ~keep graceful `Browser.close` (which ends the DevTools session first), lets those requests
+    // ~keep out (xberg-io/crawlberg#468).
+    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
     let result = match BrowserFirewall::start(
         Arc::clone(&browser),
-        BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
+        origin,
         PageContext::of_endpoint(config.browser.endpoint.as_deref()),
     )
     .await
@@ -53,19 +60,21 @@ async fn run_launched(
     };
 
     // ~keep The stopped firewall held the only other reference, so this is the browser itself.
-    match Arc::into_inner(browser) {
-        Some(browser) => {
-            release_browser(
-                browser,
-                handler_handle,
-                ExternalTabCleanup::default(),
-                config.browser.shutdown_timeout,
-            )
-            .await;
+    let shutdown_timeout = config.browser.shutdown_timeout;
+    match (Arc::into_inner(browser), data_dir) {
+        (Some(browser), Some(profile)) if origin == BrowserOrigin::Killed => {
+            kill_browser(browser, handler_handle, profile.path().to_path_buf(), shutdown_timeout).await;
         }
-        None => handler_handle.abort(),
+        (browser, profile) => {
+            match browser {
+                Some(browser) => {
+                    release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+                }
+                None => handler_handle.abort(),
+            }
+            drop(profile);
+        }
     }
-    drop(data_dir);
 
     result
 }
@@ -994,6 +1003,50 @@ mod tests {
             launch_or_connect(&config).await
         })
         .await;
+    }
+
+    /// An interact session in a Chrome it launched keeps refusing its page while the page is
+    /// still sending after the check stops.
+    ///
+    /// ~keep The page's context is left in place at the watch's end, as when Chrome fails the
+    /// ~keep dispose, and the browser stays up for a second after the stop. A stop that turns
+    /// ~keep interception off, as it does for a browser that is closed rather than killed, lets
+    /// ~keep the page's requests out in that time (xberg-io/crawlberg#468).
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_interact_session_keeps_refusing_a_page_still_sending_after_its_check_stops() {
+        let test_name = "an_interact_session_keeps_refusing_a_page_still_sending_after_its_check_stops";
+        let site = crate::ssrf_intercept::SendingSite::start().await;
+        let (result, stop_hold) = crate::ssrf_intercept::with_session_page_left_open(
+            Duration::from_secs(1),
+            run(&site.seed, &[], &site.config),
+        )
+        .await;
+        match result {
+            Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. }) => {}
+            Err(CrawlError::BrowserError { message, .. })
+                if message.contains("failed to launch") || message.contains("chrome executable") =>
+            {
+                eprintln!("skipping {test_name}: no usable Chrome: {message}");
+                return;
+            }
+            Err(error) => panic!("{test_name}: the session must end: {error:?}"),
+        }
+
+        assert!(
+            stop_hold.open_pages().iter().any(|url| url.starts_with(&site.seed)),
+            "{test_name}: the page must still be open after the stop, or the test proves nothing, open: {:?}",
+            stop_hold.open_pages()
+        );
+        let hits = site.denied_hits().await;
+        assert_eq!(
+            hits, 0,
+            "{test_name}: a page still sending after the check stopped must not reach the denied address, \
+             got {hits} requests"
+        );
     }
 
     /// A Scrape action returns the HTML of the document it checked for Chrome's error page. The

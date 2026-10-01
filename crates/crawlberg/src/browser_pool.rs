@@ -14,6 +14,7 @@ use std::time::Duration;
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, Signal, System};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -798,8 +799,8 @@ pub(crate) async fn connect_endpoint(endpoint: &str) -> Result<(Browser, chromiu
 
 /// Tear down `browser` and the task that runs its CDP handler.
 ///
-/// A Chrome that crawlberg launched is closed and reaped within `shutdown_timeout` (see
-/// `close_browser_within`); closing it removes every tab it has. A Chrome reached through
+/// A Chrome that crawlberg launched gets `shutdown_timeout` to close and exit, and is then
+/// force-killed (see `close_browser_within`); closing it removes every tab it has. A Chrome reached through
 /// `Browser::connect` (a configured `browser.endpoint`) belongs to the caller: crawlberg closes
 /// only the tabs named by `cleanup`, then disconnects by stopping the handler task that owns the
 /// CDP websocket. It never sends that Chrome `Browser.close`.
@@ -893,6 +894,239 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
     }
 
     BrowserCloseOutcome::Exited
+}
+
+/// Kill `browser`, a Chrome crawlberg launched with the throwaway profile `profile`, and every
+/// process it started, then remove the profile once none of them is left, or once what is left
+/// of `shutdown_timeout` has passed. A kill that fails falls back to [`release_browser`]'s close.
+///
+/// ~keep `Browser::kill` kills and reaps only the main process. Its renderers and helpers exit
+/// ~keep on their own a moment later and keep writing into the profile until then, so a removal
+/// ~keep right after the kill left the directory behind for about half of all sessions
+/// ~keep (xberg-io/crawlberg#468). They are collected BEFORE the kill, through each process's
+/// ~keep parent. Found afterwards by their command lines, a process whose line was not readable
+/// ~keep yet, or one forked meanwhile, was missed, and the removal raced it: 1 run in 12 under
+/// ~keep load left a profile of 71 files.
+pub(crate) async fn kill_browser(
+    mut browser: Browser,
+    handler_handle: JoinHandle<()>,
+    profile: std::path::PathBuf,
+    shutdown_timeout: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + shutdown_timeout;
+    let main = browser.get_mut_child().and_then(|child| child.as_mut_inner().id());
+    let family = match main {
+        Some(main) => tokio::task::spawn_blocking(move || {
+            let family = ChromeFamily::freeze(main);
+            family.kill();
+            family
+        })
+        .await
+        .unwrap_or_default(),
+        None => ChromeFamily::default(),
+    };
+    match browser.kill().await {
+        Some(Ok(())) => handler_handle.abort(),
+        outcome => {
+            tracing::warn!(?outcome, "failed to kill the browser; closing it instead");
+            release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+        }
+    }
+    let limit = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let gone = tokio::task::spawn_blocking(move || family.wait(limit))
+        .await
+        .unwrap_or(false);
+    if !gone {
+        tracing::warn!(
+            dir = %profile.display(),
+            timeout_secs = shutdown_timeout.as_secs_f64(),
+            "Chrome processes were still running at the shutdown timeout"
+        );
+    }
+    remove_profile_dir(profile).await;
+}
+
+/// The processes of a Chrome crawlberg launched: the main process and every descendant of it,
+/// collected before the kill and stopped as they are found, so the set is complete when they
+/// are killed.
+///
+/// ~keep chromiumoxide 0.9.1 spawns Chrome as a plain child, and Chrome makes no process group
+/// ~keep of its own (every helper carries the spawner's group; measured on Chrome 154), so the
+/// ~keep OS offers no one signal for the whole tree, and a process found after its parent died
+/// ~keep has been given to `init`. The tree is walked through each process's parent instead,
+/// ~keep every member is stopped as it is found, and the walks repeat until one finds no new
+/// ~keep member once every member has taken its stop: a stopped process cannot fork, so none
+/// ~keep is missed. The walks are capped for a platform without `Signal::Stop` (Windows),
+/// ~keep where a process that keeps forking would never settle.
+/// ~keep The wait is bounded by what is left of `shutdown_timeout` after the kill. The
+/// ~keep collection, the kill and the reap of the main process before it, and the removal of the
+/// ~keep profile after it, are not, so a kill can take longer than `shutdown_timeout` in all
+/// ~keep (measured up to 38 s on a 5 s timeout at loads of 700 to 1180).
+#[derive(Default)]
+struct ChromeFamily {
+    members: Vec<Pid>,
+}
+
+impl ChromeFamily {
+    /// The most walks over the process table before the family is taken as complete.
+    const WALKS: usize = 8;
+    /// The longest wait for a stopped member to take its stop, per walk.
+    const SETTLE: Duration = Duration::from_secs(1);
+
+    fn refresh(system: &mut System, which: ProcessesToUpdate<'_>) {
+        system.refresh_processes_specifics(which, true, ProcessRefreshKind::nothing().without_tasks());
+    }
+
+    /// Collect the family of the process `main`, stopping each member as it is found. Every member
+    /// has taken its stop, or is gone, when this returns.
+    fn freeze(main: u32) -> Self {
+        let mut system = System::new();
+        let mut members: Vec<Pid> = Vec::new();
+        for _ in 0..Self::WALKS {
+            Self::refresh(&mut system, ProcessesToUpdate::All);
+            let mut found = vec![Pid::from_u32(main)];
+            let mut next = 0;
+            while next < found.len() {
+                let parent = found[next];
+                found.extend(
+                    system
+                        .processes()
+                        .values()
+                        .filter(|process| process.parent() == Some(parent))
+                        .map(Process::pid),
+                );
+                next += 1;
+            }
+            let new: Vec<&Process> = found
+                .iter()
+                .filter(|pid| !members.contains(pid))
+                .filter_map(|pid| system.process(*pid))
+                .collect();
+            if new.is_empty() {
+                break;
+            }
+            let mut stopping = Vec::new();
+            for process in new {
+                // ~keep A process gone by the time it is stopped is no member: its pid can be
+                // ~keep reused, and the kill must never reach a stranger. A platform without the
+                // ~keep stop signal keeps the member and does not wait for a stop it cannot send.
+                match process.kill_with(Signal::Stop) {
+                    Some(true) => {
+                        members.push(process.pid());
+                        stopping.push(process.pid());
+                    }
+                    None => members.push(process.pid()),
+                    Some(false) => {}
+                }
+            }
+            Self::settle(&mut system, &stopping);
+        }
+        Self { members }
+    }
+
+    /// Wait until every process in `stopping` has taken its stop or is gone, for at most
+    /// [`Self::SETTLE`].
+    ///
+    /// ~keep A stop is taken when the process next runs, and under load that is later than the
+    /// ~keep next walk: 50 ms after the collection, 4 of some 60 members still ran in 4 runs of
+    /// ~keep 20 at a load of 20. A member still running may be inside a fork it began; the child
+    /// ~keep is in the table before the parent returns from the fork, and the parent takes the
+    /// ~keep stop only on that return, so a walk taken once every member has stopped finds every
+    /// ~keep child, and one taken before that can miss one. The bound covers a process in an
+    /// ~keep uninterruptible sleep, which takes the stop only when it wakes.
+    fn settle(system: &mut System, stopping: &[Pid]) {
+        let deadline = std::time::Instant::now() + Self::SETTLE;
+        loop {
+            Self::refresh(system, ProcessesToUpdate::Some(stopping));
+            let running = stopping.iter().any(|pid| {
+                system.process(*pid).is_some_and(|process| {
+                    !matches!(
+                        process.status(),
+                        ProcessStatus::Stop | ProcessStatus::Zombie | ProcessStatus::Dead
+                    )
+                })
+            });
+            if !running || std::time::Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Kill every member.
+    fn kill(&self) {
+        let mut system = System::new();
+        Self::refresh(&mut system, ProcessesToUpdate::Some(&self.members));
+        for pid in &self.members {
+            if let Some(process) = system.process(*pid) {
+                process.kill_with(Signal::Kill);
+            }
+        }
+    }
+
+    /// Wait until no member is left, for at most `limit`. Returns whether none is left.
+    ///
+    /// ~keep A killed process is not gone while a thread of it still runs. Its main thread
+    /// ~keep exits first and the process reads as a zombie from then on, while a thread blocked
+    /// ~keep in a write to the profile completes that write once the disk answers: under load,
+    /// ~keep 80 of 338 waits found a zombie member with threads still running or in disk sleep,
+    /// ~keep cache entries were created for two seconds after every member read as a zombie,
+    /// ~keep and the removal found a directory not empty. A member is gone once no thread of it
+    /// ~keep is left. The threads are refreshed by their own ids: a refresh of the members alone
+    /// ~keep lists their threads but does not read them. Where threads cannot be listed, the
+    /// ~keep member is gone once the process itself is.
+    fn wait(&self, limit: Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        let mut system = System::new();
+        loop {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&self.members),
+                true,
+                ProcessRefreshKind::nothing(),
+            );
+            let mut alive = self.members.iter().any(|pid| Self::is_running(&system, *pid));
+            if !alive {
+                let threads: Vec<Pid> = self
+                    .members
+                    .iter()
+                    .filter_map(|pid| system.process(*pid))
+                    .filter_map(Process::tasks)
+                    .flatten()
+                    .copied()
+                    .collect();
+                Self::refresh(&mut system, ProcessesToUpdate::Some(&threads));
+                alive = threads.iter().any(|pid| Self::is_running(&system, *pid));
+            }
+            if !alive {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Whether the process or thread `pid` is in the table and neither a zombie nor dead.
+    fn is_running(system: &System, pid: Pid) -> bool {
+        system
+            .process(pid)
+            .is_some_and(|process| !matches!(process.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
+    }
+}
+
+/// Remove a Chrome profile directory, logging rather than ignoring a failure.
+///
+/// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
+/// ~keep while the pool's state mutex was held, stalling every waiting `acquire_page`.
+async fn remove_profile_dir(dir: std::path::PathBuf) {
+    if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
+        tracing::warn!(
+            dir = %dir.display(),
+            %error,
+            "failed to remove the Chrome profile directory"
+        );
+    }
 }
 
 /// A pool that keeps a single Chrome browser alive and hands out pages (tabs),

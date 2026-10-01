@@ -828,6 +828,7 @@ mod tests {
             egress,
             profile_hold,
             shutdown_timeout: std::time::Duration::from_secs(5),
+            origin: crate::ssrf_intercept::BrowserOrigin::Killed,
         });
 
         tokio::task::spawn_blocking(move || {
@@ -874,6 +875,7 @@ mod tests {
                 egress,
                 profile_hold,
                 shutdown_timeout: std::time::Duration::from_secs(5),
+                origin: crate::ssrf_intercept::BrowserOrigin::Killed,
             });
             Some(path)
         });

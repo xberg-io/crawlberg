@@ -15,7 +15,7 @@ use tracing::Instrument as _;
 
 use self::launch::{UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
+use crate::browser_pool::{BrowserPool, ExternalTabCleanup, kill_browser, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::egress::Egress;
@@ -27,6 +27,8 @@ use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
 
 mod launch;
 mod navigation;
+#[cfg(test)]
+mod one_shot_ssrf_tests;
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -317,11 +319,13 @@ async fn release_pooled_page(
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
 ///
 /// `BrowserConfig::overall_timeout` bounds launch, page creation, navigation,
-/// rendering, and screenshot capture as a single deadline. Shutdown (closing
-/// the browser and waiting for its process to exit) runs afterward in the
-/// background, bounded by its own `BrowserConfig::shutdown_timeout`: a
-/// completed page result is returned to the caller without waiting for a
-/// Chrome process that refuses to exit.
+/// rendering, and screenshot capture as a single deadline. Shutdown runs
+/// afterward in the background: a completed page result is returned to the
+/// caller without waiting for a Chrome process that refuses to exit. A browser
+/// closed normally gets `BrowserConfig::shutdown_timeout` to exit before it is
+/// killed. A browser launched with a throwaway profile is killed at once, and
+/// the wait for its processes to go gets what is left of that timeout. Ending
+/// those processes and removing the profile are not bounded by it.
 ///
 /// Teardown is owned by [`OneShotSession`]'s `Drop`, so a caller that drops this future while
 /// the fetch runs gets the same teardown as a fetch that ran to completion.
@@ -342,6 +346,10 @@ async fn one_shot_fetch(
         };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let origin = BrowserOrigin::of_session(
+        config.browser.endpoint.as_deref(),
+        matches!(data_dir, Some(UserDataDir::Scratch(_))),
+    );
     let mut session = OneShotSession {
         browser: Some(Arc::new(browser)),
         firewall: None,
@@ -351,6 +359,7 @@ async fn one_shot_fetch(
         egress,
         profile_hold,
         shutdown_timeout: config.browser.shutdown_timeout,
+        origin,
     };
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -368,8 +377,12 @@ async fn one_shot_fetch(
     // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
     // ~keep behind a blocking OS dialog (the originally reported case: a macOS keychain prompt)
     // ~keep must not hold up delivery of a result that was already computed. `release_browser`
-    // ~keep bounds its work by `shutdown_timeout` and force-kills a launched Chrome on expiry,
-    // ~keep so that background task always finishes.
+    // ~keep gives Chrome `shutdown_timeout` to close and then force-kills a launched one.
+    // ~keep `kill_browser` gives its wait for the Chrome family what is left of that timeout;
+    // ~keep collecting and killing the family, reaping the main process and removing the profile
+    // ~keep end on their own but are not bounded by it (a reap of 6.6 s and a removal of 11.9 s
+    // ~keep at loads of 720 to 1064). So that background task always finishes, later than
+    // ~keep `shutdown_timeout` on a busy host.
     fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
 }
 
@@ -398,6 +411,7 @@ struct OneShotSession {
     /// The hold on a saved `browser_profile`, released only once teardown has reaped Chrome.
     profile_hold: Option<launch::ProfileHold>,
     shutdown_timeout: Duration,
+    origin: BrowserOrigin,
 }
 
 impl OneShotSession {
@@ -406,12 +420,7 @@ impl OneShotSession {
     /// browser context made with the crawl's proxy.
     async fn open_watched_page(&mut self, config: &CrawlConfig) -> Result<(chromiumoxide::Page, Watch), CrawlError> {
         let browser = self.browser.as_ref().expect("browser is taken only by Drop");
-        let firewall = BrowserFirewall::start(
-            Arc::clone(browser),
-            BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
-            PageContext::of(config),
-        )
-        .await?;
+        let firewall = BrowserFirewall::start(Arc::clone(browser), self.origin, PageContext::of(config)).await?;
         let firewall = self.firewall.insert(firewall);
         // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
         // ~keep that flag, so there the page's own browser context is made with the proxy. Under
@@ -461,6 +470,7 @@ impl Drop for OneShotSession {
         let egress = self.egress.take();
         let profile_hold = self.profile_hold.take();
         let shutdown_timeout = self.shutdown_timeout;
+        let origin = self.origin;
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
@@ -471,16 +481,27 @@ impl Drop for OneShotSession {
                         firewall.stop().await;
                     }
                     // ~keep The stopped firewall held the only other reference, so this is the
-                    // ~keep browser itself.
-                    match Arc::into_inner(browser) {
-                        Some(browser) => release_browser(browser, handler_handle, cleanup, shutdown_timeout).await,
-                        None => handler_handle.abort(),
+                    // ~keep browser itself. One launched with a throwaway profile is killed with
+                    // ~keep interception still on, as `interact` does (xberg-io/crawlberg#468).
+                    match (Arc::into_inner(browser), data_dir) {
+                        (Some(browser), Some(UserDataDir::Scratch(profile))) if origin == BrowserOrigin::Killed => {
+                            kill_browser(browser, handler_handle, profile.path().to_path_buf(), shutdown_timeout).await;
+                        }
+                        (browser, profile) => {
+                            match browser {
+                                Some(browser) => {
+                                    release_browser(browser, handler_handle, cleanup, shutdown_timeout).await
+                                }
+                                None => handler_handle.abort(),
+                            }
+                            drop(profile);
+                        }
                     }
                     drop(egress);
-                    drop(data_dir);
                     // ~keep `release_browser` returns once Chrome has exited and been reaped, or
-                    // ~keep been killed and reaped after `shutdown_timeout`; only then may the next
-                    // ~keep session on the profile start.
+                    // ~keep been killed and reaped after `shutdown_timeout`, and `kill_browser` once
+                    // ~keep every process of that Chrome is gone or the timeout has passed; only
+                    // ~keep then may the next session on the profile start.
                     drop(profile_hold);
                 });
             }
