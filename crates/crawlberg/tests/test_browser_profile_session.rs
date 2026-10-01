@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 mod common;
-use common::announce_chrome_skip;
+use common::{announce_chrome_skip, is_saved_profile_refusal};
 
 static NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -98,6 +98,23 @@ async fn scrape_ok(test_name: &str, what: &str, config: CrawlConfig, url: &str) 
     }
 }
 
+/// Whether the Chrome found on this machine can run a saved session on `name`: `false`,
+/// announced, when crawlberg refuses the saved profile because that Chrome is a snap that cannot
+/// open the profile store. Any other failure panics.
+///
+/// ~keep crawlberg refuses before it starts Chrome, so a refusal cannot be a lock conflict.
+async fn saved_profile_or_skip(test_name: &str, name: &str, url: &str) -> bool {
+    let engine = create_engine(Some(config_with_profile(name, true))).expect("engine must build");
+    match scrape(&engine, url).await {
+        Ok(_) => true,
+        Err(crawlberg::CrawlError::BrowserError { message, .. }) if is_saved_profile_refusal(&message) => {
+            announce_chrome_skip(test_name, &message);
+            false
+        }
+        Err(error) => panic!("{test_name}: the first saved scrape must succeed: {error:?}"),
+    }
+}
+
 /// A scrape that does not save the profile, started as soon as a saved scrape on the same profile
 /// returns, copies the profile the saved scrape's Chrome wrote.
 ///
@@ -112,6 +129,9 @@ async fn an_unsaved_scrape_right_after_a_saved_one_copies_the_profile() {
     let profile = BrowserProfile::new(&unique_profile_name("back-to-back")).expect("profile name must be valid");
     let _guard = ProfileGuard(profile.clone());
     let url = start_cookie_server().await;
+    if !saved_profile_or_skip(test_name, &profile.name, &url).await {
+        return;
+    }
     for round in 1..=3 {
         for (save, what) in [(true, "the saved scrape"), (false, "the unsaved scrape right after it")] {
             let what = format!("{what} (round {round})");
@@ -131,6 +151,9 @@ async fn scrapes_started_together_on_one_profile_all_succeed() {
     let profile = BrowserProfile::new(&unique_profile_name("together")).expect("profile name must be valid");
     let _guard = ProfileGuard(profile.clone());
     let url = start_cookie_server().await;
+    if !saved_profile_or_skip(test_name, &profile.name, &url).await {
+        return;
+    }
     for round in 1..=2 {
         let first_name = format!("the first saved scrape (round {round})");
         let second_name = format!("the second saved scrape (round {round})");
@@ -163,6 +186,10 @@ async fn saved_scrapes_on_a_profile_and_a_symlink_to_it_all_succeed() {
     let alias = BrowserProfile::new(&unique_profile_name("symlink-alias")).expect("profile name must be valid");
     std::os::unix::fs::symlink(&real.user_data_dir, &alias.user_data_dir).expect("symlink must be creatable");
     let url = start_cookie_server().await;
+    if !saved_profile_or_skip(test_name, &real.name, &url).await {
+        let _ = std::fs::remove_file(&alias.user_data_dir);
+        return;
+    }
     let mut failures = Vec::new();
     for round in 1..=3 {
         let on_real = create_engine(Some(config_with_profile(&real.name, true))).expect("engine must build");
@@ -218,6 +245,11 @@ async fn the_next_session_on_a_profile_waits_for_a_stuck_chrome_to_be_reaped() {
     let profile = BrowserProfile::new(&unique_profile_name("stuck")).expect("profile name must be valid");
     let _guard = ProfileGuard(profile.clone());
     let url = start_cookie_server().await;
+    // ~keep crawlberg sees a snap only through its path, never through the wrapper scripts below.
+    if !saved_profile_or_skip(test_name, &profile.name, &url).await {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
 
     let stuck_chrome = dir.join("stuck-chrome.sh");
     write_script(

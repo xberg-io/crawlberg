@@ -31,6 +31,14 @@ pub fn is_missing_chrome_message(message: &str) -> bool {
         || message.contains("auto detect a chrome executable")
 }
 
+/// Whether an error message is crawlberg refusing a saved `browser_profile` because the Chrome on
+/// the runner is a snap that cannot open the profile store. This is the `ubuntu-24.04-arm` CI
+/// case, where the Chrome found is the Chromium snap and the store is under `~/.local/share`.
+/// No Chrome starts, so a test of saved profiles has nothing to observe on that runner.
+pub fn is_saved_profile_refusal(message: &str) -> bool {
+    message.contains("which cannot open the saved browser profile")
+}
+
 /// Prints a loud, unambiguous skip notice to stderr naming the test and the
 /// reason. A silently-passing test that never actually launched Chrome would
 /// exercise nothing while still reporting green — this makes the skip visible

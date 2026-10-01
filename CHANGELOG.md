@@ -267,6 +267,22 @@ All notable changes to crawlberg are documented here.
   are not. With `deny_private` on, a launched Chrome sends WebRTC UDP only through a proxy, which
   stops it; a pooled Chrome always does, because one pool serves crawls with either setting.
   (#165, #178, #452)
+- **A sandboxed Chrome ran without the WebRTC policy and sent UDP to denied addresses.** crawlberg
+  turns off WebRTC UDP that bypasses the proxy by writing a preference into the profile directory
+  it gives Chrome, in the system temp directory. A sandboxed Chrome, such as the Chromium snap on
+  Ubuntu, has a private /tmp: it opened an empty directory at that path, made a fresh profile, and
+  sent WebRTC datagrams to denied addresses with no error. When the Chrome to launch is a snap,
+  crawlberg now makes its scratch profile in `~/snap/<name>/common`, which the snap reads at the
+  same path. After each launch that relies on the profile, crawlberg also checks that Chrome wrote
+  into that directory. If it did not, crawlberg stops Chrome and returns a browser error that names
+  the cause, and the crawl does not run without the policy. (#165)
+- **A saved browser profile failed on a snap Chrome with an error that did not name the cause.**
+  crawlberg keeps saved profiles under `~/.local/share/crawlberg/profiles` on Linux. A snap, such
+  as the Chromium snap on Ubuntu, cannot open a folder in the home directory whose name starts
+  with a dot, so Chrome exited at once on a lock file it could not create. crawlberg now refuses a
+  saved profile that a snap Chrome cannot open, before it starts Chrome. The error names the cause
+  and the fixes: set `XDG_DATA_HOME` to a folder the snap can open, use a Chrome that is not a
+  snap, or turn off `save_browser_profile`. (#556)
 - **Browser mode returned Chrome's error page as the page.** When the main frame ended on
   Chrome's own error page, the Chromiumoxide backend returned that page's HTML as content. This
   happened for a download with a status such as 501, 505 or 599, for an error status with an
