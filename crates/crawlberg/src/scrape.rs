@@ -196,12 +196,13 @@ async fn resolve_robots_status(
     // enforcing it -- the page is fetched by the caller either way -- so failing closed
     // here means reporting `is_allowed: false`, which is the honest answer when the
     // site's policy could not be read.
-    // ~keep The `"*"` user-agent is preserved from the previous behaviour without rotation; see
-    // `helpers::default_robots_user_agent` for why unifying that default is deferred. A
-    // configured rotation list changes what actually goes out on the wire per request, though,
-    // and robots.txt group selection must match that (crawlberg#423), so it overrides "*".
+    // ~keep Without rotation this is the previous behaviour: the configured agent, or `"*"`
+    // when none is set; see `helpers::default_robots_user_agent` for why unifying that `"*"`
+    // default is deferred. A configured rotation list changes what actually goes out on the
+    // wire per request, though, and robots.txt group selection must match that
+    // (crawlberg#423), so it overrides both.
     let ua = if config.user_agents.is_empty() {
-        "*"
+        config.user_agent.as_deref().unwrap_or("*")
     } else {
         sent_user_agent
     };
@@ -804,6 +805,49 @@ mod tests {
         assert!(
             !result.is_allowed,
             "a robots.txt group naming the agent this request actually sent must block it"
+        );
+    }
+
+    /// Without rotation, `scrape()` must match robots.txt against the configured agent, not
+    /// the `*` group: the group naming that agent decides both `is_allowed` and `crawl_delay`.
+    #[tokio::test]
+    async fn scrape_without_rotation_matches_robots_txt_against_the_configured_agent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let robots = "User-agent: *\nCrawl-delay: 5\nAllow: /\n\nUser-agent: AgentA\nCrawl-delay: 2\nDisallow: /\n";
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(robots)
+                    .append_header("content-type", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig {
+            respect_robots_txt: true,
+            user_agent: Some("AgentA".to_owned()),
+            ..CrawlConfig::default()
+        };
+        config.ssrf.deny_private = false;
+        let resp = response("text/html", "<html><body>x</body></html>");
+
+        let url = format!("{}/page", mock.uri());
+        let result = scrape_from_crawl_response(&url, &resp, None, &config, None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            !result.is_allowed,
+            "the robots.txt group naming the configured agent must block the page"
+        );
+        assert_eq!(
+            result.crawl_delay,
+            Some(2),
+            "the crawl delay must come from the group naming the configured agent, not `*`"
         );
     }
 
