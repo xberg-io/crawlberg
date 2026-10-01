@@ -231,13 +231,12 @@ title: "Changelog"
 - **A stalled committed-document read ignored `browser.timeout`.** `browser.timeout` bounded only
   the navigation block; after navigation, the committed-document HTML read — `page.content()`, a
   renderer-answered CDP command, in the scrape path and as the final-HTML read in the interact
-  path — inherited the CDP client's fixed 30-second timeout. A page that keeps a main-frame
-  navigation in flight — one that replaces itself before any new document commits — holds
-  renderer commands, so that read stalled the full 30 seconds even though the fetch had long
-  since exceeded its budget. Both document reads are now bounded by a fresh `browser.timeout`
-  each, and a timed-out document read fails as a browser timeout naming the read and the budget.
-  The accompanying URL reads are defensively bounded the same way and keep their existing
-  non-fatal fallback to the requested address. (#567)
+  path — inherited the CDP client's fixed 30-second timeout. A page whose scripts saturate the
+  renderer's main thread queues that command behind the work, so the read stalled the full 30
+  seconds even though the fetch had long since exceeded its budget. Both document reads are now
+  bounded by a fresh `browser.timeout` each, and a timed-out document read fails as a browser
+  timeout naming the read and the budget. The accompanying URL reads are defensively bounded
+  the same way and keep their existing non-fatal fallback to the requested address. (#567)
 - **A stalled module script cost 10 seconds for every module script after it.** The native browser
   backend waited, after each module script, until nothing at all was pending on the page. A module
   whose top-level `await` never settled left work pending forever, so each later module script also
