@@ -190,6 +190,28 @@ title: "Changelog"
 
 ### Fixed
 
+- **A stalled module script cost 10 seconds for every module script after it.** The native browser
+  backend waited, after each module script, until nothing at all was pending on the page. A module
+  whose top-level `await` never settled left work pending forever, so each later module script also
+  waited out its full 10-second budget: a page with one stalled module and two after it took 30
+  seconds to render. Each module script now waits only for its own evaluation, so the stalled module
+  costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
+  after the next module script runs. (#486)
+
+- **An awaited script evaluation waited for the whole page to go idle.** The native browser backend
+  ran an awaited evaluation or function call until nothing at all was pending on the page. A page
+  with a fetch that never answers made every awaited evaluation wait out a 5-second budget, even
+  for `Promise.resolve(1)`: two such evaluations took 10 seconds. Each awaited evaluation now waits
+  only for its own promise, for at most 5 seconds, and an error from other work on the page no
+  longer ends the wait early. An evaluation that did not settle in time used to return the result
+  of the evaluation before it; it now comes back as `undefined`. (#541)
+
+- **A classic script could hold its page for 5 seconds after it finished.** The native browser
+  backend runs each classic script under a 5-second watchdog. When the script finished before the
+  watchdog thread started, which happens on a loaded host, the watchdog missed the signal and slept
+  out its full budget while the page waited for it. The watchdog now checks whether the script is
+  done before it starts to wait. (#566)
+
 - **Chrome's WebSocket, WebTransport and WebRTC traffic, and a second DNS answer, reached addresses
   the SSRF policy refuses.** The request check sees only HTTP requests, so a WebSocket opened a
   connection to a denied address, WebTransport and WebRTC sent UDP datagrams to one, and Chrome
@@ -377,6 +399,15 @@ title: "Changelog"
   action now fails with the SSRF policy error that names the refused URL. A refused request counts
   for the action that was running when the check received it from Chrome, so on a busy host it can
   count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A scrape on a `browser_profile` could fail right after another one on the same profile.** A
+  scrape returns before its Chrome has exited, and Chrome writes the profile until it exits. A
+  scrape that started then copied the profile while Chrome renamed files in it, and failed with
+  "failed to copy profile file". A session on a saved profile now holds the profile until its
+  Chrome has exited, or has been killed after `shutdown_timeout`. A session on an unsaved profile
+  copies the profile only while no Chrome writes it, and two saved sessions on one profile no
+  longer run at the same time. A session that waits for the profile counts the wait against its
+  `overall_timeout`. This applies to sessions in one process. A symlink to a profile directory
+  shares the hold of the directory it points to. (#524)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of
