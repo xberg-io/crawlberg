@@ -6,6 +6,12 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **In browser mode, `max_redirects` now counts the navigations a page starts.** A meta refresh
+  or a script navigation counts as one redirect, and past the limit the page stays where it is.
+  A crawl with a low `max_redirects` that relied on a page's script to move it to the real page,
+  such as a challenge page, needs a higher limit. In `crawlberg-browser`, `NativeBrowserConfig`
+  gains `max_redirects` and `RenderedPage` gains `redirects`, so a struct literal of either needs
+  the new field; `NativeBrowserConfig::default()` sets no limit. (#117, #193, #115)
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
   supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
@@ -39,10 +45,11 @@ All notable changes to crawlberg are documented here.
   empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
   your code reads the body of such a page, expect an empty string. (#121)
 
-- **`interact` on the Chromiumoxide backend now follows at most `max_redirects` redirects.** The
-  default is 10. It followed every redirect a chain offered. For a longer chain, `interact`
-  returns the URL of the redirect at the limit, empty HTML, and a failed result for each action.
-  If an `interact` call must follow a longer chain, raise `max_redirects`. (#116)
+- **`interact` now follows at most `max_redirects` redirects.** The default is 10. The
+  Chromiumoxide backend followed every redirect a chain offered, and the native backend followed
+  up to 20. For a longer chain, `interact` returns the URL of the redirect at the limit. On the
+  Chromiumoxide backend it also returns empty HTML and a failed result for each action. If an
+  `interact` call must follow a longer chain, raise `max_redirects`. (#116, #115)
 
 - **A Chromiumoxide browser fetch or `interact` session fails when Chrome reports no main
   frame.** The redirect limit counts only the redirects of the page's main frame, so crawlberg
@@ -286,23 +293,60 @@ All notable changes to crawlberg are documented here.
   chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
   refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
   redirect response at the limit, with the same redirect count, status and final URL that HTTP
-  mode reports, and the next hop is never requested. Only the redirects of the requested page
-  count, and this applies to the Chromiumoxide backend. (#90)
+  mode reports, and the next hop is never requested. This applies to both browser backends.
+  (#90, #115)
 
-  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
-  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
-  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
-  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
-  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
-  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
-  mode does not. (#117)
+  A navigation the page starts itself also counts: a meta refresh Chrome acts on counts as one
+  redirect, as it does in HTTP mode, and so does a script navigation such as `location.replace`.
+  Each redirect such a navigation follows counts too. The limit covers every navigation of the
+  page until the crawl reads it, and past the limit the page keeps the document it has. Before,
+  only the redirects before the first document counted, so a page could lead Chrome through any
+  number of refreshes or script navigations. A redirect inside an iframe does not count.
+  (#117, #193)
+
+- **A native browser scrape skipped the redirect chain.** It did not follow a meta refresh, so
+  it returned the refresh page where HTTP mode returns the page the refresh points at. It also
+  reported a seed that answers 404 as a page with status 404 when the seed had no trailing
+  slash, where HTTP mode fails with `not_found`. A native scrape now takes the same redirect
+  chain as HTTP mode and uses the redirect count the backend reports. (#529, #530)
+
+- **A native browser scrape lost the cookies a meta refresh page set.** Each hop of the redirect
+  chain is its own native render, and each render started with an empty cookie jar, so the request
+  to the refresh target did not carry the refresh page's cookies and the result did not list them.
+  The chain now carries the jar from one hop to the next, with the Secure and HttpOnly flags of
+  each cookie.
+
+- **The native browser stored cookies that a page had no right to set.** A page could set a
+  cookie for another host with a `Domain` attribute, for example a page on `127.0.0.1` for
+  `localhost`, and the native browser then sent that cookie to the other host, after a 302 or a
+  meta refresh. It also stored a Secure cookie that a page set over plain http. The native
+  browser now ignores a cookie whose `Domain` does not match the host that set it, and a Secure
+  cookie set over http.
+  It also ignores a cookie whose `Domain` is a public suffix, such as `co.uk`, `github.io` or
+  `localhost`, unless the host that set it has that exact name.
+  A cookie set without a `Domain` attribute now goes back to the host that set it only, not to
+  that host's subdomains. In `crawlberg-browser`, `NativeCookie` gains `host_only`, so a struct
+  literal of it needs the new field.
+
+- **The native browser matched a cookie by its name alone.** A cookie with the same name but
+  another path, or another `Domain` setting, replaced the first cookie. A deletion for one path
+  removed the cookie at every path. A cookie set without a `Path` took the whole request path, a
+  `Path` that did not start with `/` was kept as given, and the path `/only` also matched
+  `/onlyfoo`. The native browser now identifies a cookie by its name, its path and whether it
+  has a `Domain`. A missing or relative `Path` gives the directory of the request path, and a
+  path matches only at a `/` boundary. A page over plain http can no longer overwrite or delete
+  a Secure cookie, and a `__Secure-` or `__Host-` cookie that breaks its prefix rules is ignored.
+
+- **A native scrape through a meta refresh listed only the last page's refused addresses.**
+  `ssrf_refused_urls` now lists the addresses the SSRF policy refused on every page of the chain.
+
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports
   the URL that answered, empty HTML, and a failed result for each action that names the status.
-  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
-  on the native backend `interact` still follows every redirect a chain offers, up to the
-  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+  The SSRF check still applies to every request. On the native backend `interact` follows at most
+  `max_redirects` redirects too, and stops on the redirect response at the limit. The limit covers
+  the navigation to the page, not the navigations the actions start. (#116, #140, #115)
 - **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
   stopped checking requests against the SSRF policy when the page finished loading, so a script
   that navigated during `extra_wait` reached any address. The check now stays on until the HTML

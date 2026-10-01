@@ -39,9 +39,11 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// closed or parked, so the requests the page sends during the extra wait, while it is read,
 /// and while it is screenshotted are checked too.
 ///
-/// Chrome follows at most `config.max_redirects` HTTP redirects. A chain longer than
-/// that ends on the redirect response at the limit, the way the HTTP fetch path ends.
-/// A response Chrome does not commit (204, 205, 304) ends the fetch the same way.
+/// Chrome follows at most `config.max_redirects` redirects: HTTP redirects, and the navigations
+/// the page starts (a meta refresh or a script) count one each. A chain of HTTP redirects longer
+/// than that ends on the redirect response at the limit, the way the HTTP fetch path ends. A
+/// navigation the page starts past the limit is dropped, and the page keeps its document. A
+/// response Chrome does not commit (204, 205, 304) ends the fetch on that response.
 pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -99,7 +101,8 @@ async fn render(
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 
@@ -115,16 +118,17 @@ async fn render(
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
+        let redirects = watch.redirects_followed();
         return Ok(BrowserPage {
             response: stopped_response(stop),
-            redirects: intercepted.redirects_followed,
-            redirected: intercepted.redirects_followed > 0,
+            redirects,
+            redirected: redirects > 0,
             refused: Vec::new(),
         });
     }
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         if matches!(error, CrawlError::BrowserError { .. })
-            && let Some(outcome) = answered_error_page(page, watch, intercepted.redirects_followed).await
+            && let Some(outcome) = answered_error_page(page, watch, watch.redirects_followed()).await
         {
             return outcome;
         }
@@ -147,7 +151,7 @@ async fn render(
     .await?;
     let recorded = watch.document(&document.loader_id);
     if let Some(failed_url) = document.unreachable_url {
-        return error_page_outcome(failed_url, recorded, intercepted.redirects_followed);
+        return error_page_outcome(failed_url, recorded, watch.redirects_followed());
     }
     let (status, headers, redirected) = recorded.map_or_else(
         || (RENDERED_PAGE_STATUS, HashMap::new(), false),
@@ -159,6 +163,9 @@ async fn render(
     let final_url = document.url;
 
     let body_bytes = html.as_bytes().to_vec();
+    // ~keep Read after the extra wait and the page read: a navigation the page starts during
+    // ~keep them counts too.
+    let redirects = watch.redirects_followed();
 
     Ok(BrowserPage {
         response: HttpResponse {
@@ -171,7 +178,7 @@ async fn render(
             final_url,
             screenshot,
         },
-        redirects: intercepted.redirects_followed,
+        redirects,
         redirected,
         refused: Vec::new(),
     })
@@ -196,7 +203,7 @@ async fn answered_error_page(
 }
 
 /// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
-/// response, if one arrived, is `recorded`. `redirects` are the HTTP redirects of the seed.
+/// response, if one arrived, is `recorded`. `redirects` are the redirects the main frame followed.
 ///
 /// ~keep The error page is Chrome's, never the server's content. When the server answered, the
 /// ~keep response is reported with its status and headers and no body, and HTTP mode's status

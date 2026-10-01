@@ -1228,3 +1228,103 @@ async fn native_interact_lists_the_refused_requests() {
         "the denied address must receive nothing: {received:?}"
     );
 }
+
+/// A native interact config at `max_redirects`.
+#[cfg(feature = "browser-native")]
+fn native_interact_config(max_redirects: usize) -> CrawlConfig {
+    CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            ..BrowserConfig::default()
+        },
+        max_redirects,
+        ..allow_private_config()
+    }
+}
+
+/// Native `interact` follows at most `max_redirects` redirects to reach its page (#115).
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_stops_a_chain_longer_than_max_redirects() {
+    let mock = MockServer::start().await;
+    for hop in 0..5 {
+        let from = if hop == 0 { "/".to_owned() } else { format!("/r{hop}") };
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(301).append_header("location", format!("/r{}", hop + 1)))
+            .mount(&mock)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/r5"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+
+    let engine = create_engine(Some(native_interact_config(2))).unwrap();
+    let result = interact(&engine, &format!("{}/", mock.uri()), vec![PageAction::Scrape])
+        .await
+        .unwrap();
+
+    assert_eq!(result.final_url.trim_start_matches(&mock.uri()), "/r2");
+    let requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    assert!(
+        !requested.iter().any(|p| p == "/r3"),
+        "native interact must not request past the limit, requested: {requested:?}"
+    );
+}
+
+/// The limit bounds the navigation to the seed only: a click that navigates afterwards is the
+/// caller's own and is followed even at `max_redirects = 0`.
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_follows_a_click_navigation_at_max_redirects_zero() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><a id="next" href="/next">Next</a></body></html>"#,
+            "text/html",
+        ))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/next"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/landed"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/landed"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><h1 id="arrived">Arrived</h1></body></html>"#,
+            "text/html",
+        ))
+        .mount(&mock)
+        .await;
+
+    let engine = create_engine(Some(native_interact_config(0))).unwrap();
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Click {
+                selector: "#next".to_string(),
+            },
+            PageAction::Scrape,
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert!(result.action_results.iter().all(|action| action.success));
+    assert!(result.final_url.ends_with("/landed"), "{}", result.final_url);
+    assert!(result.final_html.contains("id=\"arrived\""));
+}

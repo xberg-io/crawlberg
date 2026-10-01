@@ -398,6 +398,16 @@ fn canonical_redirect_key(url: &str) -> String {
         .unwrap_or_else(|_| url.to_owned())
 }
 
+/// How a redirect chain fetches each hop.
+#[derive(Clone, Copy)]
+pub(crate) enum Hop {
+    /// [`CrawlEngine::fetch_response`]: the tiers the configuration selects.
+    Fetch,
+    /// A render on the native browser backend that keeps the page's browser extras.
+    #[cfg(feature = "browser-native")]
+    NativeRender,
+}
+
 /// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
 ///
 /// This is the shared redirect-following implementation used by both
@@ -422,16 +432,25 @@ fn canonical_redirect_key(url: &str) -> String {
 /// `Some(agent)` with no policy, so the one pick its own per-page robots check already made is
 /// the one that reaches the wire here too (crawlberg#483) -- native's own frontier loop still
 /// picks entirely through `policy`, so passing `None` here changes nothing for it.
+/// `hop` says how each hop is fetched.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
     max_redirects: usize,
     mut policy: Option<&mut RedirectPolicy<'_>>,
     override_user_agent: Option<&str>,
+    hop: Hop,
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
     let mut browser_used = false;
+    // ~keep Each native hop is its own render, so the chain carries the jar from one to the next,
+    // ~keep as a single browser session would: the refresh target gets the refresh page's cookies.
+    #[cfg(feature = "browser-native")]
+    let mut native_jar: Vec<crawlberg_browser::adapter::NativeCookie> = Vec::new();
+    // ~keep A hop the chain leaves still sent its page's requests, so the result lists what the
+    // ~keep SSRF check refused on every hop, not only on the page the chain lands on.
+    let mut refused_on_earlier_hops: Vec<String> = Vec::new();
     loop {
         if let Some(policy) = policy.as_deref_mut()
             && let Some(refusal) = policy.admits(&chain.current_url, chain.redirect_count > 0).await?
@@ -459,10 +478,16 @@ pub(crate) async fn follow_redirects(
         // ~keep The browser tier follows redirects inside Chrome, so it gets the hops this
         // ~keep chain has left rather than the whole limit.
         hop_engine.config.max_redirects = max_redirects.saturating_sub(chain.redirect_count);
-        let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url, forced_user_agent.as_deref())
-            .await
-        {
+        let fetched = match hop {
+            Hop::Fetch => {
+                hop_engine
+                    .fetch_response(&chain.current_url, forced_user_agent.as_deref())
+                    .await
+            }
+            #[cfg(feature = "browser-native")]
+            Hop::NativeRender => hop_engine.native_render(&chain.current_url, &mut native_jar).await,
+        };
+        let (mut resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -497,6 +522,7 @@ pub(crate) async fn follow_redirects(
 
         let mut page_scan = None;
         let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects, &mut page_scan) else {
+            prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
                 page_scan,
@@ -504,9 +530,20 @@ pub(crate) async fn follow_redirects(
             ))));
         };
 
+        if let Some(landing) = resp.landed.as_mut() {
+            refused_on_earlier_hops.append(&mut landing.refused);
+        }
         chain
             .advance_to(target, target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
+    }
+}
+
+/// Put the refusals of the hops before `resp` ahead of its own.
+fn prepend_refused(resp: &mut crate::tower::CrawlResponse, mut earlier: Vec<String>) {
+    if let Some(landing) = resp.landed.as_mut() {
+        earlier.append(&mut landing.refused);
+        landing.refused = earlier;
     }
 }
 
@@ -598,11 +635,11 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
-/// the one requested, with the cycle key it will occupy and the HTTP redirects taken to it.
+/// the one requested, with the cycle key it will occupy and the redirects taken to it.
 ///
-/// ~keep A navigation the page starts itself (script or meta refresh) is not an HTTP
-/// ~keep redirect of the requested page, so neither it nor any redirect it follows adds hops,
-/// ~keep but its landing still passes the policy checks before its content is used.
+/// ~keep The fetcher counts a navigation the page starts itself (a script or a meta refresh)
+/// ~keep as one redirect, as this chain counts a meta refresh, and its landing still passes the
+/// ~keep policy checks before its content is used.
 fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(Url, String, usize)> {
     let landed = resp.landed.as_ref()?;
     let parsed = Url::parse(&landed.url).ok().filter(is_fetchable_scheme)?;
@@ -921,6 +958,7 @@ mod tests {
                 url: url.to_owned(),
                 redirects: 0,
                 refused: Vec::new(),
+                extras: None,
             }));
             landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };
@@ -1267,6 +1305,7 @@ mod tests {
                 url: target_url.to_owned(),
                 redirects: 1,
                 refused: Vec::new(),
+                extras: None,
             }));
             let sources = [
                 ("Location", response(302, &[("location", target_url)], "")),
