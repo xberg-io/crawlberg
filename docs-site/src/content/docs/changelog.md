@@ -243,9 +243,10 @@ title: "Changelog"
 - **The SSRF check on a `browser.endpoint` browser turned interception off while the page of an
   `interact` session or a scrape, or a popup of it, was still open, on a busy host.** crawlberg
   cannot kill a browser it does not own, and the check stopped waiting for the close after a time
-  limit. The check now closes every page and popup of the session that is still open, and waits
-  until Chrome reports each one destroyed before it turns interception off. The browser and its
-  other tabs stay open. This applies to the Chromiumoxide backend. (#484)
+  limit. Each page of the check now has a browser context of its own. Closing the page disposes
+  that context, which takes the page, its popups and their pending requests before the check
+  turns interception off. The browser and its other tabs stay open. This applies to the
+  Chromiumoxide backend. (#484)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of
