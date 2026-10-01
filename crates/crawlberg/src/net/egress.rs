@@ -510,6 +510,12 @@ mod tests {
         HostMatcher::cidr("127.0.0.0/8").expect("valid CIDR")
     }
 
+    /// Both loopback ranges. A hosts file can map `localhost` to `::1` as well as `127.0.0.1`,
+    /// and a name with one refused answer is refused whole, so `localhost` needs both.
+    fn loopback_both_families() -> Vec<HostMatcher> {
+        vec![loopback_cidr(), HostMatcher::cidr("::1/128").expect("valid CIDR")]
+    }
+
     /// A listener that counts its connections and keeps each one open.
     async fn counting_listener(address: &str) -> (SocketAddr, Arc<AtomicUsize>) {
         let listener = TcpListener::bind(address).await.expect("the test listener must bind");
@@ -630,7 +636,7 @@ mod tests {
             "each refusal is recorded as host:port"
         );
 
-        let allowed = start(&policy(vec![loopback_cidr()]), None).await;
+        let allowed = start(&policy(loopback_both_families()), None).await;
         through(&allowed, "127.0.0.1", target.port())
             .await
             .expect("an allowlisted address must connect");
@@ -652,7 +658,7 @@ mod tests {
         let targets = permitted(
             "localhost",
             9,
-            &policy(vec![loopback_cidr()]),
+            &policy(loopback_both_families()),
             &Upstream::Direct,
             &refused,
         )
