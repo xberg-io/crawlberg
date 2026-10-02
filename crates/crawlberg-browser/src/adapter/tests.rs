@@ -647,8 +647,12 @@ fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
 
 #[test]
 #[allow(deprecated)]
-fn proxy_url_takes_a_path_or_query_and_refuses_one_a_password_cut_short() {
-    for url in ["http://proxy.test:8080/proxy", "http://proxy.test:8080/?x=1"] {
+fn proxy_url_takes_a_path_query_or_fragment_and_refuses_one_a_password_cut_short() {
+    for url in [
+        "http://proxy.test:8080/proxy",
+        "http://proxy.test:8080/?x=1",
+        "http://proxy.test:8080/#f",
+    ] {
         let config = NativeBrowserConfig {
             proxy_url: Some(url.to_string()),
             ..NativeBrowserConfig::default()
