@@ -16,6 +16,15 @@ pub enum ProxyError {
 
     #[error("the proxy address holds a user name or password; pass them as the proxy credentials")]
     CredentialsInAddress,
+
+    /// ~keep An unencoded `#`, `/` or `?` in a password ends the authority early, so the url crate
+    /// ~keep reads the user name as the host and leaves the rest, `@` included, in the path, the
+    /// ~keep query or the fragment.
+    #[error(
+        "the proxy address holds an @ after the host; if it is part of a user name or password, \
+         percent-encode it, or pass it as the proxy credentials"
+    )]
+    AtAfterHost,
 }
 
 /// The proxy schemes both browser HTTP clients can use.
@@ -47,6 +56,33 @@ pub fn check_proxy_url(proxy_url: &str) -> Result<Url, ProxyError> {
     }
 }
 
+/// The proxy at `proxy_url`, a URL that can hold a user name and password: the credentials,
+/// percent-decoded, move out of the address.
+///
+/// An address that an unencoded `#`, `/` or `?` in a credential cut short is refused by
+/// [`UpstreamProxy::new`].
+pub(crate) fn proxy_from_url(proxy_url: &str) -> Result<UpstreamProxy, ProxyError> {
+    let mut address = check_proxy_url(proxy_url)?;
+    let credentials = if address.username().is_empty() && address.password().is_none() {
+        None
+    } else {
+        let decoded = |part: &str| {
+            percent_encoding::percent_decode_str(part)
+                .decode_utf8()
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|_| ProxyError::Unparseable("a user name or password in it is not UTF-8".to_string()))
+        };
+        Some(ProxyCredentials {
+            username: decoded(address.username())?,
+            password: decoded(address.password().unwrap_or(""))?,
+        })
+    };
+    // ~keep Cannot fail: the address has a host, so it can hold userinfo and lose it.
+    let _ = address.set_username("");
+    let _ = address.set_password(None);
+    UpstreamProxy::new(address, credentials)
+}
+
 /// The user name and password a proxy asks for, kept apart from its address.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProxyCredentials {
@@ -76,11 +112,18 @@ pub struct UpstreamProxy {
 }
 
 impl UpstreamProxy {
-    /// Refuses an address with a scheme the clients cannot use, and an address that holds a
-    /// user name or password: those go in `credentials`.
+    /// Refuses an address with a scheme the clients cannot use, an address that holds a user
+    /// name or password (those go in `credentials`), and an address with an `@` after the host.
     pub fn new(address: Url, credentials: Option<ProxyCredentials>) -> Result<Self, ProxyError> {
         if !address.username().is_empty() || address.password().is_some() {
             return Err(ProxyError::CredentialsInAddress);
+        }
+        if [Some(address.path()), address.query(), address.fragment()]
+            .into_iter()
+            .flatten()
+            .any(|part| part.contains('@'))
+        {
+            return Err(ProxyError::AtAfterHost);
         }
         if !address.has_host() {
             return Err(ProxyError::Unparseable(
@@ -253,6 +296,35 @@ pub(crate) mod credentialed_proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_upstream_proxy_refuses_an_address_that_a_password_character_ended_early() {
+        for raw in [
+            "http://operator:4242#s3cr3t@proxy.test:8080",
+            "http://operator:4242/s3cr3t@proxy.test:8080",
+            "http://operator:4242?s3cr3t@proxy.test:8080",
+        ] {
+            let address = Url::parse(raw).expect("the url crate reads the cut-short address");
+            let err = UpstreamProxy::new(address, None).expect_err("an @ after the host must be refused");
+            assert!(err.to_string().contains("percent-encode"), "{raw}: {err}");
+            credential_urls::assert_not_shown(raw, &err.to_string());
+        }
+
+        let encoded = proxy_from_url("http://operator:s3%23cr%2F3t%3F@proxy.test:8080")
+            .expect("a percent-encoded password is usable");
+        assert_eq!(encoded.address().as_str(), "http://proxy.test:8080/");
+        let credentials = encoded.credentials().expect("the URL holds credentials");
+        assert_eq!(
+            (credentials.username.as_str(), credentials.password.as_str()),
+            ("operator", "s3#cr/3t?")
+        );
+
+        let path = Url::parse("http://proxy.test:8080/proxy").expect("parses");
+        assert!(
+            UpstreamProxy::new(path, None).is_ok(),
+            "a path with no @ stays usable, as the crawl config check accepts it"
+        );
+    }
 
     #[test]
     fn http_and_https_proxies_are_accepted() {

@@ -97,6 +97,15 @@ impl BrowserProfile {
         let base = profiles_base_dir()?;
         list_profiles_in(&base)
     }
+
+    /// The Chrome flag that points at this profile's data directory.
+    ///
+    /// Crawlberg sets `--user-data-dir` itself when it starts Chrome for a profile, and
+    /// `browser.chrome_args` refuses the flag, so this only helps a caller that starts Chrome itself.
+    #[deprecated(since = "1.9.0", note = "read `user_data_dir` instead")]
+    pub fn chrome_args(&self) -> Vec<String> {
+        vec![format!("--user-data-dir={}", self.user_data_dir.display())]
+    }
 }
 
 /// Base directory for all browser profiles: `<data_dir>/crawlberg/profiles`.

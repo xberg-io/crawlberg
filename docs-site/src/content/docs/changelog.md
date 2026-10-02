@@ -45,10 +45,20 @@ title: "Changelog"
   now fails with an error that names the fix: use the native backend, or set `browser.proxy`.
   HTTP fetches with the provider are not affected. (#248)
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
-  `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
-  user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address
-  that holds credentials. The same type replaces the proxy URL string in the browser context, the
-  HTTP clients, the module loader and the JS runtime constructors.
+  `NativeBrowserConfig` gains `proxy`, an `UpstreamProxy`: an address that holds no user name or
+  password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address that holds
+  credentials, and an address with an `@` after the host, which an unencoded `#`, `/` or `?` in a
+  password leaves behind. Its error never shows the address. The same type replaces the proxy URL
+  string in the browser context, the HTTP clients, the module loader and the JS runtime
+  constructors.
+- **`crawlberg-browser`: `NativeBrowserConfig.proxy_url` is deprecated.** Set `proxy` instead.
+  `proxy_url` still works, and a user name and password in the URL become the proxy
+  credentials. It gets the same checks as `proxy`, so an unencoded `#`, `/` or `?` in a password,
+  which leaves an `@` after the host, fails the render. A path, a query or a fragment with no `@`
+  is accepted, as in v1.8.0. An unusable
+  `proxy_url` fails the render even when `proxy` is set. When both are set, they must name the
+  same proxy: a different address or other credentials fail the render with an error that names
+  both fields.
 
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
@@ -115,12 +125,11 @@ title: "Changelog"
   `--flag=value` with a lowercase name, and join several `--enable-features` values with commas.
   (#79, #80)
 
-- **`BrowserProfile::chrome_args()` is removed.** It returned a single `--user-data-dir=<path>`
-  flag meant for a caller's `chrome_args` list, and `chrome_args` now refuses `--user-data-dir` in
-  any form, so the method had no valid return value left. Nothing in crawlberg ever called it: a
-  profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
-  already set the launch's `--user-data-dir` directly. Code that called
-  `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
+- **`BrowserProfile::chrome_args()` is deprecated.** It returns a single `--user-data-dir=<path>`
+  flag, and `chrome_args` now refuses `--user-data-dir` in any form, so the flag only helps a
+  caller that starts Chrome itself. Nothing in crawlberg calls it: a profile reaches Chrome
+  through `CrawlConfig.browser_profile` and `save_browser_profile`, which set the launch's
+  `--user-data-dir` directly. Read `BrowserProfile.user_data_dir` instead, or set
   `CrawlConfig.browser_profile` and let crawlberg apply it. (#254)
 
 - **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that

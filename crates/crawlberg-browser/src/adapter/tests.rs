@@ -408,6 +408,283 @@ async fn render_uses_a_scheme_less_proxy_as_an_http_proxy_with_its_credentials()
     }
 }
 
+/// The address of `upstream` with its user name and password in the URL, as a v1.8.0 caller
+/// set `proxy_url`.
+fn credentialed_proxy_url(upstream: &UpstreamProxy) -> String {
+    let mut url = upstream.address().clone();
+    let credentials = upstream.credentials().expect("the test proxy has credentials");
+    url.set_username(&credentials.username)
+        .expect("an http address takes a user name");
+    url.set_password(Some(&credentials.password))
+        .expect("an http address takes a password");
+    url.to_string()
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_through_the_deprecated_proxy_url_sends_its_credentials_to_the_proxy() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    let proxy_url = credentialed_proxy_url(&upstream);
+    for stealth in [false, true] {
+        let literal = NativeBrowserConfig {
+            proxy_url: Some(proxy_url.clone()),
+            stealth,
+            ..test_config()
+        };
+        let mut assigned = test_config();
+        assigned.stealth = stealth;
+        assigned.proxy_url = Some(proxy_url.clone());
+        for config in [literal, assigned] {
+            let page = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+                .await
+                .expect("the render must finish")
+                .unwrap_or_else(|e| panic!("stealth={stealth}: a render through proxy_url must succeed, got {e:?}"));
+            assert!(
+                page.html.contains("via-proxy"),
+                "stealth={stealth}: the page must come from the proxy: {}",
+                page.html
+            );
+        }
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "every render must go through the proxy"
+    );
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.len() >= 4,
+        "each of the four renders must reach the proxy: {requests:?}"
+    );
+    for request in requests.iter() {
+        assert_eq!(
+            credentialed_proxy::proxy_authorization(request),
+            Some(credentialed_proxy::expected_authorization()),
+            "the credentials in proxy_url must reach the proxy as Proxy-Authorization"
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_refuses_proxy_and_proxy_url_that_name_different_proxies() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let other = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    // ~keep The same address with other credentials is a different proxy too.
+    let differing = [
+        other.base_url.clone(),
+        credentialed_proxy_url(&credentialed_proxy::with_wrong_password(&upstream)),
+    ];
+    for proxy_url in differing {
+        let config = NativeBrowserConfig {
+            proxy: Some(upstream.clone()),
+            proxy_url: Some(proxy_url),
+            ..test_config()
+        };
+        let error = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+            .await
+            .expect("a refused render must return, not hang")
+            .map(|page| page.html)
+            .expect_err("proxy and a different proxy_url must be refused");
+        let message = error.to_string();
+        assert!(matches!(error, PageError::InvalidConfig(_)), "{error:?}");
+        assert!(
+            message.contains("proxy and proxy_url"),
+            "the error must name both fields: {message}"
+        );
+        assert!(!message.contains(credentialed_proxy::PASSWORD), "{message}");
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must fetch nothing"
+    );
+    assert_eq!(
+        other.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must not reach proxy_url"
+    );
+    assert!(
+        requests.lock().expect("lock").is_empty(),
+        "a refused render must not reach proxy"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_with_proxy_and_an_equal_proxy_url_goes_through_proxy() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    let config = NativeBrowserConfig {
+        proxy_url: Some(credentialed_proxy_url(&upstream)),
+        proxy: Some(upstream),
+        ..test_config()
+    };
+    let page = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+        .await
+        .expect("the render must finish")
+        .expect("proxy and an equal proxy_url must render");
+    assert!(
+        page.html.contains("via-proxy"),
+        "the page must come from proxy: {}",
+        page.html
+    );
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "the render must go through proxy"
+    );
+    assert!(
+        !requests.lock().expect("lock").is_empty(),
+        "the render must reach proxy"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_refuses_an_unusable_proxy_url_even_when_proxy_is_set() {
+    use crate::net::proxy::{credential_urls, credentialed_proxy};
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    // ~keep An unencoded `#`, `/` or `?` ends the address at port 4242 and leaves the password in the
+    // ~keep fragment, the path or the query.
+    let misread = [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ];
+    for url in credential_urls::URLS.into_iter().chain(misread) {
+        for proxy in [None, Some(upstream.clone())] {
+            let with_proxy = proxy.is_some();
+            let config = NativeBrowserConfig {
+                proxy,
+                proxy_url: Some(url.to_string()),
+                ..test_config()
+            };
+            let error = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+                .await
+                .expect("a refused render must return, not hang")
+                .map(|page| page.html)
+                .expect_err(&format!("proxy_url {url} must be refused (proxy set: {with_proxy})"));
+            assert!(
+                matches!(error, PageError::InvalidConfig(_)),
+                "proxy_url {url} (proxy set: {with_proxy}): {error:?}"
+            );
+            credential_urls::assert_not_shown(url, &error.to_string());
+            credential_urls::assert_not_shown(url, &format!("{config:?}"));
+        }
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must fetch nothing"
+    );
+    assert!(
+        requests.lock().expect("lock").is_empty(),
+        "a refused render must not reach proxy"
+    );
+}
+
+#[test]
+#[allow(deprecated)]
+fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
+    let config = NativeBrowserConfig {
+        proxy_url: Some("http://op%40erator:p%23ss%2Fw@proxy.test:8080".to_string()),
+        ..NativeBrowserConfig::default()
+    };
+    let proxy = config
+        .effective_proxy()
+        .expect("a usable proxy_url")
+        .expect("proxy_url is set");
+    assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/");
+    let credentials = proxy.credentials().expect("the URL holds credentials");
+    assert_eq!(
+        (credentials.username.as_str(), credentials.password.as_str()),
+        ("op@erator", "p#ss/w")
+    );
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("erator") && !debug.contains("p%23ss"), "{debug}");
+
+    let bare = NativeBrowserConfig {
+        proxy_url: Some("proxy.test:3128".to_string()),
+        ..NativeBrowserConfig::default()
+    };
+    let proxy = bare
+        .effective_proxy()
+        .expect("a usable proxy_url")
+        .expect("proxy_url is set");
+    assert_eq!(proxy.address().as_str(), "http://proxy.test:3128/");
+    assert!(proxy.credentials().is_none());
+    for (url, username, password) in [
+        ("http://user@proxy.test:8080", "user", ""),
+        ("http://:pw@proxy.test:8080", "", "pw"),
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .expect("a usable proxy_url")
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/", "{url}");
+        let credentials = proxy
+            .credentials()
+            .unwrap_or_else(|| panic!("{url}: a user name or a password alone is still a credential"));
+        assert_eq!(
+            (credentials.username.as_str(), credentials.password.as_str()),
+            (username, password),
+            "{url}"
+        );
+    }
+    assert!(matches!(NativeBrowserConfig::default().effective_proxy(), Ok(None)));
+}
+
+#[test]
+#[allow(deprecated)]
+fn proxy_url_takes_a_path_query_or_fragment_and_refuses_one_a_password_cut_short() {
+    for url in [
+        "http://proxy.test:8080/proxy",
+        "http://proxy.test:8080/?x=1",
+        "http://proxy.test:8080/#f",
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .unwrap_or_else(|e| panic!("{url} must stay usable, as in v1.8.0: {e}"))
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), url);
+        assert!(proxy.credentials().is_none(), "{url}");
+    }
+    let at_after_host = PageError::InvalidConfig(ProxyError::AtAfterHost.to_string()).to_string();
+    for url in [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let error = config
+            .effective_proxy()
+            .expect_err("a password cut short must be refused");
+        assert_eq!(
+            error.to_string(),
+            at_after_host,
+            "{url}: the proxy type's own rule refuses it"
+        );
+    }
+}
+
 #[tokio::test]
 async fn screenshot_content_height_uses_the_dom_scroll_height_when_larger_than_static_hints() {
     let server = TestServer::start().await;

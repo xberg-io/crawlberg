@@ -69,6 +69,7 @@ pub(super) async fn run(
     })
 }
 
+#[allow(deprecated)]
 fn build_native_config(
     config: &CrawlConfig,
     url: &str,
@@ -88,6 +89,7 @@ fn build_native_config(
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy: crate::native_browser::native_proxy(config, url)?,
+        proxy_url: None,
         prior_cookies: Vec::<NativeCookie>::new(),
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),

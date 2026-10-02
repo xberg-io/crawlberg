@@ -217,6 +217,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 }
 
 /// Assemble the native backend's render configuration from the crawl config.
+#[allow(deprecated)]
 fn build_native_config(
     config: &CrawlConfig,
     url: &str,
@@ -231,6 +232,7 @@ fn build_native_config(
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy: native_proxy(config, url)?,
+        proxy_url: None,
         prior_cookies,
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
