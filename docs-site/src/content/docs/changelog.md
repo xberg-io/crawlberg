@@ -47,8 +47,10 @@ title: "Changelog"
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
   `NativeBrowserConfig` gains `proxy`, an `UpstreamProxy`: an address that holds no user name or
   password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address that holds
-  credentials. The same type replaces the proxy URL string in the browser context, the HTTP
-  clients, the module loader and the JS runtime constructors.
+  credentials, and an address with an `@` after the host, which an unencoded `#`, `/` or `?` in a
+  password leaves behind. Its error never shows the address. The same type replaces the proxy URL
+  string in the browser context, the HTTP clients, the module loader and the JS runtime
+  constructors.
 - **`crawlberg-browser`: `NativeBrowserConfig.proxy_url` is deprecated.** Set `proxy` instead.
   `proxy_url` still works, and a user name and password in the URL become the proxy
   credentials. It gets the same checks as `proxy`, and a URL with a path, query or fragment is
