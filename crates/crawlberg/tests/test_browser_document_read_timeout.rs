@@ -28,11 +28,11 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 /// then a `setTimeout` at 300 ms starts repeating 5 s busy loops on the main thread, so every
 /// renderer-answered CDP command issued after ~300 ms queues behind main-thread work.
 ///
-/// ~keep Timing, so the READ bound fires and not the pre-existing NAV bound: `load` fires at
-/// ~keep ~0 ms and `page_fetch`'s navigation+ready block (goto + ~1 s settle, plain sleeps, no
-/// ~keep CDP round-trip) completes well inside `browser.timeout`; the `page.content()` read is
-/// ~keep therefore issued ~1.1-1.5 s, inside a busy block, so the fresh 3 s read bound fires —
-/// ~keep BrowserTimeout naming "reading the committed document" and "3s", total elapsed ~4-8 s.
+/// ~keep Timing, so the budget for the reads fires and not the navigation bound: `load` fires at
+/// ~keep ~0 ms, and the navigation and ready wait (goto plus plain sleeps, no CDP round trip) end
+/// ~keep well inside `browser.timeout`. The reads of the committed document start at ~1.1-1.5 s,
+/// ~keep inside a busy block, so their shared 3 s budget fires: a BrowserTimeout naming "reading
+/// ~keep the committed document" and "3s", ~4-8 s in total.
 ///
 /// ~keep A navigation the server accepts and never answers does not stall the reads: it waits in
 /// ~keep Chrome's browser process while the renderer keeps answering. The stall needs a busy
@@ -51,8 +51,8 @@ const SATURATING_PAGE: &str = "<!doctype html><html><head><title>saturated</titl
     </body></html>";
 
 /// Serves `/start` as a redirect to `/landing`, a page that starts one 8 s busy loop on its main
-/// thread right after its HTML is read. The HTML read answers, and the read of the final URL
-/// that follows it waits behind the busy loop.
+/// thread right after its HTML is read. The HTML read answers, and the check of the committed
+/// document that follows it waits behind the busy loop.
 ///
 /// ~keep The page wraps the `outerHTML` getter that chromiumoxide's `content()` script calls, so
 /// ~keep the busy loop starts at the HTML read itself rather than at a fixed time.
@@ -125,7 +125,7 @@ fn read_bound_config() -> CrawlConfig {
             mode: BrowserMode::Always,
             // ~keep The bound under test: the stalled document read must fire at 3s, not at
             // ~keep chromiumoxide's internal 30s. overall_timeout is deliberately far larger so
-            // ~keep the ONLY deadline that can end this fetch is the new per-read bound.
+            // ~keep the ONLY deadline that can end this fetch is the budget shared by the reads.
             timeout: Duration::from_secs(3),
             overall_timeout: Duration::from_secs(30),
             ..BrowserConfig::default()
@@ -241,11 +241,11 @@ async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() 
     );
 }
 
-/// Interact path, URL read: only the read of the final URL stalls. The requested URL redirects,
-/// so a fallback to it would report a URL the page never had.
+/// Interact path, document check: only the check of the committed document after the HTML read
+/// stalls, and the budget shared by the reads must still end the session.
 #[tokio::test]
 #[serial_test::serial(browser_document_read_timeout)]
-async fn interact_does_not_report_the_requested_url_when_the_url_read_times_out() {
+async fn interact_fails_within_browser_timeout_when_the_document_check_after_the_read_stalls() {
     let url = format!("{}start", spawn_redirect_to_busy_after_read_server());
     let engine = create_engine(Some(read_bound_config())).expect("engine must build");
 
@@ -256,7 +256,7 @@ async fn interact_does_not_report_the_requested_url_when_the_url_read_times_out(
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(
-                "interact_does_not_report_the_requested_url_when_the_url_read_times_out",
+                "interact_fails_within_browser_timeout_when_the_document_check_after_the_read_stalls",
                 &message,
             );
         }
@@ -272,6 +272,6 @@ async fn interact_does_not_report_the_requested_url_when_the_url_read_times_out(
             );
             assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}: {message}");
         }
-        Err(error) => panic!("expected a BrowserTimeout for the stalled URL read, got {error:?}"),
+        Err(error) => panic!("expected a BrowserTimeout for the stalled document check, got {error:?}"),
     }
 }
