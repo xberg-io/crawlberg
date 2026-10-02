@@ -83,8 +83,13 @@ pub(crate) async fn scrape_from_crawl_response(
     let extraction = body.extraction;
     let js_render_hint = body.js_render_hint;
     let downloaded_assets = download_discovered_assets(body.asset_refs, config, &client).await;
-    let markdown =
-        crate::markdown::convert_to_markdown(&decoded.body, &parsed_url, &merged_content_config(config)).await;
+    let markdown = crate::markdown::convert_to_markdown(
+        &decoded.body,
+        Some(body.page_scan),
+        &parsed_url,
+        &merged_content_config(config),
+    )
+    .await;
 
     Ok(ScrapeResult {
         status_code: resp.status,
@@ -131,6 +136,8 @@ struct BodyExtraction {
     asset_refs: Vec<crate::assets::AssetRef>,
     page_robots: RobotsDirectives,
     js_render_hint: bool,
+    /// The read of the page, kept for the markdown's link pre-pass.
+    page_scan: PageScan,
 }
 
 /// Everything the extraction pipeline reads out of the response body.
@@ -159,11 +166,14 @@ fn extract_from_body(
     let asset_refs = discover_page_assets(&doc, &parsed_html, parsed_url, decoded.is_html, config);
     let word_count = extraction.metadata.word_count.unwrap_or(0);
     let js_render_hint = decoded.is_html && browser_detect::detect_js_render_needed(&doc, word_count);
+    // ~keep The tree borrows the masked page, so it goes before the page is detached.
+    drop(doc);
     Ok(BodyExtraction {
         extraction,
         asset_refs,
         page_robots,
         js_render_hint,
+        page_scan: parsed_html.detach(),
     })
 }
 

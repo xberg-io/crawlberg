@@ -93,6 +93,8 @@ pub(super) struct FetchResult {
     pub(super) redirect_count: usize,
     /// The URLs the browser's SSRF check refused for requests the page sent.
     pub(super) ssrf_refused_urls: Vec<String>,
+    /// The extraction's read of `body`, taken by the markdown conversion so the page is read once.
+    pub(super) page_scan: Option<PageScan>,
 }
 
 /// What a spawned frontier fetch produced.
@@ -122,6 +124,8 @@ pub(super) struct PageExtraction {
     pub(super) is_binary: bool,
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
+    /// The read of `body` the extraction used, kept for the markdown.
+    pub(super) page_scan: PageScan,
 }
 
 /// Mutable state accumulated during a crawl.
@@ -252,6 +256,7 @@ pub(super) fn blocking_extract_page(
         (extraction, header_robots)
     };
 
+    let page_scan = parsed_html.detach();
     PageExtraction {
         body,
         body_bytes,
@@ -260,5 +265,6 @@ pub(super) fn blocking_extract_page(
         is_binary,
         is_pdf,
         detected_charset,
+        page_scan,
     }
 }

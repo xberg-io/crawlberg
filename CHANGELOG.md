@@ -228,6 +228,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
+  found the page's base with a second parser. That parser read markup inside `<title>`,
+  `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so
+  `<title><base href="/x/"></title>` moved every relative link under `/x/`. It now uses the first
+  `<base href>` in tree order, the same base as the links list, and leaves markup inside raw text
+  as written.
+
 - **A browser read of the committed document ignored `browser.timeout`.** `browser.timeout`
   bounded only the navigation. The reads after it, of the HTML, the committed document and the
   screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held
