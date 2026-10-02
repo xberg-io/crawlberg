@@ -47,6 +47,40 @@ pub fn check_proxy_url(proxy_url: &str) -> Result<Url, ProxyError> {
     }
 }
 
+/// The proxy at `proxy_url`, a URL that can hold a user name and password: the credentials,
+/// percent-decoded, move out of the address.
+///
+/// ~keep A `#`, `/` or `?` that is not percent-encoded in a credential ends the address early
+/// ~keep and leaves the rest of the credential in the path, query or fragment, so those are refused.
+pub(crate) fn proxy_from_url(proxy_url: &str) -> Result<UpstreamProxy, ProxyError> {
+    let mut address = check_proxy_url(proxy_url)?;
+    if address.path() != "/" || address.query().is_some() || address.fragment().is_some() {
+        return Err(ProxyError::Unparseable(
+            "a proxy address takes no path, query or fragment; percent-encode a #, / or ? in its user \
+             name or password"
+                .to_string(),
+        ));
+    }
+    let credentials = if address.username().is_empty() && address.password().is_none() {
+        None
+    } else {
+        let decoded = |part: &str| {
+            percent_encoding::percent_decode_str(part)
+                .decode_utf8()
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|_| ProxyError::Unparseable("a user name or password in it is not UTF-8".to_string()))
+        };
+        Some(ProxyCredentials {
+            username: decoded(address.username())?,
+            password: decoded(address.password().unwrap_or(""))?,
+        })
+    };
+    // ~keep Cannot fail: the address has a host, so it can hold userinfo and lose it.
+    let _ = address.set_username("");
+    let _ = address.set_password(None);
+    UpstreamProxy::new(address, credentials)
+}
+
 /// The user name and password a proxy asks for, kept apart from its address.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProxyCredentials {

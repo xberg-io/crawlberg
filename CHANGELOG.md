@@ -45,10 +45,15 @@ All notable changes to crawlberg are documented here.
   now fails with an error that names the fix: use the native backend, or set `browser.proxy`.
   HTTP fetches with the provider are not affected. (#248)
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
-  `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
-  user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address
-  that holds credentials. The same type replaces the proxy URL string in the browser context, the
-  HTTP clients, the module loader and the JS runtime constructors.
+  `NativeBrowserConfig` gains `proxy`, an `UpstreamProxy`: an address that holds no user name or
+  password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address that holds
+  credentials. The same type replaces the proxy URL string in the browser context, the HTTP
+  clients, the module loader and the JS runtime constructors.
+- **`crawlberg-browser`: `NativeBrowserConfig.proxy_url` is deprecated.** Set `proxy` instead.
+  `proxy_url` still works: a render uses it only when `proxy` is unset, and a user name and
+  password in the URL become the proxy credentials. It gets the same checks as `proxy`, and a
+  URL with a path, query or fragment is refused, so an unencoded `#`, `/` or `?` in a password
+  fails the render. An unusable `proxy_url` fails the render even when `proxy` is set.
 
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not

@@ -1276,6 +1276,7 @@ dependencies = [
  "futures",
  "html5ever",
  "ipnet",
+ "percent-encoding",
  "png",
  "precomputed-hash",
  "psl",

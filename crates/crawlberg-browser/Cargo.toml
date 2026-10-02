@@ -23,6 +23,7 @@ deno_error = { workspace = true }
 futures = { workspace = true }
 html5ever = { workspace = true }
 ipnet = { workspace = true }
+percent-encoding = { workspace = true }
 png = { workspace = true }
 precomputed-hash = { workspace = true }
 psl = { workspace = true }

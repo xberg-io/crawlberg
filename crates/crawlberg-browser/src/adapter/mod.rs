@@ -115,6 +115,11 @@ pub struct NativeBrowserConfig {
     pub stealth: bool,
     /// Proxy (http/https only). No SOCKS5 — use chromiumoxide for that.
     pub proxy: Option<UpstreamProxy>,
+    /// The proxy as a URL, used only when `proxy` is unset. A user name and password in the URL
+    /// become the proxy credentials. It gets the same checks as `proxy`, so an unusable value
+    /// fails the render even when `proxy` is set.
+    #[deprecated(since = "1.9.0", note = "set `proxy` to an `UpstreamProxy` instead")]
+    pub proxy_url: Option<String>,
     /// Cookies pre-populated into the jar before navigation.
     pub prior_cookies: Vec<NativeCookie>,
     /// URL patterns to block (supports `*` wildcards).
@@ -149,6 +154,7 @@ pub struct NativeBrowserConfig {
     pub max_redirects: Option<usize>,
 }
 
+#[allow(deprecated)]
 impl std::fmt::Debug for NativeBrowserConfig {
     /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
     /// auth config, and `prior_cookies`
@@ -163,6 +169,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             respect_robots_txt,
             stealth,
             proxy,
+            proxy_url,
             prior_cookies,
             block_url_patterns,
             eval_script,
@@ -182,6 +189,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("respect_robots_txt", respect_robots_txt)
             .field("stealth", stealth)
             .field("proxy", proxy)
+            .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
             .field("prior_cookies", prior_cookies)
             .field("block_url_patterns", block_url_patterns)
             .field(
@@ -201,6 +209,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
     }
 }
 
+#[allow(deprecated)]
 impl Default for NativeBrowserConfig {
     fn default() -> Self {
         Self {
@@ -211,6 +220,7 @@ impl Default for NativeBrowserConfig {
             respect_robots_txt: false,
             stealth: false,
             proxy: None,
+            proxy_url: None,
             prior_cookies: Vec::new(),
             block_url_patterns: Vec::new(),
             eval_script: None,
@@ -222,6 +232,20 @@ impl Default for NativeBrowserConfig {
             origin_headers: None,
             max_redirects: None,
         }
+    }
+}
+
+impl NativeBrowserConfig {
+    /// The proxy a render goes through: `proxy`, or else the deprecated `proxy_url`, which is
+    /// checked even when `proxy` is set.
+    #[allow(deprecated)]
+    pub(crate) fn effective_proxy(&self) -> Result<Option<UpstreamProxy>, ProxyError> {
+        let from_url = self
+            .proxy_url
+            .as_deref()
+            .map(crate::net::proxy::proxy_from_url)
+            .transpose()?;
+        Ok(self.proxy.clone().or(from_url))
     }
 }
 
@@ -471,9 +495,12 @@ async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserConte
         .ssrf
         .clone()
         .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
+    let proxy = config
+        .effective_proxy()
+        .map_err(|e| PageError::InvalidConfig(e.to_string()))?;
     let mut context = BrowserContext::with_ssrf(
         "crawlberg".to_string(),
-        config.proxy.clone(),
+        proxy,
         config.stealth,
         config.user_agent.clone(),
         ssrf,
