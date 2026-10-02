@@ -50,10 +50,12 @@ title: "Changelog"
   credentials. The same type replaces the proxy URL string in the browser context, the HTTP
   clients, the module loader and the JS runtime constructors.
 - **`crawlberg-browser`: `NativeBrowserConfig.proxy_url` is deprecated.** Set `proxy` instead.
-  `proxy_url` still works: a render uses it only when `proxy` is unset, and a user name and
-  password in the URL become the proxy credentials. It gets the same checks as `proxy`, and a
-  URL with a path, query or fragment is refused, so an unencoded `#`, `/` or `?` in a password
-  fails the render. An unusable `proxy_url` fails the render even when `proxy` is set.
+  `proxy_url` still works, and a user name and password in the URL become the proxy
+  credentials. It gets the same checks as `proxy`, and a URL with a path, query or fragment is
+  refused, so an unencoded `#`, `/` or `?` in a password fails the render. An unusable
+  `proxy_url` fails the render even when `proxy` is set. When both are set, they must name the
+  same proxy: a different address or other credentials fail the render with an error that names
+  both fields.
 
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not

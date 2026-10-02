@@ -115,9 +115,9 @@ pub struct NativeBrowserConfig {
     pub stealth: bool,
     /// Proxy (http/https only). No SOCKS5 — use chromiumoxide for that.
     pub proxy: Option<UpstreamProxy>,
-    /// The proxy as a URL, used only when `proxy` is unset. A user name and password in the URL
-    /// become the proxy credentials. It gets the same checks as `proxy`, so an unusable value
-    /// fails the render even when `proxy` is set.
+    /// The proxy as a URL. A user name and password in the URL become the proxy credentials. It
+    /// gets the same checks as `proxy`, and a render fails when it is unusable or names a
+    /// different proxy than `proxy`.
     #[deprecated(since = "1.9.0", note = "set `proxy` to an `UpstreamProxy` instead")]
     pub proxy_url: Option<String>,
     /// Cookies pre-populated into the jar before navigation.
@@ -236,16 +236,23 @@ impl Default for NativeBrowserConfig {
 }
 
 impl NativeBrowserConfig {
-    /// The proxy a render goes through: `proxy`, or else the deprecated `proxy_url`, which is
-    /// checked even when `proxy` is set.
+    /// The proxy a render goes through: `proxy` or the deprecated `proxy_url`. When both are set
+    /// they must name the same proxy.
     #[allow(deprecated)]
-    pub(crate) fn effective_proxy(&self) -> Result<Option<UpstreamProxy>, ProxyError> {
+    pub(crate) fn effective_proxy(&self) -> Result<Option<UpstreamProxy>, PageError> {
         let from_url = self
             .proxy_url
             .as_deref()
             .map(crate::net::proxy::proxy_from_url)
-            .transpose()?;
-        Ok(self.proxy.clone().or(from_url))
+            .transpose()
+            .map_err(|e| PageError::InvalidConfig(e.to_string()))?;
+        match (&self.proxy, from_url) {
+            (Some(proxy), Some(from_url)) if *proxy != from_url => Err(PageError::InvalidConfig(
+                "proxy and proxy_url name different proxies; set only proxy, as proxy_url is deprecated".to_string(),
+            )),
+            (Some(proxy), _) => Ok(Some(proxy.clone())),
+            (None, from_url) => Ok(from_url),
+        }
     }
 }
 
@@ -495,9 +502,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserConte
         .ssrf
         .clone()
         .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
-    let proxy = config
-        .effective_proxy()
-        .map_err(|e| PageError::InvalidConfig(e.to_string()))?;
+    let proxy = config.effective_proxy()?;
     let mut context = BrowserContext::with_ssrf(
         "crawlberg".to_string(),
         proxy,

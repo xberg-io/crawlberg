@@ -469,29 +469,75 @@ async fn render_through_the_deprecated_proxy_url_sends_its_credentials_to_the_pr
 
 #[tokio::test]
 #[allow(deprecated)]
-async fn render_with_both_proxy_and_proxy_url_goes_through_proxy() {
+async fn render_refuses_proxy_and_proxy_url_that_name_different_proxies() {
     use crate::net::proxy::credentialed_proxy;
     let server = TestServer::start().await;
-    let ignored = TestServer::start().await;
+    let other = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    // ~keep The same address with other credentials is a different proxy too.
+    let differing = [
+        other.base_url.clone(),
+        credentialed_proxy_url(&credentialed_proxy::with_wrong_password(&upstream)),
+    ];
+    for proxy_url in differing {
+        let config = NativeBrowserConfig {
+            proxy: Some(upstream.clone()),
+            proxy_url: Some(proxy_url),
+            ..test_config()
+        };
+        let error = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+            .await
+            .expect("a refused render must return, not hang")
+            .map(|page| page.html)
+            .expect_err("proxy and a different proxy_url must be refused");
+        let message = error.to_string();
+        assert!(matches!(error, PageError::InvalidConfig(_)), "{error:?}");
+        assert!(
+            message.contains("proxy and proxy_url"),
+            "the error must name both fields: {message}"
+        );
+        assert!(!message.contains(credentialed_proxy::PASSWORD), "{message}");
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must fetch nothing"
+    );
+    assert_eq!(
+        other.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must not reach proxy_url"
+    );
+    assert!(
+        requests.lock().expect("lock").is_empty(),
+        "a refused render must not reach proxy"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_with_proxy_and_an_equal_proxy_url_goes_through_proxy() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
     let (upstream, requests) = credentialed_proxy::start().await;
     let config = NativeBrowserConfig {
+        proxy_url: Some(credentialed_proxy_url(&upstream)),
         proxy: Some(upstream),
-        proxy_url: Some(ignored.base_url.clone()),
         ..test_config()
     };
     let page = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
         .await
         .expect("the render must finish")
-        .expect("the render through proxy must succeed");
+        .expect("proxy and an equal proxy_url must render");
     assert!(
         page.html.contains("via-proxy"),
         "the page must come from proxy: {}",
         page.html
     );
     assert_eq!(
-        ignored.accepted.load(Ordering::SeqCst),
+        server.accepted.load(Ordering::SeqCst),
         0,
-        "proxy_url must not be used when proxy is set"
+        "the render must go through proxy"
     );
     assert!(
         !requests.lock().expect("lock").is_empty(),
@@ -596,7 +642,7 @@ fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
             "{url}"
         );
     }
-    assert_eq!(NativeBrowserConfig::default().effective_proxy(), Ok(None));
+    assert!(matches!(NativeBrowserConfig::default().effective_proxy(), Ok(None)));
 }
 
 #[tokio::test]
