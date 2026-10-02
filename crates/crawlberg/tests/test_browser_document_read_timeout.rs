@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, ScrapeResult,
-    create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, PageAction,
+    create_engine, interact, scrape,
 };
 
 mod common;
@@ -106,9 +106,17 @@ fn read_bound_config() -> CrawlConfig {
     }
 }
 
-/// Shared by both tests: a `BrowserTimeout` naming the read and the budget, in well under the
+/// One short wait, so an interaction has an action to run before its final read.
+fn one_short_wait() -> Vec<PageAction> {
+    vec![PageAction::Wait {
+        milliseconds: Some(100),
+        selector: None,
+    }]
+}
+
+/// Shared by every test: a `BrowserTimeout` naming the read and the budget, in well under the
 /// 30 s the pre-fix reads stalled to. Skips (does not fail) on runners without Chrome.
-fn assert_bounded_read_error(test_name: &str, result: Result<ScrapeResult, CrawlError>, elapsed: Duration) {
+fn assert_bounded_read_error<T: std::fmt::Debug>(test_name: &str, result: Result<T, CrawlError>, elapsed: Duration) {
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
@@ -185,4 +193,22 @@ async fn pooled_fetch_applies_the_same_read_bound() {
     let elapsed = start.elapsed();
 
     assert_bounded_read_error("pooled_fetch_applies_the_same_read_bound", result, elapsed);
+}
+
+/// Interact path: the read of the final HTML after the actions has the same bound.
+#[tokio::test]
+#[serial_test::serial(browser_document_read_timeout)]
+async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() {
+    let url = spawn_document_never_settles_server();
+    let engine = create_engine(Some(read_bound_config())).expect("engine must build");
+
+    let start = Instant::now();
+    let result = interact(&engine, &url, one_short_wait()).await;
+    let elapsed = start.elapsed();
+
+    assert_bounded_read_error(
+        "interact_fails_within_browser_timeout_when_the_renderer_is_saturated",
+        result,
+        elapsed,
+    );
 }
