@@ -626,6 +626,7 @@ mod tests {
     }
 
     /// Serves one canned response per accepted connection, recording each raw request head.
+    /// Each response says `Connection: close`, so the client never reuses a connection this server has dropped.
     ///
     /// Returns the base URL and the shared log, so a test can assert on exactly what went
     /// over the wire rather than on what the builder code appears to do.
@@ -647,6 +648,7 @@ mod tests {
                     .push(String::from_utf8_lossy(&buf[..read]).to_string());
                 let response = responses.get(index).copied().unwrap_or("HTTP/1.1 200 OK\r\n\r\n");
                 index += 1;
+                let response = response.replacen("\r\n", "\r\nConnection: close\r\n", 1);
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.flush().await;
             }
