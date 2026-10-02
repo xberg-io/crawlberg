@@ -6,10 +6,9 @@ use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
-use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, kill_browser, release_browser};
+use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, kill_browser, release_browser, spawn_handler};
 use crate::chrome_frame::{
     CommittedDocument, committed_document, error_page_error, page_content, read_one_document, read_one_document_within,
 };
@@ -31,12 +30,12 @@ pub(super) async fn run(
 /// Run `actions` in a browser [`launch_or_connect`] returned, then tear the browser down and
 /// remove its profile directory.
 async fn run_launched(
-    (browser, mut handler, data_dir): Launched,
+    (browser, handler, data_dir): Launched,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_handle = spawn_handler(handler);
 
     let browser = Arc::new(browser);
     // ~keep A launched browser (always with a throwaway profile here) is killed with interception
@@ -706,6 +705,93 @@ mod tests {
         .expect("an interact run must stop its Chrome and remove its profile directory");
     }
 
+    /// An interact session whose Chrome dies during the session ends with an error. It does not
+    /// wait for replies that the dead connection never sends (xberg-io/crawlberg#577).
+    ///
+    /// ~keep The page fetches `/loaded` once it has loaded, and the test kills Chrome's main process
+    /// ~keep when that request arrives, so the kill lands inside the session, before its wait action
+    /// ~keep ends. The session's next reads and the close of its page then go to a dead connection.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn an_interact_session_whose_chrome_dies_ends_with_an_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "<html><body><p>start</p><script>addEventListener('load', () => fetch('/loaded'));</script></body></html>",
+                "text/html",
+            ))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/loaded"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&site)
+            .await;
+        let seed = format!("http://localhost:{}/", site.address().port());
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                timeout: Duration::from_secs(10),
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+                .build()
+        };
+        let mut launched = match launch_or_connect(&config).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let chrome = launched
+            .0
+            .get_mut_child()
+            .and_then(|child| child.as_mut_inner().id())
+            .map(sysinfo::Pid::from_u32)
+            .expect("a launched Chrome must have a process");
+        let killer = tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            while tokio::time::Instant::now() < deadline {
+                let received = site.received_requests().await.unwrap_or_default();
+                if received.iter().any(|request| request.url.path() == "/loaded") {
+                    let mut system = sysinfo::System::new();
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[chrome]),
+                        true,
+                        sysinfo::ProcessRefreshKind::nothing(),
+                    );
+                    return system
+                        .process(chrome)
+                        .and_then(|process| process.kill_with(sysinfo::Signal::Kill))
+                        .unwrap_or(false);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        let actions = [PageAction::Wait {
+            milliseconds: Some(3_000),
+            selector: None,
+        }];
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_launched(launched, &seed, &actions, &config),
+        )
+        .await;
+        let killed = killer.await.expect("the task that kills Chrome must not panic");
+
+        assert!(killed, "Chrome must be killed once the page has loaded");
+        match outcome {
+            Ok(result) => assert!(result.is_err(), "a session whose Chrome died must fail, got {result:?}"),
+            Err(_) => panic!("the session must end once its Chrome has died, not wait 60 s and more"),
+        }
+    }
+
     /// An interact launch that fails drops its profile directory, off the executor thread.
     ///
     /// ~keep No Chrome is needed: `chrome_path` names a script that exits at once, so the check
@@ -1103,14 +1189,14 @@ mod tests {
             Ok(config) => Browser::launch(config).await.map_err(|e| e.to_string()),
             Err(error) => Err(error),
         };
-        let (mut browser, mut handler) = match launched {
+        let (mut browser, handler) = match launched {
             Ok(launched) => launched,
             Err(error) => {
                 eprintln!("skipping {test_name}: no usable Chrome: {error}");
                 return;
             }
         };
-        tokio::spawn(async move { while handler.next().await.is_some() {} });
+        spawn_handler(handler);
         let page = browser.new_page("about:blank").await.expect("page");
         // ~keep The refused connection fails the navigation; the error page it commits is the point.
         let _ = page.goto(refused.as_str()).await;

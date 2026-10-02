@@ -840,6 +840,28 @@ impl BrowserState {
     }
 }
 
+/// Run the CDP handler of a browser on its own task, until its websocket fails or ends.
+///
+/// ~keep chromiumoxide 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) reports a broken
+/// ~keep websocket, as when Chrome dies, as one `CdpError::Ws` error, and then returns
+/// ~keep `Poll::Pending` for good without failing the commands still waiting on it. Its 30 s request
+/// ~keep timeout is checked only when the handler wakes, which a dead connection never does again. A
+/// ~keep loop that went on past the error kept the handler, and with it every pending command, alive:
+/// ~keep an interact session whose Chrome died waited forever for the reply to the dispose of its
+/// ~keep page's context (xberg-io/crawlberg#577). Ending the task drops the handler, so every command
+/// ~keep and event stream of the browser ends with an error at once. The handler's other errors leave
+/// ~keep the connection usable (a binary frame is `CdpError::UnexpectedWsMessage`, `src/conn.rs`), so
+/// ~keep the loop goes on past them.
+pub(crate) fn spawn_handler(mut handler: Handler) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = handler.next().await {
+            if matches!(event, Err(chromiumoxide::error::CdpError::Ws(_))) {
+                break;
+            }
+        }
+    })
+}
+
 /// Stop the task running the CDP handler loop of a browser that has just been closed.
 ///
 /// A browser that exited on its own ends its handler loop, so that case waits briefly for the
