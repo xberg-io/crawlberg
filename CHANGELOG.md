@@ -228,15 +228,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- **A stalled committed-document read ignored `browser.timeout`.** `browser.timeout` bounded only
-  the navigation block; after navigation, the committed-document HTML read — `page.content()`, a
-  renderer-answered CDP command, in the scrape path and as the final-HTML read in the interact
-  path — inherited the CDP client's fixed 30-second timeout. A page whose scripts saturate the
-  renderer's main thread queues that command behind the work, so the read stalled the full 30
-  seconds even though the fetch had long since exceeded its budget. Both document reads are now
-  bounded by a fresh `browser.timeout` each, and a timed-out document read fails as a browser
-  timeout naming the read and the budget. The accompanying URL reads are defensively bounded
-  the same way and keep their existing non-fatal fallback to the requested address. (#567)
+- **A browser read of the committed document ignored `browser.timeout`.** `browser.timeout`
+  bounded only the navigation. The reads after it, of the HTML, the committed document and the
+  screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held
+  each read up to the CDP client's fixed 30-second timeout, and a render can make several reads.
+  In scrape, crawl and `interact`, the reads of the final document now share one `browser.timeout`
+  budget, and a read past it fails as a browser timeout that names the budget. (#567)
 - **A stalled module script cost 10 seconds for every module script after it.** The native browser
   backend waited, after each module script, until nothing at all was pending on the page. A module
   whose top-level `await` never settled left work pending forever, so each later module script also
