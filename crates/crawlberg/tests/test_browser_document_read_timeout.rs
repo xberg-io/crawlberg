@@ -1,15 +1,13 @@
 //! Regression coverage for xberg-io/crawlberg#567: `browser.timeout` bounded only the
-//! navigation block (`goto` + `wait_for_ready`); the post-navigation committed-document HTML
-//! read (`page.content()`, a renderer-answered CDP command) inherited chromiumoxide's fixed
-//! 30 s timeout. On a page whose renderer main thread never goes idle, the read queues behind
-//! main-thread work and is held for that full 30 s — the same stall measured at 65-66 s
-//! end-to-end in `page_fetch` on the #481 stress page (CI run 36837530522). Both fetch paths
-//! must now fail within a fresh `browser.timeout` budget, with a `BrowserTimeout` naming the
-//! read.
+//! navigation block (`goto` + `wait_for_ready`). The reads of the committed document after it
+//! run a script in the page, so the renderer answers them only when its main thread is free.
+//! On a page that keeps that thread busy, each read waits for as long as the page runs its
+//! script, up to chromiumoxide's fixed 30 s CDP timeout. The scrape paths and the interact path
+//! must now fail within `browser.timeout`, with a `BrowserTimeout` naming the budget.
 //!
-//! Requires a real Chrome binary (found at `/Applications/Google Chrome.app` in this
-//! environment; chromiumoxide auto-detects it) and is gated behind the `browser` feature;
-//! skipped (not failed) when Chrome is unavailable, matching the sibling deadline tests.
+//! Requires a real Chrome binary, which chromiumoxide auto-detects, and is gated behind the
+//! `browser` feature; skipped (not failed) when Chrome is unavailable, matching the sibling
+//! deadline tests.
 
 #![cfg(feature = "browser")]
 
@@ -36,20 +34,18 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 /// ~keep therefore issued ~1.1-1.5 s, inside a busy block, so the fresh 3 s read bound fires —
 /// ~keep BrowserTimeout naming "reading the committed document" and "3s", total elapsed ~4-8 s.
 ///
-/// ~keep This replaces an earlier never-answered-`location.replace` fixture: a navigation
-/// ~keep merely accepted-but-never-answered stays pending in Chrome's BROWSER-process network
-/// ~keep stack while the committed document's renderer keeps answering CDP, so the read
-/// ~keep answered and the fetch returned `Ok(ScrapeResult)` (CI run 36913385526). The stall
-/// ~keep #567 is about needs a saturated renderer main thread, not an in-flight navigation.
+/// ~keep A navigation the server accepts and never answers does not stall the reads: it waits in
+/// ~keep Chrome's browser process while the renderer keeps answering. The stall needs a busy
+/// ~keep renderer main thread.
 ///
 /// Connections are answered (if the document) and then held open for hours, never dropped
 /// with unread bytes in flight: dropping in that state can send a TCP RST -- see
 /// `test_browser_overall_deadline.rs::spawn_stalling_server` for why holding is load-bearing.
-fn spawn_document_never_settles_server() -> String {
+fn spawn_saturating_renderer_server() -> String {
     spawn_server(|path| (path == "/").then(|| html_response(SATURATING_PAGE)))
 }
 
-const SATURATING_PAGE: &str = "<!doctype html><html><head><title>never-settles</title></head><body><p>committed</p>\
+const SATURATING_PAGE: &str = "<!doctype html><html><head><title>saturated</title></head><body><p>committed</p>\
     <script>setTimeout(function(){ setInterval(function(){ \
     const until = Date.now() + 5000; while (Date.now() < until) {} }, 1); }, 300);</script>\
     </body></html>";
@@ -114,7 +110,7 @@ fn spawn_server(respond: fn(&str) -> Option<String>) -> String {
                     let _ = writer.write_all(response.as_bytes());
                     let _ = writer.flush();
                 }
-                // Hold every connection open for the test's lifetime, whether answered or not.
+                // ~keep Hold every connection open for the test's lifetime, whether answered or not.
                 std::thread::sleep(Duration::from_secs(3600));
             });
         }
@@ -146,15 +142,15 @@ fn one_short_wait() -> Vec<PageAction> {
     }]
 }
 
-/// Shared by every test: a `BrowserTimeout` naming the read and the budget, in well under the
-/// 30 s the pre-fix reads stalled to. Skips (does not fail) on runners without Chrome.
+/// Shared by the HTML-read tests: a `BrowserTimeout` naming the read and the budget, well before
+/// the busy page frees its renderer. Skips (does not fail) on runners without Chrome.
 fn assert_bounded_read_error<T: std::fmt::Debug>(test_name: &str, result: Result<T, CrawlError>, elapsed: Duration) {
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
         }
         Ok(response) => panic!(
-            "a page whose renderer main thread never goes idle must not let the document read succeed: {response:?}"
+            "a page that keeps its renderer main thread busy must not let the document read succeed: {response:?}"
         ),
         Err(error @ CrawlError::BrowserTimeout { .. }) => {
             let message = error.to_string();
@@ -169,7 +165,7 @@ fn assert_bounded_read_error<T: std::fmt::Debug>(test_name: &str, result: Result
             assert!(
                 elapsed < Duration::from_secs(10),
                 "expected the fetch to fail near the 3s read bound, took {elapsed:?} instead -- \
-                 pre-fix the read stalls to chromiumoxide's internal 30s: {message}"
+                 without the bound the read waits until the page frees its renderer: {message}"
             );
         }
         Err(error) => panic!(
@@ -183,8 +179,8 @@ fn assert_bounded_read_error<T: std::fmt::Debug>(test_name: &str, result: Result
 /// document" and "3s", well inside the 30 s the pre-fix read inherited.
 #[tokio::test]
 #[serial_test::serial(browser_document_read_timeout)]
-async fn fetch_fails_within_browser_timeout_when_the_document_never_settles() {
-    let url = spawn_document_never_settles_server();
+async fn fetch_fails_within_browser_timeout_when_the_renderer_is_saturated() {
+    let url = spawn_saturating_renderer_server();
     let engine = create_engine(Some(read_bound_config())).expect("engine must build");
 
     let start = Instant::now();
@@ -192,7 +188,7 @@ async fn fetch_fails_within_browser_timeout_when_the_document_never_settles() {
     let elapsed = start.elapsed();
 
     assert_bounded_read_error(
-        "fetch_fails_within_browser_timeout_when_the_document_never_settles",
+        "fetch_fails_within_browser_timeout_when_the_renderer_is_saturated",
         result,
         elapsed,
     );
@@ -217,7 +213,7 @@ async fn pooled_fetch_applies_the_same_read_bound() {
     config.browser.session_affinity = false;
     config.browser_pool = Some(Arc::clone(&pool));
 
-    let url = spawn_document_never_settles_server();
+    let url = spawn_saturating_renderer_server();
     let engine = create_engine(Some(config)).expect("engine must build");
 
     let start = Instant::now();
@@ -231,7 +227,7 @@ async fn pooled_fetch_applies_the_same_read_bound() {
 #[tokio::test]
 #[serial_test::serial(browser_document_read_timeout)]
 async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() {
-    let url = spawn_document_never_settles_server();
+    let url = spawn_saturating_renderer_server();
     let engine = create_engine(Some(read_bound_config())).expect("engine must build");
 
     let start = Instant::now();
