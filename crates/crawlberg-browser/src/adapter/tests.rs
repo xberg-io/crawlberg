@@ -574,6 +574,28 @@ fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
         .expect("proxy_url is set");
     assert_eq!(proxy.address().as_str(), "http://proxy.test:3128/");
     assert!(proxy.credentials().is_none());
+    for (url, username, password) in [
+        ("http://user@proxy.test:8080", "user", ""),
+        ("http://:pw@proxy.test:8080", "", "pw"),
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .expect("a usable proxy_url")
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/", "{url}");
+        let credentials = proxy
+            .credentials()
+            .unwrap_or_else(|| panic!("{url}: a user name or a password alone is still a credential"));
+        assert_eq!(
+            (credentials.username.as_str(), credentials.password.as_str()),
+            (username, password),
+            "{url}"
+        );
+    }
     assert_eq!(NativeBrowserConfig::default().effective_proxy(), Ok(None));
 }
 
