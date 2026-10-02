@@ -46,6 +46,46 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 /// with unread bytes in flight: dropping in that state can send a TCP RST -- see
 /// `test_browser_overall_deadline.rs::spawn_stalling_server` for why holding is load-bearing.
 fn spawn_document_never_settles_server() -> String {
+    spawn_server(|path| (path == "/").then(|| html_response(SATURATING_PAGE)))
+}
+
+const SATURATING_PAGE: &str = "<!doctype html><html><head><title>never-settles</title></head><body><p>committed</p>\
+    <script>setTimeout(function(){ setInterval(function(){ \
+    const until = Date.now() + 5000; while (Date.now() < until) {} }, 1); }, 300);</script>\
+    </body></html>";
+
+/// Serves `/start` as a redirect to `/landing`, a page that starts one 8 s busy loop on its main
+/// thread right after its HTML is read. The HTML read answers, and the read of the final URL
+/// that follows it waits behind the busy loop.
+///
+/// ~keep The page wraps the `outerHTML` getter that chromiumoxide's `content()` script calls, so
+/// ~keep the busy loop starts at the HTML read itself rather than at a fixed time.
+fn spawn_redirect_to_busy_after_read_server() -> String {
+    spawn_server(|path| match path {
+        "/start" => Some(
+            "HTTP/1.1 302 Found\r\nLocation: /landing\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        ),
+        "/landing" => Some(html_response(BUSY_AFTER_READ_PAGE)),
+        _ => None,
+    })
+}
+
+const BUSY_AFTER_READ_PAGE: &str = "<!doctype html><html><head><title>busy-after-read</title></head><body><p>landed</p>\
+    <script>(function(){ const original = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML'); \
+    let armed = true; Object.defineProperty(Element.prototype, 'outerHTML', { configurable: true, set: original.set, \
+    get: function(){ const html = original.get.call(this); if (armed) { armed = false; setTimeout(function(){ \
+    const until = Date.now() + 8000; while (Date.now() < until) {} }, 0); } return html; } }); })();</script>\
+    </body></html>";
+
+fn html_response(body: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// Answers each request with the response `respond` gives for its path, or with nothing.
+fn spawn_server(respond: fn(&str) -> Option<String>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
     let addr = listener.local_addr().expect("test server should have local addr");
     std::thread::spawn(move || {
@@ -69,15 +109,7 @@ fn spawn_document_never_settles_server() -> String {
                         }
                     }
                 }
-                if request_line.split_whitespace().nth(1) == Some("/") {
-                    let body = "<!doctype html><html><head><title>never-settles</title></head><body><p>committed</p>\
-                                <script>setTimeout(function(){ setInterval(function(){ \
-                                const until = Date.now() + 5000; while (Date.now() < until) {} }, 1); }, 300);</script>\
-                                </body></html>";
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{body}",
-                        body.len()
-                    );
+                if let Some(response) = request_line.split_whitespace().nth(1).and_then(respond) {
                     let mut writer = write_half;
                     let _ = writer.write_all(response.as_bytes());
                     let _ = writer.flush();
@@ -211,4 +243,39 @@ async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() 
         result,
         elapsed,
     );
+}
+
+/// Interact path, URL read: only the read of the final URL stalls. The requested URL redirects,
+/// so a fallback to it would report a URL the page never had.
+#[tokio::test]
+#[serial_test::serial(browser_document_read_timeout)]
+async fn interact_does_not_report_the_requested_url_when_the_url_read_times_out() {
+    let url = format!("{}start", spawn_redirect_to_busy_after_read_server());
+    let engine = create_engine(Some(read_bound_config())).expect("engine must build");
+
+    let start = Instant::now();
+    let result = interact(&engine, &url, one_short_wait()).await;
+    let elapsed = start.elapsed();
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(
+                "interact_does_not_report_the_requested_url_when_the_url_read_times_out",
+                &message,
+            );
+        }
+        Ok(result) => panic!(
+            "a read past browser.timeout must not become a result: final_url={} for requested {url}",
+            result.final_url
+        ),
+        Err(error @ CrawlError::BrowserTimeout { .. }) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("3s"),
+                "the timeout must name browser.timeout, got: {message}"
+            );
+            assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}: {message}");
+        }
+        Err(error) => panic!("expected a BrowserTimeout for the stalled URL read, got {error:?}"),
+    }
 }
