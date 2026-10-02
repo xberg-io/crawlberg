@@ -53,8 +53,9 @@ title: "Changelog"
   constructors.
 - **`crawlberg-browser`: `NativeBrowserConfig.proxy_url` is deprecated.** Set `proxy` instead.
   `proxy_url` still works, and a user name and password in the URL become the proxy
-  credentials. It gets the same checks as `proxy`, and a URL with a path, query or fragment is
-  refused, so an unencoded `#`, `/` or `?` in a password fails the render. An unusable
+  credentials. It gets the same checks as `proxy`, so an unencoded `#`, `/` or `?` in a password,
+  which leaves an `@` after the host, fails the render. A path or a query with no `@` is accepted,
+  as in v1.8.0. An unusable
   `proxy_url` fails the render even when `proxy` is set. When both are set, they must name the
   same proxy: a different address or other credentials fail the render with an error that names
   both fields.

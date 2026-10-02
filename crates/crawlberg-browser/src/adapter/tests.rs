@@ -645,6 +645,42 @@ fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
     assert!(matches!(NativeBrowserConfig::default().effective_proxy(), Ok(None)));
 }
 
+#[test]
+#[allow(deprecated)]
+fn proxy_url_takes_a_path_or_query_and_refuses_one_a_password_cut_short() {
+    for url in ["http://proxy.test:8080/proxy", "http://proxy.test:8080/?x=1"] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .unwrap_or_else(|e| panic!("{url} must stay usable, as in v1.8.0: {e}"))
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), url);
+        assert!(proxy.credentials().is_none(), "{url}");
+    }
+    let at_after_host = PageError::InvalidConfig(ProxyError::AtAfterHost.to_string()).to_string();
+    for url in [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let error = config
+            .effective_proxy()
+            .expect_err("a password cut short must be refused");
+        assert_eq!(
+            error.to_string(),
+            at_after_host,
+            "{url}: the proxy type's own rule refuses it"
+        );
+    }
+}
+
 #[tokio::test]
 async fn screenshot_content_height_uses_the_dom_scroll_height_when_larger_than_static_hints() {
     let server = TestServer::start().await;

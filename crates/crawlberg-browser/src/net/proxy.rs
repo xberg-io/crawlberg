@@ -59,17 +59,10 @@ pub fn check_proxy_url(proxy_url: &str) -> Result<Url, ProxyError> {
 /// The proxy at `proxy_url`, a URL that can hold a user name and password: the credentials,
 /// percent-decoded, move out of the address.
 ///
-/// ~keep A `#`, `/` or `?` that is not percent-encoded in a credential ends the address early
-/// ~keep and leaves the rest of the credential in the path, query or fragment, so those are refused.
+/// An address that an unencoded `#`, `/` or `?` in a credential cut short is refused by
+/// [`UpstreamProxy::new`].
 pub(crate) fn proxy_from_url(proxy_url: &str) -> Result<UpstreamProxy, ProxyError> {
     let mut address = check_proxy_url(proxy_url)?;
-    if address.path() != "/" || address.query().is_some() || address.fragment().is_some() {
-        return Err(ProxyError::Unparseable(
-            "a proxy address takes no path, query or fragment; percent-encode a #, / or ? in its user \
-             name or password"
-                .to_string(),
-        ));
-    }
     let credentials = if address.username().is_empty() && address.password().is_none() {
         None
     } else {
