@@ -4022,11 +4022,15 @@ mod race_tests {
         );
     }
 
-    /// Close `browser` once the test is done with it.
+    /// Close `browser` once the test is done with it, and kill it if it has not exited within five
+    /// seconds.
+    ///
+    /// ~keep `Browser::close` and `Browser::wait` have no bound of their own, so a Chrome that does
+    /// ~keep not exit would hold the test, and the macOS job with it, until the job timeout
+    /// ~keep (xberg-io/crawlberg#573).
     async fn close(browser: Arc<Browser>) {
         if let Some(mut browser) = Arc::into_inner(browser) {
-            let _ = browser.close().await;
-            let _ = browser.wait().await;
+            let _ = crate::browser_pool::close_browser_within(&mut browser, Duration::from_secs(5)).await;
         }
     }
 

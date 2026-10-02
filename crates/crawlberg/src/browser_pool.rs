@@ -815,7 +815,7 @@ struct BrowserState {
 /// ~keep type so a call site that discards the outcome is a warning, not a silent 5-second wait.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BrowserCloseOutcome {
+pub(crate) enum BrowserCloseOutcome {
     /// `Browser::close` and `Browser::wait` both finished inside `shutdown_timeout`.
     Exited,
     /// `shutdown_timeout` expired, so the process was force-killed via [`Browser::kill`].
@@ -976,7 +976,7 @@ async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
 ///
 /// Returns which of the two happened, so the caller can hand it to [`stop_handler_after_close`]
 /// instead of waiting on a handler loop that a killed process will never end.
-async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) -> BrowserCloseOutcome {
+pub(crate) async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) -> BrowserCloseOutcome {
     let closed = tokio::time::timeout(shutdown_timeout, async {
         let _ = browser.close().await;
         let _ = browser.wait().await;
