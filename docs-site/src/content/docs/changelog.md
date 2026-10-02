@@ -244,6 +244,12 @@ title: "Changelog"
   `<base href>` in tree order, the same base as the links list, and leaves markup inside raw text
   as written.
 
+- **An `interact` session waited forever when its Chrome died.** With the Chromiumoxide backend,
+  the CDP client stops reading a broken connection to Chrome, but it keeps every command that waits
+  on that connection. So the session waited without end for the reply to the close of its page. The
+  session now ends its CDP client when the connection breaks, every command that waits fails at
+  once, and `interact` returns an error. (#577)
+
 - **A browser read of the committed document ignored `browser.timeout`.** `browser.timeout`
   bounded only the navigation. The reads after it, of the HTML, the committed document and the
   screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held
