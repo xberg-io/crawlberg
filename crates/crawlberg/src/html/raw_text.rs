@@ -87,7 +87,7 @@ pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
 }
 
 /// A [`MaskedHtml`] apart from the page it borrows: what reading the page found, carried from the
-/// redirect check to extraction so the page is read once.
+/// redirect check to extraction and from extraction to the markdown, so the page is read once.
 pub(crate) struct PageScan {
     /// The masked text, when masking changed the page.
     edited: Option<String>,
@@ -99,9 +99,6 @@ pub(crate) struct PageScan {
 
 impl MaskedHtml<'_> {
     /// Keep what the read found, without the borrow of the page.
-    ///
-    /// ~keep Only the redirect check detaches a read, and wasm has none.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn detach(self) -> PageScan {
         // ~keep The masked text has the page's byte length.
         let len = self.text.len();

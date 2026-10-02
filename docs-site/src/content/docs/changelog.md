@@ -237,6 +237,13 @@ title: "Changelog"
 
 ### Fixed
 
+- **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
+  found the page's base with a second parser. That parser read markup inside `<title>`,
+  `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so
+  `<title><base href="/x/"></title>` moved every relative link under `/x/`. It now uses the first
+  `<base href>` in tree order, the same base as the links list, and leaves markup inside raw text
+  as written.
+
 - **A browser read of the committed document ignored `browser.timeout`.** `browser.timeout`
   bounded only the navigation. The reads after it, of the HTML, the committed document and the
   screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held
@@ -1249,6 +1256,20 @@ title: "Changelog"
   as no match, and one warning per crawl names the pattern. The seed is exempt from the include
   check. The REST API refuses a look-around or backreference pattern in `includePaths` or
   `excludePaths` with a 400. (#78)
+
+### Changed
+
+- **Upgraded `html-to-markdown-rs` to 3.16.0.** A comma inside a parenthesised `srcset`
+  descriptor no longer starts a new candidate, so `a.png (x, b.png 3x ), c.png 2x` shows `c.png`
+  and not the `b.png` written inside the descriptor (#320). The front matter shows the base
+  address with its character references decoded, `it's` rather than `it&#x27;s` (#103).
+
+### Internal
+
+- **The test that failed when `html-to-markdown-rs` reached 3.15 is replaced.** It checked that
+  the converter had no `base_url` option. Tests now hold the behaviours that matter: a
+  fragment-only link stays as written, which `base_url` would change, and the link pre-pass
+  keeps an empty source empty and strips userinfo from a link. (#190)
 
 ## [1.8.0] - 2026-09-27
 

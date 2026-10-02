@@ -7,8 +7,7 @@ use tl::VDom;
 use url::Url;
 
 use super::links::effective_base_url;
-use super::selectors::SEL_BASE_HREF;
-use super::{clean_url, decode_attr_value, get_attr};
+use super::{PageScan, clean_url, decode_attr_value};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -56,7 +55,7 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ];
 
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
-/// base URL (see [`effective_base_url`]) from its first `<base href>` in source order, using
+/// base URL (see [`effective_base_url`]) from its first `<base href>` in tree order, using
 /// WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
@@ -65,18 +64,21 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// Character references in a value are decoded before resolution, as a browser decodes them.
 /// Absolute URLs of any scheme, fragment-only references and empty values are left as written.
 /// Every byte outside a rewritten attribute value is kept.
-pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
-    let Ok(dom) = super::parse_html(html) else {
+///
+/// `page_scan` is the extraction's read of `html`. Without one, `html` is read here.
+pub(crate) fn resolve_link_targets<'h>(html: &'h str, page_scan: Option<PageScan>, document_url: &Url) -> Cow<'h, str> {
+    // ~keep tl reads the masked text, so markup inside a comment, `<title>` or `<script>` is not a
+    // ~keep tag, and the base is the first `<base href>` in tree order. The masked text has the
+    // ~keep source's byte length, so an edit's span in it is its span in `html`.
+    let page = match page_scan {
+        Some(page_scan) => page_scan.attach(html),
+        None => super::mask_raw_text_markup(html),
+    };
+    let Ok(dom) = super::parse_html(&page.text) else {
         return Cow::Borrowed(html);
     };
-    let base_href = dom
-        .query_selector(SEL_BASE_HREF)
-        .and_then(|mut iter| iter.next())
-        .and_then(|handle| handle.get(dom.parser()))
-        .and_then(|node| node.as_tag())
-        .map(|tag| get_attr(tag, "href").unwrap_or_default());
-    let base = effective_base_url(base_href.as_deref(), document_url);
-    let mut edits = collect_edits(&dom, html, &base);
+    let base = effective_base_url(page.base_href.as_deref(), document_url);
+    let mut edits = collect_edits(&dom, &page.text, &base);
     if edits.is_empty() {
         return Cow::Borrowed(html);
     }
@@ -244,7 +246,7 @@ mod tests {
 
     fn resolve(html: &str, document_url: &str) -> String {
         let url = Url::parse(document_url).expect("valid document URL");
-        resolve_link_targets(html, &url).into_owned()
+        resolve_link_targets(html, None, &url).into_owned()
     }
 
     #[test]
@@ -276,7 +278,7 @@ mod tests {
     fn returns_the_input_unchanged_when_nothing_is_relative() {
         let html = r##"<a href="https://example.com/x">x</a><a href="#top">t</a><img src="data:image/png;base64,AA">"##;
         let url = Url::parse("https://example.com/").expect("valid URL");
-        assert!(matches!(resolve_link_targets(html, &url), Cow::Borrowed(_)));
+        assert!(matches!(resolve_link_targets(html, None, &url), Cow::Borrowed(_)));
     }
 
     #[test]
@@ -338,6 +340,43 @@ mod tests {
             ),
             r#"<BASE HREF="https://example.com/first/"><base href="https://example.com/first/"><a href="https://example.com/first/leaf.html">x</a>"#
         );
+    }
+
+    #[test]
+    fn markup_inside_raw_text_is_left_as_written() {
+        assert_eq!(
+            resolve(
+                r#"<title><a href="t.html">t</a></title><script>"<img src='s.png'>"</script><a href="y.html">y</a>"#,
+                "https://example.com/d/"
+            ),
+            r#"<title><a href="t.html">t</a></title><script>"<img src='s.png'>"</script><a href="https://example.com/d/y.html">y</a>"#
+        );
+    }
+
+    #[test]
+    fn a_base_in_raw_text_or_a_comment_does_not_count() {
+        assert_eq!(
+            resolve(
+                r#"<title><base href="/t/"></title><!-- <base href="/c/"> --><base href="/real/"><a href="y.html">y</a>"#,
+                "https://example.com/d/"
+            ),
+            r#"<title><base href="/t/"></title><!-- <base href="/c/"> --><base href="https://example.com/real/"><a href="https://example.com/real/y.html">y</a>"#
+        );
+    }
+
+    #[test]
+    fn a_base_in_svg_or_a_template_does_not_count() {
+        let mut wrong = Vec::new();
+        for html in [
+            r#"<svg><base href="/svg/"></svg><base href="/html/"><a href="y.html">y</a>"#,
+            r#"<template><base href="/tpl/"></template><base href="/html/"><a href="y.html">y</a>"#,
+        ] {
+            let out = resolve(html, "https://example.com/d/");
+            if !out.ends_with(r#"<a href="https://example.com/html/y.html">y</a>"#) {
+                wrong.push(format!("{html} gave: {out}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

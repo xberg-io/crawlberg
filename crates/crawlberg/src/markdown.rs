@@ -2,14 +2,21 @@
 
 use url::Url;
 
+use crate::html::PageScan;
 use crate::types::{ContentConfig, MarkdownResult};
 
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
 ///
-/// ~keep html-to-markdown-rs 3.14 has no base URL option and writes each address as found, so
-/// ~keep relative addresses are made absolute in the HTML first; see `resolve_link_targets`.
-fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConfig) -> Option<MarkdownResult> {
-    let html = crate::html::resolve_link_targets(html, document_url);
+/// ~keep Relative addresses are made absolute in the HTML first; see `resolve_link_targets`. The
+/// ~keep converter's own `base_url` option stays unset: it resolves a fragment-only link against
+/// ~keep the page, which the pre-pass leaves as written (#190).
+fn convert_html_to_markdown(
+    html: &str,
+    page_scan: Option<PageScan>,
+    document_url: &Url,
+    config: &ContentConfig,
+) -> Option<MarkdownResult> {
+    let html = crate::html::resolve_link_targets(html, page_scan, document_url);
     let preset = html_to_markdown_rs::options::PreprocessingPreset::parse(&config.preprocessing_preset);
 
     let output_format = match config.output_format.as_str() {
@@ -35,13 +42,7 @@ fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConf
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
-        // ~keep Every option crawlberg has no opinion on stays at the library's default on
-        // ~keep purpose, with one option that must never be picked up by accident: from 3.15 on,
-        // ~keep html-to-markdown-rs has a `base_url` that resolves relative addresses the way
-        // ~keep `resolve_link_targets` above already does. Setting it is only safe after #123 --
-        // ~keep it resolves the empty `src=""` left by a dropped inline-data payload to the page
-        // ~keep itself, and rewrites the fragment-only hrefs this crate leaves as written. See
-        // ~keep #190; `html_to_markdown_has_no_base_url_option` below fails when 3.15 arrives.
+        // ~keep Every option crawlberg has no opinion on stays at the library's default on purpose.
         ..Default::default()
     };
 
@@ -77,11 +78,13 @@ fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConf
 ///
 /// Relative addresses in the output resolve against `document_url` (or the page's
 /// `<base href>`), so pass the URL the content was actually served from.
+/// `page_scan` is the extraction's read of `html`; pass it so the page is read once.
 ///
 /// On native targets, delegates to a blocking task so the conversion
 /// does not block the async runtime. On wasm, runs synchronously.
 pub(crate) async fn convert_to_markdown(
     html: &str,
+    page_scan: Option<PageScan>,
     document_url: &Url,
     config: &ContentConfig,
 ) -> Option<MarkdownResult> {
@@ -90,7 +93,7 @@ pub(crate) async fn convert_to_markdown(
         let html = html.to_owned();
         let document_url = document_url.clone();
         let config = config.clone();
-        tokio::task::spawn_blocking(move || convert_html_to_markdown(&html, &document_url, &config))
+        tokio::task::spawn_blocking(move || convert_html_to_markdown(&html, page_scan, &document_url, &config))
             .await
             .ok()
             .flatten()
@@ -98,7 +101,7 @@ pub(crate) async fn convert_to_markdown(
 
     #[cfg(target_arch = "wasm32")]
     {
-        convert_html_to_markdown(html, document_url, config)
+        convert_html_to_markdown(html, page_scan, document_url, config)
     }
 }
 
@@ -112,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn converts_heading() {
-        let result = convert_to_markdown("<h1>Hello</h1>", &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown("<h1>Hello</h1>", None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
         assert!(
             result.content.contains("# Hello"),
@@ -123,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn converts_paragraph() {
-        let result = convert_to_markdown("<p>Some text.</p>", &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown("<p>Some text.</p>", None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
         assert!(
             result.content.contains("Some text."),
@@ -136,6 +139,7 @@ mod tests {
     async fn converts_link() {
         let result = convert_to_markdown(
             r#"<a href="https://example.com">Click</a>"#,
+            None,
             &page(),
             &ContentConfig::default(),
         )
@@ -155,7 +159,7 @@ mod tests {
             <p>This is a paragraph.</p>
             <a href="/link">Click here</a>
         </body></html>"#;
-        let result = convert_to_markdown(html, &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown(html, None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
         assert!(
             result.content.contains("# Hello World"),
@@ -176,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_html_returns_some() {
-        let result = convert_to_markdown("", &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown("", None, &page(), &ContentConfig::default()).await;
         assert!(result.is_some(), "empty html should still return Some");
     }
 
@@ -191,7 +195,7 @@ mod tests {
             </noscript>
             <p>More content.</p>
         </body></html>"#;
-        let result = convert_to_markdown(html, &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown(html, None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
         assert_eq!(result.content, "Real content.\n\nMore content.\n");
     }
@@ -203,7 +207,7 @@ mod tests {
             <p>This is a paragraph.</p>
             <a href="/link">Click here</a>
         </body></html>"#;
-        let result = convert_to_markdown(html, &page(), &ContentConfig::default()).await;
+        let result = convert_to_markdown(html, None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
         assert_eq!(
             result.content,
@@ -213,7 +217,7 @@ mod tests {
 
     async fn markdown_at(html: &str, document_url: &str) -> String {
         let url = Url::parse(document_url).expect("valid document URL");
-        convert_to_markdown(html, &url, &ContentConfig::default())
+        convert_to_markdown(html, None, &url, &ContentConfig::default())
             .await
             .expect("should produce markdown")
             .content
@@ -417,31 +421,82 @@ mod tests {
         }
     }
 
-    /// The converter option whose arrival makes this crate's link pre-pass redundant.
-    const BASE_URL_OPTION: &str = "base_url";
+    #[tokio::test]
+    async fn the_pre_pass_leaves_an_empty_image_or_media_source_empty() {
+        let mut wrong = Vec::new();
+        for (html, expected) in [
+            (r#"<p><img src="" alt="a"></p>"#, "![a](<>)\n"),
+            (r#"<p><img src="" srcset="" alt="a"></p>"#, "![a](<>)\n"),
+            (r#"<video src="">clip</video>"#, "clip\n"),
+        ] {
+            let md = markdown_at(html, "https://example.com/docs/index.html").await;
+            if md != expected {
+                wrong.push(format!("{html} gave: {md:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
 
-    /// ~keep A canary on the dependency, not a behaviour test. The `html-to-markdown-rs`
-    /// ~keep requirement is a caret range, so 3.15 -- the first version with a `base_url`
-    /// ~keep conversion option -- arrives on a routine `cargo update` with nothing to compile
-    /// ~keep against it and nothing to fail. From that point crawlberg carries two relative-link
-    /// ~keep resolvers, and this is the only thing that says so. Read #190 before deleting it;
-    /// ~keep do not silence it by setting `base_url`, which is unsafe until #123.
-    #[test]
-    fn html_to_markdown_has_no_base_url_option() {
-        let options = html_to_markdown_rs::options::ConversionOptions::default();
-        let serialized = serde_json::to_value(&options).expect("conversion options should serialize");
-        let fields = serialized
-            .as_object()
-            .expect("conversion options should be a JSON object");
+    #[tokio::test]
+    async fn a_fragment_only_link_stays_as_written() {
+        let md = markdown_at(
+            r##"<p><a href="#section">frag</a> <a href="#">top</a></p>"##,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "[frag](#section) [top](#)\n");
+    }
 
+    #[tokio::test]
+    async fn the_pre_pass_strips_userinfo_from_a_link() {
+        let md = markdown_at(
+            r#"<p><a href="http://page:pw@example.com/b">b</a> <a href="//user:s3cret@example.com/a">a</a></p>"#,
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(md, "[b](http://example.com/b) [a](https://example.com/a)\n");
+    }
+
+    #[tokio::test]
+    async fn a_base_href_in_a_comment_or_raw_text_does_not_count() {
+        let mut wrong = Vec::new();
+        for head in [
+            r#"<!-- <base href="/comment/"> -->"#,
+            r#"<title><base href="/title/"></title>"#,
+            r#"<script>document.write('<base href="/script/">')</script>"#,
+            r#"<style>/* <base href="/style/"> */</style>"#,
+        ] {
+            let html = format!(r#"<html><head>{head}</head><body><p><a href="leaf.html">leaf</a></p></body></html>"#);
+            let md = markdown_at(&html, "https://example.com/docs/index.html").await;
+            if !md.ends_with("[leaf](https://example.com/docs/leaf.html)\n") {
+                wrong.push(format!("{head} gave: {md}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[tokio::test]
+    async fn the_base_href_after_a_decoy_in_raw_text_counts() {
+        let md = markdown_at(
+            r#"<html><head><title><base href="/title/"></title><base href="/real/"></head><body><p><a href="leaf.html">leaf</a></p></body></html>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
         assert!(
-            !fields.contains_key(BASE_URL_OPTION),
-            "html-to-markdown-rs now has a `{BASE_URL_OPTION}` conversion option, so crawlberg has two \
-             relative-link resolvers: this one and `crate::html::resolve_link_targets`. Reconcile them \
-             before landing this dependency bump -- see issue #190. Do not just set `base_url`: it is \
-             only safe after #123, because it resolves the empty `src=\"\"` that marks a dropped \
-             inline-data payload to the page URL, and it rewrites the fragment-only hrefs that \
-             `resolve_link_targets` deliberately leaves as written."
+            md.ends_with("[leaf](https://example.com/real/leaf.html)\n"),
+            "got: {md}"
         );
+    }
+
+    /// Link markup inside a `<textarea>` is text, so the pre-pass leaves its address as written
+    /// (#102).
+    #[tokio::test]
+    async fn link_markup_inside_a_textarea_stays_as_written() {
+        let md = markdown_at(
+            r#"<textarea>see <a href="x.html">here</a></textarea><p>x</p>"#,
+            "https://example.com/dir/page.html",
+        )
+        .await;
+        assert_eq!(md, "see [here](x.html)\n\nx\n");
     }
 }

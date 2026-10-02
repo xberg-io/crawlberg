@@ -25,7 +25,6 @@ pub(super) const SEL_TITLE: &str = "title";
 /// The `name` of a robots meta tag addressed to every crawler rather than to a named one.
 pub(super) const ROBOTS_META_NAME: &str = "robots";
 pub(super) const SEL_A_HREF: &str = "a[href]";
-pub(super) const SEL_BASE_HREF: &str = "base[href]";
 pub(crate) const SEL_IMG_SRC: &str = "img[src]";
 pub(super) const SEL_SOURCE_SRCSET: &str = "source[srcset]";
 pub(crate) const SEL_LINK_REL: &str = "link[rel]";

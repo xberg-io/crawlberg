@@ -944,6 +944,7 @@ async fn fetch_and_extract(
         is_binary: page_ext.is_binary,
         is_pdf: page_ext.is_pdf,
         detected_charset: page_ext.detected_charset,
+        page_scan: Some(page_ext.page_scan),
         final_url,
         redirect_count,
         browser_used,

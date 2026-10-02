@@ -38,6 +38,7 @@ impl CrawlEngine {
         // ~keep Taken rather than moved out so `fetch` stays whole: the helpers below borrow it
         // ~keep after this point, and a partial move would make that borrow illegal.
         let mut body = std::mem::take(&mut fetch.body);
+        let page_scan = fetch.page_scan.take();
 
         if let Some(max_size) = self.config.max_body_size {
             crate::http::truncate_body_at_char_boundary(&mut body, max_size);
@@ -55,7 +56,7 @@ impl CrawlEngine {
             .await?;
 
         let (downloaded_document, markdown) = self
-            .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_was_skipped)
+            .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_scan, page_was_skipped)
             .await;
 
         let page = CrawlPageResult {
@@ -145,6 +146,7 @@ impl CrawlEngine {
         page_parsed: &Url,
         fetch: &FetchResult,
         body: &str,
+        page_scan: Option<crate::html::PageScan>,
         page_was_skipped: bool,
     ) -> (Option<DownloadedDocument>, Option<MarkdownResult>) {
         let downloaded_document = crate::document::build_downloaded_document_with_filter(
@@ -164,7 +166,7 @@ impl CrawlEngine {
             None
         } else {
             let content_config = crate::scrape::merged_content_config(&self.config);
-            crate::markdown::convert_to_markdown(body, page_parsed, &content_config).await
+            crate::markdown::convert_to_markdown(body, page_scan, page_parsed, &content_config).await
         };
 
         (downloaded_document, markdown)
