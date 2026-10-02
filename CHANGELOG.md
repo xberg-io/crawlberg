@@ -1248,6 +1248,13 @@ All notable changes to crawlberg are documented here.
   check. The REST API refuses a look-around or backreference pattern in `includePaths` or
   `excludePaths` with a 400. (#78)
 
+### Internal
+
+- **The test that failed when `html-to-markdown-rs` reached 3.15 is replaced.** It checked that
+  the converter had no `base_url` option. Tests now hold the behaviours that matter: a
+  fragment-only link stays as written, which `base_url` would change, and the link pre-pass
+  keeps an empty source empty and strips userinfo from a link. (#190)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
