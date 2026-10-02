@@ -7,6 +7,7 @@
 //! ~keep gated on the narrower feature is reachable from both.
 
 use std::future::Future;
+use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::page::GetFrameTreeParams;
 
@@ -120,6 +121,32 @@ where
     Err(CrawlError::browser_error(format!(
         "the page navigated to a new document during each of {READ_ATTEMPTS} reads of its content"
     )))
+}
+
+/// [`read_one_document`] with one `budget` for all of its reads.
+///
+/// ~keep Each read runs a script in the page or asks the renderer for the frame tree, so the
+/// ~keep renderer answers it only when its main thread is free. A page that keeps that thread busy
+/// ~keep holds each read for as long as it runs, up to chromiumoxide's fixed 30 s CDP timeout, and
+/// ~keep `read_one_document` makes up to seven: four of the committed document and three of the
+/// ~keep page. One budget bounds them all, retries included.
+/// ~keep xberg-io/crawlberg#567.
+pub(crate) async fn read_one_document_within<T, D, R>(
+    budget: Duration,
+    read_document: impl FnMut() -> D,
+    read: impl FnMut() -> R,
+) -> Result<(T, CommittedDocument), CrawlError>
+where
+    D: Future<Output = Result<CommittedDocument, CrawlError>>,
+    R: Future<Output = Result<T, CrawlError>>,
+{
+    tokio::time::timeout(budget, read_one_document(read_document, read))
+        .await
+        .unwrap_or_else(|_| {
+            Err(CrawlError::browser_timeout(format!(
+                "browser timed out after {budget:?} reading the committed document"
+            )))
+        })
 }
 
 /// The error for a main frame that shows Chrome's own error page for `failed_url`. It names the
@@ -243,6 +270,27 @@ mod tests {
         let error = result.expect_err("a read not bound to a document must not be returned");
         assert!(error.contains("closed"), "got: {error}");
         assert_eq!(page_reads, 1);
+    }
+
+    #[tokio::test]
+    async fn a_read_past_the_budget_is_a_browser_timeout_naming_the_budget() {
+        let read = read_one_document_within(
+            Duration::from_millis(50),
+            || std::future::ready(Ok(document("a"))),
+            std::future::pending,
+        );
+        let result: Result<(String, CommittedDocument), CrawlError> =
+            tokio::time::timeout(Duration::from_secs(5), read)
+                .await
+                .expect("the budget must end a read that never answers");
+        let error = result.expect_err("a read that never answers must end at the budget");
+        let CrawlError::BrowserTimeout { message, .. } = &error else {
+            panic!("expected a browser timeout, got {error:?}");
+        };
+        assert!(
+            message.contains("50ms") && message.contains("reading the committed document"),
+            "{message}"
+        );
     }
 
     #[test]
