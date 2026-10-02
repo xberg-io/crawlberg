@@ -122,12 +122,11 @@ All notable changes to crawlberg are documented here.
   `--flag=value` with a lowercase name, and join several `--enable-features` values with commas.
   (#79, #80)
 
-- **`BrowserProfile::chrome_args()` is removed.** It returned a single `--user-data-dir=<path>`
-  flag meant for a caller's `chrome_args` list, and `chrome_args` now refuses `--user-data-dir` in
-  any form, so the method had no valid return value left. Nothing in crawlberg ever called it: a
-  profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
-  already set the launch's `--user-data-dir` directly. Code that called
-  `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
+- **`BrowserProfile::chrome_args()` is deprecated.** It returns a single `--user-data-dir=<path>`
+  flag, and `chrome_args` now refuses `--user-data-dir` in any form, so the flag only helps a
+  caller that starts Chrome itself. Nothing in crawlberg calls it: a profile reaches Chrome
+  through `CrawlConfig.browser_profile` and `save_browser_profile`, which set the launch's
+  `--user-data-dir` directly. Read `BrowserProfile.user_data_dir` instead, or set
   `CrawlConfig.browser_profile` and let crawlberg apply it. (#254)
 
 - **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
