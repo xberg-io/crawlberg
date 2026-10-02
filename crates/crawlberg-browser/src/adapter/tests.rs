@@ -505,9 +505,14 @@ async fn render_refuses_an_unusable_proxy_url_even_when_proxy_is_set() {
     use crate::net::proxy::{credential_urls, credentialed_proxy};
     let server = TestServer::start().await;
     let (upstream, requests) = credentialed_proxy::start().await;
-    // ~keep The unencoded `#` ends the address at port 4242 and leaves the password in the fragment.
-    let misread = "http://operator:4242#s3cr3t@proxy.test:8080";
-    for url in credential_urls::URLS.into_iter().chain([misread]) {
+    // ~keep An unencoded `#`, `/` or `?` ends the address at port 4242 and leaves the password in the
+    // ~keep fragment, the path or the query.
+    let misread = [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ];
+    for url in credential_urls::URLS.into_iter().chain(misread) {
         for proxy in [None, Some(upstream.clone())] {
             let with_proxy = proxy.is_some();
             let config = NativeBrowserConfig {
