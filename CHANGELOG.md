@@ -1248,6 +1248,13 @@ All notable changes to crawlberg are documented here.
   check. The REST API refuses a look-around or backreference pattern in `includePaths` or
   `excludePaths` with a 400. (#78)
 
+### Changed
+
+- **Upgraded `html-to-markdown-rs` to 3.16.0.** A comma inside a parenthesised `srcset`
+  descriptor no longer starts a new candidate, so `a.png (x, b.png 3x ), c.png 2x` shows `c.png`
+  and not the `b.png` written inside the descriptor (#320). The front matter shows the base
+  address with its character references decoded, `it's` rather than `it&#x27;s` (#103).
+
 ### Internal
 
 - **The test that failed when `html-to-markdown-rs` reached 3.15 is replaced.** It checked that
