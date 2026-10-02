@@ -233,7 +233,9 @@ All notable changes to crawlberg are documented here.
   screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held
   each read up to the CDP client's fixed 30-second timeout, and a render can make several reads.
   In scrape, crawl and `interact`, the reads of the final document now share one `browser.timeout`
-  budget, and a read past it fails as a browser timeout that names the budget. (#567)
+  budget, and a read past it fails as a browser timeout that names the budget. For such a page,
+  REST callers now get 504 `TIMEOUT` instead of 500 `BROWSER_ERROR`, and Python callers get
+  `BrowserTimeoutError` instead of `BrowserError`. (#567)
 - **A stalled module script cost 10 seconds for every module script after it.** The native browser
   backend waited, after each module script, until nothing at all was pending on the page. A module
   whose top-level `await` never settled left work pending forever, so each later module script also
