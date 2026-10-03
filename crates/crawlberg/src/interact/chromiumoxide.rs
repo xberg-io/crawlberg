@@ -378,7 +378,7 @@ async fn navigate_and_wait(
 
     watch.settle().await;
     let mut intercepted = watch.take_outcome();
-    if let Some(stop) = intercepted.take_intentional_abort() {
+    if let Some(stop) = intercepted.take_intentional_terminal() {
         watch.mark_unsettled();
         return Ok(Some(stop));
     }
@@ -401,7 +401,7 @@ async fn navigate_and_wait(
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
-        if stop.navigation_aborted {
+        if stop.terminal_intercepted {
             watch.mark_unsettled();
         }
         return Ok(Some(stop));

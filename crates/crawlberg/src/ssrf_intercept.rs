@@ -134,17 +134,17 @@ pub(crate) struct StoppedResponse {
     pub(crate) body: String,
     pub(crate) body_bytes: Vec<u8>,
     pub(crate) request_id: Option<FetchRequestId>,
-    pub(crate) navigation_aborted: bool,
+    pub(crate) terminal_intercepted: bool,
     pub(crate) ready: bool,
 }
 
 impl InterceptOutcome {
-    pub(crate) fn take_intentional_abort(&mut self) -> Option<StoppedResponse> {
+    pub(crate) fn take_intentional_terminal(&mut self) -> Option<StoppedResponse> {
         if self.blocked.is_none()
             && self
                 .stopped_response
                 .as_ref()
-                .is_some_and(|response| response.navigation_aborted)
+                .is_some_and(|response| response.terminal_intercepted)
         {
             self.stopped_response.take()
         } else {
@@ -1677,7 +1677,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             } else {
                 verdict
             };
-            if matches!(verdict, Verdict::Abort | Verdict::RenderRedirect) {
+            if matches!(verdict, Verdict::Abort) {
                 lock(&page.outcome).navigation_dropped = true;
             }
             (verdict, Some(in_flight))
@@ -1704,7 +1704,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     let request_id = event.request_id.clone();
     let _ = match verdict {
-        Verdict::RenderRedirect => abort_terminal_redirect(browser, event, _in_flight.as_ref()).await,
+        Verdict::RenderRedirect => continue_inert_redirect(browser, event, _in_flight.as_ref()).await,
         Verdict::Continue(_) if is_response_stage(event) => {
             browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
         }
@@ -1737,7 +1737,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
-    /// ~keep Abort a terminal redirect before Chrome can follow or render it.
+    /// ~keep Continue a terminal redirect as inert text without navigation-triggering headers.
     RenderRedirect,
     /// ~keep Replace a response that cannot commit with an inert document, then report it as sent.
     Stop,
@@ -1747,18 +1747,22 @@ enum Verdict {
     Abort,
 }
 
-async fn abort_terminal_redirect(
+async fn continue_inert_redirect(
     browser: &Browser,
     event: &EventRequestPaused,
     in_flight: Option<&InFlight>,
 ) -> Result<(), chromiumoxide::error::CdpError> {
-    browser
-        .execute(FailRequestParams::new(event.request_id.clone(), ErrorReason::Aborted))
-        .await
-        .map(drop)
-        .map(|_| {
-            complete_stopped_response(in_flight, &event.request_id, None);
-        })
+    let mut params = ContinueResponseParams::new(event.request_id.clone());
+    params.response_code = Some(200);
+    params.response_phrase = Some("OK".to_owned());
+    params.response_headers = Some(vec![
+        HeaderEntry::new("Content-Type", "text/plain; charset=utf-8"),
+        HeaderEntry::new("Content-Security-Policy", "default-src 'none'; sandbox"),
+        HeaderEntry::new("X-Content-Type-Options", "nosniff"),
+    ]);
+    browser.execute(params).await.map(drop).map(|_| {
+        complete_stopped_response(in_flight, &event.request_id, None);
+    })
 }
 
 async fn fulfill_inert_document(
@@ -1985,9 +1989,10 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. An empty inert internal document
 /// ~keep ends `goto`; callers still receive the original no-document response.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
-/// ~keep It is aborted at the response headers, before Chrome can follow its `Location` or execute
-/// ~keep response content or navigation headers. Callers receive its original status, headers and
-/// ~keep URL with an empty body: taking the body stream lets Chrome begin processing it.
+/// ~keep At the response headers, its status is rewritten to an internal 200 and every original
+/// ~keep header is replaced by a sandboxed `text/plain` set. Chrome can neither follow the
+/// ~keep `Location`/`Refresh` headers nor execute the body; callers receive the original status,
+/// ~keep headers and URL with an empty body.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -2047,7 +2052,7 @@ fn main_frame_verdict(
         body: String::new(),
         body_bytes: Vec::new(),
         request_id: Some(event.request_id.clone()),
-        navigation_aborted: render_redirect,
+        terminal_intercepted: render_redirect,
         ready: false,
     });
     if render_redirect {
@@ -2524,7 +2529,7 @@ mod tests {
             );
             assert_eq!(stopped.headers["location"], [target]);
             assert_eq!(stopped.headers["x-redirect-marker"], ["kept"]);
-            assert!(stopped.navigation_aborted);
+            assert!(stopped.terminal_intercepted);
             assert_eq!(state.redirects_followed, 0, "{target} is not followed");
         }
     }
@@ -2554,7 +2559,7 @@ mod tests {
                 .stopped_response
                 .as_ref()
                 .expect("stopped response")
-                .navigation_aborted
+                .terminal_intercepted
         );
 
         complete_stopped_response_outcome(&state, &event.request_id, None);
@@ -2580,7 +2585,7 @@ mod tests {
                 body: String::new(),
                 body_bytes: Vec::new(),
                 request_id: Some(new.clone()),
-                navigation_aborted: true,
+                terminal_intercepted: true,
                 ready: false,
             }),
             ..InterceptOutcome::default()
@@ -2807,7 +2812,7 @@ mod tests {
                 body: SECRET.to_owned(),
                 body_bytes: SECRET.as_bytes().to_vec(),
                 request_id: None,
-                navigation_aborted: false,
+                terminal_intercepted: false,
                 ready: true,
             }),
             documents: std::collections::HashMap::from([(

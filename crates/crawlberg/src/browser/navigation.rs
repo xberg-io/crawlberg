@@ -116,7 +116,7 @@ async fn render(
 
     watch.settle().await;
     let mut intercepted = watch.take_outcome();
-    if let Some(stop) = intercepted.take_intentional_abort() {
+    if let Some(stop) = intercepted.take_intentional_terminal() {
         watch.mark_unsettled();
         return Ok(stopped_browser_page(watch, stop));
     }
@@ -138,7 +138,7 @@ async fn render(
     }
     watch.settle().await;
     if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
-        if stop.navigation_aborted {
+        if stop.terminal_intercepted {
             watch.mark_unsettled();
         }
         return Ok(stopped_browser_page(watch, stop));
@@ -259,7 +259,7 @@ fn error_page_outcome(
             body: String::new(),
             body_bytes: Vec::new(),
             request_id: None,
-            navigation_aborted: false,
+            terminal_intercepted: false,
             ready: true,
         }),
         redirects,
