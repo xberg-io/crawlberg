@@ -441,6 +441,18 @@ impl HttpClient {
         initial_body: Option<Vec<u8>>,
         max_redirects: Option<usize>,
     ) -> Result<Response, NetError> {
+        self.fetch_following_from(initial_method, url, initial_body, max_redirects, None)
+            .await
+    }
+
+    pub(crate) async fn fetch_following_from(
+        &self,
+        initial_method: Method,
+        url: &Url,
+        initial_body: Option<Vec<u8>>,
+        max_redirects: Option<usize>,
+        initiator: Option<&Url>,
+    ) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
@@ -466,7 +478,9 @@ impl HttpClient {
                 cb(&request_info);
             }
 
-            let headers = self.request_headers(&current_url).await;
+            let headers = self
+                .request_headers(&current_url, initiator, is_safe_method(&method))
+                .await;
             let resp = self.send_request(&current_url, &method, body.as_ref(), headers).await?;
 
             let status = resp.status();
@@ -552,10 +566,12 @@ impl HttpClient {
 
     /// Build the outgoing header set: browser fingerprint, then jar cookies, then the
     /// caller's extra headers, which are applied last and therefore win.
-    async fn request_headers(&self, url: &Url) -> HeaderMap {
+    async fn request_headers(&self, url: &Url, initiator: Option<&Url>, safe_method: bool) -> HeaderMap {
         let mut headers = browser_fingerprint_headers(&self.user_agent.read().await.clone());
 
-        let cookie_header = self.cookie_jar.get_cookie_header(url);
+        let cookie_header = self
+            .cookie_jar
+            .get_cookie_header_for_navigation(url, initiator, safe_method);
         if !cookie_header.is_empty()
             && let Ok(value) = HeaderValue::from_str(&cookie_header)
         {
@@ -628,6 +644,10 @@ impl HttpClient {
     pub fn is_network_idle(&self) -> bool {
         self.active_requests() == 0
     }
+}
+
+fn is_safe_method(method: &Method) -> bool {
+    method == Method::GET || method == Method::HEAD || method == Method::OPTIONS || method == Method::TRACE
 }
 
 impl Default for HttpClient {

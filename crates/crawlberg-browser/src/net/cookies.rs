@@ -21,10 +21,24 @@ struct CookieEntry {
     domain: String,
     secure: bool,
     http_only: bool,
+    same_site: Option<SameSite>,
     /// Set without a `Domain` attribute, so sent to its own host only (RFC 6265 section 5.3
     /// step 6), not to the host's subdomains.
     host_only: bool,
     expires: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SameSite {
+    Strict,
+    Lax,
+    None,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NavigationContext<'a> {
+    initiator: Option<&'a Url>,
+    safe_method: bool,
 }
 
 impl CookieEntry {
@@ -37,6 +51,26 @@ impl CookieEntry {
             host.eq_ignore_ascii_case(&self.domain)
         } else {
             domain_matches(host, &self.domain)
+        }
+    }
+
+    fn same_site_allows(&self, request_url: &Url, navigation: Option<NavigationContext<'_>>) -> bool {
+        let Some(policy) = self.same_site else {
+            return true;
+        };
+        let Some(navigation) = navigation else {
+            return true;
+        };
+        let cross_site = navigation
+            .initiator
+            .is_some_and(|initiator| !schemeful_same_site(initiator, request_url));
+        if !cross_site {
+            return true;
+        }
+        match policy {
+            SameSite::Strict => false,
+            SameSite::Lax => navigation.safe_method,
+            SameSite::None => true,
         }
     }
 }
@@ -88,6 +122,7 @@ impl CookieJar {
             domain: attributes.domain.clone(),
             secure: attributes.secure,
             http_only: attributes.http_only,
+            same_site: attributes.same_site,
             host_only,
             expires: attributes.expires,
         };
@@ -108,6 +143,19 @@ impl CookieJar {
     }
 
     pub fn get_cookie_header(&self, url: &Url) -> String {
+        self.get_cookie_header_for_request(url, None)
+    }
+
+    pub(crate) fn get_cookie_header_for_navigation(
+        &self,
+        url: &Url,
+        initiator: Option<&Url>,
+        safe_method: bool,
+    ) -> String {
+        self.get_cookie_header_for_request(url, Some(NavigationContext { initiator, safe_method }))
+    }
+
+    fn get_cookie_header_for_request(&self, url: &Url, navigation: Option<NavigationContext<'_>>) -> String {
         let host = url.host_str().unwrap_or("");
         let path = url.path();
         let is_secure = url.scheme() == "https";
@@ -134,6 +182,9 @@ impl CookieJar {
                     continue;
                 }
                 if !path_matches(path, &entry.path) {
+                    continue;
+                }
+                if !entry.same_site_allows(url, navigation) {
                     continue;
                 }
                 matching.push(format!("{}={}", entry.name, entry.value));
@@ -171,6 +222,7 @@ impl CookieJar {
                 domain: cookie.domain.clone(),
                 secure: cookie.secure,
                 http_only: cookie.http_only,
+                same_site: None,
                 host_only: false,
                 expires: None,
             };
@@ -248,6 +300,7 @@ impl CookieJar {
             domain: domain.clone(),
             secure: cookie.secure,
             http_only: cookie.http_only,
+            same_site: None,
             host_only: cookie.host_only,
             expires: None,
         };
@@ -340,6 +393,7 @@ struct CookieAttributes {
     secure: bool,
     http_only: bool,
     expires: Option<u64>,
+    same_site: Option<SameSite>,
 }
 
 impl CookieAttributes {
@@ -352,6 +406,7 @@ impl CookieAttributes {
             secure: false,
             http_only: false,
             expires: None,
+            same_site: None,
         }
     }
 
@@ -391,6 +446,14 @@ impl CookieAttributes {
                     self.expires = Some(expiry);
                 }
             }
+            "samesite" => {
+                self.same_site = match value.to_ascii_lowercase().as_str() {
+                    "strict" => Some(SameSite::Strict),
+                    "lax" => Some(SameSite::Lax),
+                    "none" => Some(SameSite::None),
+                    _ => None,
+                };
+            }
             _ => {}
         }
     }
@@ -405,6 +468,9 @@ impl CookieAttributes {
     /// 4.1.3), with the prefix matched without regard to case.
     fn may_be_set_by(&mut self, name: &str, url: &Url) -> bool {
         if self.secure && url.scheme() != "https" {
+            return false;
+        }
+        if self.same_site == Some(SameSite::None) && !self.secure {
             return false;
         }
         let prefix = name.get(..PREFIX_HOST.len()).unwrap_or("");
@@ -529,6 +595,21 @@ fn domain_matches(host: &str, domain: &str) -> bool {
     let host = host.to_lowercase();
     let domain = domain.trim_start_matches('.').to_lowercase();
     host == domain || host.ends_with(&format!(".{}", domain))
+}
+
+fn schemeful_same_site(left: &Url, right: &Url) -> bool {
+    if left.scheme() != right.scheme() {
+        return false;
+    }
+    let Some(left_host) = left.host_str() else {
+        return false;
+    };
+    let Some(right_host) = right.host_str() else {
+        return false;
+    };
+    let left_site = psl::domain_str(left_host).unwrap_or(left_host);
+    let right_site = psl::domain_str(right_host).unwrap_or(right_host);
+    left_site.eq_ignore_ascii_case(right_site)
 }
 
 #[cfg(test)]
@@ -746,8 +827,8 @@ mod tests {
     fn unknown_attributes_and_valueless_flags_are_skipped_without_affecting_the_cookie() {
         let jar = CookieJar::new();
         let url = Url::parse("https://example.com/").unwrap();
-        jar.set_cookie("a=1; SameSite=Lax; Priority=High; Partitioned", &url);
-        jar.set_cookie_from_js("b=2; SameSite=Lax; Partitioned", &url);
+        jar.set_cookie("a=1; Priority=High; Partitioned", &url);
+        jar.set_cookie_from_js("b=2; Priority=High; Partitioned", &url);
 
         let snapshot = jar.snapshot();
         assert_eq!(snapshot.len(), 2);
@@ -999,5 +1080,54 @@ mod tests {
         jar.set_cookie("suffix=1; Path=/; Domain=рф", &url);
         assert_eq!(sorted_header(&jar, "http://www.пример.рф/"), ["u=1"]);
         assert_eq!(sorted_header(&jar, "http://xn--e1afmkfd.xn--p1ai/"), ["u=1"]);
+    }
+
+    #[test]
+    fn strict_and_lax_cookies_follow_cross_site_navigation_rules() {
+        let jar = CookieJar::new();
+        let destination = Url::parse("https://accounts.example.com/finish").unwrap();
+        jar.set_cookie("strict=1; Path=/; SameSite=Strict; Secure", &destination);
+        jar.set_cookie("lax=1; Path=/; SameSite=Lax; Secure", &destination);
+        jar.set_cookie("none=1; Path=/; SameSite=None; Secure", &destination);
+        let cross_site = Url::parse("https://other.example.net/start").unwrap();
+
+        let get_header = jar.get_cookie_header_for_navigation(&destination, Some(&cross_site), true);
+        let mut get_cookies: Vec<&str> = get_header.split("; ").collect();
+        get_cookies.sort_unstable();
+        assert_eq!(get_cookies, ["lax=1", "none=1"]);
+
+        assert_eq!(
+            jar.get_cookie_header_for_navigation(&destination, Some(&cross_site), false),
+            "none=1"
+        );
+    }
+
+    #[test]
+    fn same_site_is_schemeful_and_uses_the_registrable_domain() {
+        let jar = CookieJar::new();
+        let destination = Url::parse("https://login.example.co.uk/finish").unwrap();
+        jar.set_cookie("strict=1; Path=/; SameSite=Strict; Secure", &destination);
+
+        let sibling = Url::parse("https://shop.example.co.uk/start").unwrap();
+        assert_eq!(
+            jar.get_cookie_header_for_navigation(&destination, Some(&sibling), true),
+            "strict=1"
+        );
+
+        let insecure = Url::parse("http://shop.example.co.uk/start").unwrap();
+        assert_eq!(
+            jar.get_cookie_header_for_navigation(&destination, Some(&insecure), true),
+            ""
+        );
+    }
+
+    #[test]
+    fn same_site_none_requires_secure() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie("rejected=1; SameSite=None", &url);
+        jar.set_cookie("accepted=1; SameSite=None; Secure", &url);
+
+        assert_eq!(jar.get_cookie_header(&url), "accepted=1");
     }
 }

@@ -33,6 +33,7 @@ impl Page {
         max_redirects: Option<usize>,
     ) -> Result<usize, PageError> {
         let url = Url::parse(url_str).map_err(|e| PageError::InvalidUrl(e.to_string()))?;
+        let initiator = self.url.clone();
         // ~keep Refused before robots.txt or the document is fetched, and before the URL is
         // ~keep recorded as the page's own, so nothing downstream sees the userinfo.
         crate::net::credential::refuse_userinfo(&url).map_err(|e| PageError::NetworkError(e.to_string()))?;
@@ -41,8 +42,10 @@ impl Page {
         self.url = Some(url.clone());
         self.network_events.clear();
 
-        self.enforce_robots(&url).await?;
-        let response = self.fetch_document(&url, method, body, max_redirects).await?;
+        self.enforce_robots(&url, initiator.as_ref()).await?;
+        let response = self
+            .fetch_document(&url, method, body, max_redirects, initiator.as_ref())
+            .await?;
         let redirects = response.redirected_from.len();
 
         self.record_network_event(
@@ -99,7 +102,7 @@ impl Page {
     /// Apply the context's `robots.txt` policy, fetching and caching the file on first use.
     ///
     /// Does nothing when `obey_robots` is off or the URL has no host.
-    async fn enforce_robots(&mut self, url: &Url) -> Result<(), PageError> {
+    async fn enforce_robots(&mut self, url: &Url, initiator: Option<&Url>) -> Result<(), PageError> {
         if !self.context.obey_robots || url.host_str().is_none() {
             return Ok(());
         }
@@ -111,7 +114,10 @@ impl Page {
         if self.context.robots_cache.is_allowed(&origin, "/robots.txt") {
             let robots_url = format!("{origin}/robots.txt");
             if let Ok(robots_url) = Url::parse(&robots_url)
-                && let Ok(resp) = self.http_client.fetch(&robots_url).await
+                && let Ok(resp) = self
+                    .http_client
+                    .fetch_following_from(reqwest::Method::GET, &robots_url, None, None, initiator)
+                    .await
                 && resp.status == ROBOTS_OK_STATUS
             {
                 let body = String::from_utf8_lossy(&resp.body);
@@ -134,18 +140,20 @@ impl Page {
         method: &str,
         body: &str,
         max_redirects: Option<usize>,
+        initiator: Option<&Url>,
     ) -> Result<Response, PageError> {
         let result = if method == "POST" {
             self.http_client
-                .fetch_following(
+                .fetch_following_from(
                     reqwest::Method::POST,
                     url,
                     Some(body.as_bytes().to_vec()),
                     max_redirects,
+                    initiator,
                 )
                 .await
         } else {
-            self.do_fetch(url, max_redirects).await
+            self.do_fetch_from(url, max_redirects, initiator).await
         };
         result.map_err(|e| {
             self.lifecycle = LifecycleState::Failed;

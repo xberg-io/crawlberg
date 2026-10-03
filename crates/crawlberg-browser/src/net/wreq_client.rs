@@ -174,6 +174,15 @@ impl StealthHttpClient {
     /// Fetch `url`, following at most `max_redirects` redirects, as
     /// [`crate::net::HttpClient::fetch_following`] does.
     pub async fn fetch_following(&self, url: &Url, max_redirects: Option<usize>) -> Result<Response, NetError> {
+        self.fetch_following_from(url, max_redirects, None).await
+    }
+
+    pub(crate) async fn fetch_following_from(
+        &self,
+        url: &Url,
+        max_redirects: Option<usize>,
+        initiator: Option<&Url>,
+    ) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)?;
 
@@ -184,7 +193,9 @@ impl StealthHttpClient {
         for _ in 0..requests {
             let mut req = self.client_for(&current_url)?.get(current_url.as_str());
 
-            let cookie_header = self.cookie_jar.get_cookie_header(&current_url);
+            let cookie_header = self
+                .cookie_jar
+                .get_cookie_header_for_navigation(&current_url, initiator, true);
             if !cookie_header.is_empty() {
                 req = req.header("Cookie", &cookie_header);
             }

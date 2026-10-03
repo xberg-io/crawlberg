@@ -143,12 +143,21 @@ impl Page {
     }
 
     async fn do_fetch(&self, url: &Url, max_redirects: Option<usize>) -> Result<Response, NetError> {
+        self.do_fetch_from(url, max_redirects, None).await
+    }
+
+    async fn do_fetch_from(
+        &self,
+        url: &Url,
+        max_redirects: Option<usize>,
+        initiator: Option<&Url>,
+    ) -> Result<Response, NetError> {
         #[cfg(feature = "stealth")]
         if let Some(ref stealth) = self.stealth_client {
-            return stealth.fetch_following(url, max_redirects).await;
+            return stealth.fetch_following_from(url, max_redirects, initiator).await;
         }
         self.http_client
-            .fetch_following(reqwest::Method::GET, url, None, max_redirects)
+            .fetch_following_from(reqwest::Method::GET, url, None, max_redirects, initiator)
             .await
     }
     fn init_js(&mut self) {

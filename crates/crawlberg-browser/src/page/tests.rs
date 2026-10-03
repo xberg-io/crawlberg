@@ -2023,6 +2023,53 @@ fn serve_raw_recording(
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn cross_site_script_navigations_withhold_strict_but_send_lax_cookies() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let port = addr.port();
+    let first_body =
+        format!("<html><body><script>window.location.href = 'http://localhost:{port}/middle';</script></body></html>");
+    let middle_body =
+        format!("<html><body><script>window.location.href = 'http://127.0.0.1:{port}/finish';</script></body></html>");
+    let first_response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\
+         Set-Cookie: strict=1; Path=/; SameSite=Strict\r\n\
+         Set-Cookie: lax=1; Path=/; SameSite=Lax\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+        first_body.len(),
+        first_body
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &first_response),
+            ("/middle", &ok_response("text/html", &middle_body)),
+            ("/finish", &ok_response("text/html", "done")),
+        ]),
+    );
+    let mut page = test_page();
+
+    page.navigate(&format!("http://{addr}/"))
+        .await
+        .expect("the navigation chain must succeed");
+
+    let requests = requests.lock().expect("lock");
+    let finish = requests
+        .iter()
+        .find(|request| request.starts_with("GET /finish "))
+        .unwrap_or_else(|| panic!("the final page must be requested: {requests:?}"))
+        .to_lowercase();
+    assert!(
+        finish.contains("cookie: lax=1"),
+        "Lax must be sent on a top-level GET: {finish}"
+    );
+    assert!(
+        !finish.contains("strict=1"),
+        "Strict must be withheld across sites: {finish}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
