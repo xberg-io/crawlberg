@@ -19,7 +19,7 @@ use crate::net::cookies::CookieJar;
 #[cfg(feature = "stealth")]
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
-use crate::net::resolver::ValidatorResolver;
+use crate::net::resolver::{SystemProxy, SystemProxyIdentity, ValidatorResolver};
 #[cfg(feature = "stealth")]
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
@@ -28,8 +28,13 @@ pub const STEALTH_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
 #[cfg(feature = "stealth")]
+const MAX_ENVIRONMENT_PROXY_CLIENTS: usize = 64;
+
+#[cfg(feature = "stealth")]
 pub struct StealthHttpClient {
     client: wreq::Client,
+    explicit_proxy: bool,
+    environment_clients: std::sync::Mutex<HashMap<SystemProxyIdentity, wreq::Client>>,
     /// SSRF policy applied to the initial URL and every redirect hop.
     pub ssrf: Arc<dyn SsrfValidator>,
     pub cookie_jar: Arc<CookieJar>,
@@ -69,6 +74,22 @@ impl StealthHttpClient {
     }
 
     fn build(cookie_jar: Arc<CookieJar>, proxy: Option<wreq::Proxy>, ssrf: Arc<dyn SsrfValidator>) -> Self {
+        let explicit_proxy = proxy.is_some();
+        let client = Self::build_client(proxy, &ssrf);
+
+        StealthHttpClient {
+            client,
+            explicit_proxy,
+            environment_clients: std::sync::Mutex::new(HashMap::new()),
+            ssrf,
+            cookie_jar,
+            extra_headers: RwLock::new(HashMap::new()),
+            origin_headers: RwLock::new(None),
+            in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        }
+    }
+
+    fn build_client(proxy: Option<wreq::Proxy>, ssrf: &Arc<dyn SsrfValidator>) -> wreq::Client {
         let cert_store = wreq::tls::trust::CertStore::builder()
             .set_default_paths()
             .build()
@@ -89,19 +110,33 @@ impl StealthHttpClient {
             Some(proxy) => builder = builder.proxy(proxy),
             // ~keep Connect only to the addresses the policy resolved; see `ValidatorResolver`.
             // ~keep With a proxy, the proxy resolves the target.
-            None => builder = builder.dns_resolver(ValidatorResolver::new(ssrf.clone())),
+            None => builder = builder.no_proxy().dns_resolver(ValidatorResolver::new(ssrf.clone())),
         }
 
-        let client = builder.build().expect("failed to build wreq stealth client");
+        builder.build().expect("failed to build wreq stealth client")
+    }
 
-        StealthHttpClient {
-            client,
-            ssrf,
-            cookie_jar,
-            extra_headers: RwLock::new(HashMap::new()),
-            origin_headers: RwLock::new(None),
-            in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+    fn client_for(&self, url: &Url) -> Result<wreq::Client, NetError> {
+        if self.explicit_proxy {
+            return Ok(self.client.clone());
         }
+        let Some(proxy) = SystemProxy::for_url(url)? else {
+            return Ok(self.client.clone());
+        };
+        let identity = proxy.identity();
+        let mut clients = self
+            .environment_clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(client) = clients.get(&identity) {
+            return Ok(client.clone());
+        }
+        let client = Self::build_client(Some(proxy.wreq_proxy()?), &self.ssrf);
+        if clients.len() >= MAX_ENVIRONMENT_PROXY_CLIENTS {
+            clients.clear();
+        }
+        clients.insert(identity, client.clone());
+        Ok(client)
     }
 
     pub async fn fetch(&self, url: &Url) -> Result<Response, NetError> {
@@ -119,7 +154,7 @@ impl StealthHttpClient {
 
         let requests = max_redirects.map_or(20, |limit| limit.saturating_add(1));
         for _ in 0..requests {
-            let mut req = self.client.get(current_url.as_str());
+            let mut req = self.client_for(&current_url)?.get(current_url.as_str());
 
             let cookie_header = self.cookie_jar.get_cookie_header(&current_url);
             if !cookie_header.is_empty() {
@@ -301,6 +336,63 @@ mod tests {
             policy.resolved.lock().expect("lock").is_empty(),
             "the proxy resolves the target, so the client must not"
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(environment_proxy)]
+    async fn environment_proxy_changes_are_applied_by_the_stealth_client() {
+        use crate::net::resolver::tests::{EnvironmentGuard, RebindingPolicy, denied_server};
+
+        let (first_port, first_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst").await;
+        let (second_port, second_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecond").await;
+        let environment = EnvironmentGuard::with_http_proxy(format!("http://localhost:{first_port}"));
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone())
+            .expect("no explicit proxy, so the client must build");
+        let target = "http://example.invalid/page".parse::<Url>().expect("valid URL");
+
+        let first = client.fetch(&target).await.expect("the first proxy must answer");
+        environment.set_http_proxy(format!("http://localhost:{second_port}"));
+        let second = client.fetch(&target).await.expect("the changed proxy must answer");
+
+        assert_eq!((first.body, second.body), (b"first".to_vec(), b"second".to_vec()));
+        assert_eq!(first_requests.lock().expect("lock").len(), 1);
+        assert_eq!(second_requests.lock().expect("lock").len(), 1);
+        assert!(
+            policy.resolved.lock().expect("lock").is_empty(),
+            "the policy resolver must not receive either private proxy host"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(environment_proxy)]
+    async fn no_proxy_keeps_the_stealth_policy_resolver_on_a_direct_request() {
+        use crate::net::resolver::tests::{EnvironmentGuard, RebindingPolicy, denied_server};
+
+        let (target_port, target_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ntarget").await;
+        let (proxy_port, proxy_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nproxy").await;
+        let environment = EnvironmentGuard::with_http_proxy(format!("http://localhost:{proxy_port}"));
+        environment.set_no_proxy("localhost");
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone())
+            .expect("no explicit proxy, so the client must build");
+
+        client
+            .fetch(
+                &format!("http://localhost:{target_port}/")
+                    .parse::<Url>()
+                    .expect("valid URL"),
+            )
+            .await
+            .expect_err("the direct connection lookup must be refused");
+
+        assert_eq!(*policy.resolved.lock().expect("lock"), vec!["localhost"]);
+        assert!(target_requests.lock().expect("lock").is_empty());
+        assert!(proxy_requests.lock().expect("lock").is_empty());
     }
 
     #[derive(Debug)]

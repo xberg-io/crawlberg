@@ -10,6 +10,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::net::proxy::{ProxyError, UpstreamProxy, proxy_from_url};
 use crate::net::ssrf::SsrfValidator;
 
 /// Port the resolved addresses carry.
@@ -20,6 +21,62 @@ const RESOLUTION_PORT: u16 = 0;
 
 /// The error type both HTTP stacks expect from a resolver.
 type ResolveError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SystemProxyIdentity {
+    address: String,
+    authorization: Option<Vec<u8>>,
+}
+
+pub(crate) struct SystemProxy {
+    upstream: UpstreamProxy,
+    authorization: Option<reqwest::header::HeaderValue>,
+}
+
+impl SystemProxy {
+    /// Select and admit the environment or operating-system proxy for `url`.
+    ///
+    /// ~keep Selection happens before client construction so a proxy connection does not
+    /// ask the target's SSRF resolver to approve the proxy host, while a `NO_PROXY` request
+    /// still uses the policy resolver.
+    pub(crate) fn for_url(url: &url::Url) -> Result<Option<Self>, ProxyError> {
+        let Ok(destination) = url.as_str().parse() else {
+            return Ok(None);
+        };
+        let Some(intercepted) = hyper_util::client::proxy::matcher::Matcher::from_system().intercept(&destination)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            upstream: proxy_from_url(&intercepted.uri().to_string())?,
+            authorization: intercepted.basic_auth().cloned(),
+        }))
+    }
+
+    pub(crate) fn identity(&self) -> SystemProxyIdentity {
+        SystemProxyIdentity {
+            address: self.upstream.address().as_str().to_owned(),
+            authorization: self.authorization.as_ref().map(|value| value.as_bytes().to_vec()),
+        }
+    }
+
+    pub(crate) fn reqwest_proxy(&self) -> Result<reqwest::Proxy, ProxyError> {
+        let proxy = self.upstream.reqwest_proxy()?;
+        Ok(match &self.authorization {
+            Some(authorization) => proxy.custom_http_auth(authorization.clone()),
+            None => proxy,
+        })
+    }
+
+    #[cfg(feature = "stealth")]
+    pub(crate) fn wreq_proxy(&self) -> Result<wreq::Proxy, ProxyError> {
+        let proxy = self.upstream.wreq_proxy()?;
+        Ok(match &self.authorization {
+            Some(authorization) => proxy.custom_http_auth(authorization.clone()),
+            None => proxy,
+        })
+    }
+}
 
 /// A DNS resolver that returns only the addresses the SSRF policy permits.
 #[derive(Debug, Clone)]
@@ -78,6 +135,7 @@ pub(crate) fn with_policy_resolver(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::ffi::{OsStr, OsString};
     use std::net::IpAddr;
     use std::sync::Mutex;
 
@@ -86,6 +144,63 @@ pub(crate) mod tests {
     use url::Url;
 
     use super::*;
+
+    const PROXY_ENV: [&str; 9] = [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "REQUEST_METHOD",
+    ];
+
+    pub(crate) struct EnvironmentGuard(Vec<(&'static str, Option<OsString>)>);
+
+    impl EnvironmentGuard {
+        pub(crate) fn with_http_proxy(proxy: impl AsRef<OsStr>) -> Self {
+            let saved = PROXY_ENV
+                .into_iter()
+                .map(|name| (name, std::env::var_os(name)))
+                .collect();
+            for name in PROXY_ENV {
+                // SAFETY: callers are serial tests, and Drop restores every variable.
+                unsafe { std::env::remove_var(name) };
+            }
+            let guard = Self(saved);
+            guard.set_http_proxy(proxy);
+            guard
+        }
+
+        pub(crate) fn set_http_proxy(&self, proxy: impl AsRef<OsStr>) {
+            // SAFETY: callers are serial tests, and Drop restores HTTP_PROXY.
+            unsafe { std::env::set_var("HTTP_PROXY", proxy) };
+        }
+
+        pub(crate) fn set_no_proxy(&self, no_proxy: impl AsRef<OsStr>) {
+            // SAFETY: callers are serial tests, and Drop restores NO_PROXY.
+            unsafe { std::env::set_var("NO_PROXY", no_proxy) };
+        }
+    }
+
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            for (name, value) in self.0.drain(..) {
+                match value {
+                    Some(value) => {
+                        // SAFETY: callers are serial tests, and this restores the original value.
+                        unsafe { std::env::set_var(name, value) };
+                    }
+                    None => {
+                        // SAFETY: callers are serial tests, and this restores the variable's absence.
+                        unsafe { std::env::remove_var(name) };
+                    }
+                }
+            }
+        }
+    }
 
     /// The address a rebinding DNS server gives the connection's lookup; the test policy denies it.
     pub(crate) const DENIED: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);

@@ -886,6 +886,11 @@ mod tests {
             .expect("restrictive builder must configure")
             .build()
             .expect("restrictive client must build");
+        let planted = std::sync::Arc::new(StaticClients {
+            client: planted,
+            jar: None,
+            environment: Mutex::new(HashMap::new()),
+        });
         cache.insert(ClientCacheKey::from_config(&permissive), &planted);
 
         let served = cache.get_or_build(&permissive).expect("a hit must not fail");
@@ -905,13 +910,15 @@ mod tests {
     #[test]
     fn a_full_cache_is_cleared_before_the_next_insert() {
         let cache = ClientCache::default();
-        let client = cache.get_or_build(&CrawlConfig::default()).expect("client must build");
+        let clients = cache
+            .get_or_build_set(&CrawlConfig::default())
+            .expect("client must build");
         let config_at = |millis: u64| CrawlConfig {
             request_timeout: Duration::from_millis(millis),
             ..CrawlConfig::default()
         };
         for millis in 1..MAX_CACHED_CLIENTS as u64 {
-            cache.insert(ClientCacheKey::from_config(&config_at(millis)), &client);
+            cache.insert(ClientCacheKey::from_config(&config_at(millis)), &clients);
         }
         assert!(
             cache.contains(&CrawlConfig::default()) && cache.contains(&config_at(1)),
@@ -919,7 +926,7 @@ mod tests {
         );
 
         let past_cap = config_at(MAX_CACHED_CLIENTS as u64);
-        cache.insert(ClientCacheKey::from_config(&past_cap), &client);
+        cache.insert(ClientCacheKey::from_config(&past_cap), &clients);
         assert!(
             cache.contains(&past_cap),
             "the entry that found the cache full must be stored"
@@ -948,12 +955,12 @@ mod tests {
             ..CrawlConfig::default()
         });
         let config_key = ClientCacheKey::from_config(&config);
-        let sentinel_client = ClientCache::default()
-            .get_or_build(&CrawlConfig::default())
+        let sentinel_clients = ClientCache::default()
+            .get_or_build_set(&CrawlConfig::default())
             .expect("sentinel client must build");
 
         for _ in 0..100 {
-            client_cache().insert(sentinel_key.clone(), &sentinel_client);
+            client_cache().insert(sentinel_key.clone(), &sentinel_clients);
             let _client = build_client(&config).expect("client must build");
             let clients = client_cache().clients.lock().expect("cache lock must not be poisoned");
             if clients.contains_key(&sentinel_key) {
