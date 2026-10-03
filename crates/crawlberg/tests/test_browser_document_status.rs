@@ -568,6 +568,48 @@ async fn chromiumoxide_returns_the_start_page_when_a_pre_load_navigation_commits
     assert_start_page(test_name, result);
 }
 
+#[tokio::test]
+async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_address() {
+    let test_name = "chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_address";
+    let site = MockServer::start().await;
+    for (route, target) in [
+        ("/mail", "mailto:someone@example.com"),
+        ("/data", "data:text/html,hi"),
+        ("/file", "file:///etc/hostname"),
+        ("/app", "myapp://open"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(302).append_header("location", target))
+            .mount(&site)
+            .await;
+    }
+    let mut browser_config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    browser_config.browser.timeout = Duration::from_secs(3);
+    for (route, target) in [
+        ("/mail", "mailto:someone@example.com"),
+        ("/data", "data:text/html,hi"),
+        ("/file", "file:///etc/hostname"),
+        ("/app", "myapp://open"),
+    ] {
+        let Some(result) = browser_scrape_with(test_name, browser_config.clone(), &site, route).await else {
+            return;
+        };
+        let page = result.unwrap_or_else(|error| panic!("{test_name}: {target}: {error:?}"));
+        assert_eq!(
+            (page.status_code, page.html.as_str()),
+            (302, ""),
+            "{test_name}: {target}"
+        );
+        assert_eq!(page.redirect_count, 0, "{test_name}: {target}");
+        assert!(
+            page.final_url.ends_with(route),
+            "{test_name}: {target}: {}",
+            page.final_url
+        );
+    }
+}
+
 /// A document an iframe commits is not the page's: after an iframe loads during the extra wait,
 /// a main-frame navigation that commits nothing leaves the start page and its status in place.
 #[tokio::test]

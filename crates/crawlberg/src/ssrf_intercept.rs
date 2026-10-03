@@ -44,11 +44,13 @@ use futures::stream::{BoxStream, FuturesUnordered, SelectAll, StreamExt as _};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
+use crate::html::is_fetchable_scheme;
 use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
 use crate::net::LOGGED_REFUSALS;
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::net::userinfo;
+use crate::normalize::resolve_redirect;
 use crate::types::CrawlConfig;
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
@@ -1804,6 +1806,14 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
     event.response_status_code.is_some() || event.response_error_reason.is_some()
 }
 
+fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) -> bool {
+    headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("location"))
+        .and_then(|header| resolve_redirect(response_url, &header.value))
+        .is_some_and(|target| is_fetchable_scheme(&target))
+}
+
 /// How a paused document response is answered, recording the status and headers of each
 /// main-frame document response. Only the response of the committed document is kept beside the
 /// new one. A main-frame redirect is counted while it is within `limit`. Past the limit, a
@@ -1820,6 +1830,9 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
 /// ~keep Chrome commits no document for a 204, 205 or 304, so no load event fires and
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
 /// ~keep Chrome commit its error page, which ends `goto` at once.
+/// ~keep A redirect to a non-web address cannot produce another paused request for the listener
+/// ~keep to stop on, so it ends on the redirect response before Chrome hands it to an app or
+/// ~keep reports an unsafe redirect.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -1841,13 +1854,15 @@ fn main_frame_verdict(
     }
     let stop = match status {
         Some(code) if is_redirect => {
-            if spend_redirect(&mut state, limit) {
+            if !has_fetchable_redirect_target(&event.request.url, headers) {
+                code
+            } else if spend_redirect(&mut state, limit) {
                 return Verdict::Continue(None);
-            }
-            if state.first_document_arrived {
+            } else if state.first_document_arrived {
                 return Verdict::Abort;
+            } else {
+                code
             }
-            code
         }
         Some(code) if NO_DOCUMENT_STATUSES.contains(&code) => {
             if state.first_document_arrived {
@@ -2305,6 +2320,31 @@ mod tests {
             ),
             "a redirect past the limit after the first document is dropped"
         );
+    }
+
+    #[test]
+    fn a_redirect_to_a_non_web_address_stops_on_the_redirect_response() {
+        let main_frame = FrameId::new("MAIN");
+        for target in [
+            "mailto:someone@example.com",
+            "data:text/html,hi",
+            "file:///etc/hostname",
+            "myapp://open",
+        ] {
+            let state = Mutex::new(InterceptOutcome::default());
+            let event = main_frame_redirect("SEED", target);
+            assert!(matches!(
+                main_frame_verdict(&event, &main_frame, 10, &state),
+                Verdict::Refuse
+            ));
+            let state = state.into_inner().expect("state lock");
+            let stopped = state.stopped_response.expect("the redirect response must be kept");
+            assert_eq!(
+                (stopped.status, stopped.url.as_str()),
+                (302, event.request.url.as_str())
+            );
+            assert_eq!(state.redirects_followed, 0, "{target} is not followed");
+        }
     }
 
     #[test]

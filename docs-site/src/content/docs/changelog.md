@@ -954,6 +954,10 @@ title: "Changelog"
   address directly already was, so the 3xx response is the page. The same holds for robots.txt,
   sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
   the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+- **A redirect to a non-web address still failed or timed out with the Chromiumoxide backend.**
+  Chrome either refused such a redirect or waited for an external application. Browser mode now
+  returns the 3xx response as the page, matching HTTP mode, without following the `Location`.
+  (#471)
 
 - **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
   A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
