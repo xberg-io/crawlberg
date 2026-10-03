@@ -206,9 +206,10 @@ async fn answered_error_page(
 /// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
 /// response, if one arrived, is `recorded`. `redirects` are the redirects the main frame followed.
 ///
-/// ~keep The error page is Chrome's, never the server's content. When the server answered, the
-/// ~keep response is reported with its status and headers and no body, and HTTP mode's status
-/// ~keep handling decides on it: a 404 or 500 raises the same error, and a 400 or 501 is a page.
+/// ~keep The error page is Chrome's, never the server's content. When an error response arrived,
+/// ~keep it is reported with its status and headers and no body, and HTTP mode's status handling
+/// ~keep decides on it: a 404 or 500 raises the same error, and a 400 or 501 is a page. A 2xx
+/// ~keep response on this page means Chrome could not read its body, so it is a browser error.
 /// ~keep A late navigation's own redirects decide whether a 404 is a page, not the seed's. A
 /// ~keep navigation that got no response fails with a browser error.
 fn error_page_outcome(
@@ -219,6 +220,13 @@ fn error_page_outcome(
     let Some(recorded) = recorded else {
         return Err(error_page_error(&failed_url));
     };
+    if (200..300).contains(&recorded.status) {
+        return Err(CrawlError::browser_error(format!(
+            "Chrome could not read the body of the HTTP {} response from {}",
+            recorded.status,
+            crate::net::redact_url_credentials(&failed_url)
+        )));
+    }
     Ok(BrowserPage {
         response: stopped_response(StoppedResponse {
             url: failed_url,
@@ -576,6 +584,25 @@ mod tests {
             message.contains("example.com/gone") && !message.contains("s3cretpw"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn an_error_page_for_a_success_response_names_its_status() {
+        let recorded = DocumentResponse {
+            status: 200,
+            headers: HashMap::new(),
+            redirects: 0,
+        };
+        let error = error_page_outcome("https://user:s3cretpw@example.com/broken".to_owned(), Some(recorded), 0)
+            .expect_err("Chrome did not render the successful response");
+        let CrawlError::BrowserError { message, .. } = error else {
+            panic!("got {error:?}");
+        };
+        assert!(
+            message.contains("HTTP 200") && message.contains("example.com/broken"),
+            "{message}"
+        );
+        assert!(!message.contains("s3cretpw"), "{message}");
     }
 
     /// A real Chrome with the firewall and a watch as the pool builds them, and a site where `/one`

@@ -1015,15 +1015,29 @@ impl Watch {
     /// ~keep frame is idle, and chromiumoxide ignores that event, so once a navigation was dropped
     /// ~keep the navigation also ends on the first frame that stops. Which frame does not matter:
     /// ~keep no document commits after the drop, so the page keeps the one it has.
+    ///
+    /// ~keep Chrome's error page can commit without firing the requested page's load event. Its
+    /// ~keep `frameNavigated` event carries `unreachable_url`, so that commit ends the wait too;
+    /// ~keep the caller then classifies the recorded response instead of reporting a timeout.
     pub(crate) async fn goto(
         &self,
         page: &chromiumoxide::Page,
         url: &str,
     ) -> Result<(), chromiumoxide::error::CdpError> {
         let mut stops = page.event_listener::<EventFrameStoppedLoading>().await?;
+        let mut commits = page.event_listener::<EventFrameNavigated>().await?;
         let stopped_after_a_drop = async {
             while stops.next().await.is_some() {
                 if lock(&self.page.outcome).navigation_dropped {
+                    return;
+                }
+            }
+            std::future::pending::<()>().await;
+        };
+        let main_frame = self.page.main_frame.clone();
+        let error_page_committed = async {
+            while let Some(event) = commits.next().await {
+                if event.frame.id == main_frame && event.frame.unreachable_url.is_some() {
                     return;
                 }
             }
@@ -1039,12 +1053,20 @@ impl Watch {
                 }
                 Ok(())
             }
+            () = error_page_committed => {
+                #[cfg(feature = "browser")]
+                {
+                    lock(&self.page.outcome).goto_unsettled = true;
+                }
+                Ok(())
+            }
         }
     }
 
-    /// Whether a new navigation can start on the page at once. It cannot after [`Watch::goto`]
-    /// ended on a frame's stop: chromiumoxide then waits on the old navigation until its own
-    /// 30 s deadline, and the page's next `goto` waits behind it.
+    /// ~keep Whether a new navigation can start on the page at once. It cannot after
+    /// ~keep [`Watch::goto`] ended on a frame's stop or an error-page commit: chromiumoxide then
+    /// ~keep waits on the old navigation until its own 30 s deadline, and the page's next `goto`
+    /// ~keep waits behind it.
     #[cfg(feature = "browser")]
     pub(crate) fn page_reusable(&self) -> bool {
         !lock(&self.page.outcome).goto_unsettled

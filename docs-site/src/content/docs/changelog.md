@@ -377,6 +377,9 @@ title: "Changelog"
   the server did not answer, the fetch fails with a browser error that names the URL. After a page
   navigates itself, only the redirects of that navigation make a 404 a page, not the redirects of
   the requested URL. (#317, #319)
+- **A successful response whose body Chrome could not decode was reported as an empty page.** A
+  malformed compressed body now fails with a browser error that names its 2xx status and URL,
+  whether it is the seed or the target of a page navigation. (#417)
 - **The HTML, status, final URL and screenshot of a browser render come from one document.**
   They were separate reads, so a navigation that committed between them could pair the HTML of
   one document with the status, URL or screenshot of the next. The render now reads which
