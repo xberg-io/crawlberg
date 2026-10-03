@@ -91,6 +91,31 @@ async fn start_page_server() -> String {
 }
 
 #[cfg(feature = "browser")]
+async fn start_rejected_cdp_endpoint() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("CDP endpoint should bind");
+    let addr = listener.local_addr().expect("CDP endpoint should have local addr");
+    let handshake = tokio::spawn(async move {
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .expect("interact should connect to the test CDP endpoint")
+            .expect("the test CDP endpoint should accept the connection");
+        let mut prefix = [0_u8; 4];
+        tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut prefix))
+            .await
+            .expect("interact should send the CDP websocket handshake")
+            .expect("the CDP websocket handshake should be readable");
+        assert_eq!(
+            prefix, *b"GET ",
+            "the CDP connection should begin with a websocket handshake"
+        );
+        stream.shutdown().await.expect("the test CDP endpoint should close");
+    });
+    (format!("ws://{addr}/devtools/browser/crawlberg-test"), handshake)
+}
+
+#[cfg(feature = "browser")]
 #[tokio::test]
 async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
@@ -193,12 +218,12 @@ async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warn
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-async fn interact_ignores_a_browser_profile_with_a_warning() {
-    // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
+async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
+    let (endpoint, handshake) = start_rejected_cdp_endpoint().await;
     let config = CrawlConfig {
         browser: BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
-            endpoint: Some("ws://127.0.0.1:1/devtools/browser/crawlberg-test".to_owned()),
+            endpoint: Some(endpoint),
             mode: BrowserMode::Always,
             timeout: Duration::from_secs(5),
             overall_timeout: Duration::from_secs(10),
@@ -212,10 +237,37 @@ async fn interact_ignores_a_browser_profile_with_a_warning() {
     let engine = create_engine(Some(config)).expect("an interact profile config must build");
     let url = start_page_server().await;
     let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    handshake.await.expect("the test CDP endpoint task should finish");
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_PROFILE_WARNING) && logs.contains("ignored-interact-profile"),
         "interact() must warn that the named profile is ignored; logs: {logs}"
+    );
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_ignores_a_browser_profile_with_a_warning() {
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(5),
+            overall_timeout: Duration::from_secs(10),
+            ..BrowserConfig::default()
+        },
+        browser_profile: Some("ignored-native-interact-profile".to_owned()),
+        save_browser_profile: true,
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let (logs, _guard) = capture_warnings();
+    let engine = create_engine(Some(config)).expect("a native interact profile config must build");
+    let url = start_page_server().await;
+    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    let logs = logs.text();
+    assert!(
+        logs.contains(IGNORED_PROFILE_WARNING) && logs.contains("ignored-native-interact-profile"),
+        "native interact() must warn that the named profile is ignored; logs: {logs}"
     );
 }
 
