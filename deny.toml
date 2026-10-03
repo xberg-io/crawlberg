@@ -31,30 +31,17 @@ allow = [
 confidence-threshold = 0.8
 
 exceptions = [
-  { allow = [
-    "MPL-2.0",
-  ], crate = "cbindgen" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "option-ext" },
-  { allow = [
-    "LGPL-2.1-or-later",
-  ], crate = "r-efi" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "cssparser" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "cssparser-macros" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "dtoa-short" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "selectors" },
-  { allow = [
-    "MPL-2.0",
-  ], crate = "cooked-waker" },
+  { allow = ["MPL-2.0"], crate = "cbindgen" },
+  { allow = ["MPL-2.0"], crate = "option-ext" },
+  { allow = ["LGPL-2.1-or-later"], crate = "r-efi" },
+  { allow = ["MPL-2.0"], crate = "cssparser" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short" },
+  { allow = ["MPL-2.0"], crate = "selectors" },
+  { allow = ["MPL-2.0"], crate = "cooked-waker" },
+  # ~keep Inferno was already CDDL-1.0 through pprof's flamegraph feature; this direct edge only
+  # ~keep upgrades the renderer for the optional, unpublished benchmark-harness profiler.
+  { allow = ["CDDL-1.0"], crate = "inferno" },
 ]
 
 [licenses.private]

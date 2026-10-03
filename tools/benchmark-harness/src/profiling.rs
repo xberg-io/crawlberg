@@ -11,6 +11,56 @@ use std::path::Path;
 use crate::error::Error;
 use crate::error::Result;
 
+#[cfg(feature = "profiling")]
+fn push_folded_label(line: &mut String, label: &str) {
+    for character in label.chars() {
+        match character {
+            ';' => line.push(':'),
+            '\n' | '\r' => line.push(' '),
+            _ => line.push(character),
+        }
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn folded_lines(data: &std::collections::HashMap<pprof::Frames, isize>) -> Vec<String> {
+    let mut lines = Vec::with_capacity(data.len());
+    for (frames, count) in data {
+        let mut line = String::new();
+        push_folded_label(&mut line, &frames.thread_name_or_id());
+
+        for frame in frames.frames.iter().rev() {
+            for symbol in frame.iter().rev() {
+                line.push(';');
+                push_folded_label(&mut line, &symbol.name());
+            }
+        }
+
+        line.push(' ');
+        line.push_str(&count.to_string());
+        lines.push(line);
+    }
+    lines.sort_unstable();
+    lines
+}
+
+#[cfg(feature = "profiling")]
+fn write_flamegraph<W>(report: &pprof::Report, writer: W) -> std::io::Result<()>
+where
+    W: std::io::Write,
+{
+    let lines = folded_lines(&report.data);
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    inferno::flamegraph::from_lines(
+        &mut inferno::flamegraph::Options::default(),
+        lines.iter().map(String::as_str),
+        writer,
+    )
+}
+
 /// A scoped CPU-profiling guard.
 ///
 /// Create one at the start of a profiling session and let it drop at the end.
@@ -78,9 +128,7 @@ impl ProfileGuard {
         let file = File::create(&self.output_path)
             .map_err(|e| Error::Profiling(format!("failed to create flamegraph file: {e}")))?;
 
-        report
-            .flamegraph(file)
-            .map_err(|e| Error::Profiling(format!("failed to write flamegraph: {e}")))?;
+        write_flamegraph(&report, file).map_err(|e| Error::Profiling(format!("failed to write flamegraph: {e}")))?;
 
         Ok(())
     }
@@ -113,7 +161,7 @@ impl Drop for ProfileGuard {
 
         match File::create(&self.output_path) {
             Ok(file) => {
-                if let Err(e) = report.flamegraph(file) {
+                if let Err(e) = write_flamegraph(&report, file) {
                     tracing::warn!(error = %e, "failed to write flamegraph on drop");
                 }
             }
@@ -125,5 +173,69 @@ impl Drop for ProfileGuard {
                 );
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "profiling"))]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+
+    use pprof::{Frames, Symbol};
+
+    use super::folded_lines;
+
+    fn symbol(name: &str) -> Symbol {
+        Symbol {
+            name: Some(name.as_bytes().to_vec()),
+            addr: None,
+            lineno: None,
+            filename: None,
+        }
+    }
+
+    fn frames(thread_name: &str, thread_id: u64, symbols: &[&[&str]]) -> Frames {
+        Frames {
+            frames: symbols
+                .iter()
+                .map(|frame| frame.iter().map(|name| symbol(name)).collect())
+                .collect(),
+            thread_name: thread_name.to_owned(),
+            thread_id,
+            sample_timestamp: SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn folded_lines_should_reverse_frames_and_sort_output() {
+        let mut data = HashMap::new();
+        data.insert(frames("worker", 1, &[&["leaf", "inlined"], &["root"]]), 3);
+        data.insert(frames("alpha", 2, &[&["child"], &["parent"]]), 5);
+
+        assert_eq!(
+            folded_lines(&data),
+            vec!["alpha;parent;child 5", "worker;root;inlined;leaf 3"]
+        );
+    }
+
+    #[test]
+    fn folded_lines_should_escape_format_delimiters() {
+        let mut data = HashMap::new();
+        data.insert(frames("worker;one\n", 1, &[&["leaf\rname"], &["[u8; 8]"]]), 2);
+
+        assert_eq!(folded_lines(&data), vec!["worker:one ;[u8: 8];leaf name 2"]);
+    }
+
+    #[test]
+    fn folded_lines_should_return_empty_output_for_empty_data() {
+        assert_eq!(folded_lines(&HashMap::new()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn folded_lines_should_use_thread_id_when_name_is_empty() {
+        let mut data = HashMap::new();
+        data.insert(frames("", 42, &[]), 1);
+
+        assert_eq!(folded_lines(&data), vec!["42 1"]);
     }
 }

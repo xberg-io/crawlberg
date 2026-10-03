@@ -20,7 +20,7 @@ path = "src/main.rs"
 [features]
 default = []
 native-browser = ["crawlberg/browser-native"]
-profiling = ["pprof"]
+profiling = ["dep:inferno", "dep:pprof"]
 memory-profiling = ["tikv-jemallocator", "tikv-jemalloc-ctl"]
 
 [dependencies]
@@ -29,9 +29,10 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 crawlberg = { path = "../../crates/crawlberg", features = ["browser"] }
-num_cpus = "1"
 
-pprof = { version = "0.15", features = ["flamegraph", "criterion"], optional = true }
+inferno = { version = "0.12", default-features = false, optional = true }
+num_cpus = "1"
+pprof = { version = "0.15", optional = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
