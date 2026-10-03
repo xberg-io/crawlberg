@@ -7,6 +7,8 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "fuzz/Cargo.toml"
+      - "fuzz/Cargo.lock"
       - "packages/elixir/native/crawlberg_nif/Cargo.toml"
       - "packages/elixir/native/crawlberg_nif/Cargo.lock"
       - "packages/ruby/ext/crawlberg_rb/native/Cargo.toml"
@@ -33,6 +35,8 @@ on:
   #     - "crates/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
+  #     - "fuzz/Cargo.toml"
+  #     - "fuzz/Cargo.lock"
   #     - "packages/elixir/native/crawlberg_nif/Cargo.toml"
   #     - "packages/elixir/native/crawlberg_nif/Cargo.lock"
   #     - "packages/ruby/ext/crawlberg_rb/native/Cargo.toml"
@@ -204,6 +208,9 @@ jobs:
           cache-key-prefix: feature-combinations
           use-sccache: "true"
 
+      - name: Install Task
+        uses: xberg-io/actions/install-task@v1
+
       - name: Install cargo-hack
         run: cargo install cargo-hack --locked
 
@@ -229,19 +236,8 @@ jobs:
         run: git diff --exit-code -- Cargo.lock
         shell: bash
 
-      # ~keep The Elixir NIF, the Ruby native crate and the Rust e2e suite are each their own
-      # ~keep workspace with their own Cargo.lock, so no step above reads those lockfiles. All
-      # ~keep three went stale when the core crate gained dependencies, and no job failed
-      # ~keep (xberg-io/crawlberg#560).
-      - name: Assert the nested lockfiles are current
-        run: |
-          for manifest in \
-            packages/elixir/native/crawlberg_nif/Cargo.toml \
-            packages/ruby/ext/crawlberg_rb/native/Cargo.toml \
-            e2e/rust/Cargo.toml; do
-            cargo metadata --format-version 1 --locked --manifest-path "$manifest" > /dev/null
-          done
-        shell: bash
+      - name: Assert the secondary lockfiles are current
+        run: task rust:lockfiles:check
 
   validate-rust:
     name: Validate Rust

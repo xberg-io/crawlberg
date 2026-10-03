@@ -210,6 +210,52 @@ tasks:
           fi
           cargo-machete
 
+  lockfiles:check:
+    desc: Check secondary Cargo lockfiles match their manifests
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+    cmds:
+      # ~keep These four manifests own independent lockfiles and are not covered by commands
+      # ~keep against the root workspace. Assert both counts so a lost path or an empty loop
+      # ~keep cannot turn this drift gate into a successful zero-work check (#296).
+      - cmd: |
+          expected=4
+          checked=0
+          set -- \
+            fuzz/Cargo.toml \
+            e2e/rust/Cargo.toml \
+            packages/elixir/native/crawlberg_nif/Cargo.toml \
+            packages/ruby/ext/crawlberg_rb/native/Cargo.toml
+
+          echo "secondary Cargo manifests: expected $expected, configured $#"
+          if [ "$#" -ne "$expected" ]; then
+            echo "expected $expected secondary Cargo manifests, configured $#" >&2
+            exit 1
+          fi
+
+          for manifest do
+            if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+              echo "secondary Cargo manifest is missing: ${manifest:-<empty>}" >&2
+              exit 1
+            fi
+            lockfile="${manifest%/*}/Cargo.lock"
+            if [ ! -f "$lockfile" ]; then
+              echo "secondary Cargo lockfile is missing: $lockfile" >&2
+              exit 1
+            fi
+            if ! cargo metadata --format-version 1 --locked --manifest-path "$manifest" > /dev/null; then
+              echo "secondary Cargo lockfile is stale: $lockfile" >&2
+              exit 1
+            fi
+            checked=$((checked + 1))
+          done
+
+          echo "checked $checked of $expected secondary Cargo lockfiles"
+          if [ "$checked" -ne "$expected" ]; then
+            echo "expected to check $expected secondary Cargo lockfiles, checked $checked" >&2
+            exit 1
+          fi
+
   fuzz:check:
     desc: Type-check the fuzz targets (separate workspace, not covered by --workspace)
     env:
