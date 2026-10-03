@@ -95,6 +95,30 @@ impl ExternalChrome {
             .count()
     }
 
+    /// The id of the page target at `url`, when Chrome reports one.
+    fn target_id_for_url(&self, url: &str) -> Option<String> {
+        let body = devtools_get(self.port, "/json/list").expect("Chrome must answer /json/list");
+        let targets: Vec<serde_json::Value> = serde_json::from_str(&body).expect("/json/list must be a JSON array");
+        targets.into_iter().find_map(|target| {
+            if target.get("type").and_then(serde_json::Value::as_str) == Some("page")
+                && target.get("url").and_then(serde_json::Value::as_str) == Some(url)
+            {
+                target.get("id").and_then(serde_json::Value::as_str).map(str::to_owned)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Whether Chrome still reports the target named by `id`.
+    fn has_target(&self, id: &str) -> bool {
+        let body = devtools_get(self.port, "/json/list").expect("Chrome must answer /json/list");
+        let targets: Vec<serde_json::Value> = serde_json::from_str(&body).expect("/json/list must be a JSON array");
+        targets
+            .iter()
+            .any(|target| target.get("id").and_then(serde_json::Value::as_str) == Some(id))
+    }
+
     /// Assert that Chrome still answers on its port for `window`, and still has `pages` tabs.
     ///
     /// ~keep One-shot teardown runs in a background task, so a single probe right after the
@@ -129,6 +153,33 @@ impl ExternalChrome {
             pages,
             "crawlberg must close the tabs it opened and no others"
         );
+    }
+
+    /// Assert that crawlberg's target disappears while the caller-owned Chrome keeps answering.
+    async fn assert_target_gone_while_still_serving(&mut self, target_id: &str, window: Duration) {
+        let close_deadline = Instant::now() + Duration::from_secs(15);
+        while self.has_target(target_id) && Instant::now() < close_deadline {
+            assert!(
+                self.answers(),
+                "the external Chrome on port {} stopped answering while its target was closing",
+                self.port
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            !self.has_target(target_id),
+            "crawlberg's target {target_id} must disappear from the external Chrome"
+        );
+
+        let serving_deadline = Instant::now() + window;
+        while Instant::now() < serving_deadline {
+            assert!(
+                self.answers(),
+                "the external Chrome on port {} stopped answering after crawlberg's teardown",
+                self.port
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }
 
@@ -281,15 +332,51 @@ async fn one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome(
     chrome.assert_still_serving(Duration::from_secs(3), pages_before).await;
 }
 
-// ~keep A test for the DROPPED one-shot fetch on a connected Chrome (xberg-io/crawlberg#131)
-// belongs here and is deliberately absent: see xberg-io/crawlberg#210. The version written
-// for it passed locally on macOS with a real Chrome and failed on BOTH CI platforms with
-// `left: 2 right: 1` — one page target too many — so it was reverted rather than shipped
-// red. The production fix it covered (`OneShotSession`'s `Drop`) is on `main` and is
-// exercised by the five tests in this file plus `browser/launch.rs`'s `UserDataDir` unit
-// tests. Whatever replaces it must not identify crawlberg's tab by COUNTING page targets:
-// the count baseline is what is suspected of drifting on a CI runner's Chrome. Match the
-// target by its URL instead.
+/// A one-shot fetch dropped by its caller closes its own target in the external Chrome and leaves
+/// that Chrome running.
+///
+/// ~keep This identifies the target by the unique navigation URL and follows that target id until
+/// ~keep it disappears. A page-count baseline is not stable on CI because Chrome can create page
+/// ~keep targets of its own while the fetch runs (xberg-io/crawlberg#210).
+#[tokio::test]
+#[serial_test::serial(external_chrome)]
+async fn dropping_a_one_shot_fetch_closes_its_target_in_the_external_chrome() {
+    const TEST_NAME: &str = "dropping_a_one_shot_fetch_closes_its_target_in_the_external_chrome";
+    let Some(mut chrome) = ExternalChrome::start(TEST_NAME) else {
+        return;
+    };
+    let url = spawn_stalling_server();
+    let mut config = endpoint_config(&chrome.ws_url);
+    // ~keep Both deadlines outlast the test so only the caller's drop can start teardown.
+    config.browser.timeout = Duration::from_secs(120);
+    config.browser.overall_timeout = Duration::from_secs(180);
+
+    let fetch_url = url.clone();
+    let fetch = tokio::spawn(async move {
+        let engine = create_engine(Some(config)).expect("engine must build");
+        let _ = crawlberg::scrape(&engine, &fetch_url).await;
+    });
+
+    let target_deadline = Instant::now() + Duration::from_secs(30);
+    let target_id = loop {
+        if let Some(target_id) = chrome.target_id_for_url(&url) {
+            break target_id;
+        }
+        assert!(
+            Instant::now() < target_deadline,
+            "precondition: the fetch must navigate a target to {url} before it is dropped"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+
+    fetch.abort();
+    let cancelled = fetch.await;
+    assert!(cancelled.is_err_and(|error| error.is_cancelled()));
+
+    chrome
+        .assert_target_gone_while_still_serving(&target_id, Duration::from_secs(3))
+        .await;
+}
 
 /// Shutting down a pool connected through `browser_endpoint` leaves the external Chrome running.
 #[tokio::test]
