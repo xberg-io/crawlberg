@@ -26,7 +26,7 @@ TEST_LOG="/tmp/cargo-test-$$.log"
 
 core_status=0
 echo "=== cargo test -p crawlberg --all-features ==="
-if ! RUST_BACKTRACE=full cargo test -p crawlberg --all-features --verbose 2>&1 | tee -a "$TEST_LOG"; then
+if ! RUST_BACKTRACE=full cargo test -p crawlberg --all-features --no-fail-fast --verbose 2>&1 | tee -a "$TEST_LOG"; then
   core_status="${PIPESTATUS[0]}"
 fi
 
@@ -41,6 +41,7 @@ if ! RUST_BACKTRACE=full cargo test \
   --exclude crawlberg-wasm \
   --exclude crawlberg-cli \
   --all-features \
+  --no-fail-fast \
   --verbose 2>&1 | tee -a "$TEST_LOG"; then
   workspace_status="${PIPESTATUS[0]}"
 fi
@@ -52,7 +53,10 @@ fi
 # runs against a `crawlberg` binary built without the `mcp` subcommand.
 cli_status=0
 echo "=== cargo test -p crawlberg-cli --features all ==="
-if ! RUST_BACKTRACE=full cargo test -p crawlberg-cli --features all --verbose 2>&1 | tee -a "$TEST_LOG"; then
+if ! RUST_BACKTRACE=full cargo test -p crawlberg-cli \
+  --features all \
+  --no-fail-fast \
+  --verbose 2>&1 | tee -a "$TEST_LOG"; then
   cli_status="${PIPESTATUS[0]}"
 fi
 
