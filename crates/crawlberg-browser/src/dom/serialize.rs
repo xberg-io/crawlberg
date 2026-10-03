@@ -1,3 +1,5 @@
+use html5ever::QualName;
+
 use crate::dom::tree::{DomTree, NodeData, NodeId};
 
 impl DomTree {
@@ -56,13 +58,7 @@ impl DomTree {
             NodeData::Text { contents } => {
                 let parent_is_raw = node
                     .parent
-                    .and_then(|pid| {
-                        self.with_node(pid, |p| {
-                            p.as_element()
-                                .map(|name| is_raw_text_element(&name.local))
-                                .unwrap_or(false)
-                        })
-                    })
+                    .and_then(|pid| self.with_node(pid, |p| p.as_element().map(is_raw_text_element).unwrap_or(false)))
                     .unwrap_or(false);
 
                 if parent_is_raw {
@@ -134,13 +130,39 @@ fn is_void_element(tag: &str) -> bool {
     )
 }
 
-fn is_raw_text_element(tag: &str) -> bool {
-    matches!(tag, "script" | "style" | "textarea" | "title")
+fn is_raw_text_element(name: &QualName) -> bool {
+    name.ns == ns!(html)
+        && matches!(
+            &*name.local,
+            "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext"
+        )
 }
 
 #[cfg(test)]
 mod tests {
     use crate::dom::tree_sink::parse_html;
+
+    fn assert_inner_html(tag: &str, source: &str, expected: &str) {
+        let closing = if tag == "plaintext" {
+            String::new()
+        } else {
+            format!("</{tag}>")
+        };
+        let tree = parse_html(&format!("<{tag}>{source}{closing}"));
+        let element = tree.query_selector(tag).unwrap().unwrap();
+        let original_text = tree.text_content(element);
+        let serialized = tree.inner_html(element);
+
+        assert_eq!(serialized, expected, "failed for <{tag}>");
+
+        let reparsed = parse_html(&format!("<{tag}>{serialized}{closing}"));
+        let reparsed_element = reparsed.query_selector(tag).unwrap().unwrap();
+        assert_eq!(
+            reparsed.text_content(reparsed_element),
+            original_text,
+            "round trip failed for <{tag}>"
+        );
+    }
 
     #[test]
     fn test_outer_html() {
@@ -187,5 +209,28 @@ mod tests {
         let html = tree.outer_html(img);
         assert!(html.contains("<img"));
         assert!(!html.contains("</img>"));
+    }
+
+    #[test]
+    fn raw_text_elements_serialize_text_without_escaping() {
+        for tag in ["script", "style", "xmp", "iframe", "noembed", "noframes", "plaintext"] {
+            assert_inner_html(tag, "one & two < three", "one & two < three");
+        }
+    }
+
+    #[test]
+    fn escapable_raw_text_elements_escape_markup_like_text() {
+        for tag in ["title", "textarea"] {
+            let encoded_text = format!("&lt;/{tag}&gt;&lt;a href=/injected&gt;");
+            assert_inner_html(tag, &encoded_text, &encoded_text);
+        }
+    }
+
+    #[test]
+    fn non_html_elements_with_raw_text_names_escape_text() {
+        let tree = parse_html("<svg><script>one &amp; two &lt; three</script></svg>");
+        let script = tree.query_selector("svg script").unwrap().unwrap();
+
+        assert_eq!(tree.inner_html(script), "one &amp; two &lt; three");
     }
 }
