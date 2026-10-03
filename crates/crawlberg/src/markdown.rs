@@ -38,6 +38,7 @@ fn convert_html_to_markdown(
         preserve_tags: config.preserve_tags.clone(),
         exclude_selectors: config.exclude_selectors.clone(),
         skip_images: config.skip_images,
+        inline_data_media: html_to_markdown_rs::options::InlineDataMedia::AltTextOnly,
         max_depth: config.max_depth,
         wrap: config.wrap,
         wrap_width: config.wrap_width,
@@ -297,7 +298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn leaves_absolute_fragment_and_non_http_targets_as_written() {
+    async fn leaves_absolute_fragment_and_non_data_targets_as_written() {
         let md = markdown_at(
             r##"<p><a href="https://other.example/x">abs</a> <a href="#section">frag</a> <a href="mailto:me@example.com">mail</a> <a href="tel:+15551234">tel</a> <a href="javascript:void(0)">js</a> <img src="data:image/gif;base64,R0lGOD" alt="px"></p>"##,
             "https://example.com/docs/index.html",
@@ -305,8 +306,17 @@ mod tests {
         .await;
         assert_eq!(
             md,
-            "[abs](https://other.example/x) [frag](#section) [mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) ![px](data:image/gif;base64,R0lGOD)\n"
+            "[abs](https://other.example/x) [frag](#section) [mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) px\n"
         );
+    }
+
+    #[tokio::test]
+    async fn replaces_an_inline_image_payload_with_its_alt_text() {
+        let payload = "A".repeat(8_192);
+        let html = format!(r#"<p>before</p><img src="data:image/svg+xml;base64,{payload}" alt="icon"><p>after</p>"#);
+        let md = markdown_at(&html, "https://example.com/").await;
+        assert_eq!(md, "before\n\nicon\n\nafter\n");
+        assert!(!md.contains(&payload), "inline payload leaked into markdown");
     }
 
     #[tokio::test]

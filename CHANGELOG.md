@@ -266,6 +266,11 @@ All notable changes to crawlberg are documented here.
   the processes it found. It also logs a warning when the processes keep changing for eight
   reads of the table. A process that runs after the last read is still not seen. This applies to
   the Chromiumoxide backend. (#585)
+
+- **Inline image data no longer bloats markdown output.** An image whose source is a `data:` URL
+  now becomes its alt text instead of copying the encoded payload into the markdown. Images with
+  ordinary addresses keep their markdown links. (#97)
+
 - **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
   found the page's base with a second parser. That parser read markup inside `<title>`,
   `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so
