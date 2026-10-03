@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.8.0"
+version = "1.9.0"
 
 [[package]]
 name = "crc32fast"
