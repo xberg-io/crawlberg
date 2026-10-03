@@ -235,7 +235,7 @@ impl Page {
                 let base = self
                     .document_base_url
                     .as_ref()
-                    .map_or_else(|| self.url_string(), String::from);
+                    .map_or_else(|| self.url_string(), |url| url.as_str().to_owned());
                 if let Some(js) = &mut self.js
                     && let Err(error) = js.load_inline_module(&module_script.inline, &base).await
                 {

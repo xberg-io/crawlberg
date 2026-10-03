@@ -1315,6 +1315,7 @@ async fn subresources_resolve_against_the_first_base_href() {
                 <link rel=\"stylesheet\" href=\"theme.css\"></head><body>\
                 <script src=\"classic.js\"></script>\
                 <script type=\"module\" src=\"module.js\"></script>\
+                <script type=\"module\">import './inline-import.js';</script>\
                 </body></html>";
     let classic = push("classic");
     let module = push("module");
@@ -1323,6 +1324,7 @@ async fn subresources_resolve_against_the_first_base_href() {
         ("/assets/theme.css", "text/css", "body{color:green}"),
         ("/assets/classic.js", "text/javascript", &classic),
         ("/assets/module.js", "text/javascript", &module),
+        ("/assets/inline-import.js", "text/javascript", &push("inline-import")),
     ]))
     .await;
 
@@ -1331,7 +1333,7 @@ async fn subresources_resolve_against_the_first_base_href() {
         .await
         .expect("navigation must succeed");
 
-    assert_eq!(order(&mut page), vec!["classic", "module"]);
+    assert_eq!(order(&mut page), vec!["classic", "module", "inline-import"]);
     assert_eq!(
         event_urls(&page, "Stylesheet"),
         vec![format!("{base}/assets/theme.css")]
