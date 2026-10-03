@@ -2528,8 +2528,8 @@ mod race_tests {
             }
         };
         match launched {
-            Ok((browser, mut handler)) => {
-                tokio::spawn(async move { while handler.next().await.is_some() {} });
+            Ok((browser, handler)) => {
+                crate::browser_pool::spawn_handler(handler);
                 Some(Arc::new(browser))
             }
             Err(error) => {
@@ -2537,6 +2537,33 @@ mod race_tests {
                 None
             }
         }
+    }
+
+    /// A command sent to a Chrome that has died ends with an error. The test's CDP handler stops
+    /// at the broken websocket, which fails every command still waiting on it; a handler loop that
+    /// kept polling held them, and the test, until the CI job limit (xberg-io/crawlberg#573).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_command_to_a_chrome_that_died_ends_with_an_error() {
+        let test_name = "a_command_to_a_chrome_that_died_ends_with_an_error";
+        let Some(mut browser) = launch(test_name).await else {
+            return;
+        };
+        let chrome = Arc::get_mut(&mut browser).expect("the test holds the only reference to its browser");
+        let killed = chrome.kill().await;
+        assert!(
+            matches!(killed, Some(Ok(()))),
+            "the launched Chrome must be killed: {killed:?}"
+        );
+        let reply = tokio::time::timeout(Duration::from_secs(20), browser.execute(GetTargetsParams::default())).await;
+        assert!(
+            matches!(reply, Ok(Err(_))),
+            "a command to a Chrome that died must end with an error within 20 s, got {}",
+            match reply {
+                Ok(Ok(_)) => "a reply",
+                Ok(Err(_)) => "an error",
+                Err(_) => "no answer",
+            }
+        );
     }
 
     /// Allow `localhost`, where the test pages are served, and refuse the loopback address.
@@ -4011,6 +4038,8 @@ mod race_tests {
         let frame_gone = !matches!(closed.mainframe().await, Ok(Some(_)));
         let watched = firewall.handle().watch(&closed, &config(), 0).await;
         firewall.stop().await;
+        drop(closed);
+        close(browser).await;
         assert!(
             frame_gone,
             "{test_name}: the closed page must stop reporting a main frame, or the test shows nothing"
@@ -4070,9 +4099,11 @@ mod race_tests {
         // ~keep Only the denied request counts: the page's favicon can be taken in before the
         // ~keep gate shuts, and still be in flight here.
         let denied_taken_in = super::lock(&received).contains(&denied);
-        let mut parking = Box::pin(watch.park());
+        // ~keep `maybe_done` keeps a park or a stop that ended in its first poll. Awaiting the bare
+        // ~keep future again panics, which hid the assertion below that names this case.
+        let mut parking = Box::pin(futures::future::maybe_done(watch.park()));
         let park_held = futures::poll!(&mut parking).is_pending();
-        let mut stopping = Box::pin(firewall.stop());
+        let mut stopping = Box::pin(futures::future::maybe_done(firewall.stop()));
         let stop_held = futures::poll!(&mut stopping).is_pending();
         gate.add_permits(1);
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -4313,9 +4344,11 @@ mod race_tests {
         // ~keep Only the denied request counts: the page's favicon can be taken in before the
         // ~keep gate shuts, and still be in flight here.
         let denied_taken_in = super::lock(&received).contains(&denied);
-        let mut parking = Box::pin(watch.park());
+        // ~keep `maybe_done` keeps a park or a stop that ended in its first poll. Awaiting the bare
+        // ~keep future again panics, which hid the assertion below that names this case.
+        let mut parking = Box::pin(futures::future::maybe_done(watch.park()));
         let park_held = futures::poll!(&mut parking).is_pending();
-        let mut stopping = Box::pin(firewall.stop());
+        let mut stopping = Box::pin(futures::future::maybe_done(firewall.stop()));
         let stop_held = futures::poll!(&mut stopping).is_pending();
         gate.add_permits(1);
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -4487,7 +4520,8 @@ mod race_tests {
             .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
         let judged = wait_for_refusal(&watch, &denied).await;
-        let mut stopping = Box::pin(firewall.stop());
+        // ~keep `maybe_done`: the stop is awaited again below, also when this poll already ended it.
+        let mut stopping = Box::pin(futures::future::maybe_done(firewall.stop()));
         let _ = futures::poll!(&mut stopping);
         let deadline = Instant::now() + Duration::from_secs(10);
         while !super::lock(&dropped).contains(&target) && Instant::now() < deadline {

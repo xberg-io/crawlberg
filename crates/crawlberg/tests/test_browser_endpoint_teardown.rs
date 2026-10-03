@@ -374,11 +374,10 @@ async fn interact_leaves_the_external_chrome_running() {
 /// The browser contexts in `chrome` that another connection can see.
 async fn browser_context_count(ws_url: &str) -> usize {
     use chromiumoxide::cdp::browser_protocol::target::GetBrowserContextsParams;
-    use futures::StreamExt as _;
-    let (browser, mut handler) = chromiumoxide::Browser::connect(ws_url)
+    let (browser, handler) = chromiumoxide::Browser::connect(ws_url)
         .await
         .expect("a second connection to the external Chrome must open");
-    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler = common::spawn_handler(handler);
     let contexts = browser
         .execute(GetBrowserContextsParams::default())
         .await
@@ -401,11 +400,10 @@ struct ContextWatch {
 impl ContextWatch {
     async fn connect(ws_url: &str) -> Self {
         use chromiumoxide::cdp::browser_protocol::target::EventTargetCreated;
-        use futures::StreamExt as _;
-        let (browser, mut handler) = chromiumoxide::Browser::connect(ws_url)
+        let (browser, handler) = chromiumoxide::Browser::connect(ws_url)
             .await
             .expect("a second connection to the external Chrome must open");
-        let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let handler = common::spawn_handler(handler);
         let created = browser
             .event_listener::<EventTargetCreated>()
             .await

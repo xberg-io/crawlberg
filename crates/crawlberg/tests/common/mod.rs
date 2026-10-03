@@ -52,6 +52,26 @@ pub fn announce_skip(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name}: {reason}");
 }
 
+/// Run a test browser's CDP handler on its own task, until its websocket fails or ends.
+///
+/// The same rules as crawlberg's `browser_pool::spawn_handler`. A loop that polls on past the
+/// websocket error holds every pending command forever. chromiumoxide 0.9.1 checks its request
+/// timeout only when the handler is polled, which a quiet connection never causes, so the loop
+/// polls it every second: a command Chrome never answers then fails with a timeout
+/// (xberg-io/crawlberg#586).
+#[cfg(feature = "browser")]
+pub fn spawn_handler(mut handler: chromiumoxide::Handler) -> tokio::task::JoinHandle<()> {
+    use tokio_stream::StreamExt;
+    tokio::spawn(async move {
+        loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(1), handler.next()).await;
+            if matches!(event, Ok(None | Some(Err(chromiumoxide::error::CdpError::Ws(_))))) {
+                break;
+            }
+        }
+    })
+}
+
 /// Launch a Chrome that stands for another program's browser, reached through `browser.endpoint`,
 /// with the cookie `owner=1` set for `seed` in its own context. Its handler runs until it closes.
 /// `None`, announced, without Chrome.
@@ -59,7 +79,6 @@ pub fn announce_skip(test_name: &str, reason: &str) {
 pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> Option<chromiumoxide::Browser> {
     use chromiumoxide::cdp::browser_protocol::network::CookieParam;
     use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
-    use tokio_stream::StreamExt;
 
     let config = match chromiumoxide::browser::BrowserConfig::builder()
         .no_sandbox()
@@ -73,14 +92,14 @@ pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> 
             return None;
         }
     };
-    let (browser, mut handler) = match chromiumoxide::Browser::launch(config).await {
+    let (browser, handler) = match chromiumoxide::Browser::launch(config).await {
         Ok(pair) => pair,
         Err(error) => {
             announce_chrome_skip(test_name, &error.to_string());
             return None;
         }
     };
-    tokio::spawn(async move { while handler.next().await.is_some() {} });
+    spawn_handler(handler);
     browser
         .execute(SetCookiesParams {
             cookies: vec![CookieParam {

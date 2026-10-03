@@ -474,8 +474,6 @@ async fn scrape_still_sends_allowed_requests_from_workers_frames_and_popups() {
 /// an address crawlberg's policy refuses. A popup crawlberg's page opens is still refused.
 #[tokio::test]
 async fn an_external_browser_keeps_other_clients_tabs_working() {
-    use tokio_stream::StreamExt;
-
     let test_name = "an_external_browser_keeps_other_clients_tabs_working";
     let private = denied_server().await;
     let d = denied_url(&private);
@@ -491,14 +489,14 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
             return;
         }
     };
-    let (other_client, mut handler) = match external {
+    let (other_client, handler) = match external {
         Ok(pair) => pair,
         Err(error) => {
             announce_chrome_skip(test_name, &error.to_string());
             return;
         }
     };
-    tokio::spawn(async move { while handler.next().await.is_some() {} });
+    common::spawn_handler(handler);
     // ~keep The tab keeps its own tally in sessionStorage, which lasts across its reloads: a
     // ~keep fetch the check refuses rejects, one it continues resolves. The next reload waits
     // ~keep for the fetch to settle, so no fetch is cut off by its own page's unload.
