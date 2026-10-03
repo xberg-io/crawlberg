@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
-use crate::net::resolver::with_policy_resolver;
+use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_for_url};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use crate::redact::{RedactedHeaders, RedactedValues};
@@ -405,16 +405,21 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 fn build_request_client(
     proxy: Option<&crate::net::proxy::UpstreamProxy>,
     ssrf: &Arc<dyn SsrfValidator>,
+    url: &url::Url,
+) -> Result<reqwest::Client, String> {
+    build_request_client_with_selector(proxy, ssrf, url, &EnvironmentSystemProxySelector)
+}
+
+fn build_request_client_with_selector(
+    proxy: Option<&crate::net::proxy::UpstreamProxy>,
+    ssrf: &Arc<dyn SsrfValidator>,
+    url: &url::Url,
+    selector: &dyn SystemProxySelector,
 ) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
-    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    if let Some(proxy) = proxy {
-        let p = proxy
-            .reqwest_proxy()
-            .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
-        builder = builder.proxy(p);
-    }
-    with_policy_resolver(builder, proxy.is_some(), ssrf)
+    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    reqwest_builder_for_url(builder, url, proxy, selector, ssrf)
+        .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -471,7 +476,9 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy.as_ref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
+    let parsed_url = url::Url::parse(&url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
+    let client =
+        build_request_client(context.proxy.as_ref(), &ssrf, &parsed_url).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -480,13 +487,13 @@ async fn op_fetch_url(
 
     // ~keep Follow redirects manually so the SSRF policy applies to every hop.
     let response = match send_following_redirects(FetchRequest {
-        client: &client,
         url: &url,
         method: cors.request_method.clone(),
         body,
         cors: &cors,
         context: &context,
         ssrf: &ssrf,
+        system_proxy_selector: &EnvironmentSystemProxySelector,
     })
     .await?
     {
@@ -755,13 +762,13 @@ async fn send_preflight(
 }
 
 struct FetchRequest<'a> {
-    client: &'a reqwest::Client,
     url: &'a str,
     method: reqwest::Method,
     body: String,
     cors: &'a CorsContext,
     context: &'a FetchContext,
     ssrf: &'a Arc<dyn SsrfValidator>,
+    system_proxy_selector: &'a dyn SystemProxySelector,
 }
 
 enum RedirectOutcome {
@@ -775,19 +782,19 @@ const REDIRECT_STATUSES_FORCING_GET: [u16; 3] = [301, 302, 303];
 
 async fn send_following_redirects(request: FetchRequest<'_>) -> Result<RedirectOutcome, deno_error::JsErrorBox> {
     let FetchRequest {
-        client,
         url,
         mut method,
         mut body,
         cors,
         context,
         ssrf,
+        system_proxy_selector,
     } = request;
     let mut current_url = url.to_string();
     let mut redirects_followed: usize = 0;
 
     loop {
-        let response = send_one_hop(client, &current_url, &method, &body, cors, context).await?;
+        let response = send_one_hop(&current_url, &method, &body, cors, context, ssrf, system_proxy_selector).await?;
         store_response_cookies(context, &current_url, &response);
 
         if !response.status().is_redirection() {
@@ -823,13 +830,17 @@ async fn send_following_redirects(request: FetchRequest<'_>) -> Result<RedirectO
 }
 
 async fn send_one_hop(
-    client: &reqwest::Client,
     current_url: &str,
     method: &reqwest::Method,
     body: &str,
     cors: &CorsContext,
     context: &FetchContext,
+    ssrf: &Arc<dyn SsrfValidator>,
+    system_proxy_selector: &dyn SystemProxySelector,
 ) -> Result<reqwest::Response, deno_error::JsErrorBox> {
+    let parsed = url::Url::parse(current_url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
+    let client = build_request_client_with_selector(context.proxy.as_ref(), ssrf, &parsed, system_proxy_selector)
+        .map_err(deno_error::JsErrorBox::generic)?;
     let mut req = client.request(method.clone(), current_url);
 
     if cors.is_cross_origin {
@@ -985,7 +996,7 @@ mod tests {
     fn client_through(proxy: &str) -> Result<reqwest::Client, String> {
         let ssrf: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::from_env());
         let proxy = crate::net::proxy::test_proxy(proxy).map_err(|e| e.to_string())?;
-        build_request_client(Some(&proxy), &ssrf)
+        build_request_client(Some(&proxy), &ssrf, &"http://origin.test/".parse().expect("valid URL"))
     }
 
     #[test]
@@ -1009,15 +1020,13 @@ mod tests {
     async fn a_credentialed_proxy_carries_the_fetch_op_request_with_its_credentials() {
         use crate::net::proxy::credentialed_proxy;
         let (proxy, requests) = credentialed_proxy::start().await;
-        let client = build_request_client(Some(&proxy), &allow_all()).expect("an http proxy must build");
+        let target = "http://origin.test/data".parse().expect("valid URL");
+        let client = build_request_client(Some(&proxy), &allow_all(), &target).expect("an http proxy must build");
 
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            client.get("http://origin.test/data").send(),
-        )
-        .await
-        .expect("the fetch must finish")
-        .expect("the proxy answers");
+        let response = tokio::time::timeout(std::time::Duration::from_secs(10), client.get(target).send())
+            .await
+            .expect("the fetch must finish")
+            .expect("the proxy answers");
 
         assert_eq!(response.status(), 200, "the proxy accepts the credentials");
         credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/data");
@@ -1029,8 +1038,13 @@ mod tests {
         let (proxy, requests) = credentialed_proxy::start().await;
         let direct = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let target = format!("http://{}/data", direct.local_addr().expect("addr"));
-        let client = build_request_client(Some(&credentialed_proxy::with_wrong_password(&proxy)), &allow_all())
-            .expect("an http proxy must build");
+        let parsed_target = target.parse().expect("valid URL");
+        let client = build_request_client(
+            Some(&credentialed_proxy::with_wrong_password(&proxy)),
+            &allow_all(),
+            &parsed_target,
+        )
+        .expect("an http proxy must build");
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(10), client.get(&target).send())
             .await
@@ -1053,5 +1067,49 @@ mod tests {
         let requests = requests.lock().expect("lock");
         assert_eq!(requests.len(), 1, "the request must go to the proxy: {requests:?}");
         assert!(credentialed_proxy::proxy_authorization(&requests[0]).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_redirect_reselects_the_system_proxy_and_can_cross_to_direct() {
+        use crate::net::resolver::tests::{TestProxySelector, denied_server};
+
+        let (target_port, target_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ndirect").await;
+        let redirect = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{target_port}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let redirect: &'static str = Box::leak(redirect.into_boxed_str());
+        let (proxy_port, proxy_requests) = denied_server(redirect).await;
+        let selector = TestProxySelector::default();
+        selector.set_proxy(&format!("http://localhost:{proxy_port}"));
+        selector.direct_host("localhost");
+        let ssrf = allow_all();
+        let context = FetchContext {
+            cookie_jar: None,
+            in_flight: None,
+            intercept: None,
+            proxy: None,
+            origin_headers: None,
+        };
+        let cors = CorsContext::new("http://origin.test/start", "http://origin.test", "GET", "{}");
+
+        let outcome = send_following_redirects(FetchRequest {
+            url: "http://origin.test/start",
+            method: reqwest::Method::GET,
+            body: String::new(),
+            cors: &cors,
+            context: &context,
+            ssrf: &ssrf,
+            system_proxy_selector: &selector,
+        })
+        .await
+        .expect("both hops must succeed");
+
+        let RedirectOutcome::Response(response) = outcome else {
+            panic!("the redirect must finish with a response");
+        };
+        assert_eq!(response.status(), 200);
+        assert_eq!(proxy_requests.lock().expect("lock").len(), 1);
+        assert_eq!(target_requests.lock().expect("lock").len(), 1);
     }
 }

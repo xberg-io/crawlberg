@@ -13,7 +13,9 @@ use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::proxy::UpstreamProxy;
-use crate::net::resolver::{SystemProxy, SystemProxyIdentity, with_policy_resolver};
+use crate::net::resolver::{
+    EnvironmentSystemProxySelector, SystemProxyIdentity, SystemProxySelector, with_policy_resolver,
+};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::redact::{RedactedHeaders, RedactedValues};
 
@@ -235,6 +237,7 @@ async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
 pub struct HttpClient {
     client: tokio::sync::OnceCell<Client>,
     environment_clients: tokio::sync::Mutex<HashMap<SystemProxyIdentity, Client>>,
+    system_proxy_selector: Arc<dyn SystemProxySelector>,
     upstream: Option<UpstreamProxy>,
     proxy: Option<reqwest::Proxy>,
     /// SSRF policy applied to the initial URL and every redirect hop.
@@ -259,7 +262,13 @@ impl HttpClient {
     }
 
     pub fn with_cookie_jar(cookie_jar: Arc<CookieJar>) -> Self {
-        Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()), false)
+        Self::build(
+            cookie_jar,
+            None,
+            Arc::new(DefaultSsrfValidator::from_env()),
+            false,
+            Arc::new(EnvironmentSystemProxySelector),
+        )
     }
 
     /// Build a client that sends every request through `proxy`, if given.
@@ -285,7 +294,22 @@ impl HttpClient {
             Some(upstream) => Some((upstream.clone(), upstream.reqwest_proxy()?)),
             None => None,
         };
-        Ok(Self::build(cookie_jar, proxy, ssrf, allow_file_access))
+        Ok(Self::build(
+            cookie_jar,
+            proxy,
+            ssrf,
+            allow_file_access,
+            Arc::new(EnvironmentSystemProxySelector),
+        ))
+    }
+
+    #[cfg(test)]
+    fn with_ssrf_and_proxy_selector(
+        cookie_jar: Arc<CookieJar>,
+        ssrf: Arc<dyn SsrfValidator>,
+        selector: Arc<dyn SystemProxySelector>,
+    ) -> Self {
+        Self::build(cookie_jar, None, ssrf, false, selector)
     }
 
     fn build(
@@ -293,11 +317,13 @@ impl HttpClient {
         proxy: Option<(UpstreamProxy, reqwest::Proxy)>,
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
+        system_proxy_selector: Arc<dyn SystemProxySelector>,
     ) -> Self {
         let (upstream, proxy) = proxy.unzip();
         HttpClient {
             client: tokio::sync::OnceCell::new(),
             environment_clients: tokio::sync::Mutex::new(HashMap::new()),
+            system_proxy_selector,
             upstream,
             proxy,
             ssrf,
@@ -339,7 +365,7 @@ impl HttpClient {
         if self.proxy.is_some() {
             return Ok(self.get_base_client().await.clone());
         }
-        let Some(proxy) = SystemProxy::for_url(url)? else {
+        let Some(proxy) = self.system_proxy_selector.proxy_for(url)? else {
             return Ok(self.get_base_client().await.clone());
         };
         let identity = proxy.identity();
@@ -718,22 +744,22 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(environment_proxy)]
     async fn environment_proxy_changes_are_applied_without_resolving_the_private_proxy_host() {
-        use crate::net::resolver::tests::{EnvironmentGuard, RebindingPolicy, denied_server};
+        use crate::net::resolver::tests::{RebindingPolicy, TestProxySelector, denied_server};
 
         let (first_port, first_requests) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst").await;
         let (second_port, second_requests) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecond").await;
-        let environment = EnvironmentGuard::with_http_proxy(format!("http://localhost:{first_port}"));
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(&format!("http://localhost:{first_port}"));
         let policy = Arc::new(RebindingPolicy::default());
-        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
-            .expect("no explicit proxy, so the client must build");
+        let client =
+            HttpClient::with_ssrf_and_proxy_selector(Arc::new(CookieJar::new()), policy.clone(), selector.clone());
         let target = "http://example.invalid/page".parse::<Url>().expect("valid URL");
 
         let first = client.fetch(&target).await.expect("the first proxy must answer");
-        environment.set_http_proxy(format!("http://localhost:{second_port}"));
+        selector.set_proxy(&format!("http://localhost:{second_port}"));
         let second = client.fetch(&target).await.expect("the changed proxy must answer");
 
         assert_eq!((first.body, second.body), (b"first".to_vec(), b"second".to_vec()));
@@ -746,19 +772,18 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(environment_proxy)]
     async fn no_proxy_keeps_the_policy_resolver_on_a_direct_request() {
-        use crate::net::resolver::tests::{EnvironmentGuard, RebindingPolicy, denied_server};
+        use crate::net::resolver::tests::{RebindingPolicy, TestProxySelector, denied_server};
 
         let (target_port, target_requests) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ntarget").await;
         let (proxy_port, proxy_requests) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nproxy").await;
-        let environment = EnvironmentGuard::with_http_proxy(format!("http://localhost:{proxy_port}"));
-        environment.set_no_proxy("localhost");
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(&format!("http://localhost:{proxy_port}"));
+        selector.direct_host("localhost");
         let policy = Arc::new(RebindingPolicy::default());
-        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
-            .expect("no explicit proxy, so the client must build");
+        let client = HttpClient::with_ssrf_and_proxy_selector(Arc::new(CookieJar::new()), policy.clone(), selector);
 
         client
             .fetch(
@@ -775,10 +800,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(environment_proxy)]
     async fn environment_proxy_credentials_select_distinct_clients() {
         use crate::net::proxy::credentialed_proxy;
-        use crate::net::resolver::tests::{EnvironmentGuard, RebindingPolicy};
+        use crate::net::resolver::tests::{RebindingPolicy, TestProxySelector};
 
         let (proxy, requests) = credentialed_proxy::start().await;
         let mut proxy_url = proxy.address().clone();
@@ -786,14 +810,13 @@ mod tests {
         proxy_url
             .set_password(Some(credentialed_proxy::PASSWORD))
             .expect("proxy URL takes a password");
-        let environment = EnvironmentGuard::with_http_proxy(proxy_url.as_str());
-        let client = HttpClient::with_ssrf(
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(proxy_url.as_str());
+        let client = HttpClient::with_ssrf_and_proxy_selector(
             Arc::new(CookieJar::new()),
-            None,
             Arc::new(RebindingPolicy::default()),
-            false,
-        )
-        .expect("no explicit proxy, so the client must build");
+            selector.clone(),
+        );
         let target = "http://example.invalid/page".parse::<Url>().expect("valid URL");
 
         let accepted = client
@@ -803,7 +826,7 @@ mod tests {
         proxy_url
             .set_password(Some("wrong-password"))
             .expect("proxy URL takes a password");
-        environment.set_http_proxy(proxy_url.as_str());
+        selector.set_proxy(proxy_url.as_str());
         let refused = client.fetch(&target).await.expect("a 407 is an HTTP response");
 
         assert_eq!((accepted.status, refused.status), (200, 407));

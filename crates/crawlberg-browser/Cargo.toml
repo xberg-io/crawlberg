@@ -55,8 +55,5 @@ reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "sy
 [build-dependencies]
 deno_core = { workspace = true }
 
-[dev-dependencies]
-serial_test = "4"
-
 [lints]
 workspace = true

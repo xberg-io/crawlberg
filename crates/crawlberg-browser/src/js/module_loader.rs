@@ -17,7 +17,7 @@ use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::matches_block_pattern;
 use crate::net::proxy::UpstreamProxy;
-use crate::net::resolver::with_policy_resolver;
+use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_for_url};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
@@ -29,6 +29,7 @@ pub struct BrowserModuleLoader {
     /// SSRF policy applied to every dynamic `import()`. Page JS chooses these URLs,
     /// so they are as untrusted as any other page-initiated fetch.
     pub ssrf: Arc<dyn SsrfValidator>,
+    system_proxy_selector: Arc<dyn SystemProxySelector>,
     /// The page state the runtime shares with its ops. A module on the scoped host gets the
     /// page client's [`OriginHeaders`](crate::net::OriginHeaders), as a `fetch()` does.
     pub op_state: SharedState,
@@ -58,6 +59,23 @@ impl BrowserModuleLoader {
             base_url: base_url.to_string(),
             proxy,
             ssrf,
+            system_proxy_selector: Arc::new(EnvironmentSystemProxySelector),
+            op_state,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_ssrf_and_proxy_selector(
+        base_url: &str,
+        ssrf: Arc<dyn SsrfValidator>,
+        op_state: SharedState,
+        system_proxy_selector: Arc<dyn SystemProxySelector>,
+    ) -> Self {
+        Self {
+            base_url: base_url.to_owned(),
+            proxy: None,
+            ssrf,
+            system_proxy_selector,
             op_state,
         }
     }
@@ -104,6 +122,7 @@ impl ModuleLoader for BrowserModuleLoader {
         let url = module_specifier.to_string();
         let proxy = self.proxy.clone();
         let ssrf = self.ssrf.clone();
+        let system_proxy_selector = self.system_proxy_selector.clone();
         // ~keep Read before the future: the state is not `Send` and ops borrow it mutably. An
         // ~keep unreadable state refuses the module, so the block list cannot be skipped.
         let Ok(state) = self.op_state.try_borrow() else {
@@ -121,22 +140,6 @@ impl ModuleLoader for BrowserModuleLoader {
                 .await
                 .map_err(|e| io_err(format!("Module {} blocked by SSRF policy: {}", url, e)))?;
 
-            // ~keep Manual redirects: each hop is checked against the SSRF policy and gets the
-            // ~keep scoped headers only on their host. reqwest drops only `Authorization` when a
-            // ~keep redirect leaves the host, and a scoped header can have another name.
-            let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-            if let Some(ref proxy) = proxy {
-                match proxy.reqwest_proxy() {
-                    Ok(p) => builder = builder.proxy(p),
-                    Err(e) => {
-                        return Err(io_err(format!("Invalid module proxy: {e}")));
-                    }
-                }
-            }
-            let client = with_policy_resolver(builder, proxy.is_some(), &ssrf)
-                .build()
-                .map_err(|e| io_err(format!("HTTP client error: {}", e)))?;
-
             tracing::debug!(
                 "Loading ES module: {} (proxy: {})",
                 url,
@@ -149,6 +152,14 @@ impl ModuleLoader for BrowserModuleLoader {
                 if matches_block_pattern(&block_patterns, current.as_str()) {
                     return Err(io_err(format!("Module {} blocked by interception", current)));
                 }
+                // ~keep Build per hop: a redirect can cross a `NO_PROXY` boundary, and the
+                // resolver must follow the selected route for that hop.
+                let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+                let client =
+                    reqwest_builder_for_url(builder, &current, proxy.as_ref(), system_proxy_selector.as_ref(), &ssrf)
+                        .map_err(|e| io_err(format!("Invalid module proxy: {e}")))?
+                        .build()
+                        .map_err(|e| io_err(format!("HTTP client error: {e}")))?;
                 let mut request = client
                     .get(current.as_str())
                     .header("Accept", "application/javascript, text/javascript, */*");
@@ -226,6 +237,10 @@ mod tests {
             Arc::new(AllowAll),
             Rc::new(RefCell::new(JsOpState::new())),
         );
+        load_module(&loader, specifier).await
+    }
+
+    async fn load_module(loader: &BrowserModuleLoader, specifier: &str) -> Result<String, String> {
         let specifier = ModuleSpecifier::parse(specifier).expect("valid specifier");
         let options = ModuleLoadOptions {
             is_dynamic_import: true,
@@ -290,6 +305,36 @@ mod tests {
         assert!(credentialed_proxy::proxy_authorization(&requests[0]).is_some());
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_module_redirect_reselects_the_system_proxy_and_can_cross_to_direct() {
+        use crate::net::resolver::tests::{TestProxySelector, denied_server};
+
+        let (target_port, target_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 17\r\nConnection: close\r\n\r\nexport default 1;").await;
+        let redirect = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{target_port}/module.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let redirect: &'static str = Box::leak(redirect.into_boxed_str());
+        let (proxy_port, proxy_requests) = denied_server(redirect).await;
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(&format!("http://localhost:{proxy_port}"));
+        selector.direct_host("localhost");
+        let loader = BrowserModuleLoader::with_ssrf_and_proxy_selector(
+            "http://origin.test/",
+            Arc::new(AllowAll),
+            Rc::new(RefCell::new(JsOpState::new())),
+            selector,
+        );
+
+        let source = load_module(&loader, "http://origin.test/module.js")
+            .await
+            .expect("both module hops must succeed");
+
+        assert_eq!(source, "export default 1;");
+        assert_eq!(proxy_requests.lock().expect("lock").len(), 1);
+        assert_eq!(target_requests.lock().expect("lock").len(), 1);
+    }
+
     #[test]
     fn an_import_with_userinfo_is_refused_without_it() {
         let loader = BrowserModuleLoader::new("http://example.com/");
@@ -333,14 +378,14 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_module_refused_at_connect_time_names_the_policy_reason() {
-        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+        use crate::net::resolver::tests::{RebindingPolicy, TestProxySelector, denied_server};
 
         let (port, seen) = denied_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-        let loader = BrowserModuleLoader::with_ssrf(
+        let loader = BrowserModuleLoader::with_ssrf_and_proxy_selector(
             "http://example.com/",
-            None,
             Arc::new(RebindingPolicy::default()),
             Rc::new(RefCell::new(JsOpState::new())),
+            Arc::new(TestProxySelector::default()),
         );
         let specifier = ModuleSpecifier::parse(&format!("http://localhost:{port}/m.js")).expect("parse");
         let options = ModuleLoadOptions {
