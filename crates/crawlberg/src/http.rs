@@ -986,9 +986,11 @@ mod tests {
     }
 
     /// ~keep Regression: a refused `http://user:pass@host/` once leaked the credential into
-    /// API error bodies, MCP payloads and tracing fields. Pinning the policy keeps concurrent
-    /// environment tests from admitting the metadata address before this assertion sees it.
+    /// API error bodies, MCP payloads and tracing fields. The serial lock covers the unavoidable
+    /// environment read in `CrawlConfig::default`; the explicit policy keeps that value from
+    /// deciding whether the metadata address is admitted.
     #[tokio::test]
+    #[serial_test::serial]
     async fn http_fetch_ssrf_rejection_does_not_leak_url_credentials() {
         let config = CrawlConfig {
             ssrf: SsrfPolicy::default(),
