@@ -1009,6 +1009,271 @@ async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
     path
 }
 
+/// Kill the main process of the Chrome `pool` runs, and return its profile directory.
+async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
+    let path = pool_profile_dir(pool).await;
+    let mut system = sysinfo::System::new();
+    let killed = processes_naming(&mut system, &user_data_dir_flag(&path))
+        .into_iter()
+        .filter(|process| {
+            !process
+                .cmd()
+                .iter()
+                .any(|argument| argument.to_string_lossy().contains("--type="))
+        })
+        .map(|process| process.kill_with(sysinfo::Signal::Kill).unwrap_or(false))
+        .filter(|killed| *killed)
+        .count();
+    assert_eq!(killed, 1, "the pool's Chrome main process must be killed");
+    path
+}
+
+/// A pool whose Chrome was killed launches a new one for the next page, and still shuts down.
+///
+/// ~keep chromiumoxide 0.9.1's handler stays pending after its websocket breaks, so a handler loop
+/// ~keep that went on past the error never finished. The pool, which relaunches only a browser
+/// ~keep whose handler has ended, kept the dead Chrome: every page request failed and
+/// ~keep `shutdown` waited forever (xberg-io/crawlberg#581). Every wait here is bounded, so that
+/// ~keep defect fails the test instead of hanging it.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if let Err(error) = pool.warm().await {
+        eprintln!("skipping a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down: no usable Chrome: {error}");
+        return;
+    }
+    kill_pool_chrome(&pool).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut handler_finished = false;
+    while tokio::time::Instant::now() < deadline {
+        if pool
+            .state
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|state| state.handler_handle.is_finished())
+        {
+            handler_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let page = match tokio::time::timeout(Duration::from_secs(60), pool.acquire_page()).await {
+        Ok(Ok(page)) => Ok(page),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("no answer within 60 s".to_string()),
+    };
+    let page_outcome = match &page {
+        Ok(_) => "ok".to_string(),
+        Err(error) => error.clone(),
+    };
+    drop(page);
+    let shut_down = tokio::time::timeout(Duration::from_secs(30), pool.shutdown())
+        .await
+        .is_ok();
+
+    assert!(
+        handler_finished && page_outcome == "ok" && shut_down,
+        "a pool whose Chrome was killed must end its handler, open a page on a new Chrome and shut \
+         down: handler_finished_within_15s={handler_finished} acquire_page={page_outcome} \
+         shutdown_within_30s={shut_down}"
+    )
+}
+
+/// A warm pool whose Chrome was killed and whose handler has ended, with the handler's task held
+/// open, and the dead Chrome's profile directory. `None` after a skip line when no Chrome is usable.
+///
+/// ~keep A handler fails its commands as it drops, and its task is finished only after that. A
+/// ~keep page request that meets a dying Chrome runs in that gap, which lasts microseconds. The
+/// ~keep pool's test hold keeps the gap open, so a test reaches it by construction and not by
+/// ~keep timing (xberg-io/crawlberg#581).
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn pool_whose_handler_ended_with_its_task_held(
+    test_name: &str,
+) -> Option<(Arc<BrowserPool>, std::path::PathBuf)> {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    pool.hold_handler_end.send_replace(true);
+    if let Err(error) = pool.warm().await {
+        eprintln!("skipping {test_name}: no usable Chrome: {error}");
+        return None;
+    }
+    let old = kill_pool_chrome(&pool).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let (ended, finished) = pool
+            .state
+            .lock()
+            .await
+            .as_ref()
+            .map(|state| (state.handler_end.has_ended(), state.handler_handle.is_finished()))
+            .expect("a warm pool must hold a browser");
+        assert!(!finished, "{test_name}: the hold must keep the handler's task open");
+        if ended {
+            let cause = pool
+                .state
+                .lock()
+                .await
+                .as_ref()
+                .and_then(|state| state.handler_end.cause().map(str::to_owned));
+            assert!(
+                cause.as_deref().is_some_and(|cause| !cause.is_empty()),
+                "{test_name}: the handler of a killed Chrome must record the websocket error it stopped on"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{test_name}: the handler of a killed Chrome must end within 15 s"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Some((pool, old))
+}
+
+/// The text for a websocket error names the kind of the I/O error under it, and is the error's
+/// `Display` alone when there is none.
+#[test]
+fn the_text_for_a_websocket_error_names_the_io_kind_under_it() {
+    #[derive(Debug)]
+    struct Outer(std::io::Error);
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "IO error: {}", self.0)
+        }
+    }
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    let reset = Outer(std::io::Error::new(
+        std::io::ErrorKind::ConnectionReset,
+        "reset by peer",
+    ));
+    assert_eq!(
+        websocket_error_text(&reset),
+        "IO error: reset by peer (ConnectionReset)"
+    );
+    assert_eq!(websocket_error_text(&std::fmt::Error), std::fmt::Error.to_string());
+}
+
+/// A command Chrome never answers fails with a timeout, on a connection with no other traffic.
+///
+/// ~keep chromiumoxide 0.9.1 fails such a command only when something polls its handler after
+/// ~keep the request timeout, and on a quiet connection nothing did: the command waited forever
+/// ~keep (xberg-io/crawlberg#586). The request timeout is 2 s here and the wait is bounded at
+/// ~keep 20 s, so that defect fails the test.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_command_chrome_never_answers_times_out_on_a_quiet_connection() {
+    use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
+    use chromiumoxide::error::CdpError;
+
+    let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-", None).expect("a profile directory");
+    let config = build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
+        .expect("the launch builder must build")
+        .request_timeout(Duration::from_secs(2))
+        .build()
+        .expect("the launch config must build");
+    let (mut browser, handler) = match Browser::launch(config).await {
+        Ok(launched) => launched,
+        Err(error) => {
+            eprintln!(
+                "skipping a_command_chrome_never_answers_times_out_on_a_quiet_connection: no usable Chrome: {error}"
+            );
+            return;
+        }
+    };
+    let handler_task = spawn_handler(handler);
+    let page = browser.new_page("about:blank").await.expect("a page must open");
+    let never_settles = EvaluateParams::builder()
+        .expression("new Promise(() => {})")
+        .await_promise(true)
+        .build()
+        .expect("the evaluate parameters must build");
+    let outcome = tokio::time::timeout(Duration::from_secs(20), page.evaluate(never_settles)).await;
+    let _ = browser.kill().await;
+    handler_task.abort();
+    drop(user_data_dir);
+
+    match outcome {
+        Ok(Err(CdpError::Timeout)) => {}
+        Ok(other) => panic!("a command with no answer must fail with a timeout, got {other:?}"),
+        Err(_) => panic!("a command with no answer must fail after the request timeout, not wait 20 s and more"),
+    }
+}
+
+/// The profile directory of the Chrome `pool` holds now, if it holds one.
+async fn pool_profile_path(pool: &BrowserPool) -> Option<std::path::PathBuf> {
+    pool.state
+        .lock()
+        .await
+        .as_ref()
+        .and_then(|state| state.user_data_dir.as_ref())
+        .map(|dir| dir.path().to_path_buf())
+}
+
+/// A page opened after the handler ended and before its task finished is opened on a new Chrome.
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_page_replaces_a_dead_chrome_before_its_handler_task_finishes() {
+    let test_name = "opening_a_page_replaces_a_dead_chrome_before_its_handler_task_finishes";
+    let Some((pool, old)) = pool_whose_handler_ended_with_its_task_held(test_name).await else {
+        return;
+    };
+    let opened = match tokio::time::timeout(Duration::from_secs(60), pool.try_new_page(None, None)).await {
+        Ok(Ok((page, _))) => {
+            let _ = page.close().await;
+            Ok(pool_profile_path(&pool).await)
+        }
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("no answer within 60 s".to_string()),
+    };
+    pool.hold_handler_end.send_replace(false);
+    let shut_down = tokio::time::timeout(Duration::from_secs(30), pool.shutdown())
+        .await
+        .is_ok();
+
+    assert!(
+        opened
+            .as_ref()
+            .is_ok_and(|new| new.as_ref().is_some_and(|new| *new != old))
+            && shut_down,
+        "the page must open on a new Chrome: opened={opened:?} old={} shutdown_within_30s={shut_down}",
+        old.display()
+    );
+}
+
+/// The relaunch a failed page request asks for replaces a Chrome whose handler ended, before the
+/// handler's task finishes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes() {
+    let test_name = "a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes";
+    let Some((pool, old)) = pool_whose_handler_ended_with_its_task_held(test_name).await else {
+        return;
+    };
+    let relaunched = match tokio::time::timeout(Duration::from_secs(60), pool.relaunch_browser()).await {
+        Ok(Ok(())) => Ok(pool_profile_path(&pool).await),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("no answer within 60 s".to_string()),
+    };
+    pool.hold_handler_end.send_replace(false);
+    let shut_down = tokio::time::timeout(Duration::from_secs(30), pool.shutdown())
+        .await
+        .is_ok();
+
+    assert!(
+        relaunched
+            .as_ref()
+            .is_ok_and(|new| new.as_ref().is_some_and(|new| *new != old))
+            && shut_down,
+        "the relaunch must start a new Chrome: relaunched={relaunched:?} old={} shutdown_within_30s={shut_down}",
+        old.display()
+    );
+}
+
 /// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]

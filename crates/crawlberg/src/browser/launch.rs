@@ -861,21 +861,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
-        use tokio_stream::StreamExt;
-
-        let (browser, mut handler, data_dir, egress, profile_hold) =
-            match launch_or_connect(&CrawlConfig::default()).await {
-                Ok(launched) => launched,
-                Err(error) => {
-                    eprintln!("skipping: no usable Chrome: {error}");
-                    return;
-                }
-            };
+        let (browser, handler, data_dir, egress, profile_hold) = match launch_or_connect(&CrawlConfig::default()).await
+        {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
         let path = data_dir
             .as_ref()
             .map(|dir| dir.path().to_path_buf())
             .expect("a launched Chrome must have a profile directory");
-        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let handler_handle = crate::browser_pool::spawn_handler(handler);
         drop(super::super::OneShotSession {
             browser: Some(std::sync::Arc::new(browser)),
             firewall: None,
@@ -895,6 +893,105 @@ mod tests {
         .expect("the teardown task must stop Chrome and remove the profile directory");
     }
 
+    /// A one-shot fetch whose Chrome dies during the navigation ends at once with an error that
+    /// names the closed connection, and its teardown removes the profile directory.
+    ///
+    /// ~keep chromiumoxide 0.9.1's handler stays pending after its websocket breaks. With a handler
+    /// ~keep loop that went on past the error, the fetch waited for its whole overall deadline, and
+    /// ~keep its teardown then waited on the dead connection and never removed the profile
+    /// ~keep (xberg-io/crawlberg#581). The fetch is bounded at half the overall deadline here, so
+    /// ~keep that defect fails the test.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn a_one_shot_fetch_whose_chrome_dies_ends_at_once_and_leaves_no_profile_directory() {
+        use std::time::Duration;
+
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/stalled"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw("<html><body>late</body></html>", "text/html")
+                    .set_delay(Duration::from_secs(120)),
+            )
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                timeout: Duration::from_secs(60),
+                overall_timeout: Duration::from_secs(60),
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let mut launched = match launch_or_connect(&config).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let chrome = launched
+            .0
+            .get_mut_child()
+            .and_then(|child| child.as_mut_inner().id())
+            .map(sysinfo::Pid::from_u32)
+            .expect("a launched Chrome must have a process");
+        let profile = launched
+            .2
+            .as_ref()
+            .map(|dir| dir.path().to_path_buf())
+            .expect("a launched Chrome must have a profile directory");
+        let url = format!("{}/stalled", site.uri());
+        let killer = tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+            while tokio::time::Instant::now() < deadline {
+                let received = site.received_requests().await.unwrap_or_default();
+                if received.iter().any(|request| request.url.path() == "/stalled") {
+                    let mut system = sysinfo::System::new();
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[chrome]),
+                        true,
+                        sysinfo::ProcessRefreshKind::nothing(),
+                    );
+                    return system
+                        .process(chrome)
+                        .and_then(|process| process.kill_with(sysinfo::Signal::Kill))
+                        .unwrap_or(false);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        let deadline = tokio::time::Instant::now() + config.browser.overall_timeout;
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(30),
+            super::super::fetch_launched(launched, deadline, &url, &config, None, false),
+        )
+        .await;
+        let killed = killer.await.expect("the task that kills Chrome must not panic");
+
+        assert!(killed, "Chrome must be killed once it has asked for the page");
+        match outcome {
+            Ok(result) => {
+                let message = result.err().map(|error| error.to_string()).unwrap_or_default();
+                assert!(
+                    message.contains("the browser's CDP connection closed ("),
+                    "a fetch whose Chrome died must fail and name the closed connection and its cause: {message:?}"
+                );
+            }
+            Err(_) => panic!("the fetch must end once its Chrome has died, not wait 30 s and more"),
+        }
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&profile)
+        })
+        .await
+        .expect("the teardown of a fetch whose Chrome died must remove the profile directory");
+    }
+
     /// A one-shot session dropped just before its runtime stops still removes its profile directory.
     ///
     /// ~keep The session's `Drop` spawns its teardown, and a runtime that stops right after, as every
@@ -903,14 +1000,12 @@ mod tests {
     #[test]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     fn a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory() {
-        use tokio_stream::StreamExt;
-
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("a runtime must build");
         let path = runtime.block_on(async {
-            let (browser, mut handler, data_dir, egress, profile_hold) =
+            let (browser, handler, data_dir, egress, profile_hold) =
                 match launch_or_connect(&CrawlConfig::default()).await {
                     Ok(launched) => launched,
                     Err(error) => {
@@ -922,7 +1017,7 @@ mod tests {
                 .as_ref()
                 .map(|dir| dir.path().to_path_buf())
                 .expect("a launched Chrome must have a profile directory");
-            let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+            let handler_handle = crate::browser_pool::spawn_handler(handler);
             drop(super::super::OneShotSession {
                 browser: Some(std::sync::Arc::new(browser)),
                 firewall: None,

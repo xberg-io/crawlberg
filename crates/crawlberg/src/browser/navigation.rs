@@ -599,7 +599,6 @@ mod tests {
         async fn start(test_name: &str) -> Option<Self> {
             use std::sync::Arc;
 
-            use tokio_stream::StreamExt;
             use wiremock::matchers::{method, path};
             use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -626,14 +625,14 @@ mod tests {
                 Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
                 Err(error) => Err(error),
             };
-            let (browser, mut handler) = match launched {
+            let (browser, handler) = match launched {
                 Ok(launched) => launched,
                 Err(error) => {
                     eprintln!("skipping {test_name}: no usable Chrome: {error}");
                     return None;
                 }
             };
-            tokio::spawn(async move { while handler.next().await.is_some() {} });
+            crate::browser_pool::spawn_handler(handler);
             let browser = Arc::new(browser);
             let mut config = CrawlConfig::builder()
                 .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
