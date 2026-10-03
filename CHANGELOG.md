@@ -602,6 +602,9 @@ All notable changes to crawlberg are documented here.
   longer run at the same time. A session that waits for the profile counts the wait against its
   `overall_timeout`. This applies to sessions in one process. A symlink to a profile directory
   shares the hold of the directory it points to. (#524)
+- **`interact` silently ignored `browser_profile` and `save_browser_profile`.** It still uses an
+  isolated session rather than reading or writing the named profile, but now logs a warning that
+  both settings are ignored. This applies to both browser backends. (#559)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of

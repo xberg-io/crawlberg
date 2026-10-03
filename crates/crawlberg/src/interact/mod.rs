@@ -67,6 +67,7 @@ async fn run_chromiumoxide(
     actions: &[PageAction],
     config: &crate::types::CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
+    warn_ignored_browser_profile(config);
     chromiumoxide::run(url, actions, config).await
 }
 
@@ -83,6 +84,7 @@ async fn run_chromiumoxide(
 
 #[cfg(feature = "browser-native")]
 async fn run_native(engine: &CrawlEngine, url: &str, actions: &[PageAction]) -> Result<InteractionResult, CrawlError> {
+    warn_ignored_browser_profile(&engine.config);
     let native_executor = engine.native_browser_executor.as_deref().ok_or_else(|| {
         CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
@@ -98,6 +100,17 @@ async fn run_native(
     Err(CrawlError::unsupported(
         "interact() with BrowserBackend::Native requires the browser-native feature",
     ))
+}
+
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+fn warn_ignored_browser_profile(config: &crate::types::CrawlConfig) {
+    if let Some(profile) = config.browser_profile.as_deref() {
+        tracing::warn!(
+            profile,
+            "browser_profile is ignored by interact; save_browser_profile has no effect because \
+             interact does not read or write a named Chrome profile"
+        );
+    }
 }
 
 /// Reject `url` before any browser is launched, for either backend.

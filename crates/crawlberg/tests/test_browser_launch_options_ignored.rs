@@ -18,6 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const IGNORED_WARNING: &str = "browser.chrome_path and browser.chrome_args are ignored when";
+const IGNORED_PROFILE_WARNING: &str = "browser_profile is ignored by interact";
 
 /// Every log line written while the returned guard is alive, on this thread.
 #[derive(Clone, Default)]
@@ -187,6 +188,34 @@ async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warn
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("browser.endpoint"),
         "interact() on the endpoint path must warn that the launch options are ignored; logs: {logs}"
+    );
+}
+
+#[cfg(feature = "browser")]
+#[tokio::test]
+async fn interact_ignores_a_browser_profile_with_a_warning() {
+    // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Chromiumoxide,
+            endpoint: Some("ws://127.0.0.1:1/devtools/browser/crawlberg-test".to_owned()),
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(5),
+            overall_timeout: Duration::from_secs(10),
+            ..BrowserConfig::default()
+        },
+        browser_profile: Some("ignored-interact-profile".to_owned()),
+        save_browser_profile: true,
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let (logs, _guard) = capture_warnings();
+    let engine = create_engine(Some(config)).expect("an interact profile config must build");
+    let url = start_page_server().await;
+    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    let logs = logs.text();
+    assert!(
+        logs.contains(IGNORED_PROFILE_WARNING) && logs.contains("ignored-interact-profile"),
+        "interact() must warn that the named profile is ignored; logs: {logs}"
     );
 }
 
