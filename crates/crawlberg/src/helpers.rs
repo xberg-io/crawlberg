@@ -1573,7 +1573,7 @@ mod tests {
             CrawlError::connection("connection"),
             CrawlError::dns("dns"),
             CrawlError::ssl("ssl"),
-            CrawlError::data_loss("data_loss"),
+            CrawlError::data_loss("body truncated"),
             CrawlError::other("other"),
         ] {
             let outcome = outcome_for_fetch_error(&error);
@@ -1632,7 +1632,7 @@ mod tests {
             CrawlError::rate_limited("rate_limited"),
             CrawlError::server_error("server_error"),
             CrawlError::bad_gateway("bad_gateway"),
-            CrawlError::data_loss("data_loss"),
+            CrawlError::data_loss("body truncated"),
             CrawlError::other("other"),
             CrawlError::waf_blocked("cloudflare", "detected on 2xx (body): cloudflare"),
         ] {

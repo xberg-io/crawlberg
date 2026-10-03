@@ -685,8 +685,19 @@ pub(crate) fn rendered_status_outcome(
 /// rather than as ordinary framing slack.
 const BODY_SHORTFALL_TOLERANCE_BYTES: usize = 100;
 
-fn measured_shortfall_error(expected: usize, actual: usize) -> CrawlError {
-    CrawlError::data_loss(format!("expected {expected} bytes, got {actual}"))
+fn content_length_shortfall_error(expected: Option<usize>, actual: usize, hit_cap: bool) -> Option<CrawlError> {
+    // ~keep A capped read stopping short of `content-length` is expected (that is the
+    // point of `max_body_size`), not evidence of a truncated/failed transfer.
+    if hit_cap {
+        return None;
+    }
+    let expected = expected?;
+    if actual < expected && expected - actual > BODY_SHORTFALL_TOLERANCE_BYTES {
+        return Some(CrawlError::data_loss(format!(
+            "expected {expected} bytes, got {actual}"
+        )));
+    }
+    None
 }
 
 /// Read the response body under the configured cap and reject a short transfer.
@@ -699,14 +710,8 @@ async fn read_validated_body(
         .await
         .map_err(classify_body_read_error)?;
 
-    // ~keep A capped read stopping short of `content-length` is expected (that is the
-    // point of `max_body_size`), not evidence of a truncated/failed transfer.
-    if !hit_cap
-        && let Some(expected) = expected_len
-        && body_bytes.len() < expected
-        && expected - body_bytes.len() > BODY_SHORTFALL_TOLERANCE_BYTES
-    {
-        return Err(measured_shortfall_error(expected, body_bytes.len()));
+    if let Some(error) = content_length_shortfall_error(expected_len, body_bytes.len(), hit_cap) {
+        return Err(error);
     }
 
     Ok(body_bytes)
@@ -788,8 +793,27 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_http_measured_shortfall_renders_one_prefix_without_a_source() {
-        let error = measured_shortfall_error(1000, 899);
+    fn a_capped_or_unmeasured_plain_http_body_is_not_data_loss() {
+        assert!(content_length_shortfall_error(Some(1000), 10, true).is_none());
+        assert!(content_length_shortfall_error(None, 10, false).is_none());
+    }
+
+    #[test]
+    fn a_plain_http_shortfall_within_tolerance_is_not_data_loss() {
+        assert!(
+            content_length_shortfall_error(Some(1000), 1000 - BODY_SHORTFALL_TOLERANCE_BYTES, false,).is_none(),
+            "a shortfall of exactly the tolerance is accepted"
+        );
+        assert!(content_length_shortfall_error(Some(1000), 1000, false).is_none());
+        assert!(
+            content_length_shortfall_error(Some(1000), 1200, false).is_none(),
+            "a body longer than content-length is not data loss"
+        );
+    }
+
+    #[test]
+    fn a_plain_http_shortfall_past_tolerance_renders_one_prefix_without_a_source() {
+        let error = content_length_shortfall_error(Some(1000), 899, false).expect("data loss expected");
 
         assert_eq!(error.to_string(), "data_loss: expected 1000 bytes, got 899");
 
