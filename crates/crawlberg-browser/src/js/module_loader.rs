@@ -17,7 +17,7 @@ use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::matches_block_pattern;
 use crate::net::proxy::UpstreamProxy;
-use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_for_url};
+use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_and_route_for_url};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
@@ -140,12 +140,6 @@ impl ModuleLoader for BrowserModuleLoader {
                 .await
                 .map_err(|e| io_err(format!("Module {} blocked by SSRF policy: {}", url, e)))?;
 
-            tracing::debug!(
-                "Loading ES module: {} (proxy: {})",
-                url,
-                proxy.as_ref().map_or("direct", |proxy| proxy.address().as_str())
-            );
-
             let mut current = parsed;
             let mut redirects_followed = 0;
             let resp = loop {
@@ -155,11 +149,16 @@ impl ModuleLoader for BrowserModuleLoader {
                 // ~keep Build per hop: a redirect can cross a `NO_PROXY` boundary, and the
                 // resolver must follow the selected route for that hop.
                 let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-                let client =
-                    reqwest_builder_for_url(builder, &current, proxy.as_ref(), system_proxy_selector.as_ref(), &ssrf)
-                        .map_err(|e| io_err(format!("Invalid module proxy: {e}")))?
-                        .build()
-                        .map_err(|e| io_err(format!("HTTP client error: {e}")))?;
+                let (builder, route) = reqwest_builder_and_route_for_url(
+                    builder,
+                    &current,
+                    proxy.as_ref(),
+                    system_proxy_selector.as_ref(),
+                    &ssrf,
+                )
+                .map_err(|e| io_err(format!("Invalid module proxy: {e}")))?;
+                tracing::debug!(url = %current, proxy_route = route.as_str(), "loading ES module");
+                let client = builder.build().map_err(|e| io_err(format!("HTTP client error: {e}")))?;
                 let mut request = client
                     .get(current.as_str())
                     .header("Accept", "application/javascript, text/javascript, */*");

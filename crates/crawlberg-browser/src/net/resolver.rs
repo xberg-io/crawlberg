@@ -96,6 +96,23 @@ pub(crate) trait SystemProxySelector: std::fmt::Debug + Send + Sync {
     fn proxy_for(&self, url: &url::Url) -> Result<Option<SystemProxy>, ProxyError>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProxyRoute {
+    Explicit,
+    System,
+    Direct,
+}
+
+impl ProxyRoute {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::System => "system",
+            Self::Direct => "direct",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EnvironmentSystemProxySelector;
 
@@ -106,20 +123,30 @@ impl SystemProxySelector for EnvironmentSystemProxySelector {
 }
 
 pub(crate) fn reqwest_builder_for_url(
-    mut builder: reqwest::ClientBuilder,
+    builder: reqwest::ClientBuilder,
     url: &url::Url,
     explicit: Option<&UpstreamProxy>,
     selector: &dyn SystemProxySelector,
     ssrf: &Arc<dyn SsrfValidator>,
 ) -> Result<reqwest::ClientBuilder, ProxyError> {
+    reqwest_builder_and_route_for_url(builder, url, explicit, selector, ssrf).map(|(builder, _)| builder)
+}
+
+pub(crate) fn reqwest_builder_and_route_for_url(
+    mut builder: reqwest::ClientBuilder,
+    url: &url::Url,
+    explicit: Option<&UpstreamProxy>,
+    selector: &dyn SystemProxySelector,
+    ssrf: &Arc<dyn SsrfValidator>,
+) -> Result<(reqwest::ClientBuilder, ProxyRoute), ProxyError> {
     if let Some(proxy) = explicit {
-        return Ok(builder.proxy(proxy.reqwest_proxy()?));
+        return Ok((builder.proxy(proxy.reqwest_proxy()?), ProxyRoute::Explicit));
     }
     match selector.proxy_for(url)? {
-        Some(proxy) => Ok(builder.proxy(proxy.reqwest_proxy()?)),
+        Some(proxy) => Ok((builder.proxy(proxy.reqwest_proxy()?), ProxyRoute::System)),
         None => {
             builder = builder.no_proxy();
-            Ok(with_policy_resolver(builder, false, ssrf))
+            Ok((with_policy_resolver(builder, false, ssrf), ProxyRoute::Direct))
         }
     }
 }
@@ -308,6 +335,31 @@ pub(crate) mod tests {
         async fn resolve(&self, _host: &str) -> Result<Vec<IpAddr>, String> {
             Ok(vec![self.0])
         }
+    }
+
+    #[test]
+    fn request_route_classification_reports_only_the_selected_kind() {
+        let ssrf: Arc<dyn SsrfValidator> = Arc::new(ResolvesTo(DENIED));
+        let url = Url::parse("http://origin.test/").expect("URL");
+        let selector = TestProxySelector::default();
+
+        let (_, direct) = reqwest_builder_and_route_for_url(reqwest::Client::builder(), &url, None, &selector, &ssrf)
+            .expect("direct route");
+        assert_eq!(direct, ProxyRoute::Direct);
+        assert_eq!(direct.as_str(), "direct");
+
+        selector.set_proxy("http://localhost:8080");
+        let (_, system) = reqwest_builder_and_route_for_url(reqwest::Client::builder(), &url, None, &selector, &ssrf)
+            .expect("system proxy route");
+        assert_eq!(system, ProxyRoute::System);
+        assert_eq!(system.as_str(), "system");
+
+        let explicit = proxy_from_url("http://localhost:8081").expect("explicit proxy");
+        let (_, explicit) =
+            reqwest_builder_and_route_for_url(reqwest::Client::builder(), &url, Some(&explicit), &selector, &ssrf)
+                .expect("explicit proxy route");
+        assert_eq!(explicit, ProxyRoute::Explicit);
+        assert_eq!(explicit.as_str(), "explicit");
     }
 
     #[tokio::test]

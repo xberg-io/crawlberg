@@ -476,12 +476,12 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let parsed_url = url::Url::parse(&url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
-    let client =
-        build_request_client(context.proxy.as_ref(), &ssrf, &parsed_url).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
+        let parsed_url = url::Url::parse(&url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
+        let client = build_request_client(context.proxy.as_ref(), &ssrf, &parsed_url)
+            .map_err(deno_error::JsErrorBox::generic)?;
         send_preflight(&client, &url, &method, &cors).await?;
     }
 
