@@ -158,3 +158,54 @@ async fn test_markdown_links_resolve_against_the_scrape_redirect_target() {
         md.content
     );
 }
+
+/// Serves `body` as an HTML page at `/` and returns the markdown of a scrape of it, with the
+/// server's address.
+async fn scrape_markdown(body: &str) -> (String, String) {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body.to_owned())
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(allow_private_config())).unwrap();
+    let result = scrape(&handle, &mock.uri()).await.unwrap();
+    let md = result.markdown.expect("markdown should be present");
+    (md.content, mock.uri())
+}
+
+/// A comma inside a parenthesised `srcset` descriptor does not start a new candidate, so the
+/// address inside the descriptor is never the image the markdown shows (issue #320).
+#[tokio::test]
+async fn test_markdown_srcset_skips_an_address_inside_a_parenthesised_descriptor() {
+    let (md, uri) =
+        scrape_markdown(r#"<html><body><p><img srcset="a.png (x, b.png 3x ), c.png 2x" alt="a"></p></body></html>"#)
+            .await;
+
+    assert_eq!(md, format!("![a]({uri}/c.png)\n"));
+}
+
+/// The front matter shows the page's base address with its character references decoded,
+/// whether the page wrote the reference or the link pre-pass did (issue #103).
+#[tokio::test]
+async fn test_markdown_front_matter_decodes_the_base_address() {
+    let page = |base: &str| format!(r#"<html><head><base href="{base}"></head><body><p>x</p></body></html>"#);
+
+    let (written, _) = scrape_markdown(&page("https://example.com/it&#x27;s/")).await;
+    let (resolved, uri) = scrape_markdown(&page("/it's/")).await;
+
+    let wrong: Vec<&String> = [
+        (&written, "---\nbase: https://example.com/it's/\n---\n".to_owned()),
+        (&resolved, format!("---\nbase: {uri}/it's/\n---\n")),
+    ]
+    .iter()
+    .filter(|(md, front)| !md.starts_with(front.as_str()))
+    .map(|(md, _)| *md)
+    .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

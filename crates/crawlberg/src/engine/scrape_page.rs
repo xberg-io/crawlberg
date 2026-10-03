@@ -1,8 +1,7 @@
 //! [`CrawlEngine::scrape`]: fetch one page and run the extraction pipeline over it.
 
-use super::CrawlEngine;
+use super::{CrawlEngine, SeedUrl};
 use crate::error::CrawlError;
-use crate::telemetry::attributes::URL_FULL;
 use crate::types::*;
 
 impl CrawlEngine {
@@ -19,27 +18,41 @@ impl CrawlEngine {
     /// - `BrowserMode::Auto` + JS detected: after extraction, if `js_render_hint` is
     ///   `true` and the browser has not been used yet, re-fetches with headless Chrome
     ///   and re-runs the extraction pipeline on the rendered HTML.
-    #[tracing::instrument(name = "crawl.engine.scrape", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
+        let (engine, seed) = self.admit(url)?;
+        engine.scrape_seed(&seed).await
+    }
+
+    /// Scrape an admitted seed URL. See [`CrawlEngine::scrape`].
+    pub(crate) async fn scrape_seed(&self, seed: &SeedUrl) -> Result<ScrapeResult, CrawlError> {
+        self.scrape_in_scope(seed.as_str(), None).await
+    }
+
+    /// Scrape `url` under the credential scope this engine's seed admission set.
+    ///
+    /// The sequential crawl loop scrapes each frontier entry through this, not through
+    /// [`CrawlEngine::scrape`], which would admit the entry as a new seed and scope the
+    /// credentials to the entry's host.
+    ///
+    /// `forced_user_agent` pins the agent this fetch sends, ahead of the configured default.
+    /// `scrape_seed()` above passes `None`; the sequential crawl loop passes its per-page
+    /// rotation pick, so the agent that judged this page's robots.txt is the agent the fetch
+    /// sends (crawlberg#483).
+    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %url))]
+    pub(super) async fn scrape_in_scope(
+        &self,
+        url: &str,
+        forced_user_agent: Option<&str>,
+    ) -> Result<ScrapeResult, CrawlError> {
         self.config.validate()?;
 
         #[cfg(not(target_arch = "wasm32"))]
         self.warn_if_capture_screenshot_is_a_no_op();
 
-        // ~keep Short-circuit native BrowserMode::Always so browser_extras survive fetch_response conversion.
-        #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-        if self.config.browser.mode == crate::types::BrowserMode::Always
-            && self.config.browser.backend == crate::types::BrowserBackend::Native
-        {
-            return self.native_browser_scrape(url).await;
-        }
-
         // ~keep Short-circuit chromiumoxide BrowserMode::Always/Stealth when a screenshot was
-        // ~keep requested, for the same reason as the native short-circuit above: the generic
-        // ~keep `fetch_response`/`follow_redirects` path converts to `CrawlResponse`, which drops
-        // ~keep the screenshot bytes captured on `HttpResponse` (see `browser_http_to_crawl`).
+        // ~keep requested: the generic `fetch_response`/`follow_redirects` path converts to
+        // ~keep `CrawlResponse`, which drops the screenshot bytes captured on `HttpResponse`
+        // ~keep (see `browser_http_to_crawl`).
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
         if self.config.capture_screenshot
             && self.config.browser.backend == crate::types::BrowserBackend::Chromiumoxide
@@ -52,11 +65,24 @@ impl CrawlEngine {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        let (final_url, response, browser_used_for_fetch) = {
-            use super::redirect::{RedirectResolution, follow_redirects};
+        let (final_url, response, page_scan, browser_used_for_fetch) = {
+            use super::redirect::{Hop, RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            let outcome = match follow_redirects(self, url, max_redirects, None).await? {
+            // ~keep A native render in BrowserMode::Always takes the same redirect chain as every
+            // ~keep other scrape, so a meta refresh and a not-found seed end as in HTTP mode, and
+            // ~keep it works on a build without the `browser` feature, which `fetch_response` needs.
+            #[cfg(feature = "browser-native")]
+            let hop = if self.config.browser.mode == crate::types::BrowserMode::Always
+                && self.config.browser.backend == crate::types::BrowserBackend::Native
+            {
+                Hop::NativeRender
+            } else {
+                Hop::Fetch
+            };
+            #[cfg(not(feature = "browser-native"))]
+            let hop = Hop::Fetch;
+            let outcome = match follow_redirects(self, url, max_redirects, None, forced_user_agent, hop).await? {
                 RedirectResolution::Fetched(outcome) => outcome,
                 // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
@@ -66,7 +92,7 @@ impl CrawlEngine {
             };
 
             let status = outcome.final_response.status;
-            if matches!(status, 404 | 403) && outcome.final_response.body.is_empty() && self.config.soft_http_errors {
+            if outcome.final_response.soft_error {
                 return Ok(self.bodyless_status_result(status, outcome.final_url));
             }
             if outcome.final_response.status == 404
@@ -75,20 +101,36 @@ impl CrawlEngine {
             {
                 return Ok(self.bodyless_status_result(404, outcome.final_url));
             }
-            (outcome.final_url, outcome.final_response, outcome.browser_used)
+            (
+                outcome.final_url,
+                outcome.final_response,
+                outcome.page_scan,
+                outcome.browser_used,
+            )
         };
 
         #[cfg(target_arch = "wasm32")]
-        let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url).await?;
+        let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url, forced_user_agent).await?;
+        #[cfg(target_arch = "wasm32")]
+        let page_scan = None;
 
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &response,
+            page_scan,
             &self.config,
             self.document_filter.as_deref(),
         )
         .await?;
         result.browser_used = browser_used_for_fetch;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(extras) = response.landed.and_then(|landed| landed.extras) {
+            result.browser = Some(crate::types::BrowserExtras {
+                eval_result: extras.eval_result,
+                network_events: extras.network_events,
+                cookies: extras.cookies,
+            });
+        }
 
         // ~keep Without the browser feature, BrowserMode::Always still reports browser_used for binding parity.
         #[cfg(not(feature = "browser"))]
@@ -128,39 +170,37 @@ impl CrawlEngine {
         }
     }
 
-    /// Scrape through the native browser backend, keeping its `browser_extras`.
+    /// Render `url` with the native backend, as one hop of a scrape's redirect chain. The render
+    /// starts from the cookies in `jar` and leaves its own jar there for the next hop.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-    async fn native_browser_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
+    pub(super) async fn native_render(
+        &self,
+        url: &str,
+        jar: &mut Vec<crawlberg_browser::adapter::NativeCookie>,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let mut http_resp =
-            crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
-        let raw_extras = http_resp.browser_extras.take();
+        let (response, refused, redirects) =
+            crate::native_browser::native_browser_render(url, &self.config, jar, native_executor).await?;
+        let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
         let crawl_resp = crate::tower::CrawlResponse {
-            status: http_resp.status,
-            content_type: http_resp.content_type,
-            body: http_resp.body,
-            body_bytes: http_resp.body_bytes,
-            headers: std::collections::HashMap::new(),
-            landed_url: None,
+            status: response.status,
+            content_type: response.content_type,
+            body: response.body,
+            body_bytes: response.body_bytes,
+            headers: response.headers,
+            landed: Some(Box::new(crate::tower::Landing {
+                url: response.final_url,
+                redirects,
+                refused,
+                extras: response.browser_extras,
+            })),
+            // ~keep The native browser backend never reads `config.user_agents`.
+            sent_user_agent: None,
+            soft_error: false,
         };
-        let mut result = crate::scrape::scrape_from_crawl_response(
-            &http_resp.final_url,
-            &crawl_resp,
-            &self.config,
-            self.document_filter.as_deref(),
-        )
-        .await?;
-        result.browser_used = true;
-        if let Some(ex) = raw_extras {
-            result.browser = Some(crate::types::BrowserExtras {
-                eval_result: ex.eval_result,
-                network_events: ex.network_events,
-                cookies: ex.cookies,
-            });
-        }
-        Ok(result)
+        Ok((crawl_resp, true))
     }
 
     /// Scrape through chromiumoxide, keeping the screenshot it captured.
@@ -168,7 +208,7 @@ impl CrawlEngine {
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         let pool = self.config.browser_pool.as_deref();
         #[cfg(feature = "browser-native")]
-        let mut http_resp = crate::browser::browser_fetch(
+        let mut page = crate::browser::browser_fetch(
             url,
             &self.config,
             None,
@@ -178,14 +218,15 @@ impl CrawlEngine {
         )
         .await?;
         #[cfg(not(feature = "browser-native"))]
-        let mut http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
 
-        let screenshot = http_resp.screenshot.take();
-        let final_url = http_resp.final_url.clone();
-        let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+        let screenshot = page.response.screenshot.take();
+        let final_url = page.response.final_url.clone();
+        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &crawl_resp,
+            None,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -235,17 +276,41 @@ impl CrawlEngine {
             screenshot_base64: None,
             downloaded_document: None,
             browser: None,
+            ssrf_refused_urls: Vec::new(),
         }
     }
 
     /// Fetch `url` on wasm32, where the browser's own `fetch` already followed redirects.
-    #[cfg(target_arch = "wasm32")]
-    async fn wasm_fetch_for_scrape(
+    ///
+    /// `forced_user_agent`, when given, is the wasm crawl loop's own per-page rotation pick
+    /// (crawlberg#483): it goes out as the one `user-agent` header this fetch sends, replacing
+    /// (not adding to) the configured default -- see `http::send_hop_request`. `None` sends the
+    /// configured default, unchanged, exactly as a standalone `scrape()` always has.
+    ///
+    /// ~keep Also compiled under `cfg(test)` so a native test can pin the header this builds:
+    /// ~keep wasm32 has no test runner in this repo.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(super) async fn wasm_fetch_for_scrape(
         &self,
         url: &str,
+        forced_user_agent: Option<&str>,
     ) -> Result<(String, crate::tower::CrawlResponse, bool), CrawlError> {
         let client = crate::http::build_client(&self.config)?;
-        let resp = crate::http::fetch_with_retry(url, &self.config, &std::collections::HashMap::new(), &client).await?;
+        let extra_headers = match forced_user_agent {
+            Some(agent) => std::collections::HashMap::from([("user-agent".to_owned(), agent.to_owned())]),
+            None => std::collections::HashMap::new(),
+        };
+        let resp = crate::http::fetch_with_retry(
+            url,
+            &self.config,
+            &extra_headers,
+            &client,
+            crate::http::RefreshRedirects::Ignore,
+            crate::http::Fetched::Page,
+            &mut crate::http::AdmitEvery,
+        )
+        .await?
+        .response;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
         let crawl_resp = crate::tower::CrawlResponse {
@@ -254,7 +319,9 @@ impl CrawlEngine {
             body: resp.body,
             body_bytes: resp.body_bytes,
             headers: resp.headers,
-            landed_url: None,
+            landed: None,
+            sent_user_agent: forced_user_agent.map(str::to_owned),
+            soft_error: false,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

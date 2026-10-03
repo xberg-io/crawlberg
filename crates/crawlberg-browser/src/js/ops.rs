@@ -4,8 +4,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
+use crate::redact::{RedactedHeaders, RedactedValues};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
 use deno_core::OpState;
@@ -15,7 +19,6 @@ use tokio::sync::Mutex;
 pub type InterceptCallback =
     Arc<Mutex<Option<Box<dyn Fn(String, String, String) -> Option<(u16, String, String)> + Send + Sync>>>>;
 
-#[derive(Debug)]
 pub enum InterceptResolution {
     Continue {
         url: Option<String>,
@@ -31,6 +34,35 @@ pub enum InterceptResolution {
     Fail {
         reason: String,
     },
+}
+
+impl std::fmt::Debug for InterceptResolution {
+    /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the value of
+    /// each sensitive header name.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Continue {
+                url,
+                method,
+                headers,
+                body,
+            } => f
+                .debug_struct("Continue")
+                .field("url", url)
+                .field("method", method)
+                .field("headers", &headers.as_ref().map(RedactedValues))
+                .field("body", body)
+                .finish(),
+            Self::Fulfill { status, headers, body } => f
+                .debug_struct("Fulfill")
+                .field("status", status)
+                .field("headers", &RedactedHeaders(headers))
+                .field("body", body)
+                .finish(),
+            Self::Fail { reason } => f.debug_struct("Fail").field("reason", reason).finish(),
+        }
+    }
 }
 
 pub struct InterceptedRequest {
@@ -56,6 +88,10 @@ pub struct JsOpState {
     pub intercept_tx: Option<tokio::sync::mpsc::UnboundedSender<InterceptedRequest>>,
     pub intercept_counter: u64,
     pub intercept_enabled: bool,
+    /// The page's interception block list. The module loader refuses a module address it matches.
+    pub intercept_block_patterns: Vec<String>,
+    /// The page's User-Agent, which the module loader sends with every module request.
+    pub user_agent: Option<String>,
 }
 
 impl JsOpState {
@@ -72,7 +108,17 @@ impl JsOpState {
             intercept_tx: None,
             intercept_counter: 0,
             intercept_enabled: false,
+            intercept_block_patterns: Vec::new(),
+            user_agent: None,
         }
+    }
+
+    /// The page client's headers scoped to one host, such as its credential. See [`OriginHeaders`].
+    pub(crate) fn origin_headers(&self) -> Option<OriginHeaders> {
+        let client = self.http_client.as_ref()?;
+        // ~keep The scoped headers are written once, when the context is built, before any
+        // ~keep page runs script, so a busy lock here cannot hide them.
+        client.origin_headers.try_read().ok()?.clone()
     }
 }
 
@@ -356,14 +402,19 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
-fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+fn build_request_client(
+    proxy: Option<&crate::net::proxy::UpstreamProxy>,
+    ssrf: &Arc<dyn SsrfValidator>,
+) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    if let Some(proxy) = proxy_url {
-        let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
+    if let Some(proxy) = proxy {
+        let p = proxy
+            .reqwest_proxy()
+            .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
         builder = builder.proxy(p);
     }
-    builder
+    with_policy_resolver(builder, proxy.is_some(), ssrf)
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -383,6 +434,15 @@ async fn op_fetch_url(
     #[string] origin: String,
     #[string] mode: String,
 ) -> Result<String, deno_error::JsErrorBox> {
+    // ~keep Refused before anything logs or fetches it, as the Fetch standard does.
+    if let Ok(parsed) = url::Url::parse(&url)
+        && has_userinfo(&parsed)
+    {
+        return Err(deno_error::JsErrorBox::type_error(format!(
+            "fetch refused a URL with credentials in it: {}",
+            without_userinfo(&parsed)
+        )));
+    }
     tracing::debug!("op_fetch_url called: {} {} (intercept check pending)", method, url);
 
     // ~keep Clone the validator out of the RefCell before awaiting; re-entrant page JS
@@ -411,7 +471,7 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy.as_ref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -497,7 +557,8 @@ struct FetchContext {
     cookie_jar: Option<Arc<CookieJar>>,
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
-    proxy_url: Option<String>,
+    proxy: Option<crate::net::proxy::UpstreamProxy>,
+    origin_headers: Option<OriginHeaders>,
 }
 
 /// `None` when `url` matches one of the page's blocked-URL patterns.
@@ -530,10 +591,8 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
         cookie_jar: gs.cookie_jar.clone(),
         in_flight: gs.http_client.as_ref().map(|c| c.in_flight.clone()),
         intercept,
-        proxy_url: gs
-            .http_client
-            .as_ref()
-            .and_then(|c| c.proxy_url().map(|s| s.to_string())),
+        proxy: gs.http_client.as_ref().and_then(|c| c.proxy().cloned()),
+        origin_headers: gs.origin_headers(),
     })
 }
 
@@ -678,7 +737,7 @@ async fn send_preflight(
         )
         .send()
         .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", error_with_causes(&e))))?;
 
     let allowed_origin = preflight
         .headers()
@@ -789,8 +848,20 @@ async fn send_one_hop(
         }
     }
 
+    // ~keep Checked per hop, so a redirect to another host never carries the scoped headers.
+    let origin_headers = context
+        .origin_headers
+        .as_ref()
+        .zip(url::Url::parse(current_url).ok())
+        .map(|(origin_headers, url)| origin_headers.headers_for(&url))
+        .unwrap_or_default();
     for (k, v) in &cors.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+        if !origin_headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(k)) {
+            req = req.header(k.as_str(), v.as_str());
+        }
+    }
+    for (name, value) in origin_headers {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     if !body.is_empty() {
@@ -804,7 +875,7 @@ async fn send_one_hop(
         if let Some(ref counter) = context.in_flight {
             counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
-        deno_error::JsErrorBox::generic(e.to_string())
+        deno_error::JsErrorBox::generic(error_with_causes(&e))
     })?;
     if let Some(ref counter) = context.in_flight {
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -829,7 +900,8 @@ fn redirect_target(current_url: &str, response: &reqwest::Response) -> Option<ur
         .headers()
         .get(reqwest::header::LOCATION)
         .and_then(|v| v.to_str().ok())?;
-    url::Url::parse(current_url).ok()?.join(location).ok()
+    let target = url::Url::parse(current_url).ok()?.join(location).ok()?;
+    Some(without_userinfo(&target))
 }
 
 fn glob_match(pattern: &str, url: &str) -> bool {
@@ -903,5 +975,83 @@ pub fn build_extension() -> Extension {
             op_navigate(),
         ]),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client_through(proxy: &str) -> Result<reqwest::Client, String> {
+        let ssrf: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::from_env());
+        let proxy = crate::net::proxy::test_proxy(proxy).map_err(|e| e.to_string())?;
+        build_request_client(Some(&proxy), &ssrf)
+    }
+
+    #[test]
+    fn an_http_proxy_builds_the_client() {
+        assert!(client_through("http://proxy.test:8080").is_ok());
+    }
+
+    fn allow_all() -> Arc<dyn SsrfValidator> {
+        #[derive(Debug)]
+        struct AllowAll;
+        #[async_trait::async_trait]
+        impl SsrfValidator for AllowAll {
+            async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        Arc::new(AllowAll)
+    }
+
+    #[tokio::test]
+    async fn a_credentialed_proxy_carries_the_fetch_op_request_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let client = build_request_client(Some(&proxy), &allow_all()).expect("an http proxy must build");
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get("http://origin.test/data").send(),
+        )
+        .await
+        .expect("the fetch must finish")
+        .expect("the proxy answers");
+
+        assert_eq!(response.status(), 200, "the proxy accepts the credentials");
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/data");
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_refuses_the_credentials_fails_the_fetch_op_request_instead_of_connecting_directly() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let direct = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let target = format!("http://{}/data", direct.local_addr().expect("addr"));
+        let client = build_request_client(Some(&credentialed_proxy::with_wrong_password(&proxy)), &allow_all())
+            .expect("an http proxy must build");
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), client.get(&target).send())
+            .await
+            .expect("the fetch must finish");
+
+        assert!(
+            !matches!(result, Ok(ref response) if response.status() == 200),
+            "a refused proxy must not serve the request: {result:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "{result:?}"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), direct.accept())
+                .await
+                .is_err(),
+            "the fetch op connected directly"
+        );
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the request must go to the proxy: {requests:?}");
+        assert!(credentialed_proxy::proxy_authorization(&requests[0]).is_some());
     }
 }

@@ -299,9 +299,398 @@ async fn hung_render_path_eval_script_is_terminated_and_the_native_worker_recove
 }
 
 #[tokio::test]
+async fn render_through_a_proxy_that_refuses_the_credentials_never_connects_directly() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let (proxy, requests) = credentialed_proxy::start().await;
+    let refused = credentialed_proxy::with_wrong_password(&proxy);
+    for stealth in [false, true] {
+        let config = NativeBrowserConfig {
+            proxy: Some(refused.clone()),
+            stealth,
+            ..test_config()
+        };
+        let result = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+            .await
+            .expect("a refused render must return, not hang")
+            .map(|page| (page.final_url, page.html));
+        assert!(
+            !matches!(result, Ok((_, ref html)) if html.contains("Native executor")),
+            "stealth={stealth}: a refused proxy must not serve the page: {result:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "stealth={stealth}: {result:?}"
+        );
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a render through a refusing proxy must not reach the target server"
+    );
+    {
+        let requests = requests.lock().expect("lock");
+        assert!(
+            requests.len() >= 2,
+            "both clients must send the page request to the proxy: {requests:?}"
+        );
+        for request in requests.iter() {
+            let sent = credentialed_proxy::proxy_authorization(request);
+            assert!(
+                sent.is_some() && sent != Some(credentialed_proxy::expected_authorization()),
+                "the configured credentials must be sent: {sent:?}"
+            );
+        }
+    }
+
+    let page = render_url(
+        &server.base_url,
+        &NativeBrowserConfig {
+            proxy: Some(proxy),
+            ..test_config()
+        },
+    )
+    .await
+    .expect("the proxy accepts the credentials, so the render must succeed");
+    assert!(
+        page.html.contains("via-proxy"),
+        "the page must come from the proxy: {}",
+        page.html
+    );
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "the accepted render must also go through the proxy"
+    );
+}
+
+#[tokio::test]
+async fn render_uses_a_scheme_less_proxy_as_an_http_proxy_with_its_credentials() {
+    let proxy = TestServer::start().await;
+    let address = proxy
+        .base_url
+        .strip_prefix("http://")
+        .expect("the test server URL is http");
+    let port = address.rsplit(':').next().expect("the address has a port");
+    // ~keep reqwest reads each of these as an HTTP proxy; `localhost` and `operator` are read
+    // ~keep by the url crate as a scheme, so they also need the retry on a missing host.
+    let credentials = ProxyCredentials {
+        username: "operator".to_string(),
+        password: "s3cr3t".to_string(),
+    };
+    for (bare, credentials) in [
+        (address.to_string(), None),
+        (format!("localhost:{port}"), None),
+        (address.to_string(), Some(credentials)),
+    ] {
+        let upstream =
+            UpstreamProxy::new(check_proxy_url(&bare).expect("a usable address"), credentials).expect("a usable proxy");
+        for stealth in [false, true] {
+            let before = proxy.accepted.load(Ordering::SeqCst);
+            let config = NativeBrowserConfig {
+                proxy: Some(upstream.clone()),
+                stealth,
+                ..test_config()
+            };
+            let page = tokio::time::timeout(Duration::from_secs(30), render_url("http://origin.test/", &config))
+                .await
+                .expect("the render must finish")
+                .unwrap_or_else(|e| panic!("stealth={stealth}: {bare} must work as an HTTP proxy, got {e:?}"));
+            assert!(
+                page.html.contains("Native executor"),
+                "{bare} stealth={stealth}: the page must come from the proxy"
+            );
+            assert!(
+                proxy.accepted.load(Ordering::SeqCst) > before,
+                "{bare} stealth={stealth}: the render must go through the proxy"
+            );
+        }
+    }
+}
+
+/// The address of `upstream` with its user name and password in the URL, as a v1.8.0 caller
+/// set `proxy_url`.
+fn credentialed_proxy_url(upstream: &UpstreamProxy) -> String {
+    let mut url = upstream.address().clone();
+    let credentials = upstream.credentials().expect("the test proxy has credentials");
+    url.set_username(&credentials.username)
+        .expect("an http address takes a user name");
+    url.set_password(Some(&credentials.password))
+        .expect("an http address takes a password");
+    url.to_string()
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_through_the_deprecated_proxy_url_sends_its_credentials_to_the_proxy() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    let proxy_url = credentialed_proxy_url(&upstream);
+    for stealth in [false, true] {
+        let literal = NativeBrowserConfig {
+            proxy_url: Some(proxy_url.clone()),
+            stealth,
+            ..test_config()
+        };
+        let mut assigned = test_config();
+        assigned.stealth = stealth;
+        assigned.proxy_url = Some(proxy_url.clone());
+        for config in [literal, assigned] {
+            let page = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+                .await
+                .expect("the render must finish")
+                .unwrap_or_else(|e| panic!("stealth={stealth}: a render through proxy_url must succeed, got {e:?}"));
+            assert!(
+                page.html.contains("via-proxy"),
+                "stealth={stealth}: the page must come from the proxy: {}",
+                page.html
+            );
+        }
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "every render must go through the proxy"
+    );
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.len() >= 4,
+        "each of the four renders must reach the proxy: {requests:?}"
+    );
+    for request in requests.iter() {
+        assert_eq!(
+            credentialed_proxy::proxy_authorization(request),
+            Some(credentialed_proxy::expected_authorization()),
+            "the credentials in proxy_url must reach the proxy as Proxy-Authorization"
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_refuses_proxy_and_proxy_url_that_name_different_proxies() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let other = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    // ~keep The same address with other credentials is a different proxy too.
+    let differing = [
+        other.base_url.clone(),
+        credentialed_proxy_url(&credentialed_proxy::with_wrong_password(&upstream)),
+    ];
+    for proxy_url in differing {
+        let config = NativeBrowserConfig {
+            proxy: Some(upstream.clone()),
+            proxy_url: Some(proxy_url),
+            ..test_config()
+        };
+        let error = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+            .await
+            .expect("a refused render must return, not hang")
+            .map(|page| page.html)
+            .expect_err("proxy and a different proxy_url must be refused");
+        let message = error.to_string();
+        assert!(matches!(error, PageError::InvalidConfig(_)), "{error:?}");
+        assert!(
+            message.contains("proxy and proxy_url"),
+            "the error must name both fields: {message}"
+        );
+        assert!(!message.contains(credentialed_proxy::PASSWORD), "{message}");
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must fetch nothing"
+    );
+    assert_eq!(
+        other.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must not reach proxy_url"
+    );
+    assert!(
+        requests.lock().expect("lock").is_empty(),
+        "a refused render must not reach proxy"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_with_proxy_and_an_equal_proxy_url_goes_through_proxy() {
+    use crate::net::proxy::credentialed_proxy;
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    let config = NativeBrowserConfig {
+        proxy_url: Some(credentialed_proxy_url(&upstream)),
+        proxy: Some(upstream),
+        ..test_config()
+    };
+    let page = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+        .await
+        .expect("the render must finish")
+        .expect("proxy and an equal proxy_url must render");
+    assert!(
+        page.html.contains("via-proxy"),
+        "the page must come from proxy: {}",
+        page.html
+    );
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "the render must go through proxy"
+    );
+    assert!(
+        !requests.lock().expect("lock").is_empty(),
+        "the render must reach proxy"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn render_refuses_an_unusable_proxy_url_even_when_proxy_is_set() {
+    use crate::net::proxy::{credential_urls, credentialed_proxy};
+    let server = TestServer::start().await;
+    let (upstream, requests) = credentialed_proxy::start().await;
+    // ~keep An unencoded `#`, `/` or `?` ends the address at port 4242 and leaves the password in the
+    // ~keep fragment, the path or the query.
+    let misread = [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ];
+    for url in credential_urls::URLS.into_iter().chain(misread) {
+        for proxy in [None, Some(upstream.clone())] {
+            let with_proxy = proxy.is_some();
+            let config = NativeBrowserConfig {
+                proxy,
+                proxy_url: Some(url.to_string()),
+                ..test_config()
+            };
+            let error = tokio::time::timeout(Duration::from_secs(30), render_url(&server.base_url, &config))
+                .await
+                .expect("a refused render must return, not hang")
+                .map(|page| page.html)
+                .expect_err(&format!("proxy_url {url} must be refused (proxy set: {with_proxy})"));
+            assert!(
+                matches!(error, PageError::InvalidConfig(_)),
+                "proxy_url {url} (proxy set: {with_proxy}): {error:?}"
+            );
+            credential_urls::assert_not_shown(url, &error.to_string());
+            credential_urls::assert_not_shown(url, &format!("{config:?}"));
+        }
+    }
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        0,
+        "a refused render must fetch nothing"
+    );
+    assert!(
+        requests.lock().expect("lock").is_empty(),
+        "a refused render must not reach proxy"
+    );
+}
+
+#[test]
+#[allow(deprecated)]
+fn proxy_url_credentials_are_percent_decoded_and_kept_out_of_the_address() {
+    let config = NativeBrowserConfig {
+        proxy_url: Some("http://op%40erator:p%23ss%2Fw@proxy.test:8080".to_string()),
+        ..NativeBrowserConfig::default()
+    };
+    let proxy = config
+        .effective_proxy()
+        .expect("a usable proxy_url")
+        .expect("proxy_url is set");
+    assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/");
+    let credentials = proxy.credentials().expect("the URL holds credentials");
+    assert_eq!(
+        (credentials.username.as_str(), credentials.password.as_str()),
+        ("op@erator", "p#ss/w")
+    );
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("erator") && !debug.contains("p%23ss"), "{debug}");
+
+    let bare = NativeBrowserConfig {
+        proxy_url: Some("proxy.test:3128".to_string()),
+        ..NativeBrowserConfig::default()
+    };
+    let proxy = bare
+        .effective_proxy()
+        .expect("a usable proxy_url")
+        .expect("proxy_url is set");
+    assert_eq!(proxy.address().as_str(), "http://proxy.test:3128/");
+    assert!(proxy.credentials().is_none());
+    for (url, username, password) in [
+        ("http://user@proxy.test:8080", "user", ""),
+        ("http://:pw@proxy.test:8080", "", "pw"),
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .expect("a usable proxy_url")
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/", "{url}");
+        let credentials = proxy
+            .credentials()
+            .unwrap_or_else(|| panic!("{url}: a user name or a password alone is still a credential"));
+        assert_eq!(
+            (credentials.username.as_str(), credentials.password.as_str()),
+            (username, password),
+            "{url}"
+        );
+    }
+    assert!(matches!(NativeBrowserConfig::default().effective_proxy(), Ok(None)));
+}
+
+#[test]
+#[allow(deprecated)]
+fn proxy_url_takes_a_path_query_or_fragment_and_refuses_one_a_password_cut_short() {
+    for url in [
+        "http://proxy.test:8080/proxy",
+        "http://proxy.test:8080/?x=1",
+        "http://proxy.test:8080/#f",
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let proxy = config
+            .effective_proxy()
+            .unwrap_or_else(|e| panic!("{url} must stay usable, as in v1.8.0: {e}"))
+            .expect("proxy_url is set");
+        assert_eq!(proxy.address().as_str(), url);
+        assert!(proxy.credentials().is_none(), "{url}");
+    }
+    let at_after_host = PageError::InvalidConfig(ProxyError::AtAfterHost.to_string()).to_string();
+    for url in [
+        "http://operator:4242#s3cr3t@proxy.test:8080",
+        "http://operator:4242/s3cr3t@proxy.test:8080",
+        "http://operator:4242?s3cr3t@proxy.test:8080",
+    ] {
+        let config = NativeBrowserConfig {
+            proxy_url: Some(url.to_string()),
+            ..NativeBrowserConfig::default()
+        };
+        let error = config
+            .effective_proxy()
+            .expect_err("a password cut short must be refused");
+        assert_eq!(
+            error.to_string(),
+            at_after_host,
+            "{url}: the proxy type's own rule refuses it"
+        );
+    }
+}
+
+#[tokio::test]
 async fn screenshot_content_height_uses_the_dom_scroll_height_when_larger_than_static_hints() {
     let server = TestServer::start().await;
-    let context = create_context(&test_config()).await;
+    let context = create_context(&test_config())
+        .await
+        .expect("no proxy, so the context must build");
     let mut page = Page::new("page-1".to_string(), context);
     navigate_configured(&mut page, &server.base_url, &test_config())
         .await
@@ -368,6 +757,8 @@ async fn render_with_context_leaves_network_events_empty_when_capture_disabled()
 struct TestServer {
     base_url: String,
     max_in_flight: Arc<AtomicUsize>,
+    /// Connections accepted so far.
+    accepted: Arc<AtomicUsize>,
 }
 
 impl TestServer {
@@ -378,12 +769,15 @@ impl TestServer {
         let max_in_flight = Arc::new(AtomicUsize::new(0));
         let current_for_task = current.clone();
         let max_for_task = max_in_flight.clone();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_for_task = accepted.clone();
 
         tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     return;
                 };
+                accepted_for_task.fetch_add(1, Ordering::SeqCst);
                 let current = current_for_task.clone();
                 let max_in_flight = max_for_task.clone();
                 tokio::spawn(async move {
@@ -421,6 +815,191 @@ impl TestServer {
         Self {
             base_url: format!("http://{addr}"),
             max_in_flight,
+            accepted,
         }
+    }
+}
+
+#[test]
+fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
+    const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+    let config = NativeBrowserConfig {
+        extra_headers: HashMap::from([("Authorization".to_owned(), format!("Bearer {SECRET}"))]),
+        proxy: Some(
+            UpstreamProxy::new(
+                Url::parse("http://proxy.internal:8080").expect("parses"),
+                Some(ProxyCredentials {
+                    username: "user".to_owned(),
+                    password: SECRET.to_owned(),
+                }),
+            )
+            .expect("a usable proxy"),
+        ),
+        prior_cookies: vec![NativeCookie {
+            name: "session".into(),
+            value: SECRET.into(),
+            domain: None,
+            path: None,
+            secure: true,
+            http_only: true,
+            host_only: false,
+        }],
+        eval_script: Some(format!("fetch('/api?key={SECRET}')")),
+        origin_headers: Some(OriginHeaders {
+            host: "api.example.com".to_owned(),
+            headers: vec![("X-Origin-Token".to_owned(), SECRET.to_owned())],
+        }),
+        ..NativeBrowserConfig::default()
+    };
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
+        assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
+        assert!(rendered.contains("session"), "cookie name missing: {rendered}");
+        assert!(
+            rendered.contains("X-Origin-Token") && rendered.contains("api.example.com"),
+            "origin header name or host missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("host_only: false"),
+            "cookie host-only flag missing: {rendered}"
+        );
+    }
+    let compact = format!("{config:?}");
+    let script = format!(
+        r#"eval_script: Some("*** ({} bytes)")"#,
+        "fetch('/api?key=')".len() + SECRET.len()
+    );
+    assert!(
+        compact.contains(&script),
+        "eval_script must print as set, with its length: {compact}"
+    );
+}
+
+/// A secret every `Debug` below must hide.
+const HEADER_TEST_SECRET: &str = "sk-live-9f8e7d6c5b4a";
+
+/// Request headers as a caller's configuration supplies them. `X-Api-Key` is the case a
+/// name denylist misses: a credential under a name nobody can enumerate in advance.
+fn request_headers_with_secrets() -> HashMap<String, String> {
+    HashMap::from([
+        ("Authorization".to_owned(), format!("Bearer {HEADER_TEST_SECRET}")),
+        ("cookie".to_owned(), format!("sid={HEADER_TEST_SECRET}")),
+        ("Proxy-Authorization".to_owned(), format!("Basic {HEADER_TEST_SECRET}")),
+        ("X-Api-Key".to_owned(), HEADER_TEST_SECRET.to_owned()),
+        ("accept".to_owned(), "text/html".to_owned()),
+    ])
+}
+
+/// Response headers as a server returns them: one credential, one plain diagnostic value.
+fn response_headers_with_secrets() -> HashMap<String, String> {
+    HashMap::from([
+        ("set-cookie".to_owned(), format!("sid={HEADER_TEST_SECRET}; HttpOnly")),
+        ("content-type".to_owned(), "text/html".to_owned()),
+    ])
+}
+
+/// Every type that renders a header map, as `(what, rendered, carries_a_response_map)`.
+fn header_bearing_debug_renderings() -> Vec<(&'static str, String, bool)> {
+    let request_headers = request_headers_with_secrets();
+    let response_headers = response_headers_with_secrets();
+    let url = Url::parse("https://example.com/").expect("url");
+    let native_event = NativeNetworkEvent {
+        url: url.to_string(),
+        method: "GET".into(),
+        resource_type: "document".into(),
+        status: 200,
+        request_headers: request_headers.clone(),
+        response_headers: response_headers.clone(),
+        body_size: 0,
+        timestamp_ms: 0,
+    };
+    let page_event = crate::page::NetworkEvent {
+        request_id: "1".into(),
+        url: url.to_string(),
+        method: "GET".into(),
+        resource_type: "document".into(),
+        status: 200,
+        headers: request_headers.clone(),
+        response_headers: Arc::new(response_headers.clone()),
+        body_size: 0,
+        timestamp: 0.0,
+    };
+    let rendered_page = RenderedPage {
+        final_url: url.to_string(),
+        status: Some(200),
+        html: String::new(),
+        headers: response_headers.clone(),
+        eval_result: None,
+        network_events: vec![native_event.clone()],
+        cookies: Vec::new(),
+        redirects: 0,
+    };
+    let response = crate::net::client::Response {
+        url: url.clone(),
+        status: 200,
+        headers: response_headers.clone(),
+        body: Vec::new(),
+        redirected_from: Vec::new(),
+    };
+    let request_info = crate::net::client::RequestInfo {
+        url: url.clone(),
+        method: "GET".into(),
+        headers: request_headers.clone(),
+        resource_type: crate::net::client::ResourceType::Document,
+    };
+    let continue_resolution = crate::js::ops::InterceptResolution::Continue {
+        url: None,
+        method: None,
+        headers: Some(request_headers),
+        body: None,
+    };
+    let fulfill_resolution = crate::js::ops::InterceptResolution::Fulfill {
+        status: 200,
+        headers: response_headers,
+        body: String::new(),
+    };
+    vec![
+        ("NativeNetworkEvent", format!("{native_event:?}"), true),
+        ("NetworkEvent", format!("{page_event:#?}"), true),
+        ("RenderedPage", format!("{rendered_page:?}"), true),
+        ("Response", format!("{response:?}"), true),
+        ("RequestInfo", format!("{request_info:?}"), false),
+        (
+            "InterceptResolution::Continue",
+            format!("{continue_resolution:?}"),
+            false,
+        ),
+        ("InterceptResolution::Fulfill", format!("{fulfill_resolution:?}"), true),
+    ]
+}
+
+/// No type that renders a header map may print a credential, and all of them keep the names.
+#[test]
+fn header_maps_debug_hides_every_credential_and_keeps_names() {
+    let renderings = header_bearing_debug_renderings();
+    assert_eq!(renderings.len(), 7, "every header-bearing type must be covered");
+    for (what, rendered, _) in &renderings {
+        assert!(
+            !rendered.contains(HEADER_TEST_SECRET),
+            "{what} printed a secret: {rendered}"
+        );
+        assert!(rendered.contains("***"), "{what} printed no placeholder: {rendered}");
+        assert!(
+            rendered.contains("accept") || rendered.contains("content-type"),
+            "{what} dropped the header names: {rendered}"
+        );
+    }
+}
+
+/// A request header map prints no value at all, because a credential can sit under any name;
+/// a response header map keeps its non-credential values, which are the debugging value.
+#[test]
+fn only_a_response_header_map_keeps_a_value() {
+    for (what, rendered, carries_a_response_map) in header_bearing_debug_renderings() {
+        assert_eq!(
+            rendered.contains("text/html"),
+            carries_a_response_map,
+            "{what}: a response header value must print and a request one must not: {rendered}"
+        );
     }
 }

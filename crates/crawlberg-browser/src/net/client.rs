@@ -9,16 +9,42 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use crate::net::cookies::CookieJar;
+use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
+use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
+use crate::net::proxy::UpstreamProxy;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
+use crate::redact::{RedactedHeaders, RedactedValues};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Response {
     pub url: Url,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub redirected_from: Vec<Url>,
+}
+
+impl std::fmt::Debug for Response {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            status,
+            headers,
+            body,
+            redirected_from,
+        } = self;
+        f.debug_struct("Response")
+            .field("url", url)
+            .field("status", status)
+            .field("headers", &RedactedHeaders(headers))
+            .field("body", body)
+            .field("redirected_from", redirected_from)
+            .finish()
+    }
 }
 
 impl Response {
@@ -39,12 +65,31 @@ impl Response {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestInfo {
     pub url: Url,
     pub method: String,
     pub headers: HashMap<String, String>,
     pub resource_type: ResourceType,
+}
+
+impl std::fmt::Debug for RequestInfo {
+    /// Redacted: `headers` is a *request* map populated from caller configuration, so every
+    /// value is hidden and only the names print.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            method,
+            headers,
+            resource_type,
+        } = self;
+        f.debug_struct("RequestInfo")
+            .field("url", url)
+            .field("method", method)
+            .field("headers", &RedactedValues(headers))
+            .field("resource_type", resource_type)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +185,7 @@ fn resolve_redirect(current_url: &Url, location: &HeaderValue) -> Result<Url, Ne
         .map_err(|_| NetError::Network("Invalid redirect Location header".into()))?;
     current_url
         .join(location_str)
+        .map(|next_url| without_userinfo(&next_url))
         .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))
 }
 
@@ -187,7 +233,8 @@ async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
 
 pub struct HttpClient {
     client: tokio::sync::OnceCell<Client>,
-    proxy_url: Option<String>,
+    upstream: Option<UpstreamProxy>,
+    proxy: Option<reqwest::Proxy>,
     /// SSRF policy applied to the initial URL and every redirect hop.
     pub ssrf: Arc<dyn SsrfValidator>,
     /// Whether `file://` URLs may be fetched. Off unless the embedder opts in.
@@ -195,6 +242,8 @@ pub struct HttpClient {
     pub cookie_jar: Arc<CookieJar>,
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
+    /// The credential header the embedder scoped to one host; sent only to that host.
+    pub origin_headers: RwLock<Option<OriginHeaders>>,
     pub interceptor: RwLock<Option<Box<dyn RequestInterceptor + Send + Sync>>>,
     pub on_request: RwLock<Vec<RequestCallback>>,
     pub on_response: RwLock<Vec<ResponseCallback>>,
@@ -208,31 +257,52 @@ impl HttpClient {
     }
 
     pub fn with_cookie_jar(cookie_jar: Arc<CookieJar>) -> Self {
-        Self::with_options(cookie_jar, None)
+        Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
-    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Self {
-        Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()), false)
+    /// Build a client that sends every request through `proxy`, if given.
+    ///
+    /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used, rather than
+    /// building a client that silently connects directly.
+    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy: Option<&UpstreamProxy>) -> Result<Self, NetError> {
+        Self::with_ssrf(cookie_jar, proxy, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
     /// Build a client with an explicit SSRF policy.
     ///
     /// `crawlberg` uses this to inject the crawl's configured policy — including its
-    /// allowlist — in place of the deny-list-only default.
+    /// allowlist, in place of the deny-list-only default. Fails with
+    /// [`NetError::InvalidProxy`] when the proxy cannot be used.
     pub fn with_ssrf(
         cookie_jar: Arc<CookieJar>,
-        proxy_url: Option<&str>,
+        proxy: Option<&UpstreamProxy>,
+        ssrf: Arc<dyn SsrfValidator>,
+        allow_file_access: bool,
+    ) -> Result<Self, NetError> {
+        let proxy = match proxy {
+            Some(upstream) => Some((upstream.clone(), upstream.reqwest_proxy()?)),
+            None => None,
+        };
+        Ok(Self::build(cookie_jar, proxy, ssrf, allow_file_access))
+    }
+
+    fn build(
+        cookie_jar: Arc<CookieJar>,
+        proxy: Option<(UpstreamProxy, reqwest::Proxy)>,
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
     ) -> Self {
+        let (upstream, proxy) = proxy.unzip();
         HttpClient {
             client: tokio::sync::OnceCell::new(),
-            proxy_url: proxy_url.map(|s| s.to_string()),
+            upstream,
+            proxy,
             ssrf,
             allow_file_access,
             cookie_jar,
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
+            origin_headers: RwLock::new(None),
             interceptor: RwLock::new(None),
             on_request: RwLock::new(Vec::new()),
             on_response: RwLock::new(Vec::new()),
@@ -249,22 +319,22 @@ impl HttpClient {
                     .timeout(Duration::from_secs(30))
                     .danger_accept_invalid_certs(false);
 
-                if let Some(ref proxy) = self.proxy_url
-                    && let Ok(p) = reqwest::Proxy::all(proxy.as_str())
-                {
-                    builder = builder.proxy(p);
+                let proxied = self.proxy.is_some();
+                if let Some(ref proxy) = self.proxy {
+                    builder = builder.proxy(proxy.clone());
                 }
+                builder = with_policy_resolver(builder, proxied, &self.ssrf);
 
                 builder.build().expect("failed to build HTTP client")
             })
             .await
     }
 
-    /// Read-only accessor for the proxy URL the client was configured with
+    /// Read-only accessor for the proxy the client was configured with
     /// (if any). Exposed so the JS fetch bridge can route its own reqwest
     /// requests through the same upstream proxy.
-    pub fn proxy_url(&self) -> Option<&str> {
-        self.proxy_url.as_deref()
+    pub fn proxy(&self) -> Option<&UpstreamProxy> {
+        self.upstream.as_ref()
     }
 
     /// Apply the SSRF policy to `url`.
@@ -301,6 +371,20 @@ impl HttpClient {
         url: &Url,
         initial_body: Option<Vec<u8>>,
     ) -> Result<Response, NetError> {
+        self.fetch_following(initial_method, url, initial_body, None).await
+    }
+
+    /// Fetch `url`, following at most `max_redirects` redirects. The redirect response at the
+    /// limit is returned as the response, as the crawl's HTTP fetch returns it. `None` follows
+    /// up to the client's own cap and fails past it with [`NetError::TooManyRedirects`].
+    pub async fn fetch_following(
+        &self,
+        initial_method: Method,
+        url: &Url,
+        initial_body: Option<Vec<u8>>,
+        max_redirects: Option<usize>,
+    ) -> Result<Response, NetError> {
+        refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
         if url.scheme() == "file" {
@@ -313,7 +397,8 @@ impl HttpClient {
         let mut current_url = url.clone();
         let mut redirects = Vec::new();
 
-        for _redirect_count in 0..MAX_REDIRECTS {
+        let requests = max_redirects.map_or(MAX_REDIRECTS, |limit| limit.saturating_add(1));
+        for _request in 0..requests {
             let request_info = self.request_info(&current_url, &method).await;
 
             if let Some(response) = self.apply_interceptor(&request_info).await? {
@@ -332,6 +417,7 @@ impl HttpClient {
             let response_headers = collect_response_headers(&resp);
 
             if status.is_redirection()
+                && max_redirects.is_none_or(|limit| redirects.len() < limit)
                 && let Some(location) = resp.headers().get(reqwest::header::LOCATION)
             {
                 let next_url = resolve_redirect(&current_url, location)?;
@@ -425,6 +511,14 @@ impl HttpClient {
             }
         }
 
+        if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
+            for (name, value) in origin_headers.headers_for(url) {
+                if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+                    headers.insert(name, value);
+                }
+            }
+        }
+
         headers
     }
 
@@ -451,7 +545,7 @@ impl HttpClient {
         self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let response = req_builder.send().await.map_err(|e| {
             self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            NetError::Network(format!("{}: {}", url, e))
+            NetError::Network(format!("{}: {}", url, error_with_causes(&e)))
         })?;
         self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         Ok(response)
@@ -463,6 +557,11 @@ impl HttpClient {
 
     pub async fn set_extra_headers(&self, headers: HashMap<String, String>) {
         *self.extra_headers.write().await = headers;
+    }
+
+    /// Scope headers, such as a credential, to one host. See [`OriginHeaders`].
+    pub async fn set_origin_headers(&self, origin_headers: Option<OriginHeaders>) {
+        *self.origin_headers.write().await = origin_headers;
     }
 
     pub fn active_requests(&self) -> u32 {
@@ -494,6 +593,10 @@ pub enum NetError {
     /// Refused by the SSRF policy, as opposed to failing in transport.
     #[error("SSRF policy denied the request: {0}")]
     SsrfDenied(String),
+
+    /// The configured proxy cannot be used, so no client was built.
+    #[error("invalid proxy: {0}")]
+    InvalidProxy(#[from] crate::net::proxy::ProxyError),
 }
 
 #[cfg(test)]
@@ -523,6 +626,7 @@ mod tests {
     }
 
     /// Serves one canned response per accepted connection, recording each raw request head.
+    /// Each response says `Connection: close`, so the client never reuses a connection this server has dropped.
     ///
     /// Returns the base URL and the shared log, so a test can assert on exactly what went
     /// over the wire rather than on what the builder code appears to do.
@@ -544,6 +648,7 @@ mod tests {
                     .push(String::from_utf8_lossy(&buf[..read]).to_string());
                 let response = responses.get(index).copied().unwrap_or("HTTP/1.1 200 OK\r\n\r\n");
                 index += 1;
+                let response = response.replacen("\r\n", "\r\nConnection: close\r\n", 1);
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.flush().await;
             }
@@ -578,6 +683,7 @@ mod tests {
 
     fn client_with(validator: Arc<RecordingValidator>) -> HttpClient {
         HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, validator, false)
+            .expect("no proxy, so the client must build")
     }
 
     #[tokio::test]
@@ -734,7 +840,8 @@ mod tests {
         let jar = Arc::new(CookieJar::new());
         let url: Url = base.parse().expect("valid URL");
         jar.set_cookie("session=abc", &url);
-        let client = HttpClient::with_ssrf(jar, None, Arc::new(RecordingValidator::default()), false);
+        let client = HttpClient::with_ssrf(jar, None, Arc::new(RecordingValidator::default()), false)
+            .expect("no proxy, so the client must build");
         client
             .set_extra_headers(HashMap::from([
                 ("x-custom".to_string(), "yes".to_string()),
@@ -761,7 +868,8 @@ mod tests {
         .await;
         let jar = Arc::new(CookieJar::new());
         let url: Url = base.parse().expect("valid URL");
-        let client = HttpClient::with_ssrf(jar.clone(), None, Arc::new(RecordingValidator::default()), false);
+        let client = HttpClient::with_ssrf(jar.clone(), None, Arc::new(RecordingValidator::default()), false)
+            .expect("no proxy, so the client must build");
         client.fetch(&url).await.expect("fetch must succeed");
 
         assert_eq!(jar.get_cookie_header(&url), "got=1");
@@ -907,6 +1015,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_limit_above_the_hop_cap_follows_the_whole_chain() {
+        let hop = "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n";
+        let (base, requests) = spawn_recording_server(vec![hop; MAX_REDIRECTS + 5]).await;
+
+        let resp = client_with(Arc::new(RecordingValidator::default()))
+            .fetch_following(
+                reqwest::Method::GET,
+                &base.parse::<Url>().expect("valid URL"),
+                None,
+                Some(30),
+            )
+            .await
+            .expect("a limit of 30 must follow a chain of 25 redirects");
+
+        assert_eq!(
+            (resp.status, resp.redirected_from.len()),
+            (200, MAX_REDIRECTS + 5),
+            "the limit, not the cap of {MAX_REDIRECTS} hops, bounds the chain"
+        );
+        assert_eq!(requests.lock().expect("lock").len(), MAX_REDIRECTS + 6);
+    }
+
+    #[tokio::test]
     async fn request_and_response_callbacks_fire_for_each_hop() {
         let (base, _requests) = spawn_recording_server(vec![
             "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n",
@@ -952,5 +1083,298 @@ mod tests {
             .await
             .expect("fetch must succeed");
         assert_eq!(client.active_requests(), 0);
+    }
+
+    fn proxied_client(proxy: &str) -> Result<HttpClient, NetError> {
+        let proxy = crate::net::proxy::test_proxy(proxy)?;
+        HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&proxy),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_credentialed_proxy_carries_the_request_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let client = HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&proxy),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+        .expect("an http proxy must build");
+
+        let response = client
+            .fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy accepts the credentials, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/page");
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_refuses_the_credentials_fails_the_fetch_instead_of_connecting_directly() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let (target, direct) = spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndirect"]).await;
+        let client = HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&credentialed_proxy::with_wrong_password(&proxy)),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+        .expect("an http proxy must build");
+
+        let result = client
+            .fetch(&format!("{target}/page").parse::<Url>().expect("valid URL"))
+            .await;
+
+        assert!(
+            !matches!(result, Ok(ref response) if response.status == 200),
+            "a refused proxy must not serve the page: {result:?}"
+        );
+        assert!(direct.lock().expect("lock").is_empty(), "the fetch connected directly");
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the fetch must go to the proxy: {requests:?}");
+        let sent = credentialed_proxy::proxy_authorization(&requests[0]);
+        assert!(
+            sent.is_some() && sent != Some(credentialed_proxy::expected_authorization()),
+            "the configured wrong credentials must be sent: {sent:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_proxy_carries_the_request() {
+        let (proxy, requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nvia-proxy"]).await;
+        let client = proxied_client(&proxy).expect("an http proxy must build");
+
+        let response = client
+            .fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy answers, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        let requests = requests.lock().expect("lock");
+        assert!(
+            requests
+                .first()
+                .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
+            "the proxy must receive the absolute-form request, got {requests:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rebinding_host_never_reaches_the_address_the_policy_denies() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+        use crate::page::PageError;
+
+        let (port, seen) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
+            .expect("no proxy, so the client must build");
+
+        let err = client
+            .fetch(&format!("http://localhost:{port}/").parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the connection's lookup answers a denied address");
+
+        let NetError::Network(message) = &err else {
+            panic!("expected a refused connection, got {err:?}");
+        };
+        assert!(
+            message.contains("denied by the test policy: 127.0.0.1"),
+            "the refusal must carry the policy's reason: {message}"
+        );
+        assert!(
+            !PageError::from(err)
+                .to_string()
+                .contains("Network error: Network error"),
+            "a page error names the network once"
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection: {:?}",
+            seen.lock().expect("lock")
+        );
+        assert_eq!(
+            *policy.resolved.lock().expect("lock"),
+            vec!["localhost"],
+            "the connection must use the policy's lookup"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_a_rebinding_host_never_reaches_the_address_the_policy_denies() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+        let (port, seen) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/away\r\nContent-Length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone(), false)
+            .expect("no proxy, so the client must build");
+
+        client
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the redirect target's lookup answers a denied address");
+
+        assert_eq!(
+            start_requests.lock().expect("lock").len(),
+            1,
+            "the first hop is fetched"
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection: {:?}",
+            seen.lock().expect("lock")
+        );
+        assert_eq!(*policy.resolved.lock().expect("lock"), vec!["localhost"]);
+    }
+
+    #[tokio::test]
+    async fn a_proxied_client_leaves_the_target_to_the_proxy() {
+        use crate::net::resolver::tests::RebindingPolicy;
+
+        let (proxy, proxy_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let policy = Arc::new(RebindingPolicy::default());
+        // ~keep A proxy named by host: a client that asked the policy for it would be refused.
+        let proxy = proxy.replacen("127.0.0.1", "localhost", 1);
+        let proxy = crate::net::proxy::test_proxy(&proxy).expect("an http proxy");
+        let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone(), false)
+            .expect("an http proxy must build");
+
+        client
+            .fetch(&"http://example.invalid/".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy answers the request");
+
+        let proxy_requests = proxy_requests.lock().expect("lock");
+        assert!(
+            proxy_requests[0].starts_with("GET http://example.invalid/ "),
+            "the request goes to the proxy: {proxy_requests:?}"
+        );
+        assert!(
+            policy.resolved.lock().expect("lock").is_empty(),
+            "the proxy resolves the target, so the client must not"
+        );
+    }
+
+    const URL_PASSWORD: &str = "s3cret";
+
+    /// `base` with `user:s3cret@` userinfo.
+    fn with_userinfo(base: &str) -> String {
+        base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1)
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let (base, requests) = spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let validator = Arc::new(RecordingValidator::default());
+        let client = client_with(validator.clone());
+
+        let err = client
+            .fetch(&with_userinfo(&base).parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("a URL with userinfo must be refused");
+
+        let NetError::Blocked(message) = &err else {
+            panic!("expected NetError::Blocked, got {err:?}");
+        };
+        assert!(
+            !message.contains(URL_PASSWORD),
+            "the password must not be named, got '{message}'"
+        );
+        // ~keep Positive twin: the refusal names the URL without its userinfo, so the test
+        // ~keep cannot pass on an empty message.
+        assert!(
+            message.contains(&base),
+            "the refusal must name the clean URL, got '{message}'"
+        );
+        assert!(
+            requests.lock().expect("lock").is_empty(),
+            "nothing may reach the network"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_location_with_userinfo_is_followed_without_it() {
+        let (target, target_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let redirect: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {}/next\r\nContent-Length: 0\r\n\r\n",
+                with_userinfo(&target)
+            )
+            .into_boxed_str(),
+        );
+        let (start, _) = spawn_recording_server(vec![redirect]).await;
+
+        let response = client_with(Arc::new(RecordingValidator::default()))
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        assert_eq!(response.url.as_str(), format!("{target}/next"));
+        let requests = target_requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the redirect target must be requested once");
+        assert_eq!(
+            header_line(&requests[0], "authorization"),
+            None,
+            "a page-supplied userinfo must never become a header"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_origin_headers_reach_their_host_and_no_other() {
+        let (other, other_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let other_port = other.rsplit(':').next().expect("port").to_owned();
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://localhost:{other_port}/away\r\nContent-Length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
+        let client = client_with(Arc::new(RecordingValidator::default()));
+        client
+            .set_origin_headers(Some(OriginHeaders {
+                host: "127.0.0.1".to_owned(),
+                headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
+            }))
+            .await;
+
+        client
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        let start_requests = start_requests.lock().expect("lock");
+        assert_eq!(
+            header_line(&start_requests[0], "authorization").as_deref(),
+            Some("Basic dXNlcjpwdw=="),
+            "the scoped host gets the header"
+        );
+        let other_requests = other_requests.lock().expect("lock");
+        assert_eq!(other_requests.len(), 1, "the cross-host redirect must be followed");
+        assert_eq!(
+            header_line(&other_requests[0], "authorization"),
+            None,
+            "a cross-host redirect target never gets the header"
+        );
     }
 }

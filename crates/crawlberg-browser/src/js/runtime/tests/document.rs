@@ -448,40 +448,42 @@ async fn test_element_from_point_non_numeric_returns_null() {
     assert_eq!(inf, serde_json::Value::Null);
 }
 
-// ~keep `proxy_url` must thread through ES-module loading and JS fetch/XHR, or page JS bypasses the proxy.
+// ~keep The proxy must thread through ES-module loading and JS fetch/XHR, or page JS bypasses the proxy.
 #[test]
-fn http_client_round_trips_proxy_url() {
+fn http_client_round_trips_its_proxy() {
     use crate::net::{CookieJar, HttpClient};
     let jar = std::sync::Arc::new(CookieJar::new());
-    let configured = HttpClient::with_options(jar.clone(), Some("http://proxy.test:8080"));
+    let proxy = crate::net::proxy::test_proxy("http://proxy.test:8080").expect("an http proxy");
+    let configured = HttpClient::with_options(jar.clone(), Some(&proxy)).expect("an http proxy must build");
     assert_eq!(
-        configured.proxy_url(),
-        Some("http://proxy.test:8080"),
-        "proxy_url() must expose the value passed to with_options"
+        configured.proxy(),
+        Some(&proxy),
+        "proxy() must expose the value passed to with_options"
     );
 
-    let direct = HttpClient::with_options(jar, None);
+    let direct = HttpClient::with_options(jar, None).expect("no proxy, so the client must build");
     assert_eq!(
-        direct.proxy_url(),
+        direct.proxy(),
         None,
-        "proxy_url() must return None when no proxy was configured"
+        "proxy() must return None when no proxy was configured"
     );
 }
 
 #[test]
 fn module_loader_stores_proxy_for_dynamic_imports() {
     use crate::js::module_loader::BrowserModuleLoader;
-    let loader = BrowserModuleLoader::with_proxy("https://example.com/", Some("http://proxy.test:8080".to_string()));
-    assert_eq!(loader.proxy_url.as_deref(), Some("http://proxy.test:8080"));
+    let proxy = crate::net::proxy::test_proxy("http://proxy.test:8080").expect("an http proxy");
+    let loader = BrowserModuleLoader::with_proxy("https://example.com/", Some(proxy.clone()));
+    assert_eq!(loader.proxy, Some(proxy));
     assert_eq!(loader.base_url, "https://example.com/");
 
     let direct = BrowserModuleLoader::new("https://example.com/");
-    assert_eq!(direct.proxy_url, None);
+    assert_eq!(direct.proxy, None);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn runtime_with_base_url_and_proxy_constructs_successfully() {
     let _direct = BrowserJsRuntime::with_base_url_and_proxy("https://example.com/", None);
-    let _proxied =
-        BrowserJsRuntime::with_base_url_and_proxy("https://example.com/", Some("http://proxy.test:8080".to_string()));
+    let proxy = crate::net::proxy::test_proxy("http://proxy.test:8080").expect("an http proxy");
+    let _proxied = BrowserJsRuntime::with_base_url_and_proxy("https://example.com/", Some(proxy));
 }

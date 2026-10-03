@@ -7,7 +7,7 @@ use crawlberg_browser::adapter::{
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult, ProxyConfig};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -20,8 +20,13 @@ pub(super) async fn run(
             "browser.endpoint is only supported by the chromiumoxide backend",
         ));
     }
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "the native browser backend is selected; it runs no Chrome process",
+    );
 
-    let native_config = build_native_config(config)?;
+    let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+    let native_config = build_native_config(config, url, ssrf)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -57,21 +62,19 @@ pub(super) async fn run(
         }
     })?;
 
-    Ok(map_result(native_result))
+    let refused = crate::net::browser_policy::take_refused(&refused);
+    Ok(InteractionResult {
+        ssrf_refused_urls: refused,
+        ..map_result(native_result)
+    })
 }
 
-fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, CrawlError> {
-    let mut extra_headers = config.custom_headers.clone();
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert("Authorization".to_owned(), format!("Bearer {token}"));
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), value.clone());
-        }
-        _ => {}
-    }
-
+#[allow(deprecated)]
+fn build_native_config(
+    config: &CrawlConfig,
+    url: &str,
+    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
+) -> Result<NativeBrowserConfig, CrawlError> {
     let wait_until = match config.browser.wait {
         BrowserWait::NetworkIdle => NativeBrowserWait::NetworkIdle,
         BrowserWait::Selector => NativeBrowserWait::Selector,
@@ -82,36 +85,22 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
         user_agent: config.user_agent.clone(),
         timeout: config.browser.timeout,
         wait_until,
-        extra_headers,
+        extra_headers: std::collections::HashMap::new(),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
-        proxy_url: resolved_proxy(config)?,
+        proxy: crate::native_browser::native_proxy(config, url)?,
+        proxy_url: None,
         prior_cookies: Vec::<NativeCookie>::new(),
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
+        ssrf: Some(ssrf),
         allow_file_access: false,
+        origin_headers: crate::net::credentials::origin_headers(config),
+        max_redirects: Some(config.max_redirects),
     })
-}
-
-/// Resolve the proxy URL string handed to the native browser worker.
-///
-/// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds
-/// credentials via percent-encoded userinfo rather than a naive string
-/// splice, and refuses to parse a scheme out of a credential when the URL
-/// has no explicit `scheme://` prefix.
-fn resolved_proxy(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
-    let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
-        return Ok(None);
-    };
-    apply_proxy_credentials(proxy).map(Some)
-}
-
-fn apply_proxy_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
-    crate::proxy::proxy_url_with_credentials(proxy)
 }
 
 fn post_navigation_wait(config: &CrawlConfig) -> Option<Duration> {
@@ -171,6 +160,7 @@ fn map_result(result: NativeInteractionResult) -> InteractionResult {
         final_url: result.final_url,
         screenshot: result.screenshot,
         screenshot_base64,
+        ssrf_refused_urls: Vec::new(),
     }
 }
 
@@ -181,135 +171,6 @@ fn map_action_result(result: NativeActionResult) -> ActionResult {
         success: result.success,
         data: result.data,
         error: result.error,
-    }
-}
-
-#[cfg(test)]
-mod proxy_credential_tests {
-    use super::apply_proxy_credentials;
-    use crate::types::ProxyConfig;
-
-    fn proxy(url: &str, username: Option<&str>, password: Option<&str>) -> ProxyConfig {
-        ProxyConfig {
-            url: url.to_owned(),
-            username: username.map(str::to_owned),
-            password: password.map(str::to_owned),
-        }
-    }
-
-    #[test]
-    fn http_credentials_are_embedded_and_percent_encoded() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", Some("alice"), Some("s3cr3t")))
-            .expect("http proxy with plain credentials must resolve");
-        assert_eq!(
-            resolved, "http://alice:s3cr3t@proxy.test:8080/",
-            "plain alphanumeric credentials must round-trip unchanged"
-        );
-    }
-
-    #[test]
-    fn socks5_credentials_are_no_longer_silently_dropped() {
-        let resolved = apply_proxy_credentials(&proxy("socks5://proxy.test:1080", Some("alice"), Some("s3cr3t")))
-            .expect("socks5 proxy with credentials must resolve");
-        assert_eq!(
-            resolved, "socks5://alice:s3cr3t@proxy.test:1080",
-            "SOCKS5 credentials must be embedded, not dropped"
-        );
-    }
-
-    #[test]
-    fn socks5h_credentials_are_embedded() {
-        let resolved = apply_proxy_credentials(&proxy("socks5h://proxy.test:1080", Some("bob"), Some("hunter2")))
-            .expect("socks5h proxy with credentials must resolve");
-        assert_eq!(resolved, "socks5h://bob:hunter2@proxy.test:1080");
-    }
-
-    #[test]
-    fn special_characters_in_credentials_are_percent_encoded_not_spliced() {
-        // A `:`/`@`/`/` in a credential must not be able to terminate the userinfo early and
-        // smuggle in a different host, or split a single credential into `user:pass` pairs.
-        let resolved = apply_proxy_credentials(&proxy(
-            "http://proxy.test:8080",
-            Some("weird:user@name"),
-            Some("p/a:s@s"),
-        ))
-        .expect("proxy with special-character credentials must still resolve");
-
-        // The credentials must decode back to the exact original values, and the host must
-        // still be `proxy.test:8080` — not hijacked by a `@` or `:` inside a credential.
-        let parsed = url::Url::parse(&resolved).expect("resolved proxy URL must itself be valid");
-        assert_eq!(parsed.host_str(), Some("proxy.test"));
-        assert_eq!(parsed.port(), Some(8080));
-        assert_eq!(parsed.username(), "weird%3Auser%40name");
-        assert_eq!(
-            urlencoding_decode(parsed.username()),
-            "weird:user@name",
-            "username must decode back to the exact original value"
-        );
-        assert_eq!(
-            urlencoding_decode(parsed.password().expect("password must be present")),
-            "p/a:s@s",
-            "password must decode back to the exact original value"
-        );
-    }
-
-    #[test]
-    fn credential_free_proxy_url_is_passed_through_unchanged() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", None, None))
-            .expect("credential-free proxy must resolve");
-        assert_eq!(
-            resolved, "http://proxy.test:8080",
-            "URL must be passed through verbatim when there are no credentials to embed"
-        );
-    }
-
-    #[test]
-    fn invalid_proxy_url_returns_invalid_config_error() {
-        let result = apply_proxy_credentials(&proxy("not a url", Some("alice"), Some("s3cr3t")));
-        assert!(
-            matches!(result, Err(crate::error::CrawlError::InvalidConfig { .. })),
-            "malformed proxy URL with credentials must return InvalidConfig, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn scheme_less_url_error_does_not_print_the_username_as_the_scheme() {
-        // ~keep `alice` sits where a scheme would be read from by a naive `url::Url::parse` on a
-        // scheme-less string; the regression this guards is that misread leaking into the
-        // "does not support embedded credentials" error.
-        let result = apply_proxy_credentials(&proxy("alice:s3cr3t@proxy.test:8080", Some("alice"), Some("s3cr3t")));
-        let error = result
-            .expect_err("a scheme-less proxy URL must be rejected")
-            .to_string();
-        assert!(
-            !error.contains("alice"),
-            "error must not name the embedded username, got: {error}"
-        );
-        assert!(
-            !error.contains("s3cr3t"),
-            "error must not leak the embedded password, got: {error}"
-        );
-    }
-
-    /// Minimal percent-decoder sufficient for the ASCII userinfo characters this module encodes.
-    fn urlencoding_decode(input: &str) -> String {
-        let bytes = input.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%'
-                && i + 2 < bytes.len()
-                && let Ok(text) = std::str::from_utf8(&bytes[i + 1..i + 3])
-                && let Ok(value) = u8::from_str_radix(text, 16)
-            {
-                out.push(value);
-                i += 3;
-                continue;
-            }
-            out.push(bytes[i]);
-            i += 1;
-        }
-        String::from_utf8(out).expect("decoded bytes must be valid UTF-8")
     }
 }
 
@@ -400,5 +261,44 @@ mod native_worker_hang_tests {
         // ~keep executor deliberately instead of letting it drop — this mirrors the real leak the test
         // ~keep demonstrates and keeps the test binary from hanging on exit.
         std::mem::forget(executor);
+    }
+}
+
+#[cfg(test)]
+mod credential_scope_tests {
+    use super::build_native_config;
+    use crate::types::{AuthConfig, CrawlConfig};
+
+    #[test]
+    fn a_bearer_token_and_the_custom_headers_are_scoped_to_the_seed_host() {
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        let config = CrawlConfig {
+            auth: Some(AuthConfig::Bearer {
+                token: "secret-token".to_owned(),
+            }),
+            custom_headers: std::collections::HashMap::from([("x-custom".to_owned(), "value".to_owned())]),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ..CrawlConfig::default()
+        };
+
+        let (ssrf, _) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+        let native = build_native_config(&config, "http://example.com/", ssrf).expect("an admitted config must build");
+
+        assert!(
+            native.extra_headers.is_empty(),
+            "every host receives extra_headers, so nothing may be there: {:?}",
+            native.extra_headers
+        );
+        let scoped = native
+            .origin_headers
+            .expect("the token must be scoped to the seed host");
+        assert_eq!(scoped.host, "example.com");
+        assert_eq!(
+            scoped.headers,
+            [
+                ("x-custom".to_owned(), "value".to_owned()),
+                ("Authorization".to_owned(), "Bearer secret-token".to_owned()),
+            ]
+        );
     }
 }

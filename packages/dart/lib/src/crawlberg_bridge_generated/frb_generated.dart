@@ -2811,8 +2811,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2829,6 +2829,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       robotsUserAgent: dco_decode_opt_String(arr[12]),
       captureNetworkEvents: dco_decode_bool(arr[13]),
       sessionAffinity: dco_decode_bool(arr[14]),
+      chromePath: dco_decode_opt_String(arr[15]),
+      chromeArgs: dco_decode_list_String(arr[16]),
     );
   }
 
@@ -2929,8 +2931,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 54)
-      throw Exception('unexpected arr length: expect 54 but see ${arr.length}');
+    if (arr.length != 55)
+      throw Exception('unexpected arr length: expect 55 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -2948,45 +2950,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       includePaths: dco_decode_list_String(arr[13]),
       excludePaths: dco_decode_list_String(arr[14]),
       pathPatternsMatchQuery: dco_decode_bool(arr[15]),
-      dedupIncludeQuery: dco_decode_bool(arr[16]),
-      stripTrackingParams: dco_decode_bool(arr[17]),
-      trackingParams: dco_decode_list_String(arr[18]),
-      customHeaders: dco_decode_Map_String_String_None(arr[19]),
-      requestTimeout: dco_decode_i_64(arr[20]),
-      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[21]),
-      maxRedirects: dco_decode_i_64(arr[22]),
-      retryCount: dco_decode_i_64(arr[23]),
-      retryCodes: dco_decode_list_prim_i_64_strict(arr[24]),
-      retryInitialDelayMs: dco_decode_i_64(arr[25]),
-      retryMaxDelayMs: dco_decode_i_64(arr[26]),
-      rateLimitJitterRatio: dco_decode_f_64(arr[27]),
-      cookiesEnabled: dco_decode_bool(arr[28]),
-      auth: dco_decode_opt_box_autoadd_auth_config(arr[29]),
-      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[30]),
-      removeTags: dco_decode_list_String(arr[31]),
-      content: dco_decode_content_config(arr[32]),
-      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[33]),
-      mapSearch: dco_decode_opt_String(arr[34]),
-      downloadAssets: dco_decode_bool(arr[35]),
-      assetTypes: dco_decode_list_asset_category(arr[36]),
-      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[37]),
-      browser: dco_decode_browser_config(arr[38]),
-      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[39]),
-      userAgents: dco_decode_list_String(arr[40]),
-      captureScreenshot: dco_decode_bool(arr[41]),
-      followDocumentUrls: dco_decode_bool(arr[42]),
-      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[43]),
-      downloadDocuments: dco_decode_bool(arr[44]),
-      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[45]),
-      documentMimeTypes: dco_decode_list_String(arr[46]),
-      documentOutputDir: dco_decode_opt_String(arr[47]),
+      pathPatternsMatchUrl: dco_decode_bool(arr[16]),
+      dedupIncludeQuery: dco_decode_bool(arr[17]),
+      stripTrackingParams: dco_decode_bool(arr[18]),
+      trackingParams: dco_decode_list_String(arr[19]),
+      customHeaders: dco_decode_Map_String_String_None(arr[20]),
+      requestTimeout: dco_decode_i_64(arr[21]),
+      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[22]),
+      maxRedirects: dco_decode_i_64(arr[23]),
+      retryCount: dco_decode_i_64(arr[24]),
+      retryCodes: dco_decode_list_prim_i_64_strict(arr[25]),
+      retryInitialDelayMs: dco_decode_i_64(arr[26]),
+      retryMaxDelayMs: dco_decode_i_64(arr[27]),
+      rateLimitJitterRatio: dco_decode_f_64(arr[28]),
+      cookiesEnabled: dco_decode_bool(arr[29]),
+      auth: dco_decode_opt_box_autoadd_auth_config(arr[30]),
+      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[31]),
+      removeTags: dco_decode_list_String(arr[32]),
+      content: dco_decode_content_config(arr[33]),
+      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[34]),
+      mapSearch: dco_decode_opt_String(arr[35]),
+      downloadAssets: dco_decode_bool(arr[36]),
+      assetTypes: dco_decode_list_asset_category(arr[37]),
+      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[38]),
+      browser: dco_decode_browser_config(arr[39]),
+      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[40]),
+      userAgents: dco_decode_list_String(arr[41]),
+      captureScreenshot: dco_decode_bool(arr[42]),
+      followDocumentUrls: dco_decode_bool(arr[43]),
+      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[44]),
+      downloadDocuments: dco_decode_bool(arr[45]),
+      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[46]),
+      documentMimeTypes: dco_decode_list_String(arr[47]),
+      documentOutputDir: dco_decode_opt_String(arr[48]),
       documentContentEncoding:
-          dco_decode_opt_box_autoadd_document_content_encoding(arr[48]),
-      warcOutput: dco_decode_opt_String(arr[49]),
-      browserProfile: dco_decode_opt_String(arr[50]),
-      saveBrowserProfile: dco_decode_bool(arr[51]),
-      ssrf: dco_decode_ssrf_policy(arr[52]),
-      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[53]),
+          dco_decode_opt_box_autoadd_document_content_encoding(arr[49]),
+      warcOutput: dco_decode_opt_String(arr[50]),
+      browserProfile: dco_decode_opt_String(arr[51]),
+      saveBrowserProfile: dco_decode_bool(arr[52]),
+      ssrf: dco_decode_ssrf_policy(arr[53]),
+      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[54]),
     );
   }
 
@@ -3067,8 +3070,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 25)
-      throw Exception('unexpected arr length: expect 25 but see ${arr.length}');
+    if (arr.length != 26)
+      throw Exception('unexpected arr length: expect 26 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -3097,6 +3100,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       redirectCount: dco_decode_i_64(arr[22]),
       noindexDetected: dco_decode_bool(arr[23]),
       nofollowDetected: dco_decode_bool(arr[24]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[25]),
     );
   }
 
@@ -3304,13 +3308,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InteractionResult dco_decode_interaction_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return InteractionResult(
       actionResults: dco_decode_list_action_result(arr[0]),
       finalHtml: dco_decode_String(arr[1]),
       finalUrl: dco_decode_String(arr[2]),
       screenshotBase64: dco_decode_opt_String(arr[3]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[4]),
     );
   }
 
@@ -3777,8 +3782,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ScrapeResult dco_decode_scrape_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 29)
-      throw Exception('unexpected arr length: expect 29 but see ${arr.length}');
+    if (arr.length != 30)
+      throw Exception('unexpected arr length: expect 30 but see ${arr.length}');
     return ScrapeResult(
       statusCode: dco_decode_i_64(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -3811,6 +3816,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[27],
       ),
       browser: dco_decode_opt_box_autoadd_browser_extras(arr[28]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[29]),
     );
   }
 
@@ -4261,6 +4267,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_robotsUserAgent = sse_decode_opt_String(deserializer);
     var var_captureNetworkEvents = sse_decode_bool(deserializer);
     var var_sessionAffinity = sse_decode_bool(deserializer);
+    var var_chromePath = sse_decode_opt_String(deserializer);
+    var var_chromeArgs = sse_decode_list_String(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4277,6 +4285,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       robotsUserAgent: var_robotsUserAgent,
       captureNetworkEvents: var_captureNetworkEvents,
       sessionAffinity: var_sessionAffinity,
+      chromePath: var_chromePath,
+      chromeArgs: var_chromeArgs,
     );
   }
 
@@ -4404,6 +4414,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_includePaths = sse_decode_list_String(deserializer);
     var var_excludePaths = sse_decode_list_String(deserializer);
     var var_pathPatternsMatchQuery = sse_decode_bool(deserializer);
+    var var_pathPatternsMatchUrl = sse_decode_bool(deserializer);
     var var_dedupIncludeQuery = sse_decode_bool(deserializer);
     var var_stripTrackingParams = sse_decode_bool(deserializer);
     var var_trackingParams = sse_decode_list_String(deserializer);
@@ -4462,6 +4473,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       includePaths: var_includePaths,
       excludePaths: var_excludePaths,
       pathPatternsMatchQuery: var_pathPatternsMatchQuery,
+      pathPatternsMatchUrl: var_pathPatternsMatchUrl,
       dedupIncludeQuery: var_dedupIncludeQuery,
       stripTrackingParams: var_stripTrackingParams,
       trackingParams: var_trackingParams,
@@ -4626,6 +4638,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_redirectCount = sse_decode_i_64(deserializer);
     var var_noindexDetected = sse_decode_bool(deserializer);
     var var_nofollowDetected = sse_decode_bool(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return CrawlPageResult(
       url: var_url,
       normalizedUrl: var_normalizedUrl,
@@ -4652,6 +4665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       redirectCount: var_redirectCount,
       noindexDetected: var_noindexDetected,
       nofollowDetected: var_nofollowDetected,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -4886,11 +4900,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_finalHtml = sse_decode_String(deserializer);
     var var_finalUrl = sse_decode_String(deserializer);
     var var_screenshotBase64 = sse_decode_opt_String(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return InteractionResult(
       actionResults: var_actionResults,
       finalHtml: var_finalHtml,
       finalUrl: var_finalUrl,
       screenshotBase64: var_screenshotBase64,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -5728,6 +5744,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_browser = sse_decode_opt_box_autoadd_browser_extras(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return ScrapeResult(
       statusCode: var_statusCode,
       finalUrl: var_finalUrl,
@@ -5758,6 +5775,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       screenshotBase64: var_screenshotBase64,
       downloadedDocument: var_downloadedDocument,
       browser: var_browser,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -6228,6 +6246,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.robotsUserAgent, serializer);
     sse_encode_bool(self.captureNetworkEvents, serializer);
     sse_encode_bool(self.sessionAffinity, serializer);
+    sse_encode_opt_String(self.chromePath, serializer);
+    sse_encode_list_String(self.chromeArgs, serializer);
   }
 
   @protected
@@ -6329,6 +6349,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_String(self.includePaths, serializer);
     sse_encode_list_String(self.excludePaths, serializer);
     sse_encode_bool(self.pathPatternsMatchQuery, serializer);
+    sse_encode_bool(self.pathPatternsMatchUrl, serializer);
     sse_encode_bool(self.dedupIncludeQuery, serializer);
     sse_encode_bool(self.stripTrackingParams, serializer);
     sse_encode_list_String(self.trackingParams, serializer);
@@ -6489,6 +6510,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.redirectCount, serializer);
     sse_encode_bool(self.noindexDetected, serializer);
     sse_encode_bool(self.nofollowDetected, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected
@@ -6672,6 +6694,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.finalHtml, serializer);
     sse_encode_String(self.finalUrl, serializer);
     sse_encode_opt_String(self.screenshotBase64, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected
@@ -7405,6 +7428,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_browser_extras(self.browser, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected

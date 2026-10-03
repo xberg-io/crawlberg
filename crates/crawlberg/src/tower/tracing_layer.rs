@@ -192,12 +192,20 @@ mod tests {
                 body: String::new(),
                 body_bytes: Vec::new(),
                 headers: std::collections::HashMap::new(),
-                landed_url: None,
+                landed: None,
+                sent_user_agent: None,
+                soft_error: false,
             })
         });
         let svc = CrawlTracingLayer::new().layer(inner);
 
-        let req = CrawlRequest::new("http://user:hunter2@example.com/page");
+        // ~keep A struct literal, not `CrawlRequest::new`, which asserts that admission already
+        // ~keep took the userinfo off. This span redacts anyway, as the last guard.
+        let req = CrawlRequest {
+            url: "http://user:hunter2@example.com/page".to_owned(),
+            headers: std::collections::HashMap::new(),
+            tier: None,
+        };
         svc.oneshot(req).await.expect("stubbed inner service always succeeds");
 
         let recorded = sink.lock().expect("sink mutex must not be poisoned");

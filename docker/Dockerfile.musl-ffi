@@ -19,11 +19,12 @@ ENV RUSTFLAGS="-C target-feature=-crt-static"
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crawlberg/ crates/crawlberg/
+COPY crates/crawlberg-robots/ crates/crawlberg-robots/
 COPY crates/crawlberg-ffi/ crates/crawlberg-ffi/
 COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 
-RUN sed -i -z 's|members = \[[^]]*\]|members = ["crates/crawlberg", "crates/crawlberg-ffi", "crates/crawlberg-bindings-common", "crates/crawlberg-browser"]|' \
+RUN sed -i -z 's|members = \[[^]]*\]|members = ["crates/crawlberg", "crates/crawlberg-ffi", "crates/crawlberg-bindings-common", "crates/crawlberg-browser", "crates/crawlberg-robots"]|' \
     Cargo.toml
 
 RUN . "$HOME/.cargo/env" && \

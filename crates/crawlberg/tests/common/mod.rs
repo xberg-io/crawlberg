@@ -10,6 +10,9 @@
 //! reimplementing the check.
 #![allow(dead_code, clippy::print_stderr)]
 
+#[cfg(all(feature = "api", feature = "mcp"))]
+pub mod mcp;
+
 /// Whether an error message indicates the runner has no usable Chrome, rather
 /// than a genuine regression in the code under test. Three message variants are
 /// known:
@@ -28,10 +31,84 @@ pub fn is_missing_chrome_message(message: &str) -> bool {
         || message.contains("auto detect a chrome executable")
 }
 
+/// Whether an error message is crawlberg refusing a saved `browser_profile` because the Chrome on
+/// the runner is a snap that cannot open the profile store. This is the `ubuntu-24.04-arm` CI
+/// case, where the Chrome found is the Chromium snap and the store is under `~/.local/share`.
+/// No Chrome starts, so a test of saved profiles has nothing to observe on that runner.
+pub fn is_saved_profile_refusal(message: &str) -> bool {
+    message.contains("which cannot open the saved browser profile")
+}
+
 /// Prints a loud, unambiguous skip notice to stderr naming the test and the
 /// reason. A silently-passing test that never actually launched Chrome would
 /// exercise nothing while still reporting green — this makes the skip visible
 /// in CI logs instead.
 pub fn announce_chrome_skip(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name} because no usable Chrome was found: {reason}");
+}
+
+/// Say that `test_name` did not run on this machine, and why.
+pub fn announce_skip(test_name: &str, reason: &str) {
+    eprintln!("skipping {test_name}: {reason}");
+}
+
+/// Run a test browser's CDP handler on its own task, until its websocket fails or ends.
+///
+/// The same rules as crawlberg's `browser_pool::spawn_handler`. A loop that polls on past the
+/// websocket error holds every pending command forever. chromiumoxide 0.9.1 checks its request
+/// timeout only when the handler is polled, which a quiet connection never causes, so the loop
+/// polls it every second: a command Chrome never answers then fails with a timeout
+/// (xberg-io/crawlberg#586).
+#[cfg(feature = "browser")]
+pub fn spawn_handler(mut handler: chromiumoxide::Handler) -> tokio::task::JoinHandle<()> {
+    use tokio_stream::StreamExt;
+    tokio::spawn(async move {
+        loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(1), handler.next()).await;
+            if matches!(event, Ok(None | Some(Err(chromiumoxide::error::CdpError::Ws(_))))) {
+                break;
+            }
+        }
+    })
+}
+
+/// Launch a Chrome that stands for another program's browser, reached through `browser.endpoint`,
+/// with the cookie `owner=1` set for `seed` in its own context. Its handler runs until it closes.
+/// `None`, announced, without Chrome.
+#[cfg(feature = "browser")]
+pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> Option<chromiumoxide::Browser> {
+    use chromiumoxide::cdp::browser_protocol::network::CookieParam;
+    use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
+
+    let config = match chromiumoxide::browser::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+        .build()
+    {
+        Ok(config) => config,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error);
+            return None;
+        }
+    };
+    let (browser, handler) = match chromiumoxide::Browser::launch(config).await {
+        Ok(pair) => pair,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error.to_string());
+            return None;
+        }
+    };
+    spawn_handler(handler);
+    browser
+        .execute(SetCookiesParams {
+            cookies: vec![CookieParam {
+                url: Some(seed.to_owned()),
+                ..CookieParam::new("owner", "1")
+            }],
+            browser_context_id: None,
+        })
+        .await
+        .expect("the browser's own cookie must be set");
+    Some(browser)
 }

@@ -98,7 +98,11 @@ impl BrowserProfile {
         list_profiles_in(&base)
     }
 
-    /// Return Chrome/Chromium CLI arguments that point to this profile's data directory.
+    /// The Chrome flag that points at this profile's data directory.
+    ///
+    /// Crawlberg sets `--user-data-dir` itself when it starts Chrome for a profile, and
+    /// `browser.chrome_args` refuses the flag, so this only helps a caller that starts Chrome itself.
+    #[deprecated(since = "1.9.0", note = "read `user_data_dir` instead")]
     pub fn chrome_args(&self) -> Vec<String> {
         vec![format!("--user-data-dir={}", self.user_data_dir.display())]
     }
@@ -237,23 +241,6 @@ mod tests {
         assert!(BrowserProfile::new("profile.bak").is_ok());
         assert!(BrowserProfile::new("a").is_ok());
         assert!(BrowserProfile::new(&"x".repeat(255)).is_ok());
-    }
-
-    #[test]
-    fn test_chrome_args_contains_user_data_dir() {
-        let profile = BrowserProfile::new("test-chrome").unwrap();
-        let args = profile.chrome_args();
-        assert_eq!(args.len(), 1);
-        assert!(
-            args[0].starts_with("--user-data-dir="),
-            "arg should start with flag: {}",
-            args[0]
-        );
-        assert!(
-            args[0].contains("test-chrome"),
-            "arg should contain profile name: {}",
-            args[0]
-        );
     }
 
     #[test]

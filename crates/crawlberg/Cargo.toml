@@ -22,7 +22,22 @@ default = ["native-runtime"]
 # ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
-browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "native-runtime"]
+browser-chromiumoxide = [
+    "dep:chromiumoxide",
+    "dep:dirs",
+    "dep:bytes",
+    "dep:fast-socks5",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:rustix",
+    "dep:rustls-platform-verifier",
+    "dep:sysinfo",
+    "dep:tempfile",
+    "dep:tokio-rustls",
+    "dep:tokio-socks",
+    "native-runtime",
+]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 # ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
 # ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
@@ -35,13 +50,7 @@ ai = ["dep:liter-llm", "liter-llm/tower", "dep:minijinja"]
 otel = ["liter-llm?/otel"]
 interact = ["browser"]
 mcp = ["dep:rmcp", "dep:schemars"]
-api = [
-    "dep:axum",
-    "dep:tower-http",
-    "dep:utoipa",
-    "dep:uuid",
-    "native-runtime",
-]
+api = ["dep:axum", "dep:tower-http", "dep:utoipa", "dep:uuid", "native-runtime"]
 mcp-http = ["mcp", "api"]
 warc = ["dep:uuid"]
 full = [
@@ -64,17 +73,27 @@ async-trait = { workspace = true }
 axum = { workspace = true, optional = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
+bytes = { version = "1", optional = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
+crawlberg-robots = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
+fancy-regex = { workspace = true }
+fast-socks5 = { version = "1.0.0", default-features = false, optional = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }
 html-to-markdown-rs = { workspace = true }
 html5ever = { workspace = true }
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1", default-features = false, features = ["client", "http1", "server"], optional = true }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
+icu_casemap = { workspace = true }
+icu_normalizer = { workspace = true }
+idna = { workspace = true }
 ipnet = { workspace = true }
 liter-llm = { workspace = true, optional = true }
 memchr = { workspace = true }
@@ -82,17 +101,26 @@ minijinja = { workspace = true, optional = true }
 notify = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
+percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
+regex-syntax = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+sysinfo = { workspace = true, optional = true, features = ["system"] }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tl = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+# ~keep The TLS stack and certificate check reqwest's default-tls uses, for the browser's SSRF
+# ~keep proxy to reach an https upstream.
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12", "aws-lc-rs"], optional = true }
+tokio-socks = { version = "0.5", optional = true }
 tokio-stream = { workspace = true }
 toml = { workspace = true }
 tower = { workspace = true }
@@ -107,6 +135,7 @@ uuid = { workspace = true, optional = true }
 # ~keep reqwest's native TLS/HTTP2/proxy features (its `default` set) pull tokio/net -> mio,
 # which fails to compile on wasm32; restore them for native builds only.
 reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
+same-file = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "signal", "process", "io-util"] }
 
 # ~keep wasm32 needs JS getrandom backends for both the direct v0.4 API and transitive v0.3 API.
@@ -118,16 +147,35 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
 
+# ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed,
+# ~keep and polls it to wait until the killed process has ended.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, optional = true, features = ["event", "process", "std"] }
+
 [dev-dependencies]
 async-trait = { workspace = true }
 criterion = { workspace = true }
+# ~keep `testing` provides the in-memory metric exporter that tests/test_waf_blocks_counter.rs
+# ~keep reads crawl_waf_blocks_total through.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
+# ~keep in-process TLS server for the transport-error tests (#395, #463): a static
+# ~keep self-signed cert plus a pure-Rust TLS stack, instead of shelling out to the
+# ~keep system `openssl` binary, whose version differs between CI's Linux and macOS
+# ~keep legs. Both are already resolved in Cargo.lock via other dependents.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 serde_json = { workspace = true }
 serial_test = "4"
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-stream = { workspace = true }
+tracing-subscriber = { workspace = true }
 wiremock = "0.6"
+
+# ~keep A profile teardown test holds a thread of its child at its exit with ptrace.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = { workspace = true }
 
 [[bench]]
 name = "citations"

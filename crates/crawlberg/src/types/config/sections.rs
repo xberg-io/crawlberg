@@ -2,6 +2,7 @@
 //! browser fallback.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::credentials::ProxyConfig;
@@ -89,7 +90,7 @@ impl Default for ContentConfig {
 }
 
 /// Browser fallback configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
@@ -153,6 +154,84 @@ pub struct BrowserConfig {
     /// requests so cookies + fingerprint + solved challenges persist.
     /// Default: true. When false, each request gets a fresh Page.
     pub session_affinity: bool,
+    /// Chrome or Chromium executable to launch. When set, crawlberg launches only this
+    /// binary, and a path that is missing or not executable is an error that names the
+    /// path; crawlberg never falls back to a different Chrome. When unset, crawlberg uses
+    /// the `CHROME` environment variable, then searches the machine for an installed Chrome,
+    /// Chromium or Edge. Chromiumoxide backend only: ignored, with a warning, when `endpoint`
+    /// is set, with the native backend, and by scrapes and crawls that use a shared browser pool.
+    pub chrome_path: Option<PathBuf>,
+    /// Extra Chrome command-line flags, each written as `--flag` or `--flag=value`, for example
+    /// `--user-agent=...`. A flag here replaces a crawlberg default flag of the same name
+    /// (`--lang=fr` replaces crawlberg's `--lang=en_US`). Rejected: an entry that does not
+    /// start with `--`, a flag name with an uppercase letter (Chrome flag names are lowercase),
+    /// a flag named twice, and `--headless`, `--remote-debugging-port` and `--user-data-dir`,
+    /// which crawlberg sets itself to run Chrome. Set this only from trusted configuration,
+    /// like `proxy`: flags such as `--proxy-server` and `--host-resolver-rules` send Chrome's
+    /// traffic around the `ssrf` policy. Chromiumoxide backend only: ignored, with a warning,
+    /// when `endpoint` is set, with the native backend, and by scrapes and crawls that use a
+    /// shared browser pool.
+    pub chrome_args: Vec<String>,
+}
+
+impl std::fmt::Debug for BrowserConfig {
+    /// Redacted: a CDP `endpoint` is itself the capability (the GUID in
+    /// `ws://host:9222/devtools/browser/<GUID>` drives the browser), so only its scheme, host
+    /// and port print, and an endpoint that does not parse prints as `***`. `eval_script`
+    /// prints as `***` with its length, because a script can embed a token. `proxy` redacts
+    /// its own secrets. `chrome_args` prints as a count, because a flag value such as
+    /// `--proxy-server=http://user:password@host` can carry a credential. The exhaustive
+    /// destructure makes a new field a compile error here, not a silent gap.
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface.
+    #[cfg_attr(alef, alef(skip))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            mode,
+            backend,
+            endpoint,
+            timeout,
+            overall_timeout,
+            shutdown_timeout,
+            wait,
+            wait_selector,
+            extra_wait,
+            proxy,
+            block_url_patterns,
+            eval_script,
+            robots_user_agent,
+            capture_network_events,
+            session_affinity,
+            chrome_path,
+            chrome_args,
+        } = self;
+        f.debug_struct("BrowserConfig")
+            .field("mode", mode)
+            .field("backend", backend)
+            .field(
+                "endpoint",
+                &endpoint.as_deref().map(crate::net::redact::redact_url_to_origin),
+            )
+            .field("timeout", timeout)
+            .field("overall_timeout", overall_timeout)
+            .field("shutdown_timeout", shutdown_timeout)
+            .field("wait", wait)
+            .field("wait_selector", wait_selector)
+            .field("extra_wait", extra_wait)
+            .field("proxy", proxy)
+            .field("block_url_patterns", block_url_patterns)
+            .field(
+                "eval_script",
+                &eval_script.as_deref().map(crate::net::redact::redacted_text),
+            )
+            .field("robots_user_agent", robots_user_agent)
+            .field("capture_network_events", capture_network_events)
+            .field("session_affinity", session_affinity)
+            .field("chrome_path", chrome_path)
+            .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
+            .finish()
+    }
 }
 
 impl Default for BrowserConfig {
@@ -173,6 +252,118 @@ impl Default for BrowserConfig {
             robots_user_agent: None,
             capture_network_events: false,
             session_affinity: true,
+            chrome_path: None,
+            chrome_args: Vec::new(),
         }
     }
+}
+
+/// Chrome flags that the launch itself sets and a caller must not repeat: two values for
+/// one of these reach Chrome in no fixed order.
+pub(crate) const LAUNCH_OWNED_CHROME_SWITCHES: [&str; 3] = ["headless", "remote-debugging-port", "user-data-dir"];
+
+/// The switch name of a Chrome flag: `--lang=fr` and `lang` both name `lang`.
+pub(crate) fn chrome_switch_name(arg: &str) -> &str {
+    let key = arg.strip_prefix("--").unwrap_or(arg);
+    key.split_once('=').map_or(key, |(name, _)| name)
+}
+
+/// Check the entries of `BrowserConfig::chrome_args`: each is `--name` or `--name=value`, with a
+/// lowercase name that is not one of [`LAUNCH_OWNED_CHROME_SWITCHES`] and appears only once.
+/// `section` names the config that holds the list (`browser` or `BrowserPoolConfig`), so the
+/// error names the key the caller wrote.
+// ~keep Shared by `CrawlConfig::validate` and the launch helper in `browser_pool.rs`, for the
+// ~keep same reason as `check_chrome_executable` below.
+pub(crate) fn check_chrome_args(section: &str, chrome_args: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for arg in chrome_args {
+        // ~keep Only `--name` and `--name=value` are flags. Anything else would be turned
+        // ~keep into a stray `--x` flag (`["--user-agent", "x"]`), or would dodge the
+        // ~keep checks below with a single-dash spelling. A bare `--` ends Chrome's switch
+        // ~keep parsing and turns every later flag into a URL to open.
+        let key = arg.strip_prefix("--").unwrap_or_default();
+        let name = chrome_switch_name(key);
+        if name.is_empty() || key.starts_with('-') {
+            return Err(format!(
+                "{section}.chrome_args entry {arg:?} must start with -- followed by a flag name; \
+                 write a flag with a value as --flag=value"
+            ));
+        }
+        // ~keep Chrome lowercases switch names on Windows and not elsewhere, so a mixed-case
+        // ~keep name would collide with a default or reserved flag on one platform only.
+        // ~keep Refusing it keeps the exact comparisons below true on every platform.
+        if name.bytes().any(|b| b.is_ascii_uppercase()) {
+            return Err(format!(
+                "{section}.chrome_args entry {arg:?} must name the flag in lowercase, as Chrome does"
+            ));
+        }
+        // ~keep chromiumoxide keeps launch flags in a HashMap, so two values for one
+        // ~keep switch reach Chrome in no fixed order and either could win.
+        if LAUNCH_OWNED_CHROME_SWITCHES.contains(&name) {
+            return Err(format!(
+                "{section}.chrome_args must not set --{name}; crawlberg sets it to run Chrome"
+            ));
+        }
+        if !seen.insert(name) {
+            return Err(format!("{section}.chrome_args sets --{name} more than once"));
+        }
+    }
+    Ok(())
+}
+
+/// Check that `path` names an executable file, for the `chrome_path` of `section`.
+///
+/// The error names the path, so a caller can tell a typo from a permission problem.
+// ~keep Shared by `CrawlConfig::validate` and the launch helper in `browser_pool.rs`: the
+// ~keep Rust-only `BrowserPoolConfig` never passes through `validate`, and chromiumoxide's
+// ~keep own spawn error for a missing binary does not name the path.
+pub(crate) fn check_chrome_executable(section: &str, path: &Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("{section}.chrome_path '{}' cannot be used: {e}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{section}.chrome_path '{}' is not a file", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(format!("{section}.chrome_path '{}' is not executable", path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set.
+/// `reason` completes the sentence "... are ignored when ...". The warning gives the number of
+/// flags, not their values, for the reason given on the `Debug` impl of `BrowserConfig`.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) fn warn_ignored_launch_options(browser: &BrowserConfig, reason: &str) {
+    if browser.chrome_path.is_some() || !browser.chrome_args.is_empty() {
+        tracing::warn!(
+            chrome_path = ?browser.chrome_path,
+            chrome_args = %format!("{} flags", browser.chrome_args.len()),
+            "browser.chrome_path and browser.chrome_args are ignored when {reason}"
+        );
+    }
+}
+
+/// Create a uniquely named file that `check_chrome_executable` accepts, for tests that need a
+/// `chrome_path` without a real Chrome. The caller removes it.
+#[cfg(test)]
+pub(crate) fn executable_temp_file(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "crawlberg-fake-chrome-{tag}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, b"#!/bin/sh\nexit 1\n").expect("the fake chrome file must be writable");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("the fake chrome file must be chmod-able");
+    }
+    path
 }

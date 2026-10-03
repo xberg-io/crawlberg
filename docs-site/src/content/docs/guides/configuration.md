@@ -82,9 +82,16 @@ println!("batch crawl completed: {}", crawl_results.completed_count);
 | `browser.wait_selector` required when `browser.wait` is `Selector` | `"browser.wait_selector required when browser.wait is Selector"` |
 | `browser.endpoint` must be `ws://` or `wss://`                     | `"browser.endpoint must start with ws:// or wss://"`             |
 | `browser.endpoint` cannot be used with `BrowserBackend::Native`    | `"browser.endpoint is only supported by the chromiumoxide backend"` |
+| Each `browser.chrome_args` entry must be `--flag` or `--flag=value` | `"browser.chrome_args entry \"...\" must start with -- followed by a flag name; ..."` |
+| Each `browser.chrome_args` flag name must be lowercase              | `"browser.chrome_args entry \"...\" must name the flag in lowercase, as Chrome does"` |
+| `browser.chrome_args` must not set `--headless`, `--remote-debugging-port` or `--user-data-dir` | `"browser.chrome_args must not set --...; crawlberg sets it to run Chrome"` |
+| `browser.chrome_args` must not name one flag twice                  | `"browser.chrome_args sets --... more than once"`                |
+| `browser.chrome_path` must be an executable file                   | `"browser.chrome_path '...' cannot be used: ..."`                |
 | All `include_paths` must be valid regex                            | `"invalid include_path regex '...': ..."`                        |
 | All `exclude_paths` must be valid regex                            | `"invalid exclude_path regex '...': ..."`                        |
 | All `retry_codes` must be 100-599                                  | `"invalid retry code: ..."`                                      |
+
+The `browser.chrome_args` and `browser.chrome_path` rules do not apply when `browser.endpoint` is set or the native backend is selected: crawlberg launches no Chrome from them then, and ignores both fields with a warning.
 
 You can also call `validate()` manually:
 
@@ -126,7 +133,7 @@ match config.validate() {
 | `max_body_size`   | `Option<usize>`           | `None`      | Maximum response body size in bytes. Responses are truncated.             |
 | `user_agent`      | `Option<String>`          | `None`      | Custom User-Agent string.                                                 |
 | `user_agents`     | `Vec<String>`             | `[]`        | User-Agent strings for rotation. When non-empty, overrides `user_agent`.  |
-| `custom_headers`  | `HashMap<String, String>` | `{}`        | Extra HTTP headers sent with every request.                               |
+| `custom_headers`  | `HashMap<String, String>` | `{}`        | Extra HTTP headers sent with every request to the seed URL's host.        |
 | `cookies_enabled` | `bool`                    | `false`     | Whether to collect and track cookies across requests.                     |
 
 ### Authentication
@@ -156,11 +163,13 @@ AuthConfig::Header { name: "X-API-Key".into(), value: "key-value".into() }
 
 ```rust
 ProxyConfig {
-    url: "http://proxy:8080".to_string(), // or "socks5://proxy:1080"
+    url: "http://proxy:8080".to_string(),
     username: Some("user".to_string()),
     password: Some("pass".to_string()),
 }
 ```
+
+A Chrome render uses `proxy` when `browser.proxy` is not set, and Chrome cannot use a proxy with a username or password. With the Chrome backend, a `proxy` with credentials therefore fails the config check. Set `browser.proxy` to a proxy that needs no credentials, use the native backend, or set `browser.mode` to `never`.
 
 #### Dynamic proxy rotation (Rust)
 
@@ -191,7 +200,7 @@ let engine = CrawlEngineBuilder::new()
     .build()?;
 ```
 
-When both static `proxy` and an injected provider are set, the provider takes precedence for HTTP fetches. Browser-level proxies (`CrawlConfig::browser::proxy`) still read the static value; provider rotation applies only to the reqwest HTTP path.
+When both static `proxy` and an injected provider are set, the provider takes precedence. A native browser render asks the provider once for the page's host, and the page and every request it makes go through that proxy with its credentials. If `browser.proxy` is set, renders use it instead of the provider. The Chrome backend cannot render through a provider: a Chrome render with a provider and no `browser.proxy` fails. Use the native backend, or set `browser.proxy`.
 
 ### Robots and compliance
 
@@ -262,12 +271,14 @@ When `respect_robots_txt` is on, a crawl does not follow the links of a page mar
 | `wait`                   | `BrowserWait`      | `NetworkIdle` | Wait strategy after navigation: `NetworkIdle`, `Selector`, or `Fixed`. |
 | `wait_selector`          | `Option<String>`   | `None`        | CSS selector to wait for (required when `wait` is `Selector`).         |
 | `extra_wait`             | `Option<Duration>` | `None`        | Additional wait time after the wait condition is met.                  |
-| `proxy`                  | `Option<ProxyConfig>` | `None`     | Browser-level HTTP/HTTPS proxy; native backend does not support SOCKS5. |
+| `proxy`                  | `Option<ProxyConfig>` | `None`     | Browser-level proxy. The native backend takes http/https only; Chrome also takes socks4/socks5, and no proxy with credentials. The crawl-wide `proxy` never takes SOCKS. |
 | `block_url_patterns`     | `Vec<String>`      | `[]`          | Native-backend URL block patterns.                                     |
 | `eval_script`            | `Option<String>`   | `None`        | Script evaluated after navigation; native scrape stores the result.    |
 | `robots_user_agent`      | `Option<String>`   | `None`        | Native backend user-agent for robots.txt fetches.                      |
 | `capture_network_events` | `bool`             | `false`       | Native backend network-event capture into `BrowserExtras`.             |
 | `session_affinity`       | `bool`             | `true`        | Reuse same-domain browser sessions when supported.                     |
+| `chrome_path`            | `Option<PathBuf>`  | `None`        | Chrome executable to launch; the only binary used when set. `None` uses the `CHROME` environment variable, then an installed Chrome. |
+| `chrome_args`            | `Vec<String>`      | `[]`          | Extra Chrome flags, each `--flag` or `--flag=value`. A flag with the same name as a crawlberg default replaces it. Trusted input only: `--proxy-server` and `--host-resolver-rules` bypass the SSRF policy. |
 
 ### WARC output
 

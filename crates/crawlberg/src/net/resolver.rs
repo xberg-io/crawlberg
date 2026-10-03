@@ -29,12 +29,6 @@ use crate::net::ssrf::{SsrfError, SsrfPolicy, classify_private_ip, is_ip_permitt
 /// input — the port plays no part in an A/AAAA lookup.
 const RESOLUTION_PORT: u16 = 0;
 
-/// The error type [`Resolving`] resolves to.
-///
-/// ~keep reqwest's own `BoxError` alias is `pub(crate)`, so the trait's error type has to
-/// be spelled out here rather than imported.
-type ResolveError = Box<dyn std::error::Error + Send + Sync>;
-
 /// A [`reqwest::dns::Resolve`] that applies an [`SsrfPolicy`] to every address it returns.
 ///
 /// Refuses the whole resolution — rather than filtering the offending addresses out — when
@@ -58,43 +52,50 @@ impl Resolve for PolicyResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let policy = Arc::clone(&self.policy);
         Box::pin(async move {
-            let host = name.as_str().to_owned();
-
-            // ~keep Mirrors `validate_url`'s precedence exactly: a host matching an Exact or
-            // Suffix entry is permitted *before* resolution, so its addresses are never
-            // tested against the deny-list. Diverging here would reject at connect time a
-            // host that validation had just approved.
-            let host_allowlisted = policy.allowlist.iter().any(|matcher| matcher.matches_host(&host));
-
-            let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), RESOLUTION_PORT))
-                .await
-                .map_err(|e| SsrfError::DnsResolutionFailed(format!("{host}: {e}")))?
-                .collect();
-
-            if addresses.is_empty() {
-                return Err(Box::new(SsrfError::DnsResolutionFailed(format!(
-                    "no addresses resolved for {host}"
-                ))) as ResolveError);
-            }
-
-            if !host_allowlisted {
-                for address in &addresses {
-                    let ip = address.ip();
-                    if !is_ip_permitted(ip, &policy) {
-                        let reason = classify_private_ip(ip);
-                        tracing::warn!(
-                            host = %host,
-                            reason,
-                            "refusing to connect: a resolved address violates the SSRF policy"
-                        );
-                        return Err(Box::new(SsrfError::DeniedByPolicy { reason }) as ResolveError);
-                    }
-                }
-            }
-
+            let addresses = resolve_permitted(name.as_str(), &policy).await?;
             Ok(Box::new(addresses.into_iter()) as Addrs)
         })
     }
+}
+
+/// Resolve `host` and return its addresses, or refuse it when any answer violates `policy`.
+///
+/// The one resolution a connection may use: [`PolicyResolver`] serves it to the HTTP client, and
+/// the native browser's validator serves it to the browser clients.
+pub(crate) async fn resolve_permitted(host: &str, policy: &SsrfPolicy) -> Result<Vec<SocketAddr>, SsrfError> {
+    // ~keep Mirrors `validate_url`'s precedence exactly: a host matching an Exact or
+    // Suffix entry is permitted *before* resolution, so its addresses are never
+    // tested against the deny-list. Diverging here would reject at connect time a
+    // host that validation had just approved.
+    let host_allowlisted = policy.allowlist.iter().any(|matcher| matcher.matches_host(host));
+
+    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, RESOLUTION_PORT))
+        .await
+        .map_err(|e| SsrfError::DnsResolutionFailed(format!("{host}: {e}")))?
+        .collect();
+
+    if addresses.is_empty() {
+        return Err(SsrfError::DnsResolutionFailed(format!(
+            "no addresses resolved for {host}"
+        )));
+    }
+
+    if !host_allowlisted {
+        for address in &addresses {
+            let ip = address.ip();
+            if !is_ip_permitted(ip, policy) {
+                let reason = classify_private_ip(ip, &policy.allowlist);
+                tracing::warn!(
+                    host = %host,
+                    reason,
+                    "refusing to connect: a resolved address violates the SSRF policy"
+                );
+                return Err(SsrfError::DeniedByPolicy { reason });
+            }
+        }
+    }
+
+    Ok(addresses)
 }
 
 #[cfg(test)]
@@ -130,6 +131,42 @@ mod tests {
             .expect_err("localhost resolves to loopback and must be refused");
 
         assert_eq!(error, "denied by SSRF policy: loopback", "expected a loopback denial");
+    }
+
+    #[tokio::test]
+    async fn checks_the_ipv4_address_embedded_in_each_resolved_ipv6_form() {
+        // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
+        // policy check exactly as an AAAA answer carrying that address would.
+        let resolver = PolicyResolver::new(deny_private_policy());
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let actual = resolve_host(&resolver, literal).await.err();
+            let expected = expected.map(|reason| format!("denied by SSRF policy: {reason}"));
+            if actual != expected {
+                mismatches.push(format!("{literal}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "resolver decisions differ:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn names_the_resolved_candidate_the_allowlist_did_not_admit() {
+        // ~keep With fe80::/10 allowlisted, fe80::5efe:10.0.0.5 is refused only for the 10.0.0.5
+        // its ISATAP identifier carries, so the reason must be private_network, not link_local.
+        let resolver = PolicyResolver::new(SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr("fe80::/10").expect("literal CIDR is valid")],
+            ..deny_private_policy()
+        });
+
+        let error = resolve_host(&resolver, "fe80::5efe:10.0.0.5")
+            .await
+            .expect_err("the embedded private address must still be refused");
+
+        assert_eq!(error, "denied by SSRF policy: private_network");
     }
 
     #[tokio::test]

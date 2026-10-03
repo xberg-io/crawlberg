@@ -7,6 +7,12 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "packages/elixir/native/crawlberg_nif/Cargo.toml"
+      - "packages/elixir/native/crawlberg_nif/Cargo.lock"
+      - "packages/ruby/ext/crawlberg_rb/native/Cargo.toml"
+      - "packages/ruby/ext/crawlberg_rb/native/Cargo.lock"
+      - "e2e/rust/Cargo.toml"
+      - "e2e/rust/Cargo.lock"
       - "rust-toolchain.toml"
       # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
       # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
@@ -27,6 +33,12 @@ on:
   #     - "crates/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
+  #     - "packages/elixir/native/crawlberg_nif/Cargo.toml"
+  #     - "packages/elixir/native/crawlberg_nif/Cargo.lock"
+  #     - "packages/ruby/ext/crawlberg_rb/native/Cargo.toml"
+  #     - "packages/ruby/ext/crawlberg_rb/native/Cargo.lock"
+  #     - "e2e/rust/Cargo.toml"
+  #     - "e2e/rust/Cargo.lock"
   #     - "rust-toolchain.toml"
   #     # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
   #     # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
@@ -197,8 +209,8 @@ jobs:
 
       # ~keep Scoped to -p crawlberg: it owns every feature flag, and a workspace-wide run would
       # ~keep drag in ext-php-rs's `php` binary and the FFI/py build scripts for no extra
-      # ~keep coverage. --no-dev-deps keeps each configuration to a library build; the test
-      # ~keep targets are already covered by the --all-features clippy run in the `rust` job.
+      # ~keep coverage. --no-dev-deps keeps each configuration to a library build, so no
+      # ~keep dev-dependency feature can hide a library that fails to compile on its own.
       # ~keep No --locked: cargo-hack reruns cargo against crates/crawlberg/Cargo.toml directly
       # ~keep and that rejects --locked with "cannot update the lock file", even though the lock
       # ~keep comes back byte-identical. The diff check below is the stronger guarantee anyway --
@@ -207,8 +219,28 @@ jobs:
         run: cargo hack clippy -p crawlberg --each-feature --no-dev-deps -- -D warnings
         shell: bash
 
+      # ~keep The test targets build under each feature too: a test can use an item that only
+      # ~keep another feature compiles in, and the --all-features run cannot see that.
+      - name: Clippy each feature with the test targets
+        run: cargo hack clippy -p crawlberg --each-feature --all-targets -- -D warnings
+        shell: bash
+
       - name: Assert the lockfile did not drift
         run: git diff --exit-code -- Cargo.lock
+        shell: bash
+
+      # ~keep The Elixir NIF, the Ruby native crate and the Rust e2e suite are each their own
+      # ~keep workspace with their own Cargo.lock, so no step above reads those lockfiles. All
+      # ~keep three went stale when the core crate gained dependencies, and no job failed
+      # ~keep (xberg-io/crawlberg#560).
+      - name: Assert the nested lockfiles are current
+        run: |
+          for manifest in \
+            packages/elixir/native/crawlberg_nif/Cargo.toml \
+            packages/ruby/ext/crawlberg_rb/native/Cargo.toml \
+            e2e/rust/Cargo.toml; do
+            cargo metadata --format-version 1 --locked --manifest-path "$manifest" > /dev/null
+          done
         shell: bash
 
   validate-rust:

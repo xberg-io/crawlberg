@@ -16,16 +16,17 @@ pub struct ProxyConfig {
 
 impl std::fmt::Debug for ProxyConfig {
     /// Redacted: the derived `Debug` would print `password` verbatim, and `url` may
-    /// itself carry `user:pass@` userinfo. Any `tracing::debug!(?proxy, ...)` or
-    /// `{:?}` capture would leak it into logs. Shows the redacted URL and the username,
-    /// but only whether a password is set — never the password itself.
+    /// itself carry `user:pass@` userinfo or a token in its path or query. Any
+    /// `tracing::debug!(?proxy, ...)` or `{:?}` capture would leak it into logs. Shows the
+    /// URL's origin only and the username, but only whether a password is set, never the
+    /// password itself.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
     // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
     #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProxyConfig")
-            .field("url", &crate::net::redact_url_credentials(&self.url))
+            .field("url", &crate::proxy::redacted_proxy_address(self))
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "***"))
             .finish()
@@ -74,6 +75,11 @@ impl std::fmt::Debug for AuthConfig {
     /// header value carrying the secret) verbatim, and any `tracing::debug!(?auth, ...)`
     /// or `{:?}` capture would leak it into logs. Shows which variant is configured and
     /// whether its secret field is non-empty, never the secret's contents.
+    // ~keep `Basic.username` prints in clear on purpose, and must stay that way to match
+    // ~keep `ProxyConfig.username` right above. It is an account name, which is the field
+    // ~keep that makes an auth failure diagnosable. Do not "harmonise" it with
+    // ~keep `crawlberg_bypass::config::AuthScheme::BasicUsername`, which hides its
+    // ~keep username: there the username field *is* the vendor API key.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
     // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.

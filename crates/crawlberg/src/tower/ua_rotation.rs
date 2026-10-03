@@ -1,50 +1,71 @@
-//! User-Agent rotation layer for the Tower service stack.
+//! Round-robin User-Agent rotation, and its Tower layer on native targets.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::task::{Context, Poll};
 
+#[cfg(not(target_arch = "wasm32"))]
 use tower::{Layer, Service};
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::types::{CrawlRequest, CrawlResponse};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::CrawlError;
 
-/// Tower layer that rotates User-Agent headers across requests.
+/// The round-robin agent picker every target shares. On native it is also the Tower layer
+/// that sets a rotating User-Agent header on each request.
 #[derive(Clone)]
-pub struct UaRotationLayer {
+pub struct UaRotation {
     user_agents: Arc<Vec<String>>,
     index: Arc<AtomicUsize>,
 }
 
-impl UaRotationLayer {
+impl UaRotation {
     pub fn new(user_agents: Vec<String>) -> Self {
         Self {
             user_agents: Arc::new(user_agents),
             index: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    /// Advance the round-robin counter and return the next configured agent, or `None` when no
+    /// rotation list is configured.
+    ///
+    /// ~keep The single place that decides which agent a rotating request gets. A caller that
+    /// must judge robots rules before the request goes out (`RedirectPolicy::admits`) calls this
+    /// once per request and pins the result onto the `CrawlRequest`, so the request this policy
+    /// admits and the request the service below actually sends are the same one (crawlberg#423).
+    pub(crate) fn choose_next(&self) -> Option<String> {
+        if self.user_agents.is_empty() {
+            return None;
+        }
+        let idx = self.index.fetch_add(1, Ordering::Relaxed) % self.user_agents.len();
+        Some(self.user_agents[idx].clone())
+    }
 }
 
-impl<S: Clone> Layer<S> for UaRotationLayer {
+#[cfg(not(target_arch = "wasm32"))]
+impl<S: Clone> Layer<S> for UaRotation {
     type Service = UaRotationService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
         UaRotationService {
             inner,
-            user_agents: self.user_agents.clone(),
-            index: self.index.clone(),
+            rotation: self.clone(),
         }
     }
 }
 
 /// Tower service that injects a rotating User-Agent header into each request.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct UaRotationService<S> {
     inner: S,
-    user_agents: Arc<Vec<String>>,
-    index: Arc<AtomicUsize>,
+    rotation: UaRotation,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<S> Service<CrawlRequest> for UaRotationService<S>
 where
     S: Service<CrawlRequest, Response = CrawlResponse, Error = CrawlError> + Clone + Send + 'static,
@@ -59,16 +80,20 @@ where
     }
 
     fn call(&mut self, mut req: CrawlRequest) -> Self::Future {
-        if !self.user_agents.is_empty() {
-            let idx = self.index.fetch_add(1, Ordering::Relaxed) % self.user_agents.len();
-            req.headers
-                .insert("user-agent".to_owned(), self.user_agents[idx].clone());
+        // ~keep A request that already names a `user-agent` chose it upstream (a robots
+        // ~keep decision was made for that exact agent, or a caller wants a fixed one) and must
+        // ~keep not be overwritten here, or the agent robots rules were checked against and the
+        // ~keep agent this layer sends would diverge (crawlberg#423).
+        if !req.headers.contains_key("user-agent")
+            && let Some(ua) = self.rotation.choose_next()
+        {
+            req.headers.insert("user-agent".to_owned(), ua);
         }
         self.inner.call(req)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use tower::Service;
@@ -91,7 +116,9 @@ mod tests {
                     body: ua,
                     body_bytes: vec![],
                     headers: std::collections::HashMap::new(),
-                    landed_url: None,
+                    landed: None,
+                    sent_user_agent: None,
+                    soft_error: false,
                 })
             })
         }
@@ -99,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ua_rotation_injects_header() {
-        let layer = UaRotationLayer::new(vec!["Bot/1.0".into(), "Bot/2.0".into()]);
+        let layer = UaRotation::new(vec!["Bot/1.0".into(), "Bot/2.0".into()]);
         let mut svc = layer.layer(EchoService);
 
         let resp1 = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
@@ -114,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_ua_list_passes_through() {
-        let layer = UaRotationLayer::new(vec![]);
+        let layer = UaRotation::new(vec![]);
         let mut svc = layer.layer(EchoService);
         let resp = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
         assert_eq!(resp.body, "");

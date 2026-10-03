@@ -67,7 +67,8 @@ fn routes(entries: &[(&str, &str, &str)]) -> StdHashMap<String, (String, String)
 }
 
 fn test_page() -> Page {
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     Page::new("page-1".to_string(), Arc::new(context))
 }
 
@@ -199,6 +200,906 @@ async fn module_scripts_run_after_every_classic_script() {
         vec!["classic", "deferred", "module"],
         "modules are deferred past all classic scripts regardless of document order"
     );
+}
+
+fn rendered_html(page: &Page) -> String {
+    page.with_dom(|dom| dom.outer_html(dom.document()))
+        .expect("the page must have a DOM")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_with_a_src_is_fetched_and_run() {
+    let html = "<html><body><script type=\"module\" src=\"app.js\"></script></body></html>";
+    let app = "const p = document.createElement('p');\
+               p.setAttribute('id', 'from-module');\
+               p.textContent = 'module ran';\
+               document.body.appendChild(p);";
+    let base = serve(routes(&[("/", "text/html", html), ("/app.js", "text/javascript", app)])).await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    let rendered = rendered_html(&page);
+    assert!(
+        rendered.contains("<p id=\"from-module\">module ran</p>"),
+        "the module's code must run and add its element: {rendered}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_with_a_src_runs_the_modules_it_imports() {
+    let html = "<html><body><script type=\"module\" src=\"/js/app.js\"></script></body></html>";
+    let app = format!(
+        "import {{ tag }} from './dep.js';\n{}\nglobalThis.imported = tag;",
+        push("app")
+    );
+    let dep = format!("{}\nexport const tag = 'from-dep';", push("dep"));
+    let base = serve(routes(&[
+        ("/", "text/html", html),
+        ("/js/app.js", "text/javascript", &app),
+        ("/js/dep.js", "text/javascript", &dep),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(
+        order(&mut page),
+        vec!["dep", "app"],
+        "the imported module runs first, resolved against the importing module's address"
+    );
+    assert_eq!(global(&mut page, "globalThis.imported"), serde_json::json!("from-dep"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_fails_to_load_does_not_stop_the_page() {
+    let html = format!(
+        "<html><body><h1>still here</h1>\
+         <script type=\"module\" src=\"/missing.js\"></script>\
+         <script type=\"module\" src=\"/imports-missing.js\"></script>\
+         <script type=\"module\">{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script>\
+         </body></html>",
+        push("inline"),
+    );
+    let imports_missing = format!("import './gone.js';\n{}", push("imports-missing"));
+    let ok = push("ok");
+    let base = serve(routes(&[
+        ("/", "text/html", &html),
+        ("/imports-missing.js", "text/javascript", &imports_missing),
+        ("/ok.js", "text/javascript", &ok),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must still succeed");
+
+    assert_eq!(
+        order(&mut page),
+        vec!["inline", "ok"],
+        "a module that is missing, or imports one that is, must not run and must not stop the others"
+    );
+    assert!(rendered_html(&page).contains("<h1>still here</h1>"));
+    assert_eq!(
+        event_urls(&page, "Script"),
+        vec![format!("{base}/ok.js")],
+        "only the module that loaded is recorded as a script"
+    );
+}
+
+/// Refuses every address whose path ends in `refused.js`, and allows the rest.
+#[derive(Debug)]
+struct RefuseRefusedJs;
+
+#[async_trait::async_trait]
+impl SsrfValidator for RefuseRefusedJs {
+    async fn validate(&self, url: &Url) -> Result<(), String> {
+        if url.path().ends_with("refused.js") {
+            Err("refused by the test policy".to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_the_ssrf_policy_refuses_is_not_run() {
+    let html = "<html><body>\
+                <script type=\"module\" src=\"/refused.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script>\
+                </body></html>";
+    let refused = push("refused");
+    let ok = push("ok");
+    let base = serve(routes(&[
+        ("/", "text/html", html),
+        ("/refused.js", "text/javascript", &refused),
+        ("/ok.js", "text/javascript", &ok),
+    ]))
+    .await;
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(RefuseRefusedJs), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_blocked_by_interception_is_not_run() {
+    let blocked = push("blocked");
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |_| {
+            "<html><body><script type=\"module\" src=\"/blocked.js\"></script>\
+             <script type=\"module\" src=\"/ok.js\"></script></body></html>"
+                .to_string()
+        },
+        &[
+            ("/blocked.js", "text/javascript", &blocked),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+}
+
+/// Navigates to `html` with interception blocking every address that ends in `blocked.js`, serving
+/// each `(path, body)` as JavaScript, and returns the page with the request lines the server saw.
+async fn navigate_intercepted_recording(html: &str, extra: &[(&str, &str)]) -> (Page, Vec<String>) {
+    let responses: Vec<(&str, String)> = extra
+        .iter()
+        .map(|(path, body)| (*path, ok_response("text/javascript", body)))
+        .collect();
+    let responses: Vec<(&str, &str)> = responses
+        .iter()
+        .map(|(path, response)| (*path, response.as_str()))
+        .collect();
+    navigate_intercepted_raw(html, &responses).await
+}
+
+fn requested(requests: &[String], path: &str) -> bool {
+    requests
+        .iter()
+        .any(|request| request.starts_with(&format!("GET {path} ")))
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_import_blocked_by_interception_is_not_fetched() {
+    let html = "<html><body><script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let app = format!("import './blocked.js';\n{}", push("app"));
+    let (mut page, requests) = navigate_intercepted_recording(
+        html,
+        &[
+            ("/app.js", &app),
+            ("/blocked.js", &push("blocked")),
+            ("/ok.js", &push("ok")),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["ok"],
+        "a module that imports a blocked address must not run, and must not stop the others"
+    );
+    assert!(requested(&requests, "/app.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import is never requested: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_import_blocked_by_interception_is_not_fetched() {
+    let html = format!(
+        "<html><body><script type=\"module\">import './blocked.js';\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("inline"),
+    );
+    let (mut page, requests) =
+        navigate_intercepted_recording(&html, &[("/blocked.js", &push("blocked")), ("/ok.js", &push("ok"))]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import is never requested: {requests:?}"
+    );
+}
+
+/// Serves `responses` beside the page `html`, navigates with interception blocking every address
+/// that ends in `blocked.js`, and returns the page with the request lines the server saw.
+async fn navigate_intercepted_raw(html: &str, responses: &[(&str, &str)]) -> (Page, Vec<String>) {
+    let (page, requests) = navigate_intercepted_raw_live(html, responses).await;
+    let requests = requests.lock().expect("lock").clone();
+    (page, requests)
+}
+
+/// [`navigate_intercepted_raw`] with the live request log, for a page that keeps requesting after navigation.
+async fn navigate_intercepted_raw_live(
+    html: &str,
+    responses: &[(&str, &str)],
+) -> (Page, Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let page_response = ok_response("text/html", html);
+    let mut entries = vec![("/", page_response.as_str())];
+    entries.extend_from_slice(responses);
+    let requests = serve_raw_recording(listener, raw(&entries));
+
+    let mut page = test_page();
+    page.intercept_enabled = true;
+    page.intercept_block_patterns = vec!["*blocked.js".to_string()];
+    page.navigate(&format!("http://{addr}/"))
+        .await
+        .expect("navigation must succeed");
+    (page, requests)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_to_a_blocked_address_is_not_fetched() {
+    let html = "<html><body><script type=\"module\" src=\"/hop.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let redirect = "HTTP/1.1 302 Found\r\nLocation: /x/blocked.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let (mut page, requests) = navigate_intercepted_raw(
+        html,
+        &[
+            ("/hop.js", redirect),
+            ("/x/blocked.js", &ok_response("text/javascript", &push("blocked"))),
+            ("/ok.js", &ok_response("text/javascript", &push("ok"))),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert!(requested(&requests, "/hop.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/x/blocked.js"),
+        "a redirect to a blocked address is never followed: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_dynamic_import_of_a_blocked_address_is_not_fetched() {
+    let html = "<html><body><script>\
+                globalThis.settled = Promise.allSettled([\
+                import('/fine.js').then(() => { globalThis.fine = true; }),\
+                import('/blocked.js').then(() => { globalThis.blocked = 'loaded'; }, () => { globalThis.blocked = 'refused'; }),\
+                ]);\
+                </script></body></html>";
+    let (mut page, requests) = navigate_intercepted_raw_live(
+        html,
+        &[
+            ("/fine.js", &ok_response("text/javascript", "export {};")),
+            ("/blocked.js", &ok_response("text/javascript", "export {};")),
+        ],
+    )
+    .await;
+
+    // The page's drain has a time budget, and under load an import can settle after it, so wait for
+    // both imports' own promises before reading what they set.
+    let settled = page
+        .evaluate_for_cdp(
+            "globalThis.settled.then(() => JSON.stringify([!!globalThis.fine, globalThis.blocked || null]))",
+            true,
+            true,
+        )
+        .await;
+    assert_eq!(
+        settled.value,
+        Some(serde_json::json!("[true,\"refused\"]")),
+        "the allowed import loads and the blocked one is refused"
+    );
+    let requests = requests.lock().expect("lock").clone();
+    assert!(requested(&requests, "/fine.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import() is never requested: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_request_carries_the_page_user_agent() {
+    let html = "<html><body><script src=\"/classic.js\"></script>\
+                <script type=\"module\" src=\"/app.js\"></script></body></html>";
+    let app = format!("import './dep.js';\n{}", push("app"));
+    let (mut page, requests) = navigate_intercepted_recording(
+        html,
+        &[("/classic.js", &push("classic")), ("/app.js", &app), ("/dep.js", "")],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["classic", "app"]);
+    let user_agent = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+                    .map(|(_, value)| value.trim().to_string())
+            })
+    };
+    let page_user_agent = user_agent("/classic.js").expect("the page client sends a User-Agent");
+    assert_eq!(user_agent("/app.js").as_deref(), Some(page_user_agent.as_str()));
+    assert_eq!(user_agent("/dep.js").as_deref(), Some(page_user_agent.as_str()));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_named_twice_runs_once() {
+    let html = "<html><body><script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let app = push("app");
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[("/app.js", "text/javascript", &app), ("/ok.js", "text/javascript", &ok)],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["app", "ok"],
+        "a module runs once per page, as in a browser"
+    );
+}
+
+/// Accepts connections and never answers them, so a fetch from it stalls until its caller gives up.
+async fn stalling_origin() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// Navigates to `html` with a bound on the whole render, so a stalled module fails the test rather than hanging it.
+///
+/// One stalled module costs one 10-second module budget. The render must finish within that one
+/// budget plus a margin, however many modules run after the stalled one.
+async fn navigate_bounded(html: &str, extra: &[(&str, &str, &str)]) -> Page {
+    let mut entries = vec![("/", "text/html", html)];
+    entries.extend_from_slice(extra);
+    let base = serve(routes(&entries)).await;
+    let mut page = test_page();
+    let started = std::time::Instant::now();
+    tokio::time::timeout(std::time::Duration::from_secs(40), page.navigate(&base))
+        .await
+        .expect("the render must finish although a module server never answers")
+        .expect("navigation must succeed");
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(15),
+        "one stalled module must cost the page one module budget, not one per later module: took {took:?}"
+    );
+    page
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_whose_server_never_answers_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\" src=\"{stall}/app.js\"></script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>"
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_whose_import_never_answers_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">import '{stall}/dep.js';\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("stalled"),
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_whose_top_level_await_never_settles_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/tla.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let tla = format!(
+        "{}\nawait fetch('{stall}/never');\n{}",
+        push("tla-before"),
+        push("tla-after")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[("/tla.js", "text/javascript", &tla), ("/ok.js", "text/javascript", &ok)],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_whose_top_level_await_never_settles_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">{}\nawait fetch('{stall}/never');\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("tla-before"),
+        push("tla-after"),
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_stalled_module_src_costs_one_budget_however_many_module_srcs_follow() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/tla.js\"></script>\
+                <script type=\"module\" src=\"/a.js\"></script>\
+                <script type=\"module\" src=\"/b.js\"></script></body></html>";
+    let tla = format!("{}\nawait fetch('{stall}/never');", push("tla-before"));
+    let (a, b) = (push("a"), push("b"));
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/tla.js", "text/javascript", &tla),
+            ("/a.js", "text/javascript", &a),
+            ("/b.js", "text/javascript", &b),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "a", "b"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_stalled_inline_module_costs_one_budget_however_many_inline_modules_follow() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">{}\nawait fetch('{stall}/never');</script>\
+         <script type=\"module\">{}</script>\
+         <script type=\"module\">{}</script></body></html>",
+        push("tla-before"),
+        push("a"),
+        push("b"),
+    );
+    let mut page = navigate_bounded(&html, &[]).await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "a", "b"]);
+}
+
+/// A module whose top-level await needs the event loop: a timer, then a fetch of `/data.txt`.
+fn awaits_a_timer_and_a_fetch() -> String {
+    format!(
+        "await new Promise(resolve => setTimeout(resolve, 20));\n{}\n\
+         const text = await (await fetch('/data.txt')).text();\n\
+         (globalThis.order = globalThis.order || []).push(text);",
+        push("timer"),
+    )
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_awaiting_a_timer_and_a_fetch_finishes_before_the_next_module_runs() {
+    let html = "<html><body><script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_awaiting_a_timer_and_a_fetch_finishes_before_the_next_module_runs() {
+    let html = format!(
+        "<html><body><script type=\"module\">{}</script>\
+         <script type=\"module\">{}</script></body></html>",
+        awaits_a_timer_and_a_fetch(),
+        push("next"),
+    );
+    let mut page = navigate_bounded(&html, &[("/data.txt", "text/plain", "fetched")]).await;
+
+    assert_eq!(order(&mut page), vec!["timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_a_module_starts_without_awaiting_does_not_hold_the_next_module() {
+    let html = format!(
+        "<html><body><script type=\"module\">\
+         fetch('/data.txt').then(r => r.text()).then(t => (globalThis.order = globalThis.order || []).push(t));\n{}\
+         </script><script type=\"module\">{}</script></body></html>",
+        push("first"),
+        push("second"),
+    );
+    let mut page = navigate_bounded(&html, &[("/data.txt", "text/plain", "fetched")]).await;
+
+    assert_eq!(order(&mut page), vec!["first", "second", "fetched"]);
+}
+
+/// The file names of the scripts the page recorded as loaded, in load order.
+fn recorded_scripts(page: &Page) -> Vec<&str> {
+    page.network_events
+        .iter()
+        .filter(|event| event.resource_type == "Script")
+        .map(|event| event.url.rsplit('/').next().unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_awaiting_a_promise_nothing_settles_is_not_recorded_and_does_not_hold_the_page() {
+    let html = "<html><body><script type=\"module\" src=\"/forever.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let forever = format!(
+        "{}\nawait new Promise(() => {{}});\n{}",
+        push("forever-before"),
+        push("forever-after")
+    );
+    let ok = push("ok");
+    let started = std::time::Instant::now();
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/forever.js", "text/javascript", &forever),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+    let took = started.elapsed();
+
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "with nothing left to run, a module awaiting a promise nothing settles ends its wait at once: took {took:?}"
+    );
+    assert_eq!(order(&mut page), vec!["forever-before", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module left waiting on a promise nothing can settle is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_left_waiting_after_it_releases_an_earlier_stalled_module_is_not_recorded() {
+    let html = "<html><body><script type=\"module\" src=\"/first.js\"></script>\
+                <script type=\"module\" src=\"/second.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let first = format!(
+        "{}\nawait new Promise((resolve) => {{ globalThis.releaseFirst = resolve; }});\n{}",
+        push("first-before"),
+        push("first-after")
+    );
+    let second = format!(
+        "{}\nglobalThis.releaseFirst();\nawait new Promise(() => {{}});\n{}",
+        push("second-before"),
+        push("second-after")
+    );
+    let ok = push("ok");
+    let started = std::time::Instant::now();
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/first.js", "text/javascript", &first),
+            ("/second.js", "text/javascript", &second),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+    let took = started.elapsed();
+
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "a module still waiting when the event loop goes idle ends its wait at once: took {took:?}"
+    );
+    assert_eq!(
+        order(&mut page),
+        vec!["first-before", "second-before", "first-after", "ok"]
+    );
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module still waiting when the event loop goes idle is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_throws_does_not_cut_short_the_next_modules_await() {
+    let html = "<html><body><script type=\"module\" src=\"/throws.js\"></script>\
+                <script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let throws = format!("{}\nthrow new Error('throws');", push("throws"));
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/throws.js", "text/javascript", &throws),
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["throws", "timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_error_from_work_an_earlier_module_did_not_await_does_not_cut_short_the_next_module() {
+    let html = "<html><body><script type=\"module\" src=\"/background.js\"></script>\
+                <script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let background = format!(
+        "fetch('/data.txt').then(() => {{ throw new Error('late'); }});\n{}",
+        push("background")
+    );
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/background.js", "text/javascript", &background),
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["background", "timer", "fetched", "next"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["background.js", "wait.js", "next.js"],
+        "a module that ran to the end is recorded, whatever failed elsewhere on the page meanwhile"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_that_throws_or_rejects_is_not_recorded_and_does_not_stop_the_page() {
+    let html = "<html><body><script type=\"module\" src=\"/throws.js\"></script>\
+                <script type=\"module\" src=\"/rejects.js\"></script>\
+                <script type=\"module\">throw new Error('inline');</script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let throws = format!("{}\nthrow new Error('throws');", push("throws"));
+    let rejects = format!(
+        "{}\nawait new Promise((_, reject) => setTimeout(() => reject(new Error('rejects')), 10));",
+        push("rejects")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/throws.js", "text/javascript", &throws),
+            ("/rejects.js", "text/javascript", &rejects),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["throws", "rejects", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module whose evaluation fails is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_that_rejects_while_other_work_runs_is_not_recorded() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/background.js\"></script>\
+                <script type=\"module\" src=\"/rejects.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let background = format!("fetch('{stall}/never');\n{}", push("background"));
+    let rejects = format!(
+        "{}\nawait new Promise((_, reject) => setTimeout(() => reject(new Error('rejects')), 10));",
+        push("rejects")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/background.js", "text/javascript", &background),
+            ("/rejects.js", "text/javascript", &rejects),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["background", "rejects", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["background.js", "ok.js"],
+        "a module whose evaluation fails is not recorded, although other work on the page still runs"
+    );
+}
+
+/// Navigates to a page whose script starts a fetch that never answers, so the page never goes idle.
+async fn page_with_a_stalled_fetch(stall: &str) -> Page {
+    let html = format!("<html><body><script>fetch('{stall}/never');</script></body></html>");
+    navigate_bounded(&html, &[]).await
+}
+
+/// The number an awaited evaluation returned by value.
+fn number(info: &crate::js::runtime::RemoteObjectInfo) -> Option<f64> {
+    info.value.as_ref().and_then(serde_json::Value::as_f64)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_does_not_wait_for_a_stalled_fetch_on_the_page() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    for n in [1, 2] {
+        let started = std::time::Instant::now();
+        let info = js
+            .evaluate_for_cdp(&format!("Promise.resolve({n})"), true, true)
+            .await
+            .expect("the evaluation settles");
+        let took = started.elapsed();
+        assert_eq!(number(&info), Some(f64::from(n)));
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "awaited evaluation {n} waited for the stalled fetch: took {took:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_function_call_does_not_wait_for_a_stalled_fetch_on_the_page() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    for n in [1, 2] {
+        let started = std::time::Instant::now();
+        let info = js
+            .call_function_on_for_cdp(&format!("async function() {{ return {n}; }}"), None, &[], true, true)
+            .await
+            .expect("the call settles");
+        let took = started.elapsed();
+        assert_eq!(number(&info), Some(f64::from(n)));
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "awaited function call {n} waited for the stalled fetch: took {took:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_whose_own_fetch_stalls_fails_at_its_budget() {
+    let stall = stalling_origin().await;
+    let mut page = page_with_a_stalled_fetch(&stall).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp("Promise.resolve({ earlier: true })", false, true)
+        .await
+        .expect("an earlier evaluation settles");
+
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        js.evaluate_for_cdp(&format!("fetch('{stall}/own').then(() => 'answered')"), false, true),
+    )
+    .await
+    .expect("a stalled evaluation must end at its budget, not hang");
+    let took = started.elapsed();
+
+    let error = result.expect_err("a stalled evaluation must fail, not return the earlier evaluation's result");
+    assert!(error.contains("did not settle"), "unexpected error: {error}");
+    assert!(
+        took >= std::time::Duration::from_secs(4) && took < std::time::Duration::from_secs(8),
+        "a stalled evaluation must end at its 5-second budget: took {took:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_of_a_promise_nothing_settles_fails_at_once() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp("Promise.resolve({ earlier: true })", false, true)
+        .await
+        .expect("an earlier evaluation settles");
+
+    let started = std::time::Instant::now();
+    let result = js.evaluate_for_cdp("new Promise(() => {})", false, true).await;
+    let took = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a promise nothing settles must fail, not return the earlier evaluation's result: {result:?}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(1),
+        "nothing can settle it, so it must not wait: took {took:?}"
+    );
+}
+
+/// The evaluation waits on three fetches in a row, so the one background fetch fails while it still waits.
+/// A page timer cannot stand in for the wait: the page runs timer callbacks at once, whatever the delay.
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_error_from_other_page_work_does_not_end_an_awaited_evaluation_early() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[("/data.txt", "text/plain", "fetched")]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp(
+        "fetch('/data.txt').then(() => { throw new Error('late'); })",
+        true,
+        false,
+    )
+    .await
+    .expect("the background fetch starts");
+
+    let info = js
+        .evaluate_for_cdp(
+            "fetch('/data.txt').then(() => fetch('/data.txt')).then(() => fetch('/data.txt')).then(() => 7)",
+            true,
+            true,
+        )
+        .await
+        .expect("the evaluation settles although other work on the page fails meanwhile");
+
+    assert_eq!(number(&info), Some(7.0));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_evaluation_that_settles_as_other_work_fails_returns_its_value() {
+    let mut page = navigate_bounded("<html><body></body></html>", &[("/data.txt", "text/plain", "fetched")]).await;
+    let js = page.js.as_mut().expect("the page runs scripts");
+
+    let info = js
+        .evaluate_for_cdp(
+            "fetch('/data.txt').then(() => { Promise.reject(new Error('other')); return 7; })",
+            true,
+            true,
+        )
+        .await
+        .expect("the evaluation settled in the same tick as the other rejection, so it succeeds");
+
+    assert_eq!(number(&info), Some(7.0));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_still_runs_the_modules_it_imports() {
+    let html = format!(
+        "<html><body><script type=\"module\">import {{ tag }} from './dep.js';\n{}\nglobalThis.imported = tag;</script></body></html>",
+        push("inline"),
+    );
+    let dep = format!("{}\nexport const tag = 'from-dep';", push("dep"));
+    let base = serve(routes(&[
+        ("/", "text/html", &html),
+        ("/dep.js", "text/javascript", &dep),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["dep", "inline"]);
+    assert_eq!(global(&mut page, "globalThis.imported"), serde_json::json!("from-dep"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -359,6 +1260,34 @@ async fn an_absolute_module_src_is_recorded_under_its_parsed_address() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_subresource_address_with_userinfo_is_skipped_when_it_resolves() {
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |origin| {
+            let with_userinfo = origin.replacen("http://", "http://user:s3cret@", 1);
+            format!(
+                "<html><head><link rel=\"stylesheet\" href=\"{with_userinfo}/x.css\"></head><body>\
+                 <script src=\"{with_userinfo}/blocked.js\"></script>\
+                 <script src=\"{origin}/ok.js\"></script></body></html>"
+            )
+        },
+        &[("/ok.js", "application/javascript", &ok), ("/x.css", "text/css", "p{}")],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+    assert!(event_urls(&page, "Stylesheet").is_empty());
+    let with_userinfo = origin.replacen("http://", "http://user:s3cret@", 1);
+    assert_eq!(page.resolve_subresource_url(&format!("{with_userinfo}/a.js")), None);
+    assert_eq!(
+        page.resolve_subresource_url("/a.js"),
+        Some(format!("{origin}/a.js")),
+        "a reference without userinfo still resolves"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_subresource_address_that_does_not_parse_is_skipped() {
     let ok = push("ok");
     let (origin, mut page) = navigate_intercepted(
@@ -489,7 +1418,8 @@ async fn robots_txt_disallow_blocks_the_navigation() {
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -505,6 +1435,44 @@ async fn robots_txt_disallow_blocks_the_navigation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_navigation_to_a_url_with_userinfo_is_refused_before_robots_txt_is_read() {
+    const URL_PASSWORD: &str = "s3cret";
+    let base = serve(routes(&[
+        ("/", "text/html", "<html><body>ok</body></html>"),
+        ("/robots.txt", "text/plain", "User-agent: *\nDisallow: /"),
+    ]))
+    .await;
+    let credentialed = base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1);
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let context = BrowserContext {
+        obey_robots: true,
+        ..context
+    };
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let error = page
+        .navigate(&credentialed)
+        .await
+        .expect_err("a URL with userinfo must be refused");
+    let PageError::NetworkError(message) = &error else {
+        panic!("expected a network error, got {error:?}");
+    };
+    assert!(
+        !message.contains(URL_PASSWORD),
+        "the password must not be named, got '{message}'"
+    );
+    // ~keep Positive twin: the refusal, not the robots.txt block, stopped the navigation, and
+    // ~keep it names the URL without its userinfo.
+    assert!(
+        message.contains("credentials") && !message.contains("robots.txt"),
+        "the userinfo refusal must come first, got '{message}'"
+    );
+    assert!(page.url.is_none(), "a refused URL is never recorded as the page's own");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn robots_txt_allow_permits_the_navigation() {
     let base = serve(routes(&[
         (
@@ -516,7 +1484,8 @@ async fn robots_txt_allow_permits_the_navigation() {
     ]))
     .await;
 
-    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
     let context = BrowserContext {
         obey_robots: true,
         ..context
@@ -525,6 +1494,52 @@ async fn robots_txt_allow_permits_the_navigation() {
 
     page.navigate(&base).await.expect("navigation must be permitted");
     assert_eq!(page.title, "allowed");
+}
+
+/// A robots.txt that opens with a UTF-8 byte-order mark still blocks what it disallows
+/// (crawlberg#540): the mark stayed on the first line, so its group was dropped.
+#[tokio::test(flavor = "current_thread")]
+async fn robots_txt_with_a_leading_byte_order_mark_still_blocks_the_navigation() {
+    let base = serve(routes(&[
+        (
+            "/",
+            "text/html",
+            "<html><head><title>open</title></head><body></body></html>",
+        ),
+        (
+            "/private",
+            "text/html",
+            "<html><head><title>secret</title></head><body></body></html>",
+        ),
+        (
+            "/robots.txt",
+            "text/plain",
+            "\u{feff}User-agent: *\r\nDisallow: /private\r\n",
+        ),
+    ]))
+    .await;
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let context = BrowserContext {
+        obey_robots: true,
+        ..context
+    };
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    // ~keep Positive twin: the file is read and a path it does not name stays open.
+    page.navigate(&base).await.expect("/ is not disallowed");
+    assert_eq!(page.title, "open");
+
+    let private = format!("{}/private", base.trim_end_matches('/'));
+    let error = page
+        .navigate(&private)
+        .await
+        .expect_err("the leading byte-order mark must not hide the Disallow rule");
+    assert!(
+        matches!(error, PageError::NetworkError(ref message) if message.contains("Blocked by robots.txt")),
+        "expected a robots.txt block, got {error:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -848,18 +1863,18 @@ async fn a_cross_origin_fetch_with_a_wildcard_allow_origin_header_succeeds() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
-    let script = fetch_script("/setcookie", "");
+    let script = fetch_script("/api/setcookie", "");
     let html = format!("<html><body><script>{script}</script></body></html>");
     let with_cookie = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: jsfetch=1\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     let base = serve_raw(raw(&[
         ("/", &ok_response("text/html", &html)),
-        ("/setcookie", with_cookie),
+        ("/api/setcookie", with_cookie),
     ]))
     .await;
     let mut page = test_page();
     page.navigate(&base).await.expect("navigate");
 
-    // The cookie is stored against the fetched path, so it is not returned for the page path.
+    // The cookie takes the default path of the fetched URL, so it is not returned for the page path.
     let stored = page.context.cookie_jar.snapshot();
     assert_eq!(
         stored,
@@ -867,9 +1882,10 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
             "jsfetch".to_string(),
             "1".to_string(),
             "127.0.0.1".to_string(),
-            "/setcookie".to_string(),
+            "/api".to_string(),
             false,
-            false
+            false,
+            true
         )],
         "the fetch op must store Set-Cookie in the jar the page shares"
     );
@@ -897,4 +1913,737 @@ async fn a_non_networkidle_wait_leaves_the_lifecycle_at_loaded() {
         .expect("navigation must succeed");
 
     assert_eq!(page.lifecycle, LifecycleState::Loaded);
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_stealth_page_fetches_through_the_context_proxy() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let proxy = format!("http://{}", listener.local_addr().expect("addr"));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = [0u8; 4096];
+        let read = socket.read(&mut buf).await.unwrap_or(0);
+        log.lock()
+            .expect("lock")
+            .push(String::from_utf8_lossy(&buf[..read]).to_string());
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia-proxy")
+            .await;
+    });
+
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        Some(crate::net::proxy::test_proxy(&proxy).expect("an http proxy")),
+        true,
+        None,
+        Arc::new(AllowAll),
+        false,
+    )
+    .expect("an http proxy must build the context");
+    let context = Arc::new(context);
+    let page = Page::new("page-1".to_string(), context.clone());
+    let (Some(from_page), Some(from_context)) = (&page.stealth_client, &context.stealth_client) else {
+        panic!("a stealth context must give its pages the stealth client");
+    };
+    assert!(
+        Arc::ptr_eq(from_page, from_context),
+        "the page must use the context's stealth client"
+    );
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        page.do_fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"), None),
+    )
+    .await
+    .expect("the fetch must finish")
+    .expect("the proxy answers, so the fetch must succeed");
+
+    assert_eq!(response.body, b"via-proxy");
+    let seen = seen.lock().expect("lock");
+    assert!(
+        seen.first()
+            .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
+        "the stealth client must send through the context proxy, got {seen:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_to_a_url_with_userinfo_is_refused_without_it() {
+    let script = fetch_script("http://user:s3cret@127.0.0.1:9/data.json", "");
+    let html = format!("<html><body><script>{script}</script></body></html>");
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigate");
+
+    let result = fetch_result(&mut page, &base).await;
+    let error = result["error"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        error.contains("credentials") && error.contains("http://127.0.0.1:9/data.json"),
+        "the fetch must be refused and name the URL without its userinfo, got {result}"
+    );
+    assert!(
+        !error.contains("s3cret"),
+        "the password must not be named, got {result}"
+    );
+}
+
+/// Serves `responses` on `listener`, recording each raw request head.
+fn serve_raw_recording(
+    listener: TcpListener,
+    responses: StdHashMap<String, String>,
+) -> Arc<std::sync::Mutex<Vec<String>>> {
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = requests.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let responses = responses.clone();
+            let log = log.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                let read = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..read]).to_string();
+                let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                log.lock().expect("lock").push(request);
+                let fallback = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
+                let response = responses.get(&path).unwrap_or(&fallback);
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+            });
+        }
+    });
+    requests
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let script = fetch_script("/start", "");
+    let html = format!("<html><body><script>{script}</script></body></html>");
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://user:s3cret@{addr}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", &html)),
+            ("/start", &redirect),
+            ("/end", &ok_response("text/plain", "arrived")),
+        ]),
+    );
+    let base = format!("http://{addr}");
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigate");
+
+    let result = fetch_result(&mut page, &base).await;
+    assert_eq!(result["text"], "arrived", "the redirect must be followed, got {result}");
+    let requests = requests.lock().expect("lock");
+    let end = requests
+        .iter()
+        .find(|request| request.starts_with("GET /end "))
+        .expect("the redirect target must have been requested");
+    assert!(
+        !end.to_lowercase().contains("authorization:"),
+        "the Location's userinfo must not become credentials: {end}"
+    );
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_stealth_page_scopes_the_context_credential_like_the_plain_client() {
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let credential = crate::net::OriginHeaders {
+        host: "example.com".to_owned(),
+        headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
+    };
+    context.http_client.set_origin_headers(Some(credential.clone())).await;
+
+    let page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let stealth = page
+        .stealth_client
+        .as_ref()
+        .expect("a stealth context gives the page a stealth client");
+    assert_eq!(stealth.origin_headers.read().await.as_ref(), Some(&credential));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_fetches_and_module_imports_carry_the_credential_only_on_its_host() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let other = format!("http://localhost:{}", addr.port());
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 0;\
+         fetch('/data', {{headers: {{'X-Api-Key': 'page-value'}}}}).finally(() => globalThis.fetched++);\
+         fetch('{other}/elsewhere').finally(() => globalThis.fetched++);</script>\
+         <script type=\"module\">import '/near.js'; import '/hop.js';</script></body></html>"
+    );
+    // ~keep A cross-host module redirect: reqwest keeps a custom-named header across hosts,
+    // ~keep so only the loader's own per-hop check keeps it off the other host. The Location's
+    // ~keep userinfo must not become a Basic header either.
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://user:s3cret@localhost:{}/far.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        addr.port()
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", &html)),
+            ("/data", &ok_response("application/json", "{}")),
+            ("/elsewhere", &ok_response("application/json", "{}")),
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/hop.js", &redirect),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ]),
+    );
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    context
+        .http_client
+        .set_origin_headers(Some(crate::net::OriginHeaders {
+            host: "127.0.0.1".to_owned(),
+            headers: vec![("X-Api-Key".to_owned(), "k3y".to_owned())],
+        }))
+        .await;
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    assert_eq!(
+        global(
+            &mut page,
+            "JSON.stringify([globalThis.fetched, !!globalThis.near, !!globalThis.far])"
+        ),
+        serde_json::json!("[2,true,true]"),
+        "both fetches must settle and both modules must run"
+    );
+    let requests = requests.lock().expect("lock");
+    let request_for = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .to_lowercase()
+    };
+    for path in ["/data", "/near.js", "/hop.js"] {
+        assert_eq!(
+            request_for(path).matches("x-api-key:").collect::<Vec<_>>().len(),
+            1,
+            "{path} carries the header once: {}",
+            request_for(path)
+        );
+        assert!(
+            request_for(path).contains("x-api-key: k3y"),
+            "{path} is on the credential's host and must carry it: {}",
+            request_for(path)
+        );
+    }
+    for path in ["/elsewhere", "/far.js"] {
+        assert!(
+            !request_for(path).contains("x-api-key") && !request_for(path).contains("authorization:"),
+            "{path} is on another host and must carry no credential: {}",
+            request_for(path)
+        );
+    }
+}
+
+/// Refuses every URL on one host.
+#[derive(Debug)]
+struct RefuseHost(&'static str);
+
+#[async_trait::async_trait]
+impl SsrfValidator for RefuseHost {
+    async fn validate(&self, url: &Url) -> Result<(), String> {
+        if url.host_str() == Some(self.0) {
+            return Err(format!("{} is refused", self.0));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_is_checked_against_the_ssrf_policy() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let html = "<html><body><script type=\"module\">import '/near.js'; import '/hop.js';</script></body></html>";
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/far.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        addr.port()
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", html)),
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/hop.js", &redirect),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ]),
+    );
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RefuseHost("localhost")),
+        false,
+    )
+    .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.iter().any(|request| request.starts_with("GET /hop.js ")),
+        "the redirecting module must have been requested: {requests:?}"
+    );
+    assert!(
+        !requests.iter().any(|request| request.starts_with("GET /far.js ")),
+        "a module redirect to a refused host must never reach the network: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_loop_stops_after_ten_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let html = "<html><body><script type=\"module\">import '/loop.js';</script></body></html>";
+    let redirect = "HTTP/1.1 302 Found\r\nLocation: /loop.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[("/", &ok_response("text/html", html)), ("/loop.js", redirect)]),
+    );
+    let mut page = test_page();
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    let loops = requests
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter(|request| request.starts_with("GET /loop.js "))
+        .count();
+    assert_eq!(loops, 11, "the first request and ten redirects, then the load stops");
+}
+
+/// A page on 127.0.0.1 whose context scopes `X-Api-Key: k3y` to that host, served by `listener`.
+async fn credentialed_page(
+    listener: TcpListener,
+    html: &str,
+    extra: &[(&str, &str)],
+) -> (Page, Arc<std::sync::Mutex<Vec<String>>>) {
+    let addr = listener.local_addr().expect("addr");
+    let mut entries = vec![("/", ok_response("text/html", html))];
+    entries.extend(extra.iter().map(|(path, response)| (*path, (*response).to_string())));
+    let responses = entries
+        .iter()
+        .map(|(path, response)| ((*path).to_string(), response.clone()))
+        .collect();
+    let requests = serve_raw_recording(listener, responses);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    context
+        .http_client
+        .set_origin_headers(Some(crate::net::OriginHeaders {
+            host: "127.0.0.1".to_owned(),
+            headers: vec![("X-Api-Key".to_owned(), "k3y".to_owned())],
+        }))
+        .await;
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+    (page, requests)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_carries_the_credential_only_on_its_host() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let other = format!("http://localhost:{}", listener.local_addr().expect("addr").port());
+    let html = format!(
+        "<html><body><script type=\"module\" src=\"/near.js\"></script>\
+         <script type=\"module\" src=\"{other}/far.js\"></script></body></html>"
+    );
+    let (mut page, requests) = credentialed_page(
+        listener,
+        &html,
+        &[
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        global(&mut page, "JSON.stringify([!!globalThis.near, !!globalThis.far])"),
+        serde_json::json!("[true,true]"),
+        "both module scripts must run"
+    );
+    let requests = requests.lock().expect("lock");
+    let request_for = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .to_lowercase()
+    };
+    assert!(
+        request_for("/near.js").contains("x-api-key: k3y"),
+        "a module on the credential's host carries it: {}",
+        request_for("/near.js")
+    );
+    assert!(
+        !request_for("/far.js").contains("x-api-key"),
+        "a module on another host carries no credential: {}",
+        request_for("/far.js")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_fails_to_load_names_no_credential_in_its_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (mut page, requests) = credentialed_page(listener, "<html><body><p>page</p></body></html>", &[]).await;
+    let js = page.js.as_mut().expect("the page has a JS realm");
+
+    let missing = js
+        .load_module(&format!("http://{addr}/missing.js"))
+        .await
+        .expect_err("a 404 module must fail to load");
+    assert!(missing.contains("404"), "{missing}");
+    assert!(
+        !missing.contains("k3y"),
+        "the scoped credential must not reach the error: {missing}"
+    );
+
+    let with_userinfo = js
+        .load_module(&format!("http://user:s3cret@{addr}/secret.js"))
+        .await
+        .expect_err("a module address with userinfo must be refused");
+    assert!(!with_userinfo.contains("s3cret"), "{with_userinfo}");
+    assert!(
+        with_userinfo.contains(&format!("http://{addr}/secret.js")),
+        "{with_userinfo}"
+    );
+
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.iter().any(|request| request.starts_with("GET /missing.js ")),
+        "the 404 module was requested: {requests:?}"
+    );
+    assert!(
+        !requests.iter().any(|request| request.starts_with("GET /secret.js ")),
+        "a module address with userinfo is never requested: {requests:?}"
+    );
+    assert!(rendered_html(&page).contains("<p>page</p>"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_fetches_and_module_imports_never_reach_a_rebinding_hosts_denied_address() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: 22\r\nConnection: close\r\n\r\nglobalThis.far = true;",
+    )
+    .await;
+    let target = format!("http://localhost:{port}");
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 'pending';\
+         fetch('{target}/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+         <script type=\"module\">import '{target}/far.js';</script><p>page</p></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let policy = Arc::new(RebindingPolicy::default());
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, policy.clone(), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&base).await.expect("navigate");
+
+    assert!(rendered_html(&page).contains("<p>page</p>"), "the page itself renders");
+    let fetched = global(&mut page, "String(globalThis.fetched)");
+    assert!(
+        fetched
+            .as_str()
+            .is_some_and(|error| error.contains("denied by the test policy: 127.0.0.1")),
+        "the fetch must fail with the policy's reason, got {fetched}"
+    );
+    assert_eq!(
+        global(&mut page, "!!globalThis.far"),
+        serde_json::json!(false),
+        "the module must not run"
+    );
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection: {:?}",
+        seen.lock().expect("lock")
+    );
+    assert_eq!(
+        *policy.resolved.lock().expect("lock"),
+        vec!["localhost", "localhost"],
+        "the fetch and the module import must each connect through the policy's lookup"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
+    use crate::net::resolver::tests::RebindingPolicy;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let html = "<html><body><script>globalThis.fetched = 'pending';\
+                fetch('http://example.invalid/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+                <script type=\"module\">import 'http://example.invalid/m.js';</script></body></html>";
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("http://example.invalid/", &ok_response("text/html", html)),
+            ("http://example.invalid/data", &ok_response("application/json", "{}")),
+            (
+                "http://example.invalid/m.js",
+                &ok_response("text/javascript", "globalThis.far = true;"),
+            ),
+        ]),
+    );
+    let policy = Arc::new(RebindingPolicy::default());
+    // ~keep A proxy named by host: a client that asked the policy for it would be refused.
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        Some(crate::net::proxy::test_proxy(&format!("http://localhost:{port}")).expect("an http proxy")),
+        false,
+        None,
+        policy.clone(),
+        false,
+    )
+    .expect("an http proxy must build the context");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate("http://example.invalid/").await.expect("navigate");
+
+    assert_eq!(
+        global(&mut page, "JSON.stringify([globalThis.fetched, !!globalThis.far])"),
+        serde_json::json!("[\"ok\",true]"),
+        "the fetch and the module must go through the proxy: {:?}",
+        requests.lock().expect("lock")
+    );
+    assert!(
+        policy.resolved.lock().expect("lock").is_empty(),
+        "the proxy resolves the target, so no client may ask the policy to"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_navigation_refused_at_connect_time_names_the_policy_reason_once() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RebindingPolicy::default()),
+        false,
+    )
+    .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let error = page
+        .navigate(&format!("http://localhost:{port}/"))
+        .await
+        .expect_err("the connection's lookup answers a denied address")
+        .to_string();
+
+    assert!(
+        error.contains("denied by the test policy: 127.0.0.1"),
+        "the refusal must carry the policy's reason: {error}"
+    );
+    assert_eq!(error.matches("Network error").count(), 1, "{error}");
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 'pending';\
+         fetch('http://localhost:{port}/data', {{headers: {{'X-Custom': '1'}}}})\
+         .then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RebindingPolicy::default()),
+        false,
+    )
+    .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&base).await.expect("navigate");
+
+    let fetched = global(&mut page, "String(globalThis.fetched)");
+    assert!(
+        fetched
+            .as_str()
+            .is_some_and(|error| error.contains("CORS preflight failed")
+                && error.contains("denied by the test policy: 127.0.0.1")),
+        "the preflight must fail with the policy's reason, got {fetched}"
+    );
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection"
+    );
+}
+
+/// Regression for #566: a classic script that finishes before its watchdog thread starts must not hold the
+/// page for the whole 5 s watchdog budget.
+#[tokio::test(flavor = "current_thread")]
+async fn a_short_classic_script_does_not_wait_out_the_watchdog() {
+    let base = serve(routes(&[(
+        "/",
+        "text/html",
+        "<html><body><script>1</script></body></html>",
+    )]))
+    .await;
+    for render in 1..=5 {
+        let mut page = test_page();
+        let start = std::time::Instant::now();
+        page.navigate(&base).await.expect("navigation must succeed");
+        let took = start.elapsed();
+        assert!(
+            took < std::time::Duration::from_millis(2500),
+            "render {render} took {took:?} against a 5 s watchdog budget"
+        );
+    }
+}
+
+fn moved_to(location: &str) -> String {
+    format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let mut page = test_page();
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!(followed, 1);
+    assert_eq!(page.url_string(), format!("{base}/a"));
+    let status = page
+        .network_events
+        .iter()
+        .rev()
+        .find(|event| event.resource_type == "Document")
+        .map(|event| event.status);
+    assert_eq!(status, Some(301), "the page ends on the redirect at the limit");
+
+    let mut uncounted = test_page();
+    uncounted.navigate(&format!("{base}/")).await.expect("navigate");
+    assert_eq!(
+        uncounted.url_string(),
+        format!("{base}/b"),
+        "an uncounted navigation follows the chain"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_takes_a_script_navigation_only_within_the_limit() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                "<html><body><script>location.replace('/next')</script></body></html>",
+            ),
+        ),
+        ("/next", &ok_response("text/html", "<p>next</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(0, "/", 0), (1, "/next", 1)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_navigation_bounds_the_redirects_of_a_form_post() {
+    let base = serve_raw(raw(&[
+        (
+            "/",
+            &ok_response(
+                "text/html",
+                r#"<html><body><form id="f" method="post" action="/post"></form><script>document.getElementById('f').submit()</script></body></html>"#,
+            ),
+        ),
+        ("/post", &moved_to("/a")),
+        ("/a", &ok_response("text/html", "<p>a</p>")),
+    ]))
+    .await;
+    for (limit, expected_path, expected_followed) in [(1, "/post", 1), (2, "/a", 2)] {
+        let mut page = test_page();
+        let followed = page
+            .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, limit)
+            .await
+            .expect("navigate");
+        assert_eq!(
+            (followed, page.url_string()),
+            (expected_followed, format!("{base}{expected_path}")),
+            "max_redirects={limit}: the form post counts one and its redirect one more"
+        );
+    }
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_counted_stealth_navigation_ends_on_the_redirect_at_the_limit() {
+    let base = serve_raw(raw(&[
+        ("/", &moved_to("/a")),
+        ("/a", &moved_to("/b")),
+        ("/b", &ok_response("text/html", "<p>b</p>")),
+    ]))
+    .await;
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    assert!(
+        page.stealth_client.is_some(),
+        "a stealth context fetches through the stealth client"
+    );
+    let followed = page
+        .navigate_counting(&format!("{base}/"), crate::lifecycle::WaitUntil::Load, 1)
+        .await
+        .expect("navigate");
+
+    assert_eq!((followed, page.url_string()), (1, format!("{base}/a")));
 }

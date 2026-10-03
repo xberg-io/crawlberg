@@ -1,17 +1,19 @@
 //! Proxy provider trait + baseline impl.
 //!
 //! Substrate-level extension point for per-host proxy rotation. The engine
-//! calls [`ProxyProvider::next_proxy`] from `reqwest::Proxy::custom` per HTTP
-//! request, so implementations can rotate by host, by counter, or by external
-//! state. Returning `None` short-circuits to a direct connection.
+//! calls [`ProxyProvider::next_proxy`] once for each HTTP request and each
+//! native browser render, so implementations can rotate by host, by counter,
+//! or by external state. Returning `None` short-circuits to a direct connection.
 //!
 //! Crawlberg ships [`StaticProxyProvider`] — a fixed-pool round-robin
 //! rotator. Cloud impls (e.g. `BrightDataProxyProvider`) plug in via
 //! [`crate::CrawlEngineBuilder::with_proxy_provider`].
 //!
-//! Browser-backend proxies (`config.browser.proxy`) are still configured at
-//! launch time via the static `ProxyConfig` value on `CrawlConfig`; the
-//! provider only routes the reqwest HTTP path. Mixing both is supported.
+//! A native browser render asks the provider once, for the page's host, and
+//! sends the page and every request it makes through that proxy.
+//! `config.browser.proxy`, when set, wins over the provider for renders. The
+//! Chrome backend cannot render through a provider and fails the render
+//! unless `config.browser.proxy` is set.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -29,82 +31,321 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::CrawlError;
 use crate::types::ProxyConfig;
 
-/// Proxy URL schemes `reqwest` and the native browser worker can build a proxy
-/// connection from.
-pub(crate) const SUPPORTED_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
+/// Proxy URL schemes the crawl config accepts: the only ones every HTTP client in the
+/// workspace can use.
+pub(crate) const SUPPORTED_SCHEMES: [&str; 2] = ["http", "https"];
 
-/// Parses `raw` as a proxy URL, refusing to guess a scheme.
-///
-/// `url::Url::parse` treats any `word:` prefix as a scheme, even when `raw` has no real
-/// scheme delimiter — for a scheme-less proxy string such as `user:pass@host:port`, that
-/// reads the embedded username as the scheme. Requiring an explicit `scheme://` up front
-/// means a credential can never be mistaken for a scheme, here or in any error built from
-/// this function's result.
-pub(crate) fn parse_proxy_url(raw: &str) -> Result<url::Url, CrawlError> {
-    let has_scheme = raw.split_once(':').is_some_and(|(_, rest)| rest.starts_with("//"));
-    if !has_scheme {
-        return Err(CrawlError::invalid_config(
-            "proxy URL is missing a scheme (expected http://, https://, socks5://, or socks5h://)",
-        ));
+/// A proxy URL read the way reqwest reads one. Only [`parse_proxy_url`] makes one, so a
+/// scheme taken from it is never a user name that the url crate misread as a scheme.
+pub(crate) struct ProxyUrl(url::Url);
+
+impl ProxyUrl {
+    pub(crate) fn as_url(&self) -> &url::Url {
+        &self.0
     }
-    url::Url::parse(raw).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))
+}
+
+/// Shows the scheme and host only: the URL can carry a password.
+impl std::fmt::Debug for ProxyUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyUrl")
+            .field("scheme", &self.0.scheme())
+            .field("host", &self.0.host_str())
+            .finish()
+    }
+}
+
+/// Parses `raw` as a proxy URL, adding `http://` exactly where reqwest's proxy parser does.
+///
+/// ~keep reqwest retries `http://<raw>` when `raw` has no scheme (`127.0.0.1:3128`) and when
+/// ~keep it parses without a host (`localhost:3128`, `user:pass@proxy:8080`, whose first word
+/// ~keep the url crate reads as a scheme). Matching it keeps every address reqwest takes.
+pub(crate) fn parse_proxy_url(raw: &str) -> Result<ProxyUrl, CrawlError> {
+    let url = match url::Url::parse(raw) {
+        Ok(url) if url.has_host() => url,
+        Ok(_) | Err(url::ParseError::RelativeUrlWithoutBase) => url::Url::parse(&format!("http://{raw}"))
+            .ok()
+            .filter(url::Url::has_host)
+            .ok_or_else(|| {
+                CrawlError::invalid_config("invalid proxy URL: expected an address such as http://proxy:8080")
+            })?,
+        Err(e) => return Err(CrawlError::invalid_config(format!("invalid proxy URL: {e}"))),
+    };
+    Ok(ProxyUrl(url))
 }
 
 /// Rejects `url` unless its scheme is one of [`SUPPORTED_SCHEMES`].
-pub(crate) fn ensure_supported_scheme(url: &url::Url) -> Result<(), CrawlError> {
+pub(crate) fn ensure_supported_scheme(url: &ProxyUrl) -> Result<(), CrawlError> {
+    let scheme = url.as_url().scheme();
+    if SUPPORTED_SCHEMES.contains(&scheme) {
+        return Ok(());
+    }
+    let reason = if scheme.starts_with("socks") {
+        "SOCKS proxies are not supported; use http or https"
+    } else {
+        "expected http or https"
+    };
+    Err(CrawlError::invalid_config(format!(
+        "invalid proxy URL scheme '{scheme}': {reason}"
+    )))
+}
+
+/// Proxy URL schemes Chrome accepts in `--proxy-server`: the HTTP ones plus its own SOCKS ones.
+const CHROME_SCHEMES: [&str; 4] = ["http", "https", "socks4", "socks5"];
+
+/// The proxy a Chrome browser uses, read by [`chrome_proxy`]: `browser.proxy`, else the
+/// crawl-wide `proxy`.
+///
+/// ~keep With a `proxy_provider` and no `browser.proxy` this is an error, not the crawl-wide
+/// ~keep proxy: the provider picks per request and routes the HTTP fetches, and Chrome can take
+/// ~keep neither a per-page pick with credentials nor a pick that a parked page keeps.
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) fn chrome_proxy_for(config: &crate::types::CrawlConfig) -> Result<Option<ChromeProxy>, CrawlError> {
+    if config.browser.proxy.is_none() && config.proxy_provider.is_some() {
+        return Err(CrawlError::invalid_config(
+            "the Chrome backend cannot render through a proxy provider; \
+             use the native backend, or set browser.proxy",
+        ));
+    }
+    config
+        .browser
+        .proxy
+        .as_ref()
+        .or(config.proxy.as_ref())
+        .map(chrome_proxy)
+        .transpose()
+}
+
+/// The proxy a native render of a page on `host` goes through: `browser.proxy`, else the
+/// proxy the `proxy_provider` picks for `host` (as for an HTTP fetch of the page), else the
+/// crawl-wide `proxy`.
+#[cfg(feature = "browser-native")]
+pub(crate) fn native_render_proxy(
+    config: &crate::types::CrawlConfig,
+    host: &str,
+) -> Result<Option<AdmittedProxy>, CrawlError> {
+    if let Some(proxy) = &config.browser.proxy {
+        return admit_proxy(proxy).map(Some);
+    }
+    if let Some(provider) = &config.proxy_provider {
+        return Ok(pick_proxy(provider.as_ref(), host));
+    }
+    config.proxy.as_ref().map(admit_proxy).transpose()
+}
+
+/// Asks `provider` once for the proxy of a request to `host`, and checks that proxy.
+///
+/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list), so
+/// ~keep it is not logged. A refused proxy also goes direct, which bypasses whatever egress
+/// ~keep control the proxy enforces, so it is logged at ERROR. The proxy URL is not logged: a
+/// ~keep URL the check refuses can hold a password it cannot redact, and the target host
+/// ~keep already names the request that went direct. The check's own error never shows it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn pick_proxy(provider: &dyn ProxyProvider, host: &str) -> Option<AdmittedProxy> {
+    let proxy = provider.next_proxy(host)?;
+    match admit_proxy(&proxy) {
+        Ok(admitted) => Some(admitted),
+        Err(error) => {
+            tracing::error!(
+                target_host = %host,
+                %error,
+                "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
+            );
+            None
+        }
+    }
+}
+
+/// A proxy as Chrome takes it.
+#[derive(Debug)]
+#[cfg_attr(not(feature = "browser-chromiumoxide"), allow(dead_code))]
+pub(crate) struct ChromeProxy {
+    /// `scheme://host:port`, the value of `--proxy-server`.
+    pub(crate) server: String,
+}
+
+/// Reads `proxy` for Chrome, with [`parse_proxy_url`], so Chrome gets the same address as
+/// every HTTP client.
+///
+/// ~keep A proxy with credentials is refused: Chrome ignores credentials in `--proxy-server`,
+/// ~keep and chromiumoxide answers every proxy authentication challenge itself before a caller
+/// ~keep can (`handler/network.rs` `on_fetch_auth_required`), so no credentials can reach it.
+pub(crate) fn chrome_proxy(proxy: &ProxyConfig) -> Result<ChromeProxy, CrawlError> {
+    let admitted = admit_proxy(proxy)?;
+    let url = admitted.address().as_url();
     let scheme = url.scheme();
-    if !SUPPORTED_SCHEMES.contains(&scheme) {
+    if !CHROME_SCHEMES.contains(&scheme) {
         return Err(CrawlError::invalid_config(format!(
-            "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
+            "invalid proxy URL scheme '{scheme}': Chrome takes http, https, socks4 or socks5"
         )));
     }
-    Ok(())
+    if admitted.credentials().is_some() {
+        return Err(CrawlError::invalid_config(
+            "the Chrome backend cannot use a proxy with a username or password; \
+             use a proxy that needs no credentials, or the native backend",
+        ));
+    }
+    Ok(ChromeProxy {
+        server: format!(
+            "{scheme}://{}",
+            &url[url::Position::BeforeHost..url::Position::AfterPort]
+        ),
+    })
 }
 
-/// Embeds `proxy`'s username/password into its URL as percent-encoded userinfo, for
-/// backends that take a proxy connection as a single URL string rather than separate
-/// credential fields (the native browser worker). Returns the base URL unchanged when no
-/// credentials are configured.
+/// A configured proxy after [`admit_proxy`]: an address that holds no user name or password,
+/// and the credentials apart from it.
 ///
-/// Percent-encoding via `Url::set_username`/`set_password` (rather than a manual
-/// `format!("{scheme}://{user}:{pass}@{rest}")` splice) means a `:`, `@`, or `/` in a
-/// credential cannot corrupt the authority — e.g. terminate it early and smuggle a
-/// different host in, or misdirect the connection to an unintended proxy.
+/// ~keep The credentials join the address only where a connection is made (a client's
+/// ~keep `basic_auth`), so no proxy URL string that reaches a log or an error can hold them.
+pub(crate) struct AdmittedProxy {
+    address: ProxyUrl,
+    credentials: Option<ProxyCredentials>,
+}
+
+/// A proxy user name and password, percent-decoded.
 ///
-/// Only the native browser backend (`native_browser.rs`, `interact/native.rs`) hands a
-/// proxy connection to another process as a single URL string; every other caller passes
-/// credentials separately (e.g. `reqwest::Proxy::basic_auth` in `http/client.rs`).
-#[cfg(feature = "browser-native")]
-pub(crate) fn proxy_url_with_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
-    if proxy.username.is_none() && proxy.password.is_none() {
-        return Ok(proxy.url.clone());
+/// ~keep wasm32 has no proxy client, so there the value only records that credentials are set.
+pub(crate) struct ProxyCredentials {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) username: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) password: String,
+}
+
+impl AdmittedProxy {
+    /// The address, with no user name or password.
+    pub(crate) fn address(&self) -> &ProxyUrl {
+        &self.address
     }
 
-    let mut parsed = parse_proxy_url(&proxy.url)?;
-    parsed
-        .set_username(proxy.username.as_deref().unwrap_or(""))
-        .map_err(|()| credentials_unsupported_error(&parsed))?;
-    parsed
-        .set_password(proxy.password.as_deref())
-        .map_err(|()| credentials_unsupported_error(&parsed))?;
-    Ok(parsed.to_string())
+    pub(crate) fn credentials(&self) -> Option<&ProxyCredentials> {
+        self.credentials.as_ref()
+    }
+
+    /// Consumes the proxy for a backend that takes the parts.
+    #[cfg(feature = "browser-native")]
+    pub(crate) fn into_parts(self) -> (url::Url, Option<ProxyCredentials>) {
+        (self.address.0, self.credentials)
+    }
+
+    /// The reqwest proxy, with the credentials sent as `Proxy-Authorization`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn reqwest_proxy(&self) -> Result<reqwest::Proxy, CrawlError> {
+        let proxy = reqwest::Proxy::all(self.address.as_url().as_str()).map_err(|_| {
+            CrawlError::invalid_config("invalid proxy URL: expected an address such as http://proxy:8080")
+        })?;
+        Ok(match &self.credentials {
+            Some(credentials) => proxy.basic_auth(&credentials.username, &credentials.password),
+            None => proxy,
+        })
+    }
 }
 
-/// `url` has already been through [`parse_proxy_url`], so its scheme is never a
-/// misread credential — safe to name in an error.
-#[cfg(feature = "browser-native")]
-fn credentials_unsupported_error(url: &url::Url) -> CrawlError {
-    CrawlError::invalid_config(format!(
-        "proxy scheme '{}' does not support embedded credentials",
-        url.scheme()
-    ))
+/// Shows the scheme, host and port, and whether credentials are set.
+impl std::fmt::Debug for AdmittedProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmittedProxy")
+            .field("address", &self.address)
+            .field("credentials", &self.credentials.is_some())
+            .finish()
+    }
+}
+
+/// Reads `proxy` once: its address with [`parse_proxy_url`], and its credentials from the
+/// URL userinfo or from the `username`/`password` fields, never both.
+///
+/// ~keep A raw `@` after the authority means a `#`, `/` or `?` in a credential ended the
+/// ~keep authority early (#285): the parser then reads the user name as the host and the start
+/// ~keep of the password as the port, or keeps the rest of the password in the path or the
+/// ~keep fragment. It is refused. Without a userinfo, the same text can also be an `@` in a
+/// ~keep path, query or fragment, so that error names both.
+pub(crate) fn admit_proxy(proxy: &ProxyConfig) -> Result<AdmittedProxy, CrawlError> {
+    let ProxyUrl(mut url) = parse_proxy_url(&proxy.url)?;
+    let in_url = !url.username().is_empty() || url.password().is_some();
+    if after_authority(&proxy.url).contains('@') {
+        return Err(CrawlError::invalid_config(if in_url {
+            "invalid proxy URL: a user name or password in it holds a character that ends the address \
+             (such as #, / or ?); percent-encode it, or set it in username and password"
+        } else {
+            "invalid proxy URL: it holds an @ after the host, and a proxy address takes no path, query \
+             or fragment; if the @ is part of a password, percent-encode the password, or set it in \
+             username and password"
+        }));
+    }
+    let in_fields = proxy.username.is_some() || proxy.password.is_some();
+    if in_url && in_fields {
+        return Err(CrawlError::invalid_config(
+            "the proxy URL holds a user name or password and username or password is also set; \
+             set the credentials in one place",
+        ));
+    }
+    let credentials = if in_url {
+        // ~keep wasm32 keeps no credentials but refuses the same URLs as every other target.
+        #[cfg(target_arch = "wasm32")]
+        {
+            percent_decoded(url.username())?;
+            percent_decoded(url.password().unwrap_or(""))?;
+        }
+        let credentials = ProxyCredentials {
+            #[cfg(not(target_arch = "wasm32"))]
+            username: percent_decoded(url.username())?,
+            #[cfg(not(target_arch = "wasm32"))]
+            password: percent_decoded(url.password().unwrap_or(""))?,
+        };
+        // ~keep Cannot fail: the address has a host, so it can hold userinfo and lose it.
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        Some(credentials)
+    } else {
+        in_fields.then(|| ProxyCredentials {
+            #[cfg(not(target_arch = "wasm32"))]
+            username: proxy.username.clone().unwrap_or_default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            password: proxy.password.clone().unwrap_or_default(),
+        })
+    };
+    Ok(AdmittedProxy {
+        address: ProxyUrl(url),
+        credentials,
+    })
+}
+
+/// The raw text from the first `/`, `?`, `#` or `\` after the scheme: the part that is not
+/// the authority, so an `@` in it cannot end a userinfo.
+fn after_authority(raw: &str) -> &str {
+    let rest = raw.split_once("://").map_or(raw, |(_, rest)| rest);
+    rest.find(['/', '?', '#', '\\']).map_or("", |start| &rest[start..])
+}
+
+fn percent_decoded(part: &str) -> Result<String, CrawlError> {
+    percent_encoding::percent_decode_str(part)
+        .decode_utf8()
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_| CrawlError::invalid_config("invalid proxy URL: a user name or password in it is not UTF-8"))
+}
+
+/// The scheme, host and port of `proxy` as [`admit_proxy`] reads it, or `***` when it refuses
+/// it: the `Debug` text for a proxy that may never have been validated.
+pub(crate) fn redacted_proxy_address(proxy: &ProxyConfig) -> String {
+    match admit_proxy(proxy) {
+        Ok(admitted) => {
+            let url = admitted.address.as_url();
+            format!(
+                "{}://{}",
+                url.scheme(),
+                &url[url::Position::BeforeHost..url::Position::AfterPort]
+            )
+        }
+        Err(_) => "***".to_owned(),
+    }
 }
 
 /// Resolves a [`ProxyConfig`] for an outbound HTTP request.
 ///
-/// Implementations must be cheap (called per request from inside
-/// `reqwest::Proxy::custom`) and thread-safe. Returning `None` routes the
-/// request directly without a proxy.
+/// Implementations must be cheap (called once for each request, redirect hops
+/// included, and once for each native browser render) and thread-safe.
+/// Returning `None` routes the request directly without a proxy.
 pub trait ProxyProvider: std::fmt::Debug + Send + Sync + 'static {
     /// Pick a proxy for the given target host. `host` is the URL host string
     /// (no scheme, no port) — implementations may key on it for sticky
@@ -126,14 +367,11 @@ impl std::fmt::Debug for StaticProxyProvider {
     /// Redacted: [`ProxyConfig`]'s own derived `Debug` prints `username`/`password` and
     /// any userinfo embedded in `url` verbatim, and `ProxyProvider: std::fmt::Debug`
     /// means any consumer holding a trait object can trigger this via `{:?}` — including
-    /// through `tracing`'s `?field` capture. Show only the redacted URL per entry plus
-    /// whether credentials are configured, never the credentials themselves.
+    /// through `tracing`'s `?field` capture. Show only each entry's URL origin, as
+    /// `ProxyConfig` does, plus whether credentials are configured, never the credentials
+    /// themselves.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let redacted_urls: Vec<String> = self
-            .entries
-            .iter()
-            .map(|entry| crate::net::redact_url_credentials(&entry.url))
-            .collect();
+        let redacted_urls: Vec<String> = self.entries.iter().map(redacted_proxy_address).collect();
         let has_credentials = self
             .entries
             .iter()
@@ -227,50 +465,94 @@ mod tests {
         );
     }
 
+    /// One proxy address of every input class, for the equivalence tests below.
+    pub(crate) const EQUIVALENCE_INPUTS: [&str; 17] = [
+        "http://proxy.test:8080",
+        "https://u:p@proxy.test:8443",
+        "127.0.0.1:3128",
+        "[::1]:3128",
+        "localhost:3128",
+        "myproxy.corp:3128",
+        "operator:s3cr3t@proxy:8080",
+        "KEY:@host:1",
+        "user@127.0.0.1:3128",
+        "proxy.test",
+        "http:proxy.test:8080",
+        "gopher://proxy.test:70",
+        "socks5://proxy.test:1080",
+        "://operator:s3cr3t@proxy.test:8080",
+        "operator:s3cr3t@proxy:99999",
+        "mailto:someone",
+        "",
+    ];
+
     #[test]
-    fn scheme_less_url_is_rejected_without_naming_the_embedded_username() {
-        // ~keep `alice` sits where `url::Url::parse` would read a scheme from, so the
-        // regression this guards is the parser mistaking it for one.
-        let err = parse_proxy_url("alice:s3cr3t@proxy.test:8080")
-            .expect_err("a proxy URL with no scheme delimiter must be rejected")
-            .to_string();
-        assert!(
-            !err.contains("alice"),
-            "error must not name the embedded username, got: {err}"
-        );
-        assert!(
-            !err.contains("s3cr3t"),
-            "error must not leak the embedded password, got: {err}"
-        );
-        assert!(
-            err.contains("missing a scheme"),
-            "error should explain the actual problem, got: {err}"
-        );
+    #[cfg(not(target_arch = "wasm32"))]
+    fn proxy_addresses_are_read_exactly_as_reqwest_reads_them() {
+        for raw in EQUIVALENCE_INPUTS {
+            match (reqwest::Proxy::all(raw), parse_proxy_url(raw)) {
+                (Ok(theirs), Ok(ours)) => {
+                    let (theirs, ours) = (format!("{theirs:?}"), format!("{:?}", ours.as_url()));
+                    assert!(
+                        theirs.contains(&ours),
+                        "{raw:?}: reqwest reads {theirs}, we read {ours}"
+                    );
+                }
+                (Err(_), Err(_)) => {}
+                (theirs, ours) => panic!(
+                    "{raw:?}: reqwest accepts it: {}, we accept it: {}",
+                    theirs.is_ok(),
+                    ours.is_ok()
+                ),
+            }
+        }
     }
 
     #[test]
-    fn bare_host_port_without_a_scheme_is_also_rejected() {
-        let err = parse_proxy_url("proxy.test:8080").expect_err("a bare host:port must be rejected");
-        assert!(err.to_string().contains("missing a scheme"));
-    }
-
-    #[test]
-    fn issue_315_and_330_literal_repro_urls_never_echo_the_username() {
-        // ~keep The literal repro strings from #315 and #330: `operator` and `KEY` sit where a
-        // naive `url::Url::parse` would read the scheme from, and `KEY:@host:1` additionally
-        // has an empty password (nothing between `:` and `@`).
-        for raw in ["operator:s3cr3t@proxy:8080", "KEY:@host:1"] {
-            let err = parse_proxy_url(raw)
-                .expect_err(&format!("{raw} has no scheme delimiter and must be rejected"))
-                .to_string();
-            let lowered = err.to_lowercase();
-            assert!(
-                !lowered.contains("operator") && !lowered.contains("key"),
-                "error for {raw} must not name the embedded username, got: {err}"
+    #[cfg(feature = "browser-native")]
+    fn the_native_browser_reads_and_accepts_proxies_exactly_as_the_config_check_does() {
+        assert_eq!(SUPPORTED_SCHEMES, crawlberg_browser::adapter::SUPPORTED_PROXY_SCHEMES);
+        for raw in EQUIVALENCE_INPUTS {
+            let ours =
+                parse_proxy_url(raw).and_then(|url| ensure_supported_scheme(&url).map(|()| url.as_url().clone()));
+            let theirs = crawlberg_browser::adapter::check_proxy_url(raw);
+            assert_eq!(
+                ours.as_ref().ok().map(url::Url::as_str),
+                theirs.as_ref().ok().map(url::Url::as_str),
+                "{raw:?}: the config check and the native browser disagree"
             );
+        }
+    }
+
+    #[test]
+    fn a_scheme_less_proxy_is_read_as_http_with_its_credentials_in_the_userinfo() {
+        // ~keep The literal repro strings from #315 and #330: `operator` and `KEY` sit where a
+        // naive `url::Url::parse` reads a scheme from. They are user names, not schemes.
+        for (raw, user, host) in [
+            ("operator:s3cr3t@proxy:8080", "operator", "proxy"),
+            ("KEY:@host:1", "KEY", "host"),
+            ("localhost:3128", "", "localhost"),
+            ("127.0.0.1:3128", "", "127.0.0.1"),
+        ] {
+            let url = parse_proxy_url(raw).expect("reqwest takes this address, so we must");
+            let url = url.as_url();
+            assert_eq!(
+                (url.scheme(), url.username(), url.host_str()),
+                ("http", user, Some(host)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unusable_proxy_address_is_refused_without_showing_it() {
+        for raw in ["://operator:s3cr3t@proxy.test:8080", "operator:s3cr3t@proxy:99999"] {
+            let err = parse_proxy_url(raw)
+                .expect_err("reqwest refuses this address")
+                .to_string();
             assert!(
-                !lowered.contains("s3cr3t"),
-                "error for {raw} must not leak the password, got: {err}"
+                !err.contains("operator") && !err.contains("s3cr3t"),
+                "the error for {raw} shows the credential: {err}"
             );
         }
     }
@@ -278,8 +560,8 @@ mod tests {
     #[test]
     fn a_url_with_an_explicit_scheme_parses_normally() {
         let url = parse_proxy_url("http://proxy.test:8080").expect("a well-formed URL must parse");
-        assert_eq!(url.scheme(), "http");
-        assert_eq!(url.host_str(), Some("proxy.test"));
+        assert_eq!(url.as_url().scheme(), "http");
+        assert_eq!(url.as_url().host_str(), Some("proxy.test"));
     }
 
     #[test]
@@ -292,101 +574,289 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "browser-native")]
-    fn password_with_special_characters_is_percent_encoded_and_round_trips() {
+    fn socks_is_refused_with_a_reason() {
+        for raw in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
+            let url = parse_proxy_url(raw).expect("a socks URL parses");
+            let err = ensure_supported_scheme(&url)
+                .expect_err("no client speaks SOCKS")
+                .to_string();
+            assert!(err.contains("SOCKS proxies are not supported"), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn chrome_gets_the_scheme_host_and_port() {
+        for (raw, server) in [
+            ("127.0.0.1:3128", "http://127.0.0.1:3128"),
+            ("http:proxy.test:8080", "http://proxy.test:8080"),
+            ("[::1]:3128", "http://[::1]:3128"),
+            ("https://proxy.test", "https://proxy.test"),
+            ("http://proxy.test:8080/path", "http://proxy.test:8080"),
+            ("socks5://proxy.test:1080", "socks5://proxy.test:1080"),
+            ("socks4://proxy.test:1080", "socks4://proxy.test:1080"),
+        ] {
+            let proxy = chrome_proxy(&proxy(raw)).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(proxy.server, server, "{raw}");
+        }
+    }
+
+    #[test]
+    fn chrome_refuses_a_proxy_with_credentials_without_showing_them() {
+        let with_fields = ProxyConfig {
+            url: "http://proxy.test:8080".into(),
+            username: Some("operator".into()),
+            password: Some("s3cr3t".into()),
+        };
+        let password_only = ProxyConfig {
+            url: "http://proxy.test:8080".into(),
+            username: None,
+            password: Some("s3cr3t".into()),
+        };
+        for config in [
+            proxy("operator:s3cr3t@proxy.test:8080"),
+            proxy("http://operator:s3cr3t@proxy.test:8080"),
+            proxy("http://operator@proxy.test:8080"),
+            proxy("socks5://operator:s3cr3t@proxy.test:1080"),
+            with_fields,
+            password_only,
+        ] {
+            let err = chrome_proxy(&config)
+                .expect_err("Chrome cannot use credentials")
+                .to_string();
+            assert!(err.contains("username or password"), "{err}");
+            assert!(!err.contains("s3cr3t") && !err.contains("operator"), "{err}");
+        }
+    }
+
+    #[cfg(feature = "browser-chromiumoxide")]
+    #[test]
+    fn a_chrome_render_with_a_proxy_provider_is_refused_unless_browser_proxy_is_set() {
+        let provider: std::sync::Arc<dyn ProxyProvider> =
+            std::sync::Arc::new(StaticProxyProvider::new(vec![proxy("http://picked:3")]));
+        let mut config = crate::types::CrawlConfig {
+            proxy: Some(proxy("http://crawl-proxy:1")),
+            proxy_provider: Some(provider),
+            ..crate::types::CrawlConfig::default()
+        };
+        let err = chrome_proxy_for(&config)
+            .expect_err("Chrome must not render around the provider")
+            .to_string();
+        assert!(err.contains("proxy provider") && err.contains("browser.proxy"), "{err}");
+
+        config.browser.proxy = Some(proxy("http://browser-proxy:2"));
+        let chosen = chrome_proxy_for(&config).expect("browser.proxy is Chrome's own proxy");
+        assert_eq!(
+            chosen.map(|proxy| proxy.server).as_deref(),
+            Some("http://browser-proxy:2")
+        );
+    }
+
+    fn admitted(proxy: &ProxyConfig) -> (url::Url, Option<(String, String)>) {
+        let admitted = admit_proxy(proxy).expect("a usable proxy");
+        let credentials = admitted
+            .credentials()
+            .map(|credentials| (credentials.username.clone(), credentials.password.clone()));
+        (admitted.address().as_url().clone(), credentials)
+    }
+
+    #[test]
+    fn credentials_in_the_fields_stay_out_of_the_address() {
         let secret_password = "p@ss:w/ord #1 two";
         let proxy = ProxyConfig {
             url: "http://proxy.test:8080".into(),
             username: Some("alice".into()),
             password: Some(secret_password.into()),
         };
-
-        let resolved = proxy_url_with_credentials(&proxy).expect("credentials must resolve");
-        assert!(
-            !resolved.contains(secret_password),
-            "the raw password must not appear unencoded in the resolved URL, got '{resolved}'"
-        );
-
-        let reparsed = url::Url::parse(&resolved).expect("the resolved proxy URL must itself be valid");
-        assert_eq!(
-            reparsed.host_str(),
-            Some("proxy.test"),
-            "special characters in the password must not corrupt the host, got '{resolved}'"
-        );
-        assert_eq!(reparsed.port(), Some(8080));
-        let decoded_password = percent_decode(reparsed.password().expect("password must be set"));
-        assert_eq!(
-            decoded_password, secret_password,
-            "the password must decode back to its original value"
-        );
+        let (address, credentials) = admitted(&proxy);
+        assert_eq!(address.as_str(), "http://proxy.test:8080/");
+        assert_eq!(credentials, Some(("alice".to_owned(), secret_password.to_owned())));
     }
 
     #[test]
-    #[cfg(feature = "browser-native")]
-    fn socks5_credentials_are_embedded_via_userinfo_not_dropped() {
-        let proxy = ProxyConfig {
-            url: "socks5://proxy.test:1080".into(),
-            username: Some("alice".into()),
-            password: Some("s3cr3t".into()),
-        };
-        let resolved = proxy_url_with_credentials(&proxy).expect("socks5 with credentials must resolve");
-        assert_eq!(resolved, "socks5://alice:s3cr3t@proxy.test:1080");
-    }
-
-    #[test]
-    #[cfg(feature = "browser-native")]
-    fn credential_free_proxy_is_passed_through_unchanged() {
-        let proxy = ProxyConfig {
-            url: "http://proxy.test:8080".into(),
-            username: None,
-            password: None,
-        };
-        assert_eq!(
-            proxy_url_with_credentials(&proxy).expect("credential-free proxy must resolve"),
-            "http://proxy.test:8080"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "browser-native")]
-    fn scheme_less_base_url_with_credentials_is_rejected_without_naming_the_username() {
-        let proxy = ProxyConfig {
-            url: "alice:s3cr3t@proxy.test:8080".into(),
-            username: Some("alice".into()),
-            password: Some("s3cr3t".into()),
-        };
-        let err = proxy_url_with_credentials(&proxy)
-            .expect_err("a scheme-less base URL must be rejected")
-            .to_string();
-        assert!(!err.contains("alice"), "error must not name the username, got: {err}");
-        assert!(!err.contains("s3cr3t"), "error must not leak the password, got: {err}");
-    }
-
-    /// Minimal ASCII percent-decoder for test assertions only; production code never
-    /// needs to decode a proxy password, only encode one via `Url::set_password`.
-    fn percent_decode(input: &str) -> String {
-        let bytes = input.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%'
-                && i + 3 <= bytes.len()
-                && let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap(), 16)
-            {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-            out.push(bytes[i]);
-            i += 1;
+    fn credentials_in_the_url_move_out_of_the_address_decoded() {
+        for (raw, address, user, password) in [
+            (
+                "http://alice:p%40ss%3Aw%2Ford%20%231@proxy.test:8080",
+                "http://proxy.test:8080/",
+                "alice",
+                "p@ss:w/ord #1",
+            ),
+            ("operator:s3cr3t@proxy:8080", "http://proxy:8080/", "operator", "s3cr3t"),
+            (
+                "http://operator@proxy.test:8080",
+                "http://proxy.test:8080/",
+                "operator",
+                "",
+            ),
+        ] {
+            let (admitted_address, credentials) = admitted(&proxy(raw));
+            assert_eq!(admitted_address.as_str(), address, "{raw}");
+            assert_eq!(credentials, Some((user.to_owned(), password.to_owned())), "{raw}");
         }
-        String::from_utf8(out).expect("test fixture is valid UTF-8")
     }
 
     #[test]
-    fn percent_decode_round_trips_reserved_characters() {
-        assert_eq!(percent_decode("p%40ss%3Aw%2Ford%20%231"), "p@ss:w/ord #1");
-        assert_eq!(percent_decode("plain"), "plain");
+    fn credential_free_proxy_is_returned_as_parsed() {
+        for (raw, expected) in [
+            ("http://proxy.test:8080", "http://proxy.test:8080/"),
+            ("127.0.0.1:3128", "http://127.0.0.1:3128/"),
+        ] {
+            assert_eq!(
+                admitted(&proxy(raw)),
+                (url::Url::parse(expected).expect("parses"), None)
+            );
+        }
+    }
+
+    #[test]
+    fn scheme_less_base_url_takes_the_configured_credentials() {
+        // ~keep #421: the address is read once, the way reqwest reads it, and the configured
+        // ~keep credentials go with that address.
+        let proxy = ProxyConfig {
+            url: "127.0.0.1:3128".into(),
+            username: Some("alice".into()),
+            password: Some("s3cr3t".into()),
+        };
+        let (address, credentials) = admitted(&proxy);
+        assert_eq!(address.as_str(), "http://127.0.0.1:3128/");
+        assert_eq!(credentials, Some(("alice".to_owned(), "s3cr3t".to_owned())));
+    }
+
+    /// #285: an unencoded `#`, `/` or `?` ends the authority, so the url crate reads
+    /// `operator` as the host and the start of the password as the port.
+    const UNENCODED_PASSWORDS: [&str; 3] = [
+        "http://operator:4242#IMPL385-285@proxy.test:8080",
+        "http://operator:4242/IMPL385-285@proxy.test:8080",
+        "http://operator:4242?IMPL385-285@proxy.test:8080",
+    ];
+
+    fn assert_hides_the_password(raw: &str, text: &str) {
+        for part in ["4242", "IMPL385-285", "operator"] {
+            assert!(!text.contains(part), "{raw}: '{part}' is shown: {text}");
+        }
+    }
+
+    /// A config that validates `proxy` with no Chrome render, so only the proxy check can refuse it.
+    fn crawl_through(proxy: ProxyConfig) -> crate::CrawlConfig {
+        let mut config = crate::CrawlConfig {
+            proxy: Some(proxy),
+            ..crate::CrawlConfig::default()
+        };
+        config.browser.mode = crate::BrowserMode::Never;
+        config
+    }
+
+    #[test]
+    fn a_password_with_an_unencoded_hash_slash_or_question_mark_is_refused_without_showing_it() {
+        for raw in UNENCODED_PASSWORDS {
+            let err = crawl_through(proxy(raw))
+                .validate()
+                .expect_err("an unencoded password must be refused, not read as a host")
+                .to_string();
+            assert!(
+                err.contains("percent-encode"),
+                "{raw}: the error must name the fix: {err}"
+            );
+            assert_hides_the_password(raw, &err);
+        }
+        crawl_through(proxy("http://operator:4242%23IMPL385-285@proxy.test:8080"))
+            .validate()
+            .expect("positive twin: the percent-encoded password is accepted");
+    }
+
+    #[test]
+    fn a_password_with_a_raw_at_sign_then_a_hash_is_refused_without_showing_its_tail() {
+        for raw in [
+            "http://op:pa@h#FIX385D-TAIL@proxy.test:8080",
+            "http://op:pa@h/FIX385D-TAIL@proxy.test:8080",
+            "http://op:pa@h?FIX385D-TAIL@proxy.test:8080",
+            "op:pa@h#FIX385D-TAIL@proxy.test:8080",
+            "http://op:4242\\RB385Z@proxy.test:8080",
+        ] {
+            let err = crawl_through(proxy(raw))
+                .validate()
+                .expect_err("an @ past the userinfo means the password ended the address early")
+                .to_string();
+            assert!(
+                err.contains("percent-encode"),
+                "{raw}: the error must name the fix: {err}"
+            );
+            let shown = format!(
+                "{err} {:?} {:?} {}",
+                proxy(raw),
+                StaticProxyProvider::new(vec![proxy(raw)]),
+                redacted_proxy_address(&proxy(raw))
+            );
+            for part in ["FIX385D-TAIL", "RB385Z", "pa@h"] {
+                assert!(!shown.contains(part), "{raw}: '{part}' is shown: {shown}");
+            }
+        }
+        crawl_through(proxy("http://op:pa%40h%23FIX385D-TAIL@proxy.test:8080"))
+            .validate()
+            .expect("positive twin: the percent-encoded password is accepted");
+    }
+
+    #[test]
+    fn an_at_sign_in_the_path_query_or_fragment_of_a_proxy_is_refused_for_the_path_not_a_password() {
+        for raw in [
+            "http://proxy.test:8080/p@th",
+            "http://proxy.test:8080/?q=a@b",
+            "http://proxy.test:8080?q=a@b",
+            "http://proxy.test:8080/#f@g",
+        ] {
+            let err = crawl_through(proxy(raw))
+                .validate()
+                .expect_err("an @ after the host is refused")
+                .to_string();
+            assert!(
+                err.contains("a proxy address takes no path, query or fragment"),
+                "{raw}: the error must name the path, query or fragment: {err}"
+            );
+            assert!(
+                !err.contains("user name or password in it"),
+                "{raw}: the address holds no credentials, so the error must not blame one: {err}"
+            );
+            for part in ["p@th", "a@b", "f@g"] {
+                assert!(!err.contains(part), "{raw}: '{part}' is shown: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_debug_of_a_proxy_with_an_unencoded_password_shows_no_part_of_it() {
+        for raw in UNENCODED_PASSWORDS {
+            assert_hides_the_password(raw, &format!("{:?}", proxy(raw)));
+            assert_hides_the_password(raw, &format!("{:?}", StaticProxyProvider::new(vec![proxy(raw)])));
+        }
+        let shown = format!("{:?}", StaticProxyProvider::new(vec![proxy("http://proxy.test:8080")]));
+        assert!(
+            shown.contains("proxy.test:8080"),
+            "positive twin: the address is shown: {shown}"
+        );
+        let shown = format!("{:?}", proxy("http://operator:IMPL385-DBG@proxy.test:8080"));
+        assert!(
+            shown.contains("proxy.test:8080"),
+            "positive twin: the address is shown: {shown}"
+        );
+        assert!(!shown.contains("IMPL385-DBG"), "{shown}");
+    }
+
+    #[test]
+    fn credentials_in_both_the_url_and_the_fields_are_a_config_error() {
+        let both = ProxyConfig {
+            url: "http://operator:IMPL385-BOTH-URL@proxy.test:8080".into(),
+            username: Some("other".into()),
+            password: Some("IMPL385-BOTH-FIELD".into()),
+        };
+        let err = crawl_through(both)
+            .validate()
+            .expect_err("two sources of proxy credentials must be refused")
+            .to_string();
+        assert!(err.contains("username"), "the error must name the fields: {err}");
+        assert!(
+            !err.contains("IMPL385-BOTH") && !err.contains("operator"),
+            "the error shows a credential: {err}"
+        );
     }
 
     #[test]

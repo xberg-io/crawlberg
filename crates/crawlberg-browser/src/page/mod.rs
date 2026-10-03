@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, parse_html};
 use crate::js::runtime::BrowserJsRuntime;
 use crate::net::{HttpClient, NetError, Response};
+use crate::redact::{RedactedHeaders, RedactedValues};
 use url::Url;
 
 use crate::context::BrowserContext;
@@ -25,7 +26,7 @@ use security::cross_scheme_to_file;
 /// operator/config-supplied scripts, independent of any caller-configured, potentially
 /// unbounded timeout.
 const PRELOAD_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkEvent {
     pub request_id: String,
     pub url: String,
@@ -36,6 +37,36 @@ pub struct NetworkEvent {
     pub response_headers: Arc<std::collections::HashMap<String, String>>,
     pub body_size: usize,
     pub timestamp: f64,
+}
+
+impl std::fmt::Debug for NetworkEvent {
+    /// Redacted: names stay visible throughout. `headers` is the *request* map, so every
+    /// value is hidden; `response_headers` keeps every value but those of the credential
+    /// denylist, `SENSITIVE_HEADERS`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            request_id,
+            url,
+            method,
+            resource_type,
+            status,
+            headers,
+            response_headers,
+            body_size,
+            timestamp,
+        } = self;
+        f.debug_struct("NetworkEvent")
+            .field("request_id", request_id)
+            .field("url", url)
+            .field("method", method)
+            .field("resource_type", resource_type)
+            .field("status", status)
+            .field("headers", &RedactedValues(headers))
+            .field("response_headers", &RedactedHeaders(response_headers))
+            .field("body_size", body_size)
+            .field("timestamp", timestamp)
+            .finish()
+    }
 }
 
 pub struct Page {
@@ -63,18 +94,18 @@ impl Page {
         // ~keep Playwright expects the main frame id to equal target id; diverging detaches the frame.
         let frame_id = id.clone();
         #[cfg(feature = "stealth")]
-        let stealth_client = if context.stealth {
-            // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
-            // ~keep Share the plain client's SSRF policy: the stealth path is an
-            // alternate transport, not an alternate policy.
-            Some(Arc::new(StealthHttpClient::with_ssrf(
-                context.cookie_jar.clone(),
-                context.proxy_url.as_deref(),
-                http_client.ssrf.clone(),
-            )))
-        } else {
-            None
-        };
+        let stealth_client = context.stealth_client.clone();
+        // ~keep The scoped headers are set on the context's client before any page exists,
+        // ~keep so they are already there to copy; the stealth client must scope them the same way.
+        #[cfg(feature = "stealth")]
+        if let Some(stealth) = &stealth_client
+            && let (Ok(source), Ok(mut target)) = (
+                http_client.origin_headers.try_read(),
+                stealth.origin_headers.try_write(),
+            )
+        {
+            target.clone_from(&source);
+        }
 
         Page {
             id,
@@ -97,47 +128,28 @@ impl Page {
     }
 
     fn should_block_url(&self, url: &str) -> bool {
-        if !self.intercept_enabled || self.intercept_block_patterns.is_empty() {
-            return false;
-        }
-        for pattern in &self.intercept_block_patterns {
-            if pattern == "*" {
-                return true;
-            }
-            if pattern.starts_with('*') && pattern.ends_with('*') {
-                if url.contains(&pattern[1..pattern.len() - 1]) {
-                    return true;
-                }
-            } else if let Some(suffix) = pattern.strip_prefix('*') {
-                if url.ends_with(suffix) {
-                    return true;
-                }
-            } else if let Some(prefix) = pattern.strip_suffix('*') {
-                if url.starts_with(prefix) {
-                    return true;
-                }
-            } else if url.contains(pattern.as_str()) {
-                return true;
-            }
-        }
-        false
+        self.intercept_enabled && crate::net::interceptor::matches_block_pattern(&self.intercept_block_patterns, url)
     }
 
-    /// Parse a sub-resource reference against the page URL; `None` when it does not parse.
+    /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
+    /// carries userinfo, which is refused before anything logs or fetches it.
     fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
         Url::options()
             .base_url(self.url.as_ref())
             .parse(reference)
             .ok()
+            .filter(|url| !crate::net::credential::has_userinfo(url))
             .map(String::from)
     }
 
-    async fn do_fetch(&self, url: &Url) -> Result<Response, NetError> {
+    async fn do_fetch(&self, url: &Url, max_redirects: Option<usize>) -> Result<Response, NetError> {
         #[cfg(feature = "stealth")]
         if let Some(ref stealth) = self.stealth_client {
-            return stealth.fetch(url).await;
+            return stealth.fetch_following(url, max_redirects).await;
         }
-        self.http_client.fetch(url).await
+        self.http_client
+            .fetch_following(reqwest::Method::GET, url, None, max_redirects)
+            .await
     }
     fn init_js(&mut self) {
         // ~keep Recreate the JS realm every navigation so prior-page handlers cannot run in the next document.
@@ -148,7 +160,7 @@ impl Page {
         // ~keep Thread the context proxy into ES modules and JS fetch/XHR so page JS honors upstream proxy settings.
         let mut rt = BrowserJsRuntime::with_base_url_proxy_and_ssrf(
             &self.url_string(),
-            self.context.proxy_url.clone(),
+            self.context.proxy.clone(),
             self.http_client.ssrf.clone(),
         );
         rt.set_url(&self.url_string());
@@ -167,6 +179,9 @@ impl Page {
 
         rt.set_cookie_jar(self.context.cookie_jar.clone());
         rt.set_http_client(self.http_client.clone());
+        if self.intercept_enabled {
+            rt.set_intercept_block_patterns(self.intercept_block_patterns.clone());
+        }
 
         if let Some(tx) = &self.intercept_tx {
             rt.set_intercept_tx(tx.clone());
@@ -198,41 +213,82 @@ impl Page {
         method: &str,
         body: &str,
     ) -> Result<(), PageError> {
+        self.navigate_chain(url_str, wait_until, method, body, None)
+            .await
+            .map(drop)
+    }
+
+    /// Navigate to `url_str` and follow at most `max_redirects` redirects on the way: HTTP
+    /// redirects, and the navigations the page's script starts, one each. Returns how many it
+    /// followed. A chain of HTTP redirects past the limit ends on the redirect response at the
+    /// limit; a script navigation past it is not taken, and the page keeps its document.
+    pub async fn navigate_counting(
+        &mut self,
+        url_str: &str,
+        wait_until: crate::lifecycle::WaitUntil,
+        max_redirects: usize,
+    ) -> Result<usize, PageError> {
+        self.navigate_chain(url_str, wait_until, "GET", "", Some(max_redirects))
+            .await
+    }
+
+    /// Navigate, then follow the navigations the page's script starts. With `max_redirects`
+    /// set, it bounds every redirect of the chain and the count is returned; without it, HTTP
+    /// redirects follow the client's cap and a chain of script navigations fails past its own.
+    async fn navigate_chain(
+        &mut self,
+        url_str: &str,
+        wait_until: crate::lifecycle::WaitUntil,
+        method: &str,
+        body: &str,
+        max_redirects: Option<usize>,
+    ) -> Result<usize, PageError> {
         let mut current_url = url_str.to_string();
         let mut current_method = method.to_string();
         let mut current_body = body.to_string();
         const REDIRECT_LIMIT: usize = 10;
-        for chain in 0..REDIRECT_LIMIT {
-            self.navigate_single(&current_url, wait_until, &current_method, &current_body)
+        let mut followed = 0usize;
+        let mut script_navigations = 0usize;
+        loop {
+            let left = max_redirects.map(|limit| limit.saturating_sub(followed));
+            followed += self
+                .navigate_single(&current_url, wait_until, &current_method, &current_body, left)
                 .await?;
-            if let Some((next_url, next_method, next_body)) = self.take_pending_navigation() {
-                if cross_scheme_to_file(&current_url, &next_url) {
-                    // ~keep SOP gate: HTTP(S) pages must not navigate to `file:` and then read the loaded document.
-                    tracing::warn!(
-                        "blocking JS-initiated cross-scheme navigation to file: {} -> {}",
-                        current_url,
-                        next_url,
-                    );
-                    break;
-                }
-                tracing::info!(
-                    "JS-triggered navigation chain: {} {} -> {}",
-                    current_method,
+            let Some((next_url, next_method, next_body)) = self.take_pending_navigation() else {
+                break;
+            };
+            if cross_scheme_to_file(&current_url, &next_url) {
+                // ~keep SOP gate: HTTP(S) pages must not navigate to `file:` and then read the loaded document.
+                tracing::warn!(
+                    "blocking JS-initiated cross-scheme navigation to file: {} -> {}",
                     current_url,
-                    next_url
+                    next_url,
                 );
-                current_url = next_url;
-                current_method = next_method;
-                current_body = next_body;
-                if chain + 1 == REDIRECT_LIMIT {
-                    // ~keep Exceeding the JS navigation cap is an error so redirect storms are not reported as loads.
-                    return Err(PageError::TooManyRedirects(REDIRECT_LIMIT));
-                }
-                continue;
+                break;
             }
-            break;
+            if max_redirects.is_some_and(|limit| followed >= limit) {
+                tracing::debug!(
+                    "not following a script navigation past the redirect limit: {current_url} -> {next_url}"
+                );
+                break;
+            }
+            script_navigations += 1;
+            if max_redirects.is_none() && script_navigations == REDIRECT_LIMIT {
+                // ~keep Exceeding the JS navigation cap is an error so redirect storms are not reported as loads.
+                return Err(PageError::TooManyRedirects(REDIRECT_LIMIT));
+            }
+            followed += 1;
+            tracing::info!(
+                "JS-triggered navigation chain: {} {} -> {}",
+                current_method,
+                current_url,
+                next_url
+            );
+            current_url = next_url;
+            current_method = next_method;
+            current_body = next_body;
         }
-        Ok(())
+        Ok(followed)
     }
     pub fn navigate_blank(&mut self) {
         self.js = None;
@@ -497,10 +553,19 @@ pub enum PageError {
 
     #[error("Too many redirects (limit {0})")]
     TooManyRedirects(usize),
+
+    /// The render configuration cannot be used, so nothing was fetched.
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 }
 
 impl From<NetError> for PageError {
     fn from(e: NetError) -> Self {
-        PageError::NetworkError(e.to_string())
+        match e {
+            NetError::InvalidProxy(reason) => PageError::InvalidConfig(reason.to_string()),
+            // ~keep Both variants print "Network error: "; keep one.
+            NetError::Network(message) => PageError::NetworkError(message),
+            other => PageError::NetworkError(other.to_string()),
+        }
     }
 }

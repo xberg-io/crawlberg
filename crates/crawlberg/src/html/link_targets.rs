@@ -3,11 +3,11 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use tl::{ParserOptions, VDom};
+use tl::VDom;
 use url::Url;
 
-use super::decode_attr_value;
 use super::links::effective_base_url;
+use super::{PageScan, clean_url, decode_attr_value};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -55,7 +55,8 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ];
 
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
-/// base URL (its first `<base href>`, else `document_url`), using WHATWG URL parsing.
+/// base URL (see [`effective_base_url`]) from its first `<base href>` in tree order, using
+/// WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
 /// the address the links resolve against.
@@ -63,12 +64,21 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// Character references in a value are decoded before resolution, as a browser decodes them.
 /// Absolute URLs of any scheme, fragment-only references and empty values are left as written.
 /// Every byte outside a rewritten attribute value is kept.
-pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
-    let Ok(dom) = tl::parse(html, ParserOptions::default()) else {
+///
+/// `page_scan` is the extraction's read of `html`. Without one, `html` is read here.
+pub(crate) fn resolve_link_targets<'h>(html: &'h str, page_scan: Option<PageScan>, document_url: &Url) -> Cow<'h, str> {
+    // ~keep tl reads the masked text, so markup inside a comment, `<title>` or `<script>` is not a
+    // ~keep tag, and the base is the first `<base href>` in tree order. The masked text has the
+    // ~keep source's byte length, so an edit's span in it is its span in `html`.
+    let page = match page_scan {
+        Some(page_scan) => page_scan.attach(html),
+        None => super::mask_raw_text_markup(html),
+    };
+    let Ok(dom) = super::parse_html(&page.text) else {
         return Cow::Borrowed(html);
     };
-    let base = effective_base_url(&dom, document_url);
-    let mut edits = collect_edits(&dom, html, &base);
+    let base = effective_base_url(page.base_href.as_deref(), document_url);
+    let mut edits = collect_edits(&dom, &page.text, &base);
     if edits.is_empty() {
         return Cow::Borrowed(html);
     }
@@ -99,7 +109,7 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
     };
     for tag in dom.nodes().iter().filter_map(|node| node.as_tag()) {
         let name = tag.name().as_bytes();
-        if name.eq_ignore_ascii_case(b"base") {
+        if name == b"base" {
             // ~keep Every `<base href>`, not only the first: the converter's front matter
             // ~keep keeps the last one it meets, and only the first one counts in HTML.
             if let Some(raw) = borrowed_attr(tag, "href")
@@ -109,10 +119,7 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
             }
             continue;
         }
-        let Some((_, attributes)) = TARGETS
-            .iter()
-            .find(|(element, _)| name.eq_ignore_ascii_case(element.as_bytes()))
-        else {
+        let Some((_, attributes)) = TARGETS.iter().find(|(element, _)| name == element.as_bytes()) else {
             continue;
         };
         for &(attr, shape) in *attributes {
@@ -147,45 +154,55 @@ fn rewrite_value(raw: &str, shape: Shape, base: &Url) -> Option<String> {
 /// Resolve `reference` against `base` when it is a relative reference.
 ///
 /// Returns `None` for anything a reader can already use as written: an absolute URL of any
-/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...), a fragment-only reference that
-/// points into the same document, and an empty value.
+/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...) without userinfo, a fragment-only
+/// reference that points into the same document, and a blank value. An absolute URL with
+/// userinfo is rewritten without it.
 fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
-    let trimmed = reference.trim_matches(|c: char| c.is_ascii_whitespace());
-    if trimmed.is_empty() || trimmed.starts_with('#') {
+    let reference = clean_url(Cow::Borrowed(reference))?;
+    if reference.starts_with('#') {
         return None;
     }
-    match Url::parse(trimmed) {
-        Err(url::ParseError::RelativeUrlWithoutBase) => base.join(trimmed).ok().map(String::from),
+    match Url::parse(&reference) {
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            crate::net::userinfo::resolve(base, &reference).map(String::from)
+        }
+        Ok(mut absolute) if crate::net::userinfo::has_userinfo(&absolute) => {
+            crate::net::userinfo::strip(&mut absolute);
+            Some(absolute.into())
+        }
         _ => None,
     }
 }
 
-/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
+/// Split a `srcset`-style list into its candidates, each a URL and its descriptor.
 ///
 /// ~keep Follows the HTML "parse a srcset attribute" split: a candidate URL is a run of
-/// ~keep non-whitespace (so a `data:` URL's own comma stays inside it), trailing commas end
-/// ~keep the candidate, and otherwise the descriptor runs to the next comma.
+/// ~keep non-ASCII-whitespace (so a `data:` URL's own comma stays inside it), trailing commas
+/// ~keep end the candidate, and otherwise the descriptor runs to the next comma.
+pub(super) fn srcset_candidates(list: &str) -> impl Iterator<Item = (&str, &str)> {
+    let mut rest = list;
+    std::iter::from_fn(move || {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if rest.is_empty() {
+            return None;
+        }
+        let url_end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
+        let (candidate_url, after_url) = rest.split_at(url_end);
+        if candidate_url.ends_with(',') {
+            rest = after_url;
+            return Some((candidate_url.trim_end_matches(','), ""));
+        }
+        let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
+        rest = &after_url[descriptor_end..];
+        Some((candidate_url, after_url[..descriptor_end].trim()))
+    })
+}
+
+/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
 fn resolve_candidates(list: &str, base: &Url) -> Option<String> {
     let mut candidates = Vec::new();
     let mut changed = false;
-    let mut rest = list;
-    loop {
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-        if rest.is_empty() {
-            break;
-        }
-        let url_end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
-        let (mut candidate_url, after_url) = rest.split_at(url_end);
-        let descriptor;
-        if candidate_url.ends_with(',') {
-            candidate_url = candidate_url.trim_end_matches(',');
-            descriptor = "";
-            rest = after_url;
-        } else {
-            let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
-            descriptor = after_url[..descriptor_end].trim();
-            rest = &after_url[descriptor_end..];
-        }
+    for (candidate_url, descriptor) in srcset_candidates(list) {
         let resolved = resolve_reference(candidate_url, base);
         changed |= resolved.is_some();
         let candidate_url = resolved.unwrap_or_else(|| candidate_url.to_owned());
@@ -229,7 +246,7 @@ mod tests {
 
     fn resolve(html: &str, document_url: &str) -> String {
         let url = Url::parse(document_url).expect("valid document URL");
-        resolve_link_targets(html, &url).into_owned()
+        resolve_link_targets(html, None, &url).into_owned()
     }
 
     #[test]
@@ -261,7 +278,16 @@ mod tests {
     fn returns_the_input_unchanged_when_nothing_is_relative() {
         let html = r##"<a href="https://example.com/x">x</a><a href="#top">t</a><img src="data:image/png;base64,AA">"##;
         let url = Url::parse("https://example.com/").expect("valid URL");
-        assert!(matches!(resolve_link_targets(html, &url), Cow::Borrowed(_)));
+        assert!(matches!(resolve_link_targets(html, None, &url), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn an_address_of_only_c0_controls_is_left_as_written() {
+        let html = "<a href=\"\u{1}\u{B}\">x</a><a href=\"\u{B}y.html\">y</a>";
+        assert_eq!(
+            resolve(html, "https://example.com/p/"),
+            "<a href=\"\u{1}\u{B}\">x</a><a href=\"https://example.com/p/y.html\">y</a>"
+        );
     }
 
     #[test]
@@ -317,6 +343,43 @@ mod tests {
     }
 
     #[test]
+    fn markup_inside_raw_text_is_left_as_written() {
+        assert_eq!(
+            resolve(
+                r#"<title><a href="t.html">t</a></title><script>"<img src='s.png'>"</script><a href="y.html">y</a>"#,
+                "https://example.com/d/"
+            ),
+            r#"<title><a href="t.html">t</a></title><script>"<img src='s.png'>"</script><a href="https://example.com/d/y.html">y</a>"#
+        );
+    }
+
+    #[test]
+    fn a_base_in_raw_text_or_a_comment_does_not_count() {
+        assert_eq!(
+            resolve(
+                r#"<title><base href="/t/"></title><!-- <base href="/c/"> --><base href="/real/"><a href="y.html">y</a>"#,
+                "https://example.com/d/"
+            ),
+            r#"<title><base href="/t/"></title><!-- <base href="/c/"> --><base href="https://example.com/real/"><a href="https://example.com/real/y.html">y</a>"#
+        );
+    }
+
+    #[test]
+    fn a_base_in_svg_or_a_template_does_not_count() {
+        let mut wrong = Vec::new();
+        for html in [
+            r#"<svg><base href="/svg/"></svg><base href="/html/"><a href="y.html">y</a>"#,
+            r#"<template><base href="/tpl/"></template><base href="/html/"><a href="y.html">y</a>"#,
+        ] {
+            let out = resolve(html, "https://example.com/d/");
+            if !out.ends_with(r#"<a href="https://example.com/html/y.html">y</a>"#) {
+                wrong.push(format!("{html} gave: {out}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
     fn a_base_without_an_href_does_not_count() {
         assert_eq!(
             resolve(
@@ -369,6 +432,17 @@ mod tests {
         assert_eq!(
             resolve_candidates("a.png, b.png 2x", &base).as_deref(),
             Some("https://example.com/p/a.png, https://example.com/p/b.png 2x")
+        );
+    }
+
+    #[test]
+    fn a_link_target_loses_its_userinfo() {
+        assert_eq!(
+            resolve(
+                r#"<a href="//user:s3cret@example.com/a">x</a><a href="http://page:pw@example.com/b">y</a>"#,
+                "https://example.com/"
+            ),
+            r#"<a href="https://example.com/a">x</a><a href="http://example.com/b">y</a>"#
         );
     }
 }

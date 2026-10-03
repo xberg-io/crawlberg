@@ -4,12 +4,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
+pub use crate::net::OriginHeaders;
+pub use crate::net::proxy::{
+    ProxyCredentials, ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, UpstreamProxy, check_proxy_url,
+};
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
 use crate::lifecycle::WaitUntil;
 use crate::page::Page;
+use crate::redact::{REDACTED, RedactedHeaders, RedactedValues};
 
 mod executor;
 mod snapshot;
@@ -21,7 +26,7 @@ use snapshot::{
 };
 
 /// A cookie passed into or captured from the native browser.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeCookie {
     pub name: String,
     pub value: String,
@@ -29,10 +34,37 @@ pub struct NativeCookie {
     pub path: Option<String>,
     pub secure: bool,
     pub http_only: bool,
+    /// Sent to `domain` only, not to its subdomains: the page set it without a `Domain` attribute.
+    pub host_only: bool,
+}
+
+impl std::fmt::Debug for NativeCookie {
+    /// Redacted: a cookie value is often a session credential. Shows whether a value is
+    /// set, never the value itself.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            name,
+            value,
+            domain,
+            path,
+            secure,
+            http_only,
+            host_only,
+        } = self;
+        f.debug_struct("NativeCookie")
+            .field("name", name)
+            .field("value", &(!value.is_empty()).then_some(REDACTED))
+            .field("domain", domain)
+            .field("path", path)
+            .field("secure", secure)
+            .field("http_only", http_only)
+            .field("host_only", host_only)
+            .finish()
+    }
 }
 
 /// A single network event recorded during page navigation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeNetworkEvent {
     pub url: String,
     pub method: String,
@@ -44,7 +76,35 @@ pub struct NativeNetworkEvent {
     pub timestamp_ms: u64,
 }
 
-#[derive(Debug, Clone)]
+impl std::fmt::Debug for NativeNetworkEvent {
+    /// Redacted: names stay visible throughout. Every *request* header value is hidden,
+    /// because the map is populated from caller configuration and a credential can sit under
+    /// any name. *Response* header values print except those of the credential denylist.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            method,
+            resource_type,
+            status,
+            request_headers,
+            response_headers,
+            body_size,
+            timestamp_ms,
+        } = self;
+        f.debug_struct("NativeNetworkEvent")
+            .field("url", url)
+            .field("method", method)
+            .field("resource_type", resource_type)
+            .field("status", status)
+            .field("request_headers", &RedactedValues(request_headers))
+            .field("response_headers", &RedactedHeaders(response_headers))
+            .field("body_size", body_size)
+            .field("timestamp_ms", timestamp_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct NativeBrowserConfig {
     pub user_agent: Option<String>,
     pub timeout: Duration,
@@ -53,7 +113,12 @@ pub struct NativeBrowserConfig {
     pub respect_robots_txt: bool,
     /// Use Chrome 145 TLS fingerprint via wreq stealth client.
     pub stealth: bool,
-    /// Proxy URL (http/https only). No SOCKS5 — use chromiumoxide for that.
+    /// Proxy (http/https only). No SOCKS5 — use chromiumoxide for that.
+    pub proxy: Option<UpstreamProxy>,
+    /// The proxy as a URL. A user name and password in the URL become the proxy credentials. It
+    /// gets the same checks as `proxy`, and a render fails when it is unusable or names a
+    /// different proxy than `proxy`.
+    #[deprecated(since = "1.9.0", note = "set `proxy` to an `UpstreamProxy` instead")]
     pub proxy_url: Option<String>,
     /// Cookies pre-populated into the jar before navigation.
     pub prior_cookies: Vec<NativeCookie>,
@@ -76,8 +141,75 @@ pub struct NativeBrowserConfig {
     /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
     /// not be able to point the browser at local files.
     pub allow_file_access: bool,
+    /// Headers sent only to one host, such as a credential, on every request and redirect
+    /// hop there, including a page script's `fetch()` and module imports.
+    ///
+    /// Unlike `extra_headers`, which every host receives, these never reach a third-party
+    /// subresource or a cross-host redirect target.
+    pub origin_headers: Option<OriginHeaders>,
+    /// The most redirects the navigation to the page follows: HTTP redirects, and the
+    /// navigations the page's script starts, one each. A chain of HTTP redirects past it ends on
+    /// the redirect response at the limit; a script navigation past it is not taken. `None`
+    /// keeps the backend's own caps. Navigations an interact action starts are not counted.
+    pub max_redirects: Option<usize>,
 }
 
+#[allow(deprecated)]
+impl std::fmt::Debug for NativeBrowserConfig {
+    /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
+    /// auth config, and `prior_cookies`
+    /// are session cookies. `eval_script` can embed a token, so it prints as `***` with its
+    /// length. Header names stay visible; secret values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            user_agent,
+            timeout,
+            wait_until,
+            extra_headers,
+            respect_robots_txt,
+            stealth,
+            proxy,
+            proxy_url,
+            prior_cookies,
+            block_url_patterns,
+            eval_script,
+            wait_selector,
+            robots_user_agent,
+            capture_network_events,
+            ssrf,
+            allow_file_access,
+            origin_headers,
+            max_redirects,
+        } = self;
+        f.debug_struct("NativeBrowserConfig")
+            .field("user_agent", user_agent)
+            .field("timeout", timeout)
+            .field("wait_until", wait_until)
+            .field("extra_headers", &RedactedValues(extra_headers))
+            .field("respect_robots_txt", respect_robots_txt)
+            .field("stealth", stealth)
+            .field("proxy", proxy)
+            .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
+            .field("prior_cookies", prior_cookies)
+            .field("block_url_patterns", block_url_patterns)
+            .field(
+                "eval_script",
+                &eval_script
+                    .as_ref()
+                    .map(|script| format!("{REDACTED} ({} bytes)", script.len())),
+            )
+            .field("wait_selector", wait_selector)
+            .field("robots_user_agent", robots_user_agent)
+            .field("capture_network_events", capture_network_events)
+            .field("ssrf", ssrf)
+            .field("allow_file_access", allow_file_access)
+            .field("origin_headers", origin_headers)
+            .field("max_redirects", max_redirects)
+            .finish()
+    }
+}
+
+#[allow(deprecated)]
 impl Default for NativeBrowserConfig {
     fn default() -> Self {
         Self {
@@ -87,6 +219,7 @@ impl Default for NativeBrowserConfig {
             extra_headers: HashMap::new(),
             respect_robots_txt: false,
             stealth: false,
+            proxy: None,
             proxy_url: None,
             prior_cookies: Vec::new(),
             block_url_patterns: Vec::new(),
@@ -96,6 +229,29 @@ impl Default for NativeBrowserConfig {
             capture_network_events: false,
             ssrf: None,
             allow_file_access: false,
+            origin_headers: None,
+            max_redirects: None,
+        }
+    }
+}
+
+impl NativeBrowserConfig {
+    /// The proxy a render goes through: `proxy` or the deprecated `proxy_url`. When both are set
+    /// they must name the same proxy.
+    #[allow(deprecated)]
+    pub(crate) fn effective_proxy(&self) -> Result<Option<UpstreamProxy>, PageError> {
+        let from_url = self
+            .proxy_url
+            .as_deref()
+            .map(crate::net::proxy::proxy_from_url)
+            .transpose()
+            .map_err(|e| PageError::InvalidConfig(e.to_string()))?;
+        match (&self.proxy, from_url) {
+            (Some(proxy), Some(from_url)) if *proxy != from_url => Err(PageError::InvalidConfig(
+                "proxy and proxy_url name different proxies; set only proxy, as proxy_url is deprecated".to_string(),
+            )),
+            (Some(proxy), _) => Ok(Some(proxy.clone())),
+            (None, from_url) => Ok(from_url),
         }
     }
 }
@@ -108,7 +264,7 @@ pub enum NativeBrowserWait {
     Selector,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RenderedPage {
     pub final_url: String,
     pub status: Option<u16>,
@@ -120,6 +276,36 @@ pub struct RenderedPage {
     pub network_events: Vec<NativeNetworkEvent>,
     /// All non-expired cookies from the jar after navigation.
     pub cookies: Vec<NativeCookie>,
+    /// Redirects the navigation followed when `max_redirects` was set: HTTP redirects, and the
+    /// navigations the page's script started, one each. 0 when it was not set.
+    pub redirects: usize,
+}
+
+impl std::fmt::Debug for RenderedPage {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            final_url,
+            status,
+            html,
+            headers,
+            eval_result,
+            network_events,
+            cookies,
+            redirects,
+        } = self;
+        f.debug_struct("RenderedPage")
+            .field("final_url", final_url)
+            .field("status", status)
+            .field("html", html)
+            .field("headers", &RedactedHeaders(headers))
+            .field("eval_result", eval_result)
+            .field("network_events", network_events)
+            .field("cookies", cookies)
+            .field("redirects", redirects)
+            .finish()
+    }
 }
 
 /// Per-action ceiling in the native worker.
@@ -240,7 +426,7 @@ pub async fn interact_url(
 }
 
 async fn render_url_local(url: &str, config: &NativeBrowserConfig) -> Result<RenderedPage, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     render_with_context(url, config, context).await
 }
 
@@ -250,7 +436,7 @@ async fn interact_url_local(
     actions: &[NativePageAction],
     post_navigation_wait: Option<Duration>,
 ) -> Result<NativeInteractionResult, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     let mut page = Page::new("page-1".to_string(), context);
     configure_page_interception(&mut page, config);
     navigate_configured(&mut page, url, config).await?;
@@ -311,19 +497,20 @@ async fn interact_url_local(
     })
 }
 
-async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
+async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserContext>, PageError> {
     let ssrf: Arc<dyn SsrfValidator> = config
         .ssrf
         .clone()
         .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
+    let proxy = config.effective_proxy()?;
     let mut context = BrowserContext::with_ssrf(
         "crawlberg".to_string(),
-        config.proxy_url.clone(),
+        proxy,
         config.stealth,
         config.user_agent.clone(),
         ssrf,
         config.allow_file_access,
-    );
+    )?;
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {
         context.user_agent = robots_ua.clone();
@@ -333,19 +520,16 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         .http_client
         .set_extra_headers(config.extra_headers.clone())
         .await;
+    context
+        .http_client
+        .set_origin_headers(config.origin_headers.clone())
+        .await;
 
     for cookie in &config.prior_cookies {
-        context.cookie_jar.set_parsed_cookie(
-            &cookie.name,
-            &cookie.value,
-            cookie.domain.as_deref(),
-            cookie.path.as_deref(),
-            cookie.secure,
-            cookie.http_only,
-        );
+        context.cookie_jar.set_parsed_cookie(cookie);
     }
 
-    context
+    Ok(context)
 }
 
 async fn render_with_context(
@@ -355,7 +539,7 @@ async fn render_with_context(
 ) -> Result<RenderedPage, PageError> {
     let mut page = Page::new("page-1".to_string(), context.clone());
     configure_page_interception(&mut page, config);
-    navigate_configured(&mut page, url, config).await?;
+    let redirects = navigate_configured(&mut page, url, config).await?;
 
     let final_url = page.url_string();
     let status = page
@@ -379,14 +563,17 @@ async fn render_with_context(
         .cookie_jar
         .snapshot()
         .into_iter()
-        .map(|(name, value, domain, path, secure, http_only)| NativeCookie {
-            name,
-            value,
-            domain: Some(domain),
-            path: Some(path),
-            secure,
-            http_only,
-        })
+        .map(
+            |(name, value, domain, path, secure, http_only, host_only)| NativeCookie {
+                name,
+                value,
+                domain: Some(domain),
+                path: Some(path),
+                secure,
+                http_only,
+                host_only,
+            },
+        )
         .collect();
 
     let html = rendered_html(&page)
@@ -400,6 +587,7 @@ async fn render_with_context(
         eval_result,
         network_events,
         cookies,
+        redirects,
     })
 }
 
@@ -441,13 +629,21 @@ fn configure_page_interception(page: &mut Page, config: &NativeBrowserConfig) {
     }
 }
 
-async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserConfig) -> Result<(), PageError> {
+/// Navigate `page` to `url` as `config` asks, and return the redirects followed on the way
+/// (0 without `max_redirects`).
+async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserConfig) -> Result<usize, PageError> {
     let wait_until = match config.wait_until {
         NativeBrowserWait::Load => WaitUntil::Load,
         NativeBrowserWait::NetworkIdle | NativeBrowserWait::Selector => WaitUntil::NetworkIdle0,
     };
 
-    tokio::time::timeout(config.timeout, page.navigate_with_wait(url, wait_until))
+    let navigation = async {
+        match config.max_redirects {
+            Some(limit) => page.navigate_counting(url, wait_until, limit).await,
+            None => page.navigate_with_wait(url, wait_until).await.map(|()| 0),
+        }
+    };
+    let redirects = tokio::time::timeout(config.timeout, navigation)
         .await
         .map_err(|_| PageError::NetworkError(format!("browser timed out after {:?}", config.timeout)))??;
 
@@ -472,7 +668,7 @@ async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserC
         }
     }
 
-    Ok(())
+    Ok(redirects)
 }
 
 struct NativeActionData {

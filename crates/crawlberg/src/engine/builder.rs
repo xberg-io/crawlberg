@@ -212,14 +212,15 @@ impl CrawlEngineBuilder {
         self
     }
 
-    /// Inject a [`crate::ProxyProvider`] for per-request proxy rotation on the
-    /// reqwest HTTP path. Stored on the resolved [`CrawlConfig`] as
-    /// `proxy_provider`; takes precedence over the static
-    /// `CrawlConfig::proxy` value when both are set.
+    /// Inject a [`crate::ProxyProvider`] for per-request proxy rotation. Stored
+    /// on the resolved [`CrawlConfig`] as `proxy_provider`; takes precedence
+    /// over the static `CrawlConfig::proxy` value when both are set.
     ///
-    /// Browser-backend proxies (`CrawlConfig::browser::proxy`) still read the
-    /// static `ProxyConfig` value — provider rotation only applies to the HTTP
-    /// fetcher.
+    /// A native browser render asks the provider once for the page's host and
+    /// sends the page and all of its requests through that proxy.
+    /// `CrawlConfig::browser::proxy`, when set, wins over the provider for
+    /// renders. The Chrome backend cannot render through a provider, so a
+    /// Chrome render with a provider and no `browser.proxy` fails.
     pub fn with_proxy_provider(mut self, provider: Arc<dyn crate::ProxyProvider>) -> Self {
         self.proxy_provider = Some(provider);
         self
@@ -246,8 +247,7 @@ impl CrawlEngineBuilder {
 
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
         let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
-        #[cfg(not(target_arch = "wasm32"))]
-        let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());
+        let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
         let native_browser_executor = if let Some(executor) = self.native_executor {
@@ -281,7 +281,6 @@ impl CrawlEngineBuilder {
             page_budget: self
                 .page_budget
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
-            #[cfg(not(target_arch = "wasm32"))]
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
             robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
@@ -540,17 +539,32 @@ mod rate_limiter_plumbing_tests {
             .build()
             .expect("engine must build");
 
-        let waited = wait_for_second_acquire(&engine, "example.com").await;
+        // ~keep One draw cannot carry this assertion. tokio's paused clock advances to a
+        // sleep's deadline at whole-millisecond granularity, so a 0.5 ratio over 100ms has
+        // exactly 100 reachable outcomes in [51ms, 150ms] and lands on an unperturbed 100ms
+        // in 1 of 100 draws -- measured, not estimated. A single `assert_ne!` against 100ms
+        // was therefore ~1% flaky, under a comment claiming it could only collide at
+        // double-precision float equality; that reasoning was about the f64 factor and
+        // missed the timer's rounding. Several domains fix it: each is an independent draw,
+        // so requiring at least one to differ collides by chance at 0.01^4 = 1e-8, and the
+        // range check still applies to every draw.
+        let domains = ["a.example.com", "b.example.com", "c.example.com", "d.example.com"];
+        let mut waits = Vec::with_capacity(domains.len());
+        for domain in domains {
+            let waited = wait_for_second_acquire(&engine, domain).await;
+            assert!(
+                waited >= Duration::from_millis(50) && waited <= Duration::from_millis(150),
+                "a 0.5 jitter_ratio over a 100ms delay must stay within [50ms, 150ms], \
+                 got {waited:?} for {domain}"
+            );
+            waits.push(waited);
+        }
 
         assert!(
-            waited >= Duration::from_millis(50) && waited <= Duration::from_millis(150),
-            "a 0.5 jitter_ratio over a 100ms delay must stay within [50ms, 150ms], got {waited:?}"
-        );
-        assert_ne!(
-            waited,
-            Duration::from_millis(100),
-            "a nonzero jitter_ratio must perturb the delay away from the unjittered 100ms baseline \
-             (this can only coincide by chance at the level of double-precision float equality)"
+            waits.iter().any(|waited| *waited != Duration::from_millis(100)),
+            "a nonzero jitter_ratio must perturb the delay away from the unjittered 100ms \
+             baseline, but all {} domains waited exactly 100ms: {waits:?}",
+            waits.len()
         );
     }
 

@@ -92,7 +92,7 @@ Crawlberg emits 10 OTel instruments via `crawlberg::telemetry::metrics::registry
 | `crawl_pages_total` | Counter (u64) | `status` ∈ `{ok, http_error, timeout, blocked}` | Pages fetched, partitioned by terminal status |
 | `crawl_documents_discovered_total` | Counter (u64) | `mime_type` | Non-HTML documents discovered (PDF, DOCX, etc.) |
 | `crawl_robots_blocked_total` | Counter (u64) | — | Requests rejected by robots.txt |
-| `crawl_waf_blocks_total` | Counter (u64) | `vendor` ∈ `{cloudflare, datadome, …}` | WAF challenges detected, per vendor |
+| `crawl_waf_blocks_total` | Counter (u64) | `vendor` ∈ `{cloudflare, datadome, …}` | Responses refused as a WAF block, per vendor |
 | `crawl_backend_escalations_total` | Counter (u64) | `from_tier`, `to_tier`, `reason` | Tier escalations (e.g., HTTP→Browser) |
 | `crawl_bypass_requests_total` | Counter (u64) | `vendor`, `mode` ∈ `{managed, byo}` | Requests routed through bypass provider |
 | `crawl_bypass_failures_total` | Counter (u64) | `vendor`, `reason` | Bypass provider failures |

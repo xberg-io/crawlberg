@@ -97,8 +97,8 @@ Start an asynchronous crawl job. Returns a job ID for polling.
 | `url`             | `string`   | Yes      | --             | Seed URL to start crawling from      |
 | `maxDepth`        | `integer`  | No       | Engine default | Maximum link depth to follow         |
 | `maxPages`        | `integer`  | No       | Engine default | Maximum number of pages to crawl     |
-| `includePaths`    | `string[]` | No       | `[]`           | URL path patterns to include (regex) |
-| `excludePaths`    | `string[]` | No       | `[]`           | URL path patterns to exclude (regex) |
+| `includePaths`    | `string[]` | No       | `[]`           | URL path patterns to include (regex). A pattern with look-around or a backreference is refused with `400`. |
+| `excludePaths`    | `string[]` | No       | `[]`           | URL path patterns to exclude (regex). A pattern with look-around or a backreference is refused with `400`. |
 | `onlyMainContent` | `boolean`  | No       | Engine config  | When `true`, sets `content.preprocessing_preset = "aggressive"` for this crawl job. |
 
 **Response:** `202 Accepted`
