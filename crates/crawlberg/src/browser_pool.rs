@@ -2,10 +2,11 @@
 //!
 //! ~keep This module is feature-gated behind `#[cfg(feature = "browser-chromiumoxide")]` at
 //! ~keep the module level in `lib.rs` (the narrower flag -- `browser` implies it, see the
-//! ~keep `~keep` there). Two methods compiled under this module, `PooledPage::into_parts` and
-//! ~keep `BrowserPool::firewall`, are only called from code gated on the wider `browser`
-//! ~keep feature, so each carries its own `#[cfg(feature = "browser")]` inline; those are the
-//! ~keep sanctioned in-file feature gates, not a precedent for adding more.
+//! ~keep `~keep` there). Three methods compiled under this module, `PooledPage::into_parts`,
+//! ~keep `BrowserPool::firewall` and `HandlerEnd::cause`, are only called from code gated on the
+//! ~keep wider `browser` feature, so each carries its own `#[cfg(feature = "browser")]` inline
+//! ~keep (`HandlerEnd::cause` adds `test`, because a test of this module reads it too); those are
+//! ~keep the sanctioned in-file feature gates, not a precedent for adding more.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -940,6 +941,11 @@ impl HandlerEnd {
     }
 
     /// The websocket error the handler stopped on. `None` while it runs, and after an abort.
+    ///
+    /// ~keep Its callers are the one-shot fetch in `browser.rs`, which the wider `browser` feature
+    /// ~keep compiles, and a test of this module. Under `browser-chromiumoxide` alone it has no
+    /// ~keep caller and would be dead code.
+    #[cfg(any(feature = "browser", test))]
     pub(crate) fn cause(&self) -> Option<&str> {
         self.0.cause.get().map(String::as_str)
     }
