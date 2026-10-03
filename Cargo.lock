@@ -1320,6 +1320,7 @@ dependencies = [
  "deno_error",
  "futures",
  "html5ever",
+ "hyper-util",
  "ipnet",
  "percent-encoding",
  "png",
