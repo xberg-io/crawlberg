@@ -379,7 +379,8 @@ title: "Changelog"
   the requested URL. (#317, #319)
 - **A successful response whose body Chrome could not decode was reported as an empty page.** A
   malformed compressed body now fails with a browser error that names its 2xx status and URL,
-  whether it is the seed or the target of a page navigation. (#417)
+  whether it is the seed or the target of a page navigation. This applies before `interact`
+  renderer scripts and actions too. (#417)
 - **The HTML, status, final URL and screenshot of a browser render come from one document.**
   They were separate reads, so a navigation that committed between them could pair the HTML of
   one document with the status, URL or screenshot of the next. The render now reads which
@@ -961,7 +962,8 @@ title: "Changelog"
   Chrome either refused such a redirect or waited for an external application. Browser mode now
   returns the 3xx response, including its body, status, headers and URL, matching HTTP mode without
   following the `Location`. This also applies when a page script starts the redirect after its
-  initial load. (#471)
+  initial load. The body is captured with the configured size bound and cannot execute in Chrome.
+  (#471)
 - **The Chromiumoxide interaction renderer script ignored `browser.timeout`.** A configured
   post-navigation `eval_script` could wait for chromiumoxide's fixed 30-second command deadline
   when the page's renderer was busy. It now fails within the configured browser timeout. (#569)

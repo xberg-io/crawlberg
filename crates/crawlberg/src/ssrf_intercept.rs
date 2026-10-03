@@ -26,12 +26,12 @@ use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
-    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, HeaderEntry, RequestPattern,
-    RequestStage,
+    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
+    RequestPattern, RequestStage, TakeResponseBodyAsStreamParams,
 };
+use chromiumoxide::cdp::browser_protocol::io::{CloseParams as CloseStreamParams, ReadParams as ReadStreamParams};
 use chromiumoxide::cdp::browser_protocol::network::{
-    Cookie, CookieParam, ErrorReason, GetResponseBodyParams as NetworkGetResponseBodyParams, Headers, RequestId,
-    ResourceType, TimeSinceEpoch,
+    Cookie, CookieParam, ErrorReason, Headers, ResourceType, TimeSinceEpoch,
 };
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
 use chromiumoxide::cdp::browser_protocol::storage::{
@@ -58,6 +58,8 @@ use crate::types::CrawlConfig;
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
+
+const RESPONSE_BODY_CHUNK_SIZE: usize = 64 * 1024;
 
 /// How long closing a watched page and its popups may take before the watch ends anyway.
 ///
@@ -136,7 +138,7 @@ pub(crate) struct StoppedResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
     pub(crate) body: String,
     pub(crate) body_bytes: Vec<u8>,
-    pub(crate) body_request_id: Option<RequestId>,
+    pub(crate) ready: bool,
 }
 
 impl std::fmt::Debug for StoppedResponse {
@@ -1000,51 +1002,53 @@ impl Watch {
     /// the response the navigation stopped on.
     pub(crate) fn take_outcome(&self) -> InterceptOutcome {
         let mut state = lock(&self.page.outcome);
+        let stopped_response = if state.stopped_response.as_ref().is_some_and(|response| response.ready) {
+            state.stopped_response.take()
+        } else {
+            None
+        };
         InterceptOutcome {
             blocked: state.blocked.take(),
-            stopped_response: state.stopped_response.take(),
+            stopped_response,
             ..InterceptOutcome::default()
         }
     }
 
     pub(crate) fn take_stopped_response(&self) -> Option<StoppedResponse> {
-        lock(&self.page.outcome).stopped_response.take()
+        let mut outcome = lock(&self.page.outcome);
+        if outcome.stopped_response.as_ref().is_some_and(|response| response.ready) {
+            outcome.stopped_response.take()
+        } else {
+            None
+        }
     }
 
-    pub(crate) async fn read_stopped_response(
+    pub(crate) async fn take_stopped_response_within(
         &self,
-        page: &chromiumoxide::Page,
-        mut stop: StoppedResponse,
-    ) -> Result<StoppedResponse, CrawlError> {
-        let Some(request_id) = stop.body_request_id.take() else {
-            return Ok(stop);
-        };
-        let response = page
-            .execute(NetworkGetResponseBodyParams::new(request_id))
-            .await
-            .map_err(|error| {
-                CrawlError::browser_error(format!(
-                    "failed to read the stopped response body from {}: {error}",
-                    crate::net::redact_url_credentials(&stop.url)
-                ))
-            })?
-            .result;
-        let mut body_bytes = if response.base64_encoded {
-            BASE64.decode(response.body).map_err(|error| {
-                CrawlError::browser_error(format!(
-                    "failed to decode the stopped response body from {}: {error}",
-                    crate::net::redact_url_credentials(&stop.url)
-                ))
-            })?
-        } else {
-            response.body.into_bytes()
-        };
-        if let Some(max_size) = effective_max_body_size(&self.page.config) {
-            body_bytes.truncate(max_size);
+        timeout: Duration,
+    ) -> Result<Option<StoppedResponse>, CrawlError> {
+        let pending = || lock(&self.page.outcome).stopped_response.is_some();
+        if !pending() {
+            return Ok(None);
         }
-        stop.body = String::from_utf8_lossy(&body_bytes).into_owned();
-        stop.body_bytes = body_bytes;
-        Ok(stop)
+        match tokio::time::timeout(timeout, async {
+            loop {
+                if let Some(response) = self.take_stopped_response() {
+                    return response;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        {
+            Ok(response) => Ok(Some(response)),
+            Err(_) => {
+                self.mark_unsettled();
+                Err(CrawlError::browser_timeout(format!(
+                    "browser timed out after {timeout:?} reading a terminal response"
+                )))
+            }
+        }
     }
 
     /// The redirects the main frame has followed since the watch began: HTTP redirects, and
@@ -1121,6 +1125,10 @@ impl Watch {
         !lock(&self.page.outcome).goto_unsettled
     }
 
+    pub(crate) fn mark_unsettled(&self) {
+        lock(&self.page.outcome).goto_unsettled = true;
+    }
+
     /// End the requested navigation: the navigations the page makes from now on are the
     /// caller's own, so the redirect limit no longer counts them.
     pub(crate) fn end_navigation(&self) {
@@ -1133,7 +1141,6 @@ impl Watch {
     ///
     /// ~keep Keyed by the committed loader, not taken from the last response: Chrome commits
     /// ~keep no document for a 204 or a 2xx download, so the page keeps showing the previous one.
-    #[cfg(feature = "browser")]
     pub(crate) fn document(&self, loader_id: &str) -> Option<DocumentResponse> {
         lock(&self.page.outcome).documents.get(loader_id).cloned()
     }
@@ -1685,13 +1692,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     let request_id = event.request_id.clone();
     let _ = match verdict {
-        Verdict::RenderRedirect(headers) => {
-            let mut params = ContinueResponseParams::new(request_id);
-            params.response_code = Some(200);
-            params.response_phrase = Some("OK".to_owned());
-            params.response_headers = Some(headers);
-            browser.execute(params).await.map(drop)
-        }
+        Verdict::RenderRedirect => render_terminal_redirect(browser, event, _in_flight.as_ref()).await,
         Verdict::Continue(_) if is_response_stage(event) => {
             browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
         }
@@ -1699,6 +1700,16 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             let mut params = ContinueRequestParams::new(request_id);
             params.headers = headers;
             browser.execute(params).await.map(drop)
+        }
+        Verdict::Stop => {
+            let result = browser
+                .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
+                .await
+                .map(drop);
+            if result.is_ok() {
+                complete_stopped_response(_in_flight.as_ref(), None);
+            }
+            result
         }
         Verdict::Refuse => browser
             .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
@@ -1717,12 +1728,98 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
-    /// ~keep Render a terminal redirect's body without letting Chrome follow its Location.
-    RenderRedirect(Vec<HeaderEntry>),
+    /// ~keep Capture a terminal redirect's body, then commit an inert internal document.
+    RenderRedirect,
+    /// ~keep Fail a response that cannot commit a document, then report its original metadata.
+    Stop,
     /// Fail it with `BlockedByClient`.
     Refuse,
     /// ~keep Drop a navigation the page must not wait on, so it keeps its document.
     Abort,
+}
+
+async fn render_terminal_redirect(
+    browser: &Browser,
+    event: &EventRequestPaused,
+    in_flight: Option<&InFlight>,
+) -> Result<(), chromiumoxide::error::CdpError> {
+    let max_size = in_flight.and_then(|request| effective_max_body_size(&request.0.config));
+    let body = match read_response_stream(browser, event.request_id.clone(), max_size).await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(
+                url = %crate::net::redact_url_credentials(&event.request.url),
+                %error,
+                "failed to read a terminal redirect body; returning the response with an empty body"
+            );
+            Vec::new()
+        }
+    };
+    let mut params = FulfillRequestParams::new(event.request_id.clone(), 200);
+    params.response_phrase = Some("OK".to_owned());
+    params.response_headers = Some(vec![
+        HeaderEntry::new("Content-Type", "text/plain; charset=utf-8"),
+        HeaderEntry::new("Content-Length", "0"),
+        HeaderEntry::new("Content-Security-Policy", "default-src 'none'; sandbox"),
+        HeaderEntry::new("X-Content-Type-Options", "nosniff"),
+    ]);
+    params.body = Some(String::new().into());
+    browser.execute(params).await.map(|_| {
+        complete_stopped_response(in_flight, Some(body));
+    })
+}
+
+fn complete_stopped_response(in_flight: Option<&InFlight>, body: Option<Vec<u8>>) {
+    let Some(request) = in_flight else { return };
+    let mut outcome = lock(&request.0.outcome);
+    if let Some(stop) = outcome.stopped_response.as_mut() {
+        if let Some(body) = body {
+            stop.body = String::from_utf8_lossy(&body).into_owned();
+            stop.body_bytes = body;
+        }
+        stop.ready = true;
+    }
+}
+
+async fn read_response_stream(
+    browser: &Browser,
+    request_id: chromiumoxide::cdp::browser_protocol::fetch::RequestId,
+    max_size: Option<usize>,
+) -> Result<Vec<u8>, String> {
+    let stream = browser
+        .execute(TakeResponseBodyAsStreamParams::new(request_id))
+        .await
+        .map_err(|error| error.to_string())?
+        .result
+        .stream;
+    let result = async {
+        let mut body = Vec::new();
+        loop {
+            let remaining = max_size.map_or(RESPONSE_BODY_CHUNK_SIZE, |limit| limit.saturating_sub(body.len()));
+            if remaining == 0 {
+                break;
+            }
+            let mut params = ReadStreamParams::new(stream.clone());
+            params.size = Some(remaining.min(RESPONSE_BODY_CHUNK_SIZE) as i64);
+            let chunk = browser.execute(params).await.map_err(|error| error.to_string())?.result;
+            let mut bytes = if chunk.base64_encoded.unwrap_or(false) {
+                BASE64.decode(chunk.data).map_err(|error| error.to_string())?
+            } else {
+                chunk.data.into_bytes()
+            };
+            if let Some(limit) = max_size {
+                bytes.truncate(limit.saturating_sub(body.len()));
+            }
+            body.extend(bytes);
+            if chunk.eof {
+                break;
+            }
+        }
+        Ok(body)
+    }
+    .await;
+    let _ = browser.execute(CloseStreamParams::new(stream)).await;
+    result
 }
 
 /// A paused request of a watched page, counted in the page's `in_flight` while it lives.
@@ -1911,8 +2008,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
 /// ~keep Chrome commit its error page, which ends `goto` at once.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
-/// ~keep Its response is continued as a 200 without `Location`, so Chrome consumes its body but
-/// ~keep cannot hand the target to an app; callers still receive the original status and headers.
+/// ~keep Its body is captured through a bounded stream, then Chrome receives an empty, sandboxed
+/// ~keep text document without the original headers. Callers still receive the original status,
+/// ~keep headers, URL and captured body, while none of that body can execute in the renderer.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -1964,18 +2062,12 @@ fn main_frame_verdict(
         headers: header_map(headers),
         body: String::new(),
         body_bytes: Vec::new(),
-        body_request_id: render_redirect.then(|| event.network_id.clone()).flatten(),
+        ready: false,
     });
     if render_redirect {
-        Verdict::RenderRedirect(
-            headers
-                .iter()
-                .filter(|header| !header.name.eq_ignore_ascii_case("location"))
-                .cloned()
-                .collect(),
-        )
+        Verdict::RenderRedirect
     } else {
-        Verdict::Refuse
+        Verdict::Stop
     }
 }
 
@@ -2393,7 +2485,7 @@ mod tests {
         ));
         assert!(matches!(
             main_frame_verdict(&redirect("B"), &main_frame, 1, &state),
-            Verdict::RenderRedirect(_)
+            Verdict::RenderRedirect
         ));
         assert_eq!(
             state
@@ -2434,21 +2526,9 @@ mod tests {
                 .as_mut()
                 .expect("redirect headers")
                 .push(super::HeaderEntry::new("X-Redirect-Marker", "kept"));
-            let Verdict::RenderRedirect(rendered_headers) = main_frame_verdict(&event, &main_frame, 10, &state) else {
+            let Verdict::RenderRedirect = main_frame_verdict(&event, &main_frame, 10, &state) else {
                 panic!("the terminal redirect must be rendered without being followed");
             };
-            assert!(
-                rendered_headers
-                    .iter()
-                    .all(|header| !header.name.eq_ignore_ascii_case("location")),
-                "Chrome must not receive the redirect target: {rendered_headers:?}"
-            );
-            assert!(
-                rendered_headers
-                    .iter()
-                    .any(|header| header.name.eq_ignore_ascii_case("x-redirect-marker")),
-                "ordinary response headers must reach Chrome: {rendered_headers:?}"
-            );
             let state = state.into_inner().expect("state lock");
             let stopped = state.stopped_response.expect("the redirect response must be kept");
             assert_eq!(
@@ -2457,10 +2537,6 @@ mod tests {
             );
             assert_eq!(stopped.headers["location"], [target]);
             assert_eq!(stopped.headers["x-redirect-marker"], ["kept"]);
-            assert!(
-                stopped.body_request_id.is_some(),
-                "the response body must be retrievable"
-            );
             assert_eq!(state.redirects_followed, 0, "{target} is not followed");
         }
     }
@@ -2651,7 +2727,7 @@ mod tests {
                 headers: headers.clone(),
                 body: SECRET.to_owned(),
                 body_bytes: SECRET.as_bytes().to_vec(),
-                body_request_id: None,
+                ready: true,
             }),
             documents: std::collections::HashMap::from([(
                 "loader-1".to_owned(),

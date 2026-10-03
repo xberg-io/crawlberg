@@ -114,13 +114,10 @@ async fn render(
     })
     .await;
 
+    watch.settle().await;
     let intercepted = watch.take_outcome();
-    if intercepted.blocked.is_none()
-        && let Some(stop) = intercepted.stopped_response
-    {
-        return stopped_browser_page(page, watch, stop).await;
-    }
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
+        watch.mark_unsettled();
         if matches!(error, CrawlError::BrowserError { .. })
             && let Some(outcome) = answered_error_page(page, watch, watch.redirects_followed()).await
         {
@@ -128,12 +125,16 @@ async fn render(
         }
         return Err(error);
     }
+    if let Some(stop) = intercepted.stopped_response {
+        return Ok(stopped_browser_page(watch, stop));
+    }
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
-    if let Some(stop) = watch.take_stopped_response() {
-        return stopped_browser_page(page, watch, stop).await;
+    watch.settle().await;
+    if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
+        return Ok(stopped_browser_page(watch, stop));
     }
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
@@ -182,19 +183,14 @@ async fn render(
     })
 }
 
-async fn stopped_browser_page(
-    page: &chromiumoxide::Page,
-    watch: &Watch,
-    stop: StoppedResponse,
-) -> Result<BrowserPage, CrawlError> {
-    let stop = watch.read_stopped_response(page, stop).await?;
+fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
     let redirects = watch.redirects_followed();
-    Ok(BrowserPage {
+    BrowserPage {
         response: stopped_response(stop),
         redirects,
         redirected: redirects > 0,
         refused: Vec::new(),
-    })
+    }
 }
 
 /// The outcome of a navigation that failed on Chrome's error page for a response the server
@@ -246,7 +242,7 @@ fn error_page_outcome(
             headers: recorded.headers,
             body: String::new(),
             body_bytes: Vec::new(),
-            body_request_id: None,
+            ready: true,
         }),
         redirects,
         redirected: recorded.redirects > 0,
@@ -607,8 +603,10 @@ mod tests {
             headers: HashMap::new(),
             redirects: 0,
         };
-        let error = error_page_outcome("https://user:s3cretpw@example.com/broken".to_owned(), Some(recorded), 0)
-            .expect_err("Chrome did not render the successful response");
+        let error = match error_page_outcome("https://user:s3cretpw@example.com/broken".to_owned(), Some(recorded), 0) {
+            Ok(_) => panic!("Chrome did not render the successful response"),
+            Err(error) => error,
+        };
         let CrawlError::BrowserError { message, .. } = error else {
             panic!("got {error:?}");
         };

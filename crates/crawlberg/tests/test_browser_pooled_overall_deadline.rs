@@ -12,13 +12,14 @@
 
 #![cfg(feature = "browser")]
 
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, create_engine,
-    scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
+    CrawlError, create_engine, scrape,
 };
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
@@ -44,6 +45,49 @@ fn spawn_stalling_server() -> String {
         }
     });
     format!("http://{addr}/")
+}
+
+fn spawn_stalled_redirect_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+    let addr = listener.local_addr().expect("test server should have local addr");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { break };
+            std::thread::spawn(move || {
+                let Ok(mut writer) = stream.try_clone() else { return };
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) if header == "\r\n" || header == "\n" => break,
+                        Ok(_) => {}
+                    }
+                }
+                if request_line.contains(" /ok ") {
+                    let body = "<p>follow-up-ok</p>";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = writer.write_all(response.as_bytes());
+                    let _ = writer.flush();
+                    return;
+                }
+                let _ = writer.write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: mailto:someone@example.com\r\n\
+                      Content-Type: text/html\r\nContent-Length: 1000000\r\n\r\npartial",
+                );
+                let _ = writer.flush();
+                std::thread::sleep(Duration::from_secs(3600));
+            });
+        }
+    });
+    format!("http://{addr}")
 }
 
 fn stalled_pooled_config(pool: std::sync::Arc<BrowserPool>) -> CrawlConfig {
@@ -94,6 +138,37 @@ async fn pooled_fetch_fails_near_the_overall_deadline_when_navigation_stalls() {
             );
         }
     }
+}
+
+#[tokio::test]
+#[serial_test::serial(pooled_browser_deadline)]
+async fn a_timed_out_terminal_redirect_is_not_reused_for_the_follow_up_fetch() {
+    let test_name = "a_timed_out_terminal_redirect_is_not_reused_for_the_follow_up_fetch";
+    let base = spawn_stalled_redirect_server();
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let mut config = stalled_pooled_config(Arc::clone(&pool));
+    config.browser.timeout = Duration::from_secs(2);
+    config.browser.overall_timeout = Duration::from_secs(15);
+    config.browser.session_affinity = true;
+    config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    match scrape(&engine, &format!("{base}/redirect")).await {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            pool.shutdown().await;
+            return;
+        }
+        Err(CrawlError::BrowserTimeout { .. }) => {}
+        Ok(page) => panic!("an incomplete terminal redirect must not become reusable success: {page:?}"),
+        Err(error) => panic!("the incomplete terminal redirect must time out: {error:?}"),
+    }
+
+    let follow_up = scrape(&engine, &format!("{base}/ok"))
+        .await
+        .unwrap_or_else(|error| panic!("the follow-up must use a fresh page: {error:?}"));
+    pool.shutdown().await;
+    assert!(follow_up.html.contains("follow-up-ok"), "{}", follow_up.html);
 }
 
 /// Same shape as [`stalled_pooled_config`], with a longer overall deadline.

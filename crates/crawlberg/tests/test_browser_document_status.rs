@@ -578,13 +578,19 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
         ("/file", "file:///etc/hostname"),
         ("/app", "myapp://open"),
     ] {
-        let body = format!("<p>{route}-redirect-body</p>");
+        let body = format!(
+            "<script>fetch('/script-fired')</script>\
+             <meta http-equiv='refresh' content='0;url=/meta-fired'>\
+             <img src='/image-fired'><p>{route}-redirect-body</p>"
+        );
         Mock::given(method("GET"))
             .and(path(route))
             .respond_with(
                 ResponseTemplate::new(302)
                     .append_header("location", target)
                     .append_header("x-redirect-marker", route)
+                    .append_header("refresh", "0;url=/header-fired")
+                    .append_header("content-disposition", "attachment")
                     .set_body_raw(body, "text/html"),
             )
             .mount(&site)
@@ -602,7 +608,11 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             return;
         };
         let page = result.unwrap_or_else(|error| panic!("{test_name}: {target}: {error:?}"));
-        let expected_body = format!("<p>{route}-redirect-body</p>");
+        let expected_body = format!(
+            "<script>fetch('/script-fired')</script>\
+             <meta http-equiv='refresh' content='0;url=/meta-fired'>\
+             <img src='/image-fired'><p>{route}-redirect-body</p>"
+        );
         assert_eq!(
             (page.status_code, page.html.as_str()),
             (302, expected_body.as_str()),
@@ -616,6 +626,22 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             page.final_url
         );
     }
+    let active_requests: Vec<_> = site
+        .received_requests()
+        .await
+        .expect("request recording is enabled")
+        .into_iter()
+        .filter(|request| {
+            matches!(
+                request.url.path(),
+                "/script-fired" | "/meta-fired" | "/image-fired" | "/header-fired"
+            )
+        })
+        .collect();
+    assert!(
+        active_requests.is_empty(),
+        "terminal redirect content and navigation headers must be inert: {active_requests:?}"
+    );
 }
 
 #[tokio::test]

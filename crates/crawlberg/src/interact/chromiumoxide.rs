@@ -209,14 +209,17 @@ async fn run_session(
     if let Some(stop) = navigate_and_wait(page, watch, url, config).await? {
         return Ok(no_document_result(&stop, actions));
     }
+    ensure_committed_page_is_readable(page, watch).await?;
     if let Some(ref script) = config.browser.eval_script {
         let budget = config.browser.timeout;
         match tokio::time::timeout(budget, evaluate_json(page, script)).await {
-            Ok(result) => result.map_err(|e| {
-                CrawlError::browser_error(format!(
-                    "post-navigation eval_script failed before interaction actions: {e}"
-                ))
-            })?,
+            Ok(result) => {
+                result.map_err(|e| {
+                    CrawlError::browser_error(format!(
+                        "post-navigation eval_script failed before interaction actions: {e}"
+                    ))
+                })?;
+            }
             Err(_) => {
                 return Err(CrawlError::browser_timeout(format!(
                     "post-navigation eval_script timed out after {budget:?}"
@@ -239,6 +242,23 @@ async fn run_session(
         screenshot_base64,
         ssrf_refused_urls: watch.refused_urls().await,
     })
+}
+
+async fn ensure_committed_page_is_readable(page: &chromiumoxide::Page, watch: &Watch) -> Result<(), CrawlError> {
+    let document = committed_document(page).await?;
+    let Some(failed_url) = document.unreachable_url else {
+        return Ok(());
+    };
+    if let Some(response) = watch.document(&document.loader_id)
+        && (200..300).contains(&response.status)
+    {
+        return Err(CrawlError::browser_error(format!(
+            "Chrome could not read the body of the HTTP {} response from {}",
+            response.status,
+            crate::net::redact_url_credentials(&failed_url)
+        )));
+    }
+    Err(error_page_error(&failed_url))
 }
 
 /// The final HTML and URL of the session, both of one committed document.
@@ -346,13 +366,15 @@ async fn navigate_and_wait(
     })
     .await;
 
+    watch.settle().await;
     let intercepted = watch.take_outcome();
-    if intercepted.blocked.is_none()
-        && let Some(stop) = intercepted.stopped_response
-    {
-        return Ok(Some(watch.read_stopped_response(page, stop).await?));
+    if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
+        watch.mark_unsettled();
+        return Err(error);
     }
-    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
+    if let Some(stop) = intercepted.stopped_response {
+        return Ok(Some(stop));
+    }
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -364,8 +386,8 @@ async fn navigate_and_wait(
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
-    if let Some(stop) = watch.take_stopped_response() {
-        return Ok(Some(watch.read_stopped_response(page, stop).await?));
+    if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
+        return Ok(Some(stop));
     }
     // ~keep The redirect limit bounds the navigation to `url`. A navigation an action starts is
     // ~keep the caller's own, so it is not counted.
