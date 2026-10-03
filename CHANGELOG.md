@@ -1318,6 +1318,24 @@ All notable changes to crawlberg are documented here.
   check. The REST API refuses a look-around or backreference pattern in `includePaths` or
   `excludePaths` with a 400. (#78)
 
+- **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
+  `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
+  of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
+  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
+  name and every other value stays
+  visible. Output is unchanged for a document crawlberg produced itself, because no path in the
+  core populates `headers` yet — the leak was reachable through a deserialised or caller-built
+  value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
+  map and are not covered by this. (#159)
+
+- **A custom retry policy could not read the status of a failed attempt.** `AttemptOutcome.status`
+  was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
+  the error but not the 503 or 500 behind it. The field now holds the status for every status the
+  built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
+  stays empty when no response caused the error, such as a connection failure. (#99)
+
 ### Changed
 
 - **Upgraded `html-to-markdown-rs` to 3.16.0.** A comma inside a parenthesised `srcset`
@@ -1434,18 +1452,6 @@ Four changes can affect an existing setup:
   HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
   percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
   they do not resolve at all. (#220)
-
-- **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
-  `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
-  of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
-  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
-  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
-  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
-  name and every other value stays
-  visible. Output is unchanged for a document crawlberg produced itself, because no path in the
-  core populates `headers` yet — the leak was reachable through a deserialised or caller-built
-  value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
-  map and are not covered by this. (#159)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
@@ -1581,11 +1587,6 @@ Four changes can affect an existing setup:
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
-- **A custom retry policy could not read the status of a failed attempt.** `AttemptOutcome.status`
-  was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
-  the error but not the 503 or 500 behind it. The field now holds the status for every status the
-  built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
-  stays empty when no response caused the error, such as a connection failure. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
