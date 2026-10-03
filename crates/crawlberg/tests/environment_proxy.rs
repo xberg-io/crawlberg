@@ -1,3 +1,8 @@
+#![allow(
+    unsafe_code,
+    reason = "all tests in this binary share one serial key and restore every mutated environment variable"
+)]
+
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex};
 
@@ -26,7 +31,7 @@ impl EnvironmentGuard {
             .map(|name| (name, std::env::var_os(name)))
             .collect();
         for name in PROXY_ENV {
-            // SAFETY: this test is serial, and restores every variable before returning.
+            // SAFETY: ~keep every test in this binary shares one serial key, and the guard restores every variable.
             unsafe { std::env::remove_var(name) };
         }
         let guard = Self(saved);
@@ -35,12 +40,12 @@ impl EnvironmentGuard {
     }
 
     fn set_http_proxy(&self, proxy: impl AsRef<OsStr>) {
-        // SAFETY: this test is serial, and restores HTTP_PROXY before returning.
+        // SAFETY: ~keep every test in this binary shares one serial key, and the guard restores HTTP_PROXY.
         unsafe { std::env::set_var("HTTP_PROXY", proxy) };
     }
 
     fn set_no_proxy(&self, no_proxy: impl AsRef<OsStr>) {
-        // SAFETY: this test is serial, and restores NO_PROXY before returning.
+        // SAFETY: ~keep every test in this binary shares one serial key, and the guard restores NO_PROXY.
         unsafe { std::env::set_var("NO_PROXY", no_proxy) };
     }
 }
@@ -78,11 +83,11 @@ impl Drop for EnvironmentGuard {
         for (name, value) in self.0.drain(..) {
             match value {
                 Some(value) => {
-                    // SAFETY: this test is serial, and this restores the original value.
+                    // SAFETY: ~keep every test in this binary shares one serial key; this restores the original value.
                     unsafe { std::env::set_var(name, value) };
                 }
                 None => {
-                    // SAFETY: this test is serial, and this restores the variable's absence.
+                    // SAFETY: ~keep every test in this binary shares one serial key; this restores absence.
                     unsafe { std::env::remove_var(name) };
                 }
             }
