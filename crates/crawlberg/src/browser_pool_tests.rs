@@ -1393,10 +1393,13 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
         pool_handlers_stopped.is_ok(),
         "every pool handler must stop during cleanup"
     );
-    assert!(owner_killed.is_ok(), "stopping the test-owned Chrome must not time out");
     assert!(
-        owner_handler_stopped.is_ok(),
-        "the test-owned Chrome's handler must stop during cleanup"
+        matches!(&owner_killed, Ok(Some(Ok(())))),
+        "stopping the test-owned Chrome must succeed: {owner_killed:?}"
+    );
+    assert!(
+        matches!(&owner_handler_stopped, Ok(Err(error)) if error.is_cancelled()),
+        "the aborted test-owned Chrome handler must report cancellation: {owner_handler_stopped:?}"
     );
 }
 
