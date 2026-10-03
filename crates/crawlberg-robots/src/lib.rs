@@ -71,25 +71,25 @@ impl RobotsParseState {
                 }
                 self.current_agents.push(value.to_lowercase());
             }
-            "allow" => {
+            "allow" if !self.current_agents.is_empty() => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.allow.push(value.to_owned());
                 }
             }
-            "disallow" => {
+            "disallow" if !self.current_agents.is_empty() => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.disallow.push(value.to_owned());
                 }
             }
-            "crawl-delay" => {
+            "crawl-delay" if !self.current_agents.is_empty() => {
                 self.in_rules = true;
                 if let Ok(delay) = value.parse::<u64>() {
                     self.current_rules.crawl_delay = Some(delay);
                 }
             }
-            "request-rate" => {
+            "request-rate" if !self.current_agents.is_empty() => {
                 self.in_rules = true;
                 if let Some((_, seconds)) = value.split_once('/')
                     && let Ok(s) = seconds.parse::<u64>()
@@ -97,6 +97,9 @@ impl RobotsParseState {
                 {
                     self.current_rules.crawl_delay = Some(s);
                 }
+            }
+            _ if !self.current_agents.is_empty() => {
+                self.in_rules = true;
             }
             _ => {}
         }
@@ -113,16 +116,24 @@ impl RobotsParseState {
 
 /// Whether a robots product token addresses the crawler running as `ua_lower`.
 ///
-/// ~keep RFC 9309 §2.2.1 matches in one direction only: the token must prefix our user-agent
-/// (so `crawlberg` matches the default `crawlberg/1.2.1`). Accepting the reverse let UA
-/// `crawlberg` claim rules written for a different, more specific bot such as `crawlberg-news`.
+/// ~keep RFC 9309 §2.2.1 matches complete product tokens, excluding version and other suffixes.
+/// Comparing raw prefixes let `crawl` claim `crawlberg`, while failing to match a versioned group
+/// such as `crawlberg/2.0` to the running product `crawlberg/1.2.1`.
 /// Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule decides which
 /// crawler a named directive binds, wherever that name appears.
 ///
 /// Hidden from the docs: it is public only so the `crawlberg` crate can call it.
 #[doc(hidden)]
 pub fn product_token_addresses_us(token_lower: &str, ua_lower: &str) -> bool {
-    !token_lower.is_empty() && ua_lower != "*" && ua_lower.starts_with(token_lower)
+    fn product_token(value: &str) -> &str {
+        let end = value
+            .find(|character: char| !character.is_ascii_alphabetic() && character != '_' && character != '-')
+            .unwrap_or(value.len());
+        &value[..end]
+    }
+
+    let token = product_token(token_lower);
+    !token.is_empty() && ua_lower != "*" && token == product_token(ua_lower)
 }
 
 /// Combine every block written for `ua_lower` specifically, and every `*` block.
@@ -220,30 +231,38 @@ fn robots_path_matches(path: &str, rule: &str) -> bool {
         (rule, false)
     };
 
-    if !rule_body.contains('*') {
-        if exact_end {
-            return path == rule_body;
+    let path = path.as_bytes();
+    let pattern = rule_body.as_bytes();
+    let mut path_index = 0;
+    let mut pattern_index = 0;
+    let mut wildcard_index = None;
+    let mut wildcard_match = 0;
+
+    while path_index < path.len() {
+        if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            wildcard_index = Some(pattern_index);
+            wildcard_match = path_index;
+            pattern_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == path[path_index] {
+            pattern_index += 1;
+            path_index += 1;
+        } else if let Some(star) = wildcard_index {
+            wildcard_match += 1;
+            path_index = wildcard_match;
+            pattern_index = star + 1;
+        } else {
+            return false;
         }
-        return path.starts_with(rule_body);
+
+        if !exact_end && pattern_index == pattern.len() {
+            return true;
+        }
     }
 
-    let parts: Vec<&str> = rule_body.split('*').collect();
-    let mut remaining = path;
-    for (i, segment) in parts.iter().enumerate() {
-        if segment.is_empty() {
-            continue;
-        }
-        match remaining.find(segment) {
-            Some(pos) => {
-                if i == 0 && pos != 0 {
-                    return false;
-                }
-                remaining = &remaining[pos + segment.len()..];
-            }
-            None => return false,
-        }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
     }
-    if exact_end { remaining.is_empty() } else { true }
+    pattern_index == pattern.len()
 }
 
 /// Determine whether the given path is allowed by the robots.txt rules.
@@ -484,6 +503,28 @@ mod tests {
     }
 
     #[test]
+    fn a_prefix_of_our_product_token_does_not_name_our_crawler() {
+        let body = "User-agent: crawl\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            is_path_allowed("/x", &rules),
+            "the `crawl` product token must not bind the distinct `crawlberg` crawler"
+        );
+    }
+
+    #[test]
+    fn a_versioned_group_token_names_the_same_product_token() {
+        let body = "User-agent: crawlberg/2.0\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            !is_path_allowed("/x", &rules),
+            "versions after the `crawlberg` product token must not affect group selection"
+        );
+    }
+
+    #[test]
     fn crawl_delay_is_parsed_from_the_selected_block() {
         let body = "User-agent: *\nCrawl-delay: 5\nDisallow: /private\n";
         let rules = parse_robots_txt(body, "crawlberg");
@@ -606,6 +647,32 @@ mod tests {
     }
 
     #[test]
+    fn a_rule_before_the_first_user_agent_is_ignored() {
+        let body = "Disallow: /x\nUser-agent: *\nDisallow: /y\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            is_path_allowed("/x", &rules),
+            "a rule outside a user-agent group must not apply to the first group"
+        );
+        assert!(
+            !is_path_allowed("/y", &rules),
+            "the rule inside the wildcard group must still apply"
+        );
+    }
+
+    #[test]
+    fn an_unknown_directive_separates_adjacent_user_agent_groups() {
+        let body = "User-agent: crawlberg\nFoo: bar\nUser-agent: other\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.8.0");
+
+        assert!(
+            is_path_allowed("/x", &rules),
+            "the rule for `other` must not join the preceding `crawlberg` group"
+        );
+    }
+
+    #[test]
     fn wildcard_mid_pattern_matches_any_substring_in_between() {
         assert!(
             !is_path_allowed("/foo/bar/baz", &rules(&[], &["/foo/*/baz"], true)),
@@ -648,6 +715,26 @@ mod tests {
         assert!(
             is_path_allowed("/files/report.txt", &robots),
             "/*.pdf$ must not match a path that does not contain .pdf at all"
+        );
+    }
+
+    #[test]
+    fn anchored_wildcard_retries_a_repeated_suffix() {
+        let robots = rules(&[], &["/*.pdf$"], true);
+
+        assert!(
+            !is_path_allowed("/a.pdf.pdf", &robots),
+            "/*.pdf$ must retry the suffix and match the final .pdf occurrence"
+        );
+    }
+
+    #[test]
+    fn anchored_wildcard_retries_a_repeated_literal() {
+        let robots = rules(&[], &["/a*b$"], true);
+
+        assert!(
+            !is_path_allowed("/abab", &robots),
+            "/a*b$ must let the wildcard consume `ba` and match the final `b`"
         );
     }
 }
