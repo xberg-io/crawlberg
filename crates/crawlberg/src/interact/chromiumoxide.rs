@@ -256,19 +256,37 @@ async fn ensure_committed_page_is_readable(
                 "browser timed out after {budget:?} checking the committed document before interaction actions"
             ))
         })??;
+    if let Some(error) = unreadable_success_error(&document, watch) {
+        return Err(error);
+    }
     let Some(failed_url) = document.unreachable_url else {
         return Ok(());
     };
-    if let Some(response) = watch.document(&document.loader_id)
-        && (200..300).contains(&response.status)
-    {
-        return Err(CrawlError::browser_error(format!(
+    Err(error_page_error(&failed_url))
+}
+
+fn unreadable_success_error(document: &CommittedDocument, watch: &Watch) -> Option<CrawlError> {
+    let failed_url = document.unreachable_url.as_deref()?;
+    let response = watch.document(&document.loader_id)?;
+    (200..300).contains(&response.status).then(|| {
+        CrawlError::browser_error(format!(
             "Chrome could not read the body of the HTTP {} response from {}",
             response.status,
-            crate::net::redact_url_credentials(&failed_url)
-        )));
-    }
-    Err(error_page_error(&failed_url))
+            crate::net::redact_url_credentials(failed_url)
+        ))
+    })
+}
+
+async fn classify_unreadable_success_within(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    budget: Duration,
+) -> Option<CrawlError> {
+    let document = tokio::time::timeout(budget, committed_document(page))
+        .await
+        .ok()?
+        .ok()?;
+    unreadable_success_error(&document, watch)
 }
 
 /// The final HTML and URL of the session, both of one committed document.
@@ -365,16 +383,26 @@ async fn navigate_and_wait(
     let timeout = config.browser.timeout;
 
     let navigation = tokio::time::timeout(timeout, async {
-        watch
+        let goto = watch
             .goto(page, url)
             .await
-            .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
-        wait_for_ready(page, config)
+            .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")));
+        if let Some(unreadable) = classify_unreadable_success_within(page, watch, timeout).await {
+            return (Err(unreadable), true);
+        }
+        if let Err(error) = goto {
+            return (Err(error), false);
+        }
+        let ready = wait_for_ready(page, config)
             .await
-            .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
-        Ok::<(), CrawlError>(())
+            .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")));
+        (ready, false)
     })
     .await;
+    let (navigation, already_classified) = match navigation {
+        Ok((result, classified)) => (Ok(result), classified),
+        Err(elapsed) => (Err(elapsed), false),
+    };
 
     watch.settle().await;
     let mut intercepted = watch.take_outcome();
@@ -382,8 +410,13 @@ async fn navigate_and_wait(
         watch.mark_unsettled();
         return Ok(Some(stop));
     }
+    let was_blocked = intercepted.blocked.is_some();
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         watch.mark_unsettled();
+        let should_classify = !was_blocked && !already_classified && matches!(&error, CrawlError::BrowserError { .. });
+        if should_classify && let Some(unreadable) = classify_unreadable_success_within(page, watch, timeout).await {
+            return Err(unreadable);
+        }
         return Err(error);
     }
     if let Some(stop) = intercepted.stopped_response {
