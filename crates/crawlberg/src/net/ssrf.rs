@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_url_rejects_shared_address_space() {
+    async fn validate_url_rejects_shared_address_space_as_private_network() {
         let policy = SsrfPolicy::default();
         for host in ["100.100.100.200", "100.64.0.1", "100.127.255.254"] {
             let url = format!("http://{host}/").parse::<url::Url>().unwrap();
@@ -422,8 +422,13 @@ mod tests {
                 .await
                 .expect_err("RFC 6598 shared address space must be denied");
             assert!(
-                matches!(err, SsrfError::DeniedByPolicy { .. }),
-                "expected DeniedByPolicy for RFC 6598 address {host}, got {err:?}"
+                matches!(
+                    err,
+                    SsrfError::DeniedByPolicy {
+                        reason: "private_network"
+                    }
+                ),
+                "expected a private_network denial for RFC 6598 address {host}, got {err:?}"
             );
         }
     }
