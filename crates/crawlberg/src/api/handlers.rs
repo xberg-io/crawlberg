@@ -251,8 +251,17 @@ fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) -> Result
         refuse_backtracking_patterns("excludePaths", excludes)?;
         config.exclude_paths = excludes.clone();
     }
+    if let Some(match_query) = req.path_patterns_match_query {
+        config.path_patterns_match_query = match_query;
+    }
+    if let Some(match_url) = req.path_patterns_match_url {
+        config.path_patterns_match_url = match_url;
+    }
     if let Some(stay) = req.stay_on_domain {
         config.stay_on_domain = stay;
+    }
+    if let Some(respect_robots_txt) = req.respect_robots_txt {
+        config.respect_robots_txt = respect_robots_txt;
     }
     Ok(())
 }
@@ -626,7 +635,9 @@ fn rebuild_engine_with_config(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_url;
+    use super::{apply_crawl_overrides, validate_url};
+    use crate::api::types::CrawlRequest;
+    use crate::types::CrawlConfig;
 
     #[test]
     fn accepts_an_upper_case_scheme() {
@@ -642,5 +653,43 @@ mod tests {
     #[test]
     fn rejects_a_non_http_scheme() {
         assert!(validate_url("ftp://example.com/").is_err());
+    }
+
+    #[test]
+    fn crawl_overrides_preserve_server_defaults_when_fields_are_omitted() {
+        let request: CrawlRequest = serde_json::from_value(serde_json::json!({
+            "url": "https://example.com"
+        }))
+        .expect("minimal crawl request");
+        let mut config = CrawlConfig {
+            respect_robots_txt: true,
+            path_patterns_match_query: true,
+            path_patterns_match_url: true,
+            ..CrawlConfig::default()
+        };
+
+        apply_crawl_overrides(&mut config, &request).expect("omitted fields preserve defaults");
+
+        assert!(config.respect_robots_txt);
+        assert!(config.path_patterns_match_query);
+        assert!(config.path_patterns_match_url);
+    }
+
+    #[test]
+    fn crawl_overrides_apply_robots_and_path_pattern_target_fields() {
+        let request: CrawlRequest = serde_json::from_value(serde_json::json!({
+            "url": "https://example.com",
+            "respectRobotsTxt": true,
+            "pathPatternsMatchQuery": true,
+            "pathPatternsMatchUrl": true
+        }))
+        .expect("crawl request with policy overrides");
+        let mut config = CrawlConfig::default();
+
+        apply_crawl_overrides(&mut config, &request).expect("policy overrides are valid");
+
+        assert!(config.respect_robots_txt);
+        assert!(config.path_patterns_match_query);
+        assert!(config.path_patterns_match_url);
     }
 }

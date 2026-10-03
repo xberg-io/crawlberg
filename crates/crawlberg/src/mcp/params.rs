@@ -39,6 +39,9 @@ pub struct CrawlParams {
     /// Whether to restrict crawling to the same domain
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stay_on_domain: Option<bool>,
+    /// Whether to respect robots.txt directives and nofollow hints
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respect_robots_txt: Option<bool>,
 }
 
 /// Request parameters for site mapping (URL discovery).
@@ -157,6 +160,15 @@ mod tests {
         assert_eq!(params.max_pages, None);
         assert_eq!(params.format, None);
         assert_eq!(params.stay_on_domain, None);
+        assert_eq!(params.respect_robots_txt, None);
+    }
+
+    #[test]
+    fn crawl_params_accept_a_robots_override() {
+        let json = r#"{"url": "https://example.com", "respect_robots_txt": true}"#;
+        let params: CrawlParams = serde_json::from_str(json).expect("crawl parameters");
+
+        assert_eq!(params.respect_robots_txt, Some(true));
     }
 
     #[test]

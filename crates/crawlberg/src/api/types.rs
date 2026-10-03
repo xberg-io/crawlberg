@@ -53,12 +53,21 @@ pub struct CrawlRequest {
     /// URL patterns to exclude (regex). A pattern with look-around or a backreference is refused.
     #[serde(default)]
     pub exclude_paths: Option<Vec<String>>,
+    /// Whether path patterns match against `path?query` instead of the path alone.
+    #[serde(default)]
+    pub path_patterns_match_query: Option<bool>,
+    /// Whether path patterns match against the full URL. Takes precedence over query matching.
+    #[serde(default)]
+    pub path_patterns_match_url: Option<bool>,
     /// Whether to extract only the main content.
     #[serde(default)]
     pub only_main_content: Option<bool>,
     /// Whether to restrict crawling to the same domain as the seed URL.
     #[serde(default)]
     pub stay_on_domain: Option<bool>,
+    /// Whether to respect robots.txt directives and nofollow hints.
+    #[serde(default)]
+    pub respect_robots_txt: Option<bool>,
 }
 
 /// Request body for `POST /v1/map`.

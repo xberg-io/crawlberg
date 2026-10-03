@@ -183,6 +183,9 @@ impl CrawlbergMcp {
         if let Some(stay) = params.stay_on_domain {
             config.stay_on_domain = stay;
         }
+        if let Some(respect_robots_txt) = params.respect_robots_txt {
+            config.respect_robots_txt = respect_robots_txt;
+        }
 
         let engine = self.build_engine(config)?;
         let result = match engine.crawl(&params.url).await {
@@ -1042,5 +1045,36 @@ mod tests {
             .find_map(|block| block.as_text().map(|content| content.text.clone()))
             .unwrap_or_default();
         assert_eq!(text, "forbidden: robots.txt disallows /private");
+    }
+
+    #[tokio::test]
+    async fn crawl_can_override_the_server_robots_policy() {
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/private"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"),
+            )
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..CrawlConfig::builder().allow_private_networks(true).max_depth(0).build()
+        };
+        let server = CrawlbergMcp::with_config(config);
+
+        let result = server
+            .crawl(Parameters(super::super::params::CrawlParams {
+                url: format!("{}/private", mock.uri()),
+                max_depth: None,
+                max_pages: None,
+                format: None,
+                stay_on_domain: None,
+                respect_robots_txt: Some(false),
+            }))
+            .await
+            .expect("the robots override permits the crawl");
+
+        assert_ne!(result.is_error, Some(true), "crawl result: {result:?}");
     }
 }
