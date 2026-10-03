@@ -1382,9 +1382,9 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
         }
     })
     .await;
-    let owner_killed = tokio::time::timeout(Duration::from_secs(5), owner.kill()).await;
     owner_task.abort();
     let owner_handler_stopped = tokio::time::timeout(Duration::from_secs(5), &mut owner_task).await;
+    let owner_killed = tokio::time::timeout(Duration::from_secs(5), owner.kill()).await;
     drop(owner_dir);
 
     assert!(exercise.is_ok(), "{}", exercise.expect_err("checked above"));
