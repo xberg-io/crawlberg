@@ -134,7 +134,7 @@ fn is_raw_text_element(name: &QualName) -> bool {
     name.ns == ns!(html)
         && matches!(
             &*name.local,
-            "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext"
+            "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext" | "noscript"
         )
 }
 
@@ -213,7 +213,16 @@ mod tests {
 
     #[test]
     fn raw_text_elements_serialize_text_without_escaping() {
-        for tag in ["script", "style", "xmp", "iframe", "noembed", "noframes", "plaintext"] {
+        for tag in [
+            "script",
+            "style",
+            "xmp",
+            "iframe",
+            "noembed",
+            "noframes",
+            "plaintext",
+            "noscript",
+        ] {
             assert_inner_html(tag, "one & two < three", "one & two < three");
         }
     }

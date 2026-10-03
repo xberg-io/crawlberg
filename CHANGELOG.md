@@ -18,9 +18,6 @@ All notable changes to crawlberg are documented here.
   the auth scheme's token, user name and header or query value, and each fixed query value, are
   now a `Secret`. Its `Debug` and `Display` print `***`, so a struct that derives `Debug` over it
   cannot show the key. Build one with `.into()` from a string, and read it with `expose()`. (#386)
-- **The native browser serializes HTML raw-text elements by the HTML rules.** Text in `xmp`,
-  `iframe`, `noembed`, `noframes` and `plaintext` is no longer escaped, while text in `title` and
-  `textarea` is escaped so markup-like text cannot become active markup after a reparse. (#288)
 - **The config check refuses a proxy password that is not percent-encoded.** A `#`, `/` or `?`
   in a proxy user name or password ends the address early, so `http://user:4242#rest@proxy:8080`
   was read as the host `user` on port 4242. Such an address now fails `CrawlConfig::validate`,
@@ -269,6 +266,11 @@ All notable changes to crawlberg are documented here.
   the processes it found. It also logs a warning when the processes keep changing for eight
   reads of the table. A process that runs after the last read is still not seen. This applies to
   the Chromiumoxide backend. (#585)
+
+- **The native browser serializes HTML raw-text elements by the HTML rules.** Text in `xmp`,
+  `iframe`, `noembed`, `noframes`, `plaintext` and `noscript` is no longer escaped, while text in
+  `title` and `textarea` is escaped so markup-like text cannot become active markup after a
+  reparse. (#288)
 
 - **The native browser fetched a blank stylesheet or script address as the page itself.** An
   empty address, or one made only of URL-parser whitespace, is now skipped before resolution, so
