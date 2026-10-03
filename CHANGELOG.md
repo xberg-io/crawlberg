@@ -237,6 +237,16 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A Chrome that crawlberg kills could leave a child process behind on macOS.** crawlberg stops
+  every process of a Chrome it launched before it kills them, so that none of them can start a
+  child that the kill does not see. On macOS, a stop sent to a process that is starting a program
+  does not always hold: the process can run again and start a child after crawlberg last read the
+  process table. crawlberg now reads every process again after it reads the table. If a process
+  runs, crawlberg stops it again and reads the table once more. A process that does not take its
+  stop in two waits of one second no longer holds the kill: crawlberg logs a warning and kills
+  the processes it found. It also logs a warning when the processes keep changing for eight
+  reads of the table. A process that runs after the last read is still not seen. This applies to
+  the Chromiumoxide backend. (#585)
 - **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
   found the page's base with a second parser. That parser read markup inside `<title>`,
   `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so
