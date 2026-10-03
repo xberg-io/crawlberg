@@ -116,7 +116,6 @@ pub(crate) struct InterceptOutcome {
     /// ~keep whose response cannot commit a document while the requested page is still loading.
     navigation_dropped: bool,
     /// Whether [`Watch::goto`] ended on a frame's stop instead of the page's load.
-    #[cfg(feature = "browser")]
     goto_unsettled: bool,
 }
 
