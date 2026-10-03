@@ -1080,8 +1080,11 @@ mod tests {
                 respect_robots_txt: None,
             }))
             .await
-            .expect("robots refusal is a tool error, not a protocol error");
-        assert_eq!(refused.is_error, Some(true), "the server default must refuse the seed");
+            .expect("robots refusal is returned as a structured crawl result");
+        assert_eq!(refused.is_error, Some(false));
+        let refused_result = refused.structured_content.as_ref().expect("structured crawl result");
+        assert_eq!(refused_result["was_skipped"], true);
+        assert_eq!(refused_result["error"], "robots.txt disallows /private");
 
         let allowed = server
             .crawl(Parameters(super::super::params::CrawlParams {
@@ -1095,7 +1098,10 @@ mod tests {
             .await
             .expect("the robots override permits the crawl");
 
-        assert_ne!(allowed.is_error, Some(true), "the override must permit the crawl");
+        assert_eq!(allowed.is_error, Some(false));
+        let allowed_result = allowed.structured_content.as_ref().expect("structured crawl result");
+        assert_eq!(allowed_result["was_skipped"], false);
+        assert_eq!(allowed_result["error"], serde_json::Value::Null);
         let requests = mock.received_requests().await.expect("wiremock records requests");
         assert_eq!(
             requests
