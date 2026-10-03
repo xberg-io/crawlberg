@@ -60,18 +60,10 @@ crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.9.0" }
 crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.9.0" }
 crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.9.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
-# ~keep Held at 0.37, and cannot move while `selectors` is at 0.40: selectors-0.40.0 itself
-# depends on cssparser 0.37 and exposes those types in the parser traits that
-# crawlberg-browser/src/dom/selector.rs implements. cssparser has exactly one consumer in
-# this workspace -- that file -- and every use there is in service of those traits, so
-# upgrading to 0.38 would split the dep graph and break the impls for no gain. Revisit only
-# when a selectors release picks up cssparser 0.38.
-# ~keep `cargo upgrade --exclude cssparser` DOES NOT HONOUR THE EXCLUSION. Verified with
-# ~keep cargo-edit-upgrade 0.13.13 on 2026-09-25: the run footer printed `excluded: cssparser`
-# ~keep and the requirement was rewritten to "0.38" anyway, in the same invocation. Always
-# ~keep `git diff -- Cargo.toml` after a `cargo upgrade` and re-pin this line by hand; the
-# ~keep tool's own report of what it skipped is not evidence.
-cssparser = "0.37"
+# ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
+# ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched
+# ~keep versions split the type graph and make those trait implementations uncompilable.
+cssparser = "0.38"
 dashmap = "6"
 deno_core = "0.412"
 deno_error = "0.7"
@@ -79,7 +71,7 @@ dirs = "7"
 encoding_rs = "0.8"
 
 # Binding framework dependencies
-ext-php-rs = "0.15.15"
+ext-php-rs = "0.16.0"
 fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
@@ -147,10 +139,10 @@ reqwest = { version = "0.13", default-features = false, features = ["cookies", "
 rmcp = { version = "3", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 rustix = { version = "1", default-features = false }
 schemars = "1.2"
-selectors = "0.40"
+selectors = "0.41"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-servo_arc = "0.4"
+servo_arc = "0.5"
 sha2 = "0.11"
 sysinfo = { version = "0.39", default-features = false }
 tempfile = "3"
@@ -175,7 +167,7 @@ tracing-opentelemetry = "0.34"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "6", features = ["axum_extras"] }
-uuid = { version = "1.26", features = ["v4"] }
+uuid = { version = "1.27", features = ["v4"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
