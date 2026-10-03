@@ -210,11 +210,19 @@ async fn run_session(
         return Ok(no_document_result(&stop, actions));
     }
     if let Some(ref script) = config.browser.eval_script {
-        evaluate_json(page, script).await.map_err(|e| {
-            CrawlError::browser_error(format!(
-                "post-navigation eval_script failed before interaction actions: {e}"
-            ))
-        })?;
+        let budget = config.browser.timeout;
+        match tokio::time::timeout(budget, evaluate_json(page, script)).await {
+            Ok(result) => result.map_err(|e| {
+                CrawlError::browser_error(format!(
+                    "post-navigation eval_script failed before interaction actions: {e}"
+                ))
+            })?,
+            Err(_) => {
+                return Err(CrawlError::browser_timeout(format!(
+                    "post-navigation eval_script timed out after {budget:?}"
+                )));
+            }
+        }
     }
 
     let (action_results, screenshot) = run_actions(page, watch, actions).await;

@@ -241,6 +241,47 @@ async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() 
     );
 }
 
+/// ~keep The configured renderer script runs before interaction actions and has no action
+/// ~keep timeout, so it must use `browser.timeout` rather than chromiumoxide's 30 s deadline.
+#[tokio::test]
+#[serial_test::serial(browser_document_read_timeout)]
+async fn interact_bounds_post_navigation_eval_script_when_the_renderer_is_saturated() {
+    let url = spawn_saturating_renderer_server();
+    let mut config = read_bound_config();
+    config.browser.eval_script = Some("document.title".to_owned());
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let start = Instant::now();
+    let result = interact(&engine, &url, Vec::new()).await;
+    let elapsed = start.elapsed();
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(
+                "interact_bounds_post_navigation_eval_script_when_the_renderer_is_saturated",
+                &message,
+            );
+        }
+        Ok(result) => panic!(
+            "a saturated renderer must not complete eval_script outside its budget: final_url={}",
+            result.final_url
+        ),
+        Err(error @ CrawlError::BrowserTimeout { .. }) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("post-navigation eval_script"),
+                "the timeout must name the configured renderer evaluation, got: {message}"
+            );
+            assert!(
+                message.contains("3s"),
+                "the timeout must name browser.timeout, got: {message}"
+            );
+            assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}: {message}");
+        }
+        Err(error) => panic!("expected a BrowserTimeout for the stalled eval_script, got {error:?}"),
+    }
+}
+
 /// Interact path, document check: only the check of the committed document after the HTML read
 /// stalls, and the budget shared by the reads must still end the session.
 #[tokio::test]

@@ -962,6 +962,9 @@ title: "Changelog"
   returns the 3xx response, including its body, status, headers and URL, matching HTTP mode without
   following the `Location`. This also applies when a page script starts the redirect after its
   initial load. (#471)
+- **The Chromiumoxide interaction renderer script ignored `browser.timeout`.** A configured
+  post-navigation `eval_script` could wait for chromiumoxide's fixed 30-second command deadline
+  when the page's renderer was busy. It now fails within the configured browser timeout. (#569)
 
 - **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
   A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
