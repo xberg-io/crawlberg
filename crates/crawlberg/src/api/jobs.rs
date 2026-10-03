@@ -141,8 +141,8 @@ impl JobRegistry {
             .count()
     }
 
-    /// Return whether the registry contains no jobs in any state.
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.jobs.is_empty()
     }
 

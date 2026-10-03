@@ -476,13 +476,14 @@ mod tests {
 
     #[tokio::test]
     async fn crawl_with_a_look_around_path_pattern_is_rejected() {
+        let secret_pattern = "^/private/REST-PATH-284/(?!token=REST-QUERY-284)";
         for field in ["includePaths", "excludePaths"] {
             let router = create_router_with_security(test_engine(), ApiSecurityConfig::default());
             let response = call(
                 router,
                 json_post(
                     "/v1/crawl",
-                    serde_json::json!({ "url": "http://127.0.0.1:9/", field: ["^/docs", "^/(?!private/)"] }),
+                    serde_json::json!({ "url": "http://127.0.0.1:9/", field: ["^/docs", secret_pattern] }),
                 ),
             )
             .await;
@@ -494,10 +495,13 @@ mod tests {
             );
             let body = body_json(response).await;
             let message = body["error"]["message"].as_str().unwrap_or_default();
-            assert!(
-                message.contains(field) && message.contains("^/(?!private/)") && message.contains("look-around"),
-                "the error must name the field the caller sent, the pattern and why: {body}"
+            assert_eq!(
+                message,
+                format!("{field}[1] uses look-around or a backreference, which the REST API does not accept"),
+                "the error must identify the indexed field and reason"
             );
+            assert!(!message.contains("REST-PATH-284"), "path secret leaked: {body}");
+            assert!(!message.contains("REST-QUERY-284"), "query secret leaked: {body}");
         }
     }
 
@@ -521,15 +525,15 @@ mod tests {
             let message = body["error"]["message"].as_str().unwrap_or_default();
             assert_eq!(
                 message,
-                format!(r#"{field} pattern "a{{2,1}}" does not compile"#),
-                "the error must name the field and safe rejected pattern"
+                format!("{field}[0] does not compile"),
+                "the error must identify the indexed field"
             );
             assert!(state.jobs.is_empty(), "an invalid request must not create a job");
         }
     }
 
     #[tokio::test]
-    async fn malformed_path_pattern_error_redacts_url_credentials() {
+    async fn malformed_path_pattern_error_does_not_reflect_path_or_query_secrets() {
         let (router, state) = crawl_router_and_state();
         let response = call(
             router,
@@ -537,7 +541,7 @@ mod tests {
                 "/v1/crawl",
                 serde_json::json!({
                     "url": "http://127.0.0.1:9/",
-                    "includePaths": ["^https://user:REST-PW-284@example.com/["]
+                    "includePaths": ["^https://example.com/private/REST-PATH-284?token=REST-QUERY-284/["]
                 }),
             ),
         )
@@ -548,10 +552,11 @@ mod tests {
         assert_eq!(body["error"]["code"], "BAD_REQUEST", "body: {body}");
         let message = body["error"]["message"].as_str().unwrap_or_default();
         assert_eq!(
-            message, r#"includePaths pattern "[address hidden: it may carry credentials]" does not compile"#,
-            "the error must identify the field without exposing credentials"
+            message, "includePaths[0] does not compile",
+            "the error must identify the indexed field without reflecting caller text"
         );
-        assert!(!message.contains("REST-PW-284"), "credential leaked: {body}");
+        assert!(!message.contains("REST-PATH-284"), "path secret leaked: {body}");
+        assert!(!message.contains("REST-QUERY-284"), "query secret leaked: {body}");
         assert!(state.jobs.is_empty(), "an invalid request must not create a job");
     }
 

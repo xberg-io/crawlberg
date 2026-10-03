@@ -220,13 +220,12 @@ pub async fn crawl_handler(
 /// with the URL. A REST caller is not trusted to choose one. Patterns in the server's own config
 /// are not checked here: they come from the operator.
 fn validate_caller_path_patterns(field: &str, patterns: &[String]) -> Result<(), ApiError> {
-    for pattern in patterns {
-        let safe_pattern = crate::net::redact_url_credentials(pattern);
+    for (index, pattern) in patterns.iter().enumerate() {
         let compiled = crate::helpers::PathPattern::new(pattern)
-            .map_err(|_| ApiError::bad_request(format!("{field} pattern \"{safe_pattern}\" does not compile")))?;
+            .map_err(|_| ApiError::bad_request(format!("{field}[{index}] does not compile")))?;
         if compiled.needs_backtracking() {
             return Err(ApiError::bad_request(format!(
-                "{field} pattern \"{safe_pattern}\" uses look-around or a backreference, \
+                "{field}[{index}] uses look-around or a backreference, \
                  which the REST API does not accept"
             )));
         }
