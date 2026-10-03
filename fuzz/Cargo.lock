@@ -454,6 +454,7 @@ dependencies = [
  "html-escape",
  "html-to-markdown-rs",
  "html5ever",
+ "hyper-util",
  "icu_casemap",
  "icu_normalizer",
  "idna",
