@@ -139,9 +139,11 @@ All notable changes to crawlberg are documented here.
   to Swift's `init` and the Java record constructor, and `chromeArgs` to Dart's constructor. The
   Java builder and the other bindings give both settings defaults. (#79, #80)
 
-- **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
-  `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
-  iterates it does not.
+- **`crawlberg_browser::adapter::DEFAULT_DENY_NET_CIDRS` is now a slice and grows from 13 to 14
+  entries**, adding `240.0.0.0/4`. Its exported type is `&[&str]`, so future length changes no
+  longer alter the type. Code that expected the fixed array must accept a slice instead. A direct
+  `for cidr in DEFAULT_DENY_NET_CIDRS` loop now yields `&&str` rather than `&str`; use
+  `DEFAULT_DENY_NET_CIDRS.iter().copied()` when the loop body needs `&str` values.
 
 - **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
   The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
