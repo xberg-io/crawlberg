@@ -540,6 +540,34 @@ async fn chromiumoxide_keeps_the_status_when_a_late_navigation_commits_no_docume
     assert_start_page(test_name, result);
 }
 
+/// ~keep A response without a document that arrives before the start page's delayed load event
+/// ~keep cannot leave chromiumoxide waiting for that event. The start page remains committed.
+#[tokio::test]
+async fn chromiumoxide_returns_the_start_page_when_a_pre_load_navigation_commits_no_document() {
+    let test_name = "chromiumoxide_returns_the_start_page_when_a_pre_load_navigation_commits_no_document";
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        config(BrowserBackend::Chromiumoxide, BrowserMode::Always),
+        "<img src='/slow.png'><script>setTimeout(() => location.assign('/nocontent'), 300)</script>",
+        vec![
+            (
+                "/slow.png",
+                ResponseTemplate::new(200)
+                    .set_body_raw("pixel", "image/png")
+                    .set_delay(Duration::from_secs(3)),
+            ),
+            ("/nocontent", ResponseTemplate::new(204)),
+        ],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/slow.png").await;
+    assert_requested(test_name, &site, "/nocontent").await;
+    assert_start_page(test_name, result);
+}
+
 /// A document an iframe commits is not the page's: after an iframe loads during the extra wait,
 /// a main-frame navigation that commits nothing leaves the start page and its status in place.
 #[tokio::test]

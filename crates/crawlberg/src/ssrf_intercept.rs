@@ -110,7 +110,8 @@ pub(crate) struct InterceptOutcome {
     navigation_started: bool,
     /// Set once the requested navigation is over: later navigations are not counted.
     navigation_ended: bool,
-    /// Whether the check has dropped a main-frame navigation past the redirect limit.
+    /// ~keep Whether the check has dropped a main-frame navigation past the redirect limit or one
+    /// ~keep whose response cannot commit a document while the requested page is still loading.
     navigation_dropped: bool,
     /// Whether [`Watch::goto`] ended on a frame's stop instead of the page's load.
     #[cfg(feature = "browser")]
@@ -1638,7 +1639,7 @@ enum Verdict {
     Continue(Option<Vec<HeaderEntry>>),
     /// Fail it with `BlockedByClient`.
     Refuse,
-    /// Drop a navigation past the redirect limit, so the page keeps its document.
+    /// ~keep Drop a navigation the page must not wait on, so it keeps its document.
     Abort,
 }
 
@@ -1810,6 +1811,9 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
 /// redirect of a navigation the page started is dropped. A main-frame response of the requested
 /// navigation that Chrome does not commit is also recorded and failed.
 ///
+/// ~keep Such a response from a later navigation is dropped, so it cannot keep the requested
+/// ~keep navigation waiting for a load event that will never arrive.
+///
 /// ~keep The requested navigation ends at the first main-frame response that is not a
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
 /// ~keep redirect after it belongs to a navigation the page started.
@@ -1845,7 +1849,12 @@ fn main_frame_verdict(
             }
             code
         }
-        Some(code) if !state.first_document_arrived && NO_DOCUMENT_STATUSES.contains(&code) => code,
+        Some(code) if NO_DOCUMENT_STATUSES.contains(&code) => {
+            if state.first_document_arrived {
+                return Verdict::Abort;
+            }
+            code
+        }
         _ => {
             state.first_document_arrived = true;
             return Verdict::Continue(None);
@@ -2299,15 +2308,35 @@ mod tests {
     }
 
     #[test]
+    fn a_later_response_without_a_document_is_dropped() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("START", 200), &main_frame, 1, &state),
+            Verdict::Continue(None)
+        ));
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("LATE", 204), &main_frame, 1, &state),
+            Verdict::Abort
+        ));
+        assert!(
+            state.lock().expect("state lock").stopped_response.is_none(),
+            "the original document stays the page"
+        );
+    }
+
+    #[test]
     fn keeps_only_the_committed_document_and_the_newest_response() {
         let main_frame = FrameId::new("MAIN");
         let state = Mutex::new(InterceptOutcome::default());
-        for (network_id, status, committed) in [("A", 200, None), ("B", 204, Some("A")), ("C", 204, Some("A"))] {
+        for (network_id, status, committed, dropped) in [
+            ("A", 200, None, false),
+            ("B", 204, Some("A"), true),
+            ("C", 204, Some("A"), true),
+        ] {
             state.lock().expect("state lock").committed_loader = committed.map(str::to_owned);
-            assert!(matches!(
-                main_frame_verdict(&main_frame_response(network_id, status), &main_frame, 0, &state),
-                Verdict::Continue(None)
-            ));
+            let verdict = main_frame_verdict(&main_frame_response(network_id, status), &main_frame, 0, &state);
+            assert_eq!(matches!(verdict, Verdict::Abort), dropped, "{network_id}");
         }
         let state = state.into_inner().expect("state lock");
         let mut kept: Vec<(&str, u16)> = state

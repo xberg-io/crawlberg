@@ -94,6 +94,10 @@ title: "Changelog"
 - **The native browser backend reports an empty body for a 204, 205 or 304.** It reported an
   empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
   your code reads the body of such a page, expect an empty string. (#121)
+- **A page that navigated to a 204, 205 or 304 before its load event could time out in browser
+  mode.** Chrome commits no document and fires no load event for those responses, so the
+  Chromiumoxide backend could wait until `browser.timeout`. It now keeps and returns the page
+  that was already loading. (#436)
 
 - **`interact` now follows at most `max_redirects` redirects.** The default is 10. The
   Chromiumoxide backend followed every redirect a chain offered, and the native backend followed
