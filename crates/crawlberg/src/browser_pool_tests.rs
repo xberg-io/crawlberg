@@ -1300,54 +1300,104 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
         .launch(owner_config)
         .await
         .expect("the detected Chrome executable must launch");
-    let owner_task = spawn_handler(owner_handler);
+    let mut owner_task = spawn_handler(owner_handler);
     let pool = BrowserPool::new(BrowserPoolConfig {
         browser_endpoint: Some(owner.websocket_address().clone()),
         ..BrowserPoolConfig::default()
     });
-    pool.warm().await.expect("the pool must connect to the external Chrome");
+    let operation_timeout = Duration::from_secs(30);
+    let mut pool_handlers = Vec::new();
+    let exercise: Result<(), String> = async {
+        tokio::time::timeout(operation_timeout, pool.warm())
+            .await
+            .map_err(|_| "the pool warm timed out".to_owned())?
+            .map_err(|error| format!("the pool must connect to the external Chrome: {error}"))?;
 
-    {
-        let state = pool.state.lock().await;
-        let state = state.as_ref().expect("a warm pool must hold a browser connection");
-        assert!(
-            state.user_data_dir.is_none(),
-            "the pool must treat the connected Chrome as external"
-        );
-        state.handler_handle.abort();
+        {
+            let state = pool.state.lock().await;
+            let Some(state) = state.as_ref() else {
+                return Err("a warm pool must hold a browser connection".to_owned());
+            };
+            if state.user_data_dir.is_some() {
+                return Err("the pool must treat the connected Chrome as external".to_owned());
+            }
+            let old_handler = state.handler_handle.abort_handle();
+            old_handler.abort();
+            pool_handlers.push(old_handler);
+        }
+        tokio::time::timeout(PROCESS_TEST_WAIT, async {
+            while !pool
+                .state
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|state| state.handler_end.has_ended())
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| "the aborted pool connection's handler must end".to_owned())?;
+
+        tokio::time::timeout(operation_timeout, pool.relaunch_browser())
+            .await
+            .map_err(|_| "the pool relaunch timed out".to_owned())?
+            .map_err(|error| format!("the pool must reconnect after its handler ends: {error}"))?;
+        {
+            let state = pool.state.lock().await;
+            let Some(state) = state.as_ref() else {
+                return Err("a successful relaunch must install new browser state".to_owned());
+            };
+            pool_handlers.push(state.handler_handle.abort_handle());
+            if state.handler_end.has_ended() {
+                return Err("the relaunched handler must still be running before page acquisition".to_owned());
+            }
+        }
+
+        let page = tokio::time::timeout(operation_timeout, pool.acquire_page())
+            .await
+            .map_err(|_| "page acquisition after relaunch timed out".to_owned())?
+            .map_err(|error| format!("the relaunched connection must open a page: {error}"))?;
+        tokio::time::timeout(operation_timeout, page.close())
+            .await
+            .map_err(|_| "closing the relaunched page timed out".to_owned())?;
+        tokio::time::timeout(operation_timeout, pool.shutdown())
+            .await
+            .map_err(|_| "pool shutdown after relaunch timed out".to_owned())?;
+        tokio::time::timeout(Duration::from_secs(5), owner.version())
+            .await
+            .map_err(|_| "the caller's Chrome version request timed out".to_owned())?
+            .map_err(|error| format!("the caller's Chrome must answer after pool shutdown: {error}"))?;
+        Ok(())
     }
-    let handler_deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
-    while !pool
-        .state
-        .lock()
-        .await
-        .as_ref()
-        .is_some_and(|state| state.handler_end.has_ended())
-    {
-        assert!(
-            tokio::time::Instant::now() < handler_deadline,
-            "the aborted pool connection's handler must end"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    .await;
+
+    let cleanup_shutdown = tokio::time::timeout(operation_timeout, pool.shutdown()).await;
+    for handler in &pool_handlers {
+        handler.abort();
     }
-
-    pool.relaunch_browser()
-        .await
-        .expect("the pool must reconnect after its handler ends");
-    let page = pool
-        .acquire_page()
-        .await
-        .expect("the relaunched connection must open a page");
-    page.close().await;
-    pool.shutdown().await;
-
-    tokio::time::timeout(Duration::from_secs(5), owner.version())
-        .await
-        .expect("the caller's Chrome must answer after pool relaunch and shutdown")
-        .expect("the caller's Chrome version request must succeed");
-    let _ = owner.kill().await;
+    let pool_handlers_stopped = tokio::time::timeout(Duration::from_secs(5), async {
+        while pool_handlers.iter().any(|handler| !handler.is_finished()) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let owner_killed = tokio::time::timeout(Duration::from_secs(5), owner.kill()).await;
     owner_task.abort();
+    let owner_handler_stopped = tokio::time::timeout(Duration::from_secs(5), &mut owner_task).await;
     drop(owner_dir);
+
+    assert!(exercise.is_ok(), "{}", exercise.expect_err("checked above"));
+    assert!(cleanup_shutdown.is_ok(), "cleanup pool shutdown must not time out");
+    assert!(
+        pool_handlers_stopped.is_ok(),
+        "every pool handler must stop during cleanup"
+    );
+    assert!(owner_killed.is_ok(), "stopping the test-owned Chrome must not time out");
+    assert!(
+        owner_handler_stopped.is_ok(),
+        "the test-owned Chrome's handler must stop during cleanup"
+    );
 }
 
 /// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
