@@ -1017,8 +1017,8 @@ mod tests {
             panic!("the metadata address must be refused before any request, got {err:?}");
         };
         assert_eq!(
-            refused_url, "http://***:***@169.254.169.254/latest/meta-data/",
-            "the refusal must name only the redacted metadata URL"
+            refused_url, "http://169.254.169.254/latest/meta-data/",
+            "admission must remove userinfo before the SSRF policy names the metadata URL"
         );
         assert_eq!(
             reason, "denied by SSRF policy: link_local",
