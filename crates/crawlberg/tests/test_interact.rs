@@ -200,7 +200,7 @@ fn chromiumoxide_interact_config() -> CrawlConfig {
 }
 
 #[cfg(feature = "browser-chromiumoxide")]
-async fn seed_that_closes_before_click() -> (String, String) {
+async fn seed_with_failed_click_navigation() -> (String, String, tokio::sync::oneshot::Receiver<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -210,37 +210,59 @@ async fn seed_that_closes_before_click() -> (String, String) {
     let seed = format!("http://{address}/");
     let unreachable = format!("http://{address}/gone");
     let body = format!(r#"<html><body><a id="go" href="{unreachable}">go</a></body></html>"#);
+    let (gone_tx, gone_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
-        let (mut socket, _) = listener
-            .accept()
-            .await
-            .expect("test server should receive the seed request");
-        let mut request = [0_u8; 4096];
-        let _ = socket.read(&mut request).await;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        socket
-            .write_all(response.as_bytes())
-            .await
-            .expect("test server should answer");
-        socket.shutdown().await.expect("test server should close the response");
-        // ~keep The listener drops with this task after the seed response closes, so the target
-        // ~keep closes as part of serving the page instead of before the browser session starts.
+        loop {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should receive the browser request");
+            let mut request = [0_u8; 4096];
+            let read = socket
+                .read(&mut request)
+                .await
+                .expect("test server should read the request");
+            let request_line = String::from_utf8_lossy(&request[..read])
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            if request_line == "GET /gone HTTP/1.1" {
+                gone_tx
+                    .send(request_line)
+                    .expect("the test should still be waiting for the failed navigation");
+                // ~keep Dropping the accepted connection without a response deterministically
+                // ~keep gives Chrome a network failure after proving the click reached `/gone`.
+                return;
+            }
+            let (status, response_body) = if request_line == "GET / HTTP/1.1" {
+                ("200 OK", body.as_str())
+            } else {
+                ("404 Not Found", "")
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("test server should answer");
+            socket.shutdown().await.expect("test server should close the response");
+        }
     });
 
-    (seed, unreachable)
+    (seed, unreachable, gone_rx)
 }
 
-/// A click that navigates to a closed port fails the session instead of returning Chrome's own
-/// error page as successful HTML (xberg-io/crawlberg#370).
+/// A click navigation whose server closes without a response fails the session instead of
+/// returning Chrome's own error page as successful HTML (xberg-io/crawlberg#370).
 #[cfg(feature = "browser-chromiumoxide")]
 #[tokio::test]
-async fn chromiumoxide_interact_fails_when_a_click_navigates_to_a_closed_port() {
-    let test_name = "chromiumoxide_interact_fails_when_a_click_navigates_to_a_closed_port";
-    let (seed, unreachable) = seed_that_closes_before_click().await;
+async fn chromiumoxide_interact_fails_when_a_click_navigation_gets_no_response() {
+    let test_name = "chromiumoxide_interact_fails_when_a_click_navigation_gets_no_response";
+    let (seed, unreachable, gone_request) = seed_with_failed_click_navigation().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
@@ -258,16 +280,23 @@ async fn chromiumoxide_interact_fails_when_a_click_navigates_to_a_closed_port() 
     )
     .await;
 
-    match result {
+    let message = match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
+            return;
         }
-        Err(CrawlError::BrowserError { message, .. }) => assert!(
-            message.contains(&unreachable) && message.contains("error page"),
-            "{test_name}: the error must name the URL Chrome could not show: {message}"
-        ),
+        Err(CrawlError::BrowserError { message, .. }) => message,
         other => panic!("{test_name}: the failed navigation must fail the session: {other:?}"),
-    }
+    };
+    let request_line = tokio::time::timeout(Duration::from_secs(1), gone_request)
+        .await
+        .expect("the failed navigation request should be observed promptly")
+        .expect("the failed navigation server should report its request");
+    assert_eq!(request_line, "GET /gone HTTP/1.1", "{test_name}");
+    assert!(
+        message.contains(&unreachable) && message.contains("error page"),
+        "{test_name}: the error must name the URL Chrome could not show: {message}"
+    );
 }
 
 /// A session that ends on Chrome's error page fails with a browser error that names the URL Chrome
