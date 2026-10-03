@@ -1156,10 +1156,8 @@ mod tests {
         jar.set_cookie("invalid=1; SameSite=maybe; Secure", &destination);
 
         let top_level_get = CookieRequestContext::top_level(Some(&cross_site), true);
-        let mut cookies: Vec<&str> = jar
-            .get_cookie_header_for_request(&destination, top_level_get)
-            .split("; ")
-            .collect();
+        let header = jar.get_cookie_header_for_request(&destination, top_level_get);
+        let mut cookies: Vec<&str> = header.split("; ").collect();
         cookies.sort_unstable();
         assert_eq!(cookies, ["default=1", "invalid=1"]);
         assert_eq!(
