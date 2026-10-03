@@ -448,6 +448,8 @@ pub(crate) async fn follow_redirects(
     // ~keep document's site from one to the next, as a single browser session would.
     #[cfg(feature = "browser-native")]
     let mut native_state = crawlberg_browser::adapter::NativeRenderState::new(&[]);
+    #[cfg(not(feature = "browser-native"))]
+    let mut native_state = ();
     // ~keep A hop the chain leaves still sent its page's requests, so the result lists what the
     // ~keep SSRF check refused on every hop, not only on the page the chain lands on.
     let mut refused_on_earlier_hops: Vec<String> = Vec::new();
@@ -481,7 +483,11 @@ pub(crate) async fn follow_redirects(
         let fetched = match hop {
             Hop::Fetch => {
                 hop_engine
-                    .fetch_response(&chain.current_url, forced_user_agent.as_deref())
+                    .fetch_response(
+                        &chain.current_url,
+                        forced_user_agent.as_deref(),
+                        Some(&mut native_state),
+                    )
                     .await
             }
             #[cfg(feature = "browser-native")]
@@ -519,6 +525,9 @@ pub(crate) async fn follow_redirects(
                 });
             }
         }
+
+        #[cfg(feature = "browser-native")]
+        native_state.set_site_for_cookies(&chain.current_url);
 
         let mut page_scan = None;
         let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects, &mut page_scan) else {
@@ -821,82 +830,101 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let port = addr.port();
-        let refresh = |target: &str| {
-            format!("<html><head><meta http-equiv='refresh' content='0; url={target}'></head><body></body></html>")
-        };
-        let start_body = "refresh header".to_owned();
-        let middle_body = refresh(&format!("http://127.0.0.1:{port}/finish"));
-        let response = |body: &str, cookies: &str| {
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{cookies}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-        };
-        let routes = Arc::new(HashMap::from([
-            (
-                "/start".to_owned(),
-                response(
-                    &start_body,
-                    &format!(
-                        "Refresh: 0; url=http://localhost:{port}/middle\r\n\
-                         Set-Cookie: strict=1; Path=/; SameSite=Strict\r\n\
-                     Set-Cookie: lax=1; Path=/; SameSite=Lax\r\n",
+        let mut modes = vec![crate::types::BrowserMode::Always, crate::types::BrowserMode::Stealth];
+        #[cfg(feature = "browser")]
+        modes.push(crate::types::BrowserMode::Auto);
+        for mode in modes {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let port = addr.port();
+            let refresh = |target: &str| {
+                format!("<html><head><meta http-equiv='refresh' content='0; url={target}'></head><body></body></html>")
+            };
+            let start_body = "refresh header".to_owned();
+            let middle_body = refresh(&format!("http://127.0.0.1:{port}/finish"));
+            let response = |body: &str, cookies: &str| {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{cookies}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            let routes = Arc::new(HashMap::from([
+                (
+                    "/start".to_owned(),
+                    response(
+                        &start_body,
+                        &format!(
+                            "Refresh: 0; url=http://localhost:{port}/middle\r\n\
+                             Set-Cookie: strict=1; Path=/; SameSite=Strict\r\n\
+                         Set-Cookie: lax=1; Path=/; SameSite=Lax\r\n",
+                        ),
                     ),
                 ),
-            ),
-            ("/middle".to_owned(), response(&middle_body, "")),
-            ("/finish".to_owned(), response("done", "")),
-        ]));
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let server_requests = requests.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut socket, _)) = listener.accept().await else {
-                    return;
-                };
-                let routes = routes.clone();
-                let requests = server_requests.clone();
-                tokio::spawn(async move {
-                    let mut buffer = [0_u8; 8192];
-                    let read = socket.read(&mut buffer).await.unwrap_or(0);
-                    let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    let path = request.split_whitespace().nth(1).unwrap_or("/");
-                    requests.lock().expect("lock").push(request);
-                    let response = routes.get(path).cloned().unwrap_or_else(|| {
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                ("/middle".to_owned(), response(&middle_body, "")),
+                ("/finish".to_owned(), response("done", "")),
+            ]));
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let attempts = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+            let server_requests = requests.clone();
+            let auto = mode == crate::types::BrowserMode::Auto;
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let routes = routes.clone();
+                    let requests = server_requests.clone();
+                    let attempts = attempts.clone();
+                    tokio::spawn(async move {
+                        let mut buffer = [0_u8; 8192];
+                        let read = socket.read(&mut buffer).await.unwrap_or(0);
+                        let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                        let path = request.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                        requests.lock().expect("lock").push(request);
+                        let attempt = {
+                            let mut attempts = attempts.lock().expect("lock");
+                            let attempt = attempts.entry(path.clone()).or_default();
+                            *attempt += 1;
+                            *attempt
+                        };
+                        let response = if auto && attempt == 1 {
+                            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                        } else {
+                            routes.get(&path).cloned().unwrap_or_else(|| {
+                                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                            })
+                        };
+                        let _ = socket.write_all(response.as_bytes()).await;
                     });
-                    let _ = socket.write_all(response.as_bytes()).await;
-                });
-            }
-        });
-        let mut config = crate::CrawlConfig::builder().allow_private_networks(true).build();
-        config.browser.backend = crate::types::BrowserBackend::Native;
-        config.browser.mode = crate::types::BrowserMode::Always;
-        config.browser.timeout = std::time::Duration::from_secs(10);
-        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+                }
+            });
+            let mut config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+            config.browser.backend = crate::types::BrowserBackend::Native;
+            config.browser.mode = mode;
+            config.browser.timeout = std::time::Duration::from_secs(10);
+            let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
 
-        engine
-            .scrape(&format!("http://{addr}/start"))
-            .await
-            .expect("the native refresh chain must succeed");
+            engine
+                .scrape(&format!("http://{addr}/start"))
+                .await
+                .expect("the native refresh chain must succeed");
 
-        let requests = requests.lock().expect("lock");
-        let finish = requests
-            .iter()
-            .find(|request| request.starts_with("GET /finish "))
-            .expect("the final refresh target must be requested")
-            .to_lowercase();
-        assert!(
-            finish.contains("cookie: lax=1"),
-            "Lax must be sent on the top-level GET: {finish}"
-        );
-        assert!(
-            !finish.contains("strict=1"),
-            "Strict must be withheld across sites: {finish}"
-        );
+            let requests = requests.lock().expect("lock");
+            let finish = requests
+                .iter()
+                .filter(|request| request.starts_with("GET /finish "))
+                .next_back()
+                .expect("the final refresh target must be requested")
+                .to_lowercase();
+            assert!(
+                finish.contains("cookie: lax=1"),
+                "Lax must be sent on the top-level GET in {mode:?}: {finish}"
+            );
+            assert!(
+                !finish.contains("strict=1"),
+                "Strict must be withheld across sites in {mode:?}: {finish}"
+            );
+        }
     }
 
     /// ~keep A public crawl refuses a seed that does not parse before this policy runs, so the

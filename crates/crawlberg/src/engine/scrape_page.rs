@@ -69,12 +69,14 @@ impl CrawlEngine {
             use super::redirect::{Hop, RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            // ~keep A native render in BrowserMode::Always takes the same redirect chain as every
+            // ~keep A native render in BrowserMode::Always/Stealth takes the same redirect chain as every
             // ~keep other scrape, so a meta refresh and a not-found seed end as in HTTP mode, and
             // ~keep it works on a build without the `browser` feature, which `fetch_response` needs.
             #[cfg(feature = "browser-native")]
-            let hop = if self.config.browser.mode == crate::types::BrowserMode::Always
-                && self.config.browser.backend == crate::types::BrowserBackend::Native
+            let hop = if matches!(
+                self.config.browser.mode,
+                crate::types::BrowserMode::Always | crate::types::BrowserMode::Stealth
+            ) && self.config.browser.backend == crate::types::BrowserBackend::Native
             {
                 Hop::NativeRender
             } else {

@@ -78,7 +78,10 @@ impl CrawlEngine {
         tier: crate::types::Tier,
         url: &str,
         forced_user_agent: Option<&str>,
+        native_state: Option<&mut super::fetch::NativeRenderState>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+        #[cfg(not(all(feature = "browser", feature = "browser-native")))]
+        let _ = native_state;
         match tier {
             crate::types::Tier::Http => {
                 let client = crate::http::build_client(&self.config)?;
@@ -142,6 +145,12 @@ impl CrawlEngine {
                         && let Some(reason) = robots_disallows_browser_agent(self, url).await?
                     {
                         return Err(CrawlError::forbidden(reason));
+                    }
+                    #[cfg(feature = "browser-native")]
+                    if self.config.browser.backend == crate::types::BrowserBackend::Native
+                        && let Some(state) = native_state
+                    {
+                        return self.native_render(url, state).await;
                     }
                     let pool = self.config.browser_pool.as_deref();
                     #[cfg(feature = "browser-native")]

@@ -9,6 +9,11 @@ use super::dispatch::{content_density, escalation_reason_label};
 use crate::error::CrawlError;
 use crate::types::*;
 
+#[cfg(feature = "browser-native")]
+pub(super) type NativeRenderState = crawlberg_browser::adapter::NativeRenderState;
+#[cfg(not(feature = "browser-native"))]
+pub(super) type NativeRenderState = ();
+
 /// What the dispatch loop should do once a step has had its say.
 enum LoopStep {
     /// Carry on with the current attempt.
@@ -277,9 +282,16 @@ impl CrawlEngine {
         &self,
         url: &str,
         forced_user_agent: Option<&str>,
+        mut native_state: Option<&mut NativeRenderState>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if self.request_will_use_browser() {
+            #[cfg(feature = "browser-native")]
+            if self.config.browser.backend == BrowserBackend::Native
+                && let Some(state) = native_state.as_deref_mut()
+            {
+                return self.native_render(url, state).await;
+            }
             let pool = self.config.browser_pool.as_deref();
             #[cfg(feature = "browser-native")]
             let page = crate::browser::browser_fetch(
@@ -318,7 +330,8 @@ impl CrawlEngine {
             ));
         }
 
-        self.run_dispatch_loop(url, &plan, forced_user_agent).await
+        self.run_dispatch_loop(url, &plan, forced_user_agent, native_state)
+            .await
     }
 
     /// Attempt the fetch, retrying and escalating tiers until the policy says stop.
@@ -327,6 +340,7 @@ impl CrawlEngine {
         url: &str,
         plan: &DispatchPlan,
         forced_user_agent: Option<&str>,
+        mut native_state: Option<&mut NativeRenderState>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let mut state = AttemptState::new();
 
@@ -344,7 +358,10 @@ impl CrawlEngine {
                 LoopStep::Done(result) => return result,
             }
 
-            let step = match self.run_tier(state.current_tier, url, forced_user_agent).await {
+            let step = match self
+                .run_tier(state.current_tier, url, forced_user_agent, native_state.as_deref_mut())
+                .await
+            {
                 Ok(fetched) => self.handle_tier_success(url, fetched, plan, &mut state).await,
                 Err(err) => self.handle_tier_error(url, err, plan, &mut state).await,
             };

@@ -61,6 +61,11 @@ impl NativeRenderState {
             site_for_cookies: None,
         }
     }
+
+    /// ~keep Record the document that initiates the next top-level navigation.
+    pub fn set_site_for_cookies(&mut self, url: &str) {
+        self.site_for_cookies = url::Url::parse(url).ok();
+    }
 }
 
 impl std::fmt::Debug for NativeCookie {
