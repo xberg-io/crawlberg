@@ -199,6 +199,77 @@ fn chromiumoxide_interact_config() -> CrawlConfig {
     }
 }
 
+#[cfg(feature = "browser-chromiumoxide")]
+async fn seed_that_closes_before_click() -> (String, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test server should bind");
+    let address = listener.local_addr().expect("test server should have an address");
+    let seed = format!("http://{address}/");
+    let unreachable = format!("http://{address}/gone");
+    let body = format!(r#"<html><body><a id="go" href="{unreachable}">go</a></body></html>"#);
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener
+            .accept()
+            .await
+            .expect("test server should receive the seed request");
+        let mut request = [0_u8; 4096];
+        let _ = socket.read(&mut request).await;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await
+            .expect("test server should answer");
+        socket.shutdown().await.expect("test server should close the response");
+        // ~keep The listener drops with this task after the seed response closes, so the target
+        // ~keep closes as part of serving the page instead of before the browser session starts.
+    });
+
+    (seed, unreachable)
+}
+
+/// A click that navigates to a closed port fails the session instead of returning Chrome's own
+/// error page as successful HTML (xberg-io/crawlberg#370).
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_fails_when_a_click_navigates_to_a_closed_port() {
+    let test_name = "chromiumoxide_interact_fails_when_a_click_navigates_to_a_closed_port";
+    let (seed, unreachable) = seed_that_closes_before_click().await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &seed,
+        vec![
+            PageAction::Click {
+                selector: "#go".to_string(),
+            },
+            PageAction::Wait {
+                milliseconds: Some(1500),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(CrawlError::BrowserError { message, .. }) => assert!(
+            message.contains(&unreachable) && message.contains("error page"),
+            "{test_name}: the error must name the URL Chrome could not show: {message}"
+        ),
+        other => panic!("{test_name}: the failed navigation must fail the session: {other:?}"),
+    }
+}
+
 /// A session that ends on Chrome's error page fails with a browser error that names the URL Chrome
 /// could not show. It never returns Chrome's page as the final HTML.
 #[cfg(feature = "browser-chromiumoxide")]
