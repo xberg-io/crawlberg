@@ -520,10 +520,6 @@ impl CrawlEngine {
         plan: &DispatchPlan,
         state: &mut AttemptState,
     ) -> LoopStep {
-        if let Some(step) = self.soft_page(&err) {
-            return step;
-        }
-
         state.last_err = Some(err.clone());
 
         // ~keep Error-arm WAF classification has vendor attribution but no classifier fingerprint.
@@ -551,7 +547,7 @@ impl CrawlEngine {
         match plan.retry_policy.decide(&outcome).await {
             RetryDirective::Stop => {
                 state.report_dispatch(url, plan);
-                LoopStep::Done(Err(err))
+                self.refuse(err)
             }
             RetryDirective::Retry { backoff_ms } => {
                 tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
@@ -565,7 +561,7 @@ impl CrawlEngine {
                     return LoopStep::Restart;
                 }
                 state.report_dispatch(url, plan);
-                LoopStep::Done(Err(err))
+                self.refuse(err)
             }
         }
     }
