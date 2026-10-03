@@ -4,6 +4,8 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-03
+
 ### Upgrading
 
 - **In browser mode, `max_redirects` now counts the navigations a page starts.** A meta refresh
@@ -214,6 +216,21 @@ title: "Changelog"
   `javascript:` or `file:` address came back unchanged. Each field now resolves against the page's
   base URL, as the canonical URL does, and is absent when the result is not an `http` or `https`
   address. If your code joins a relative address to the page URL, remove that step. (#312)
+
+- **A struct literal of a type that gained a field needs the new field.** This holds for
+  `ScrapeResult`, `CrawlPageResult` and `InteractionResult` (`ssrf_refused_urls`), `BrowserConfig`
+  (`chrome_path`, `chrome_args`), `CrawlConfig` (`path_patterns_match_url`) and, in
+  `crawlberg-browser`, `NativeBrowserConfig` (`proxy`). Each of these types implements `Default`,
+  so ending the literal with `..Default::default()` is enough.
+- **Three more public structs gained a field, so a struct literal of each needs it.** In
+  `crawlberg-browser`, `NativeBrowserConfig` gains `origin_headers`: set it to `None`, or end the
+  literal with `..Default::default()`. In `crawlberg`, `BrowserPoolConfig` gains `chrome_path`:
+  set it to `None` to find Chrome as before, or end the literal with `..Default::default()`. In
+  `crawlberg-browser`, `NativeCookie` gains `host_only` and has no default: set it to `true` for a
+  cookie that goes only to its `domain`, and to `false` for one that also goes to subdomains.
+- **`crawlberg-browser`: `PageError` gained `InvalidConfig`.** A render returns it when its
+  configuration cannot be used, such as an unusable proxy, and then fetches nothing. A `match` on
+  `PageError` with no wildcard arm needs an arm for it.
 
 ### Added
 
