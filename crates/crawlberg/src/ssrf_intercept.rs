@@ -27,7 +27,7 @@ use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
     EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
-    RequestPattern, RequestStage, TakeResponseBodyAsStreamParams,
+    RequestId as FetchRequestId, RequestPattern, RequestStage, TakeResponseBodyAsStreamParams,
 };
 use chromiumoxide::cdp::browser_protocol::io::{CloseParams as CloseStreamParams, ReadParams as ReadStreamParams};
 use chromiumoxide::cdp::browser_protocol::network::{
@@ -138,6 +138,7 @@ pub(crate) struct StoppedResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
     pub(crate) body: String,
     pub(crate) body_bytes: Vec<u8>,
+    pub(crate) request_id: Option<FetchRequestId>,
     pub(crate) ready: bool,
 }
 
@@ -1702,12 +1703,9 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             browser.execute(params).await.map(drop)
         }
         Verdict::Stop => {
-            let result = browser
-                .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
-                .await
-                .map(drop);
+            let result = fulfill_inert_document(browser, request_id.clone()).await;
             if result.is_ok() {
-                complete_stopped_response(_in_flight.as_ref(), None);
+                complete_stopped_response(_in_flight.as_ref(), &request_id, None);
             }
             result
         }
@@ -1730,7 +1728,7 @@ enum Verdict {
     Continue(Option<Vec<HeaderEntry>>),
     /// ~keep Capture a terminal redirect's body, then commit an inert internal document.
     RenderRedirect,
-    /// ~keep Fail a response that cannot commit a document, then report its original metadata.
+    /// ~keep Replace a response that cannot commit with an inert document, then report it as sent.
     Stop,
     /// Fail it with `BlockedByClient`.
     Refuse,
@@ -1755,7 +1753,18 @@ async fn render_terminal_redirect(
             Vec::new()
         }
     };
-    let mut params = FulfillRequestParams::new(event.request_id.clone(), 200);
+    fulfill_inert_document(browser, event.request_id.clone())
+        .await
+        .map(|_| {
+            complete_stopped_response(in_flight, &event.request_id, Some(body));
+        })
+}
+
+async fn fulfill_inert_document(
+    browser: &Browser,
+    request_id: FetchRequestId,
+) -> Result<(), chromiumoxide::error::CdpError> {
+    let mut params = FulfillRequestParams::new(request_id, 200);
     params.response_phrase = Some("OK".to_owned());
     params.response_headers = Some(vec![
         HeaderEntry::new("Content-Type", "text/plain; charset=utf-8"),
@@ -1764,15 +1773,23 @@ async fn render_terminal_redirect(
         HeaderEntry::new("X-Content-Type-Options", "nosniff"),
     ]);
     params.body = Some(String::new().into());
-    browser.execute(params).await.map(|_| {
-        complete_stopped_response(in_flight, Some(body));
-    })
+    browser.execute(params).await.map(drop)
 }
 
-fn complete_stopped_response(in_flight: Option<&InFlight>, body: Option<Vec<u8>>) {
+fn complete_stopped_response(in_flight: Option<&InFlight>, request_id: &FetchRequestId, body: Option<Vec<u8>>) {
     let Some(request) = in_flight else { return };
-    let mut outcome = lock(&request.0.outcome);
-    if let Some(stop) = outcome.stopped_response.as_mut() {
+    complete_stopped_response_outcome(&request.0.outcome, request_id, body);
+}
+
+fn complete_stopped_response_outcome(
+    outcome: &Mutex<InterceptOutcome>,
+    request_id: &FetchRequestId,
+    body: Option<Vec<u8>>,
+) {
+    let mut outcome = lock(outcome);
+    if let Some(stop) = outcome.stopped_response.as_mut()
+        && stop.request_id.as_ref() == Some(request_id)
+    {
         if let Some(body) = body {
             stop.body = String::from_utf8_lossy(&body).into_owned();
             stop.body_bytes = body;
@@ -1783,7 +1800,7 @@ fn complete_stopped_response(in_flight: Option<&InFlight>, body: Option<Vec<u8>>
 
 async fn read_response_stream(
     browser: &Browser,
-    request_id: chromiumoxide::cdp::browser_protocol::fetch::RequestId,
+    request_id: FetchRequestId,
     max_size: Option<usize>,
 ) -> Result<Vec<u8>, String> {
     let stream = browser
@@ -1795,23 +1812,15 @@ async fn read_response_stream(
     let result = async {
         let mut body = Vec::new();
         loop {
-            let remaining = max_size.map_or(RESPONSE_BODY_CHUNK_SIZE, |limit| limit.saturating_sub(body.len()));
-            if remaining == 0 {
+            if response_stream_done(false, body.len(), max_size) {
                 break;
             }
+            let remaining = max_size.map_or(RESPONSE_BODY_CHUNK_SIZE, |limit| limit.saturating_sub(body.len()));
             let mut params = ReadStreamParams::new(stream.clone());
             params.size = Some(remaining.min(RESPONSE_BODY_CHUNK_SIZE) as i64);
             let chunk = browser.execute(params).await.map_err(|error| error.to_string())?.result;
-            let mut bytes = if chunk.base64_encoded.unwrap_or(false) {
-                BASE64.decode(chunk.data).map_err(|error| error.to_string())?
-            } else {
-                chunk.data.into_bytes()
-            };
-            if let Some(limit) = max_size {
-                bytes.truncate(limit.saturating_sub(body.len()));
-            }
-            body.extend(bytes);
-            if chunk.eof {
+            append_response_stream_chunk(&mut body, chunk.data, chunk.base64_encoded.unwrap_or(false), max_size)?;
+            if response_stream_done(chunk.eof, body.len(), max_size) {
                 break;
             }
         }
@@ -1820,6 +1829,28 @@ async fn read_response_stream(
     .await;
     let _ = browser.execute(CloseStreamParams::new(stream)).await;
     result
+}
+
+fn append_response_stream_chunk(
+    body: &mut Vec<u8>,
+    data: String,
+    base64_encoded: bool,
+    max_size: Option<usize>,
+) -> Result<(), String> {
+    let mut bytes = if base64_encoded {
+        BASE64.decode(data).map_err(|error| error.to_string())?
+    } else {
+        data.into_bytes()
+    };
+    if let Some(limit) = max_size {
+        bytes.truncate(limit.saturating_sub(body.len()));
+    }
+    body.extend(bytes);
+    Ok(())
+}
+
+fn response_stream_done(eof: bool, body_len: usize, max_size: Option<usize>) -> bool {
+    eof || max_size.is_some_and(|limit| body_len >= limit)
 }
 
 /// A paused request of a watched page, counted in the page's `in_flight` while it lives.
@@ -2005,8 +2036,8 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
 /// ~keep redirect after it belongs to a navigation the page started.
 /// ~keep Chrome commits no document for a 204, 205 or 304, so no load event fires and
-/// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
-/// ~keep Chrome commit its error page, which ends `goto` at once.
+/// ~keep chromiumoxide's `goto` waits for the browser timeout. An empty inert internal document
+/// ~keep ends `goto`; callers still receive the original no-document response.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
 /// ~keep Its body is captured through a bounded stream, then Chrome receives an empty, sandboxed
 /// ~keep text document without the original headers. Callers still receive the original status,
@@ -2062,6 +2093,7 @@ fn main_frame_verdict(
         headers: header_map(headers),
         body: String::new(),
         body_bytes: Vec::new(),
+        request_id: Some(event.request_id.clone()),
         ready: false,
     });
     if render_redirect {
@@ -2169,9 +2201,10 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        BrowserOrigin, EventRequestPaused, EventTargetCreated, FrameId, HeaderEntry, InterceptOutcome, Owner,
-        PageContext, Registry, Shared, TargetId, TestDelays, Verdict, WatchedPage, adopt_target, lock,
-        main_frame_verdict, navigation_verdict, release, require_main_frame, ssrf_verdict,
+        BrowserOrigin, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome,
+        Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict, WatchedPage, adopt_target,
+        append_response_stream_chunk, complete_stopped_response_outcome, lock, main_frame_verdict, navigation_verdict,
+        release, require_main_frame, response_stream_done, ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2542,6 +2575,86 @@ mod tests {
     }
 
     #[test]
+    fn a_seed_without_a_document_is_ready_only_after_its_inert_replacement_is_delivered() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        let event = main_frame_response("NO_DOCUMENT", 204);
+        assert!(matches!(
+            main_frame_verdict(&event, &main_frame, 10, &state),
+            Verdict::Stop
+        ));
+        assert!(
+            !state
+                .lock()
+                .expect("state lock")
+                .stopped_response
+                .as_ref()
+                .expect("stopped response")
+                .ready
+        );
+
+        complete_stopped_response_outcome(&state, &event.request_id, None);
+        assert!(
+            state
+                .into_inner()
+                .expect("state lock")
+                .stopped_response
+                .expect("stopped response")
+                .ready
+        );
+    }
+
+    #[test]
+    fn response_stream_chunks_decode_and_stop_at_the_cap_or_eof() {
+        let mut body = Vec::new();
+        append_response_stream_chunk(&mut body, "abcdef".to_owned(), false, Some(3)).expect("plain chunk");
+        assert_eq!(body, b"abc");
+        assert!(response_stream_done(false, body.len(), Some(3)));
+
+        let mut body = Vec::new();
+        append_response_stream_chunk(&mut body, "aGVsbG8=".to_owned(), true, Some(10)).expect("base64 chunk");
+        assert_eq!(body, b"hello");
+        assert!(!response_stream_done(false, body.len(), Some(10)));
+        assert!(response_stream_done(true, body.len(), Some(10)));
+
+        let mut unchanged = b"prefix".to_vec();
+        assert!(append_response_stream_chunk(&mut unchanged, "%%%".to_owned(), true, None).is_err());
+        assert_eq!(unchanged, b"prefix");
+    }
+
+    #[test]
+    fn an_older_response_completion_cannot_complete_its_replacement() {
+        let old = FetchRequestId::new("OLD");
+        let new = FetchRequestId::new("NEW");
+        let outcome = Mutex::new(InterceptOutcome {
+            stopped_response: Some(super::StoppedResponse {
+                url: "https://example.com/new".to_owned(),
+                status: 302,
+                headers: std::collections::HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+                request_id: Some(new.clone()),
+                ready: false,
+            }),
+            ..InterceptOutcome::default()
+        });
+
+        complete_stopped_response_outcome(&outcome, &old, Some(b"old".to_vec()));
+        {
+            let outcome = outcome.lock().expect("outcome lock");
+            let stopped = outcome.stopped_response.as_ref().expect("new response");
+            assert!(!stopped.ready);
+            assert!(stopped.body_bytes.is_empty());
+        }
+
+        complete_stopped_response_outcome(&outcome, &new, Some(b"new".to_vec()));
+        let outcome = outcome.into_inner().expect("outcome lock");
+        let stopped = outcome.stopped_response.expect("new response");
+        assert!(stopped.ready);
+        assert_eq!(stopped.body_bytes, b"new");
+    }
+
+    #[test]
     fn a_later_response_without_a_document_is_dropped() {
         let main_frame = FrameId::new("MAIN");
         let state = Mutex::new(InterceptOutcome::default());
@@ -2727,6 +2840,7 @@ mod tests {
                 headers: headers.clone(),
                 body: SECRET.to_owned(),
                 body_bytes: SECRET.as_bytes().to_vec(),
+                request_id: None,
                 ready: true,
             }),
             documents: std::collections::HashMap::from([(

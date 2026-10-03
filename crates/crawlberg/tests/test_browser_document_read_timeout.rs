@@ -246,9 +246,9 @@ async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() 
 #[tokio::test]
 #[serial_test::serial(browser_document_read_timeout)]
 async fn interact_bounds_post_navigation_eval_script_when_the_renderer_is_saturated() {
-    let url = spawn_saturating_renderer_server();
+    let url = spawn_server(|path| (path == "/").then(|| html_response("<p>eval-script-page</p>")));
     let mut config = read_bound_config();
-    config.browser.eval_script = Some("document.title".to_owned());
+    config.browser.eval_script = Some("while (true) {}".to_owned());
     let engine = create_engine(Some(config)).expect("engine must build");
 
     let start = Instant::now();

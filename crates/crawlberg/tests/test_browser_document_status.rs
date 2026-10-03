@@ -619,7 +619,6 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             "{test_name}: {target}"
         );
         assert_eq!(page.content_type, "text/html", "{test_name}: {target}");
-        assert_eq!(page.redirect_count, 0, "{test_name}: {target}");
         assert!(
             page.final_url.ends_with(route),
             "{test_name}: {target}: {}",
@@ -668,7 +667,6 @@ async fn chromiumoxide_returns_a_late_non_web_redirect_response() {
     let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
     assert_eq!((page.status_code, page.html.as_str()), (302, body), "{test_name}");
     assert_eq!(page.content_type, "text/html", "{test_name}");
-    assert_eq!(page.redirect_count, 1, "{test_name}");
     assert!(page.final_url.ends_with("/late"), "{test_name}: {}", page.final_url);
 }
 

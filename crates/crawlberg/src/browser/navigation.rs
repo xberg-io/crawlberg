@@ -119,7 +119,7 @@ async fn render(
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         watch.mark_unsettled();
         if matches!(error, CrawlError::BrowserError { .. })
-            && let Some(outcome) = answered_error_page(page, watch, watch.redirects_followed()).await
+            && let Some(outcome) = answered_error_page(page, watch, watch.redirects_followed(), timeout).await
         {
             return outcome;
         }
@@ -204,8 +204,17 @@ async fn answered_error_page(
     page: &chromiumoxide::Page,
     watch: &Watch,
     redirects: usize,
+    budget: Duration,
 ) -> Option<Result<BrowserPage, CrawlError>> {
-    let document = committed_document(page).await.ok()?;
+    let document = match tokio::time::timeout(budget, committed_document(page)).await {
+        Ok(Ok(document)) => document,
+        Ok(Err(_)) => return None,
+        Err(_) => {
+            return Some(Err(CrawlError::browser_timeout(format!(
+                "browser timed out after {budget:?} classifying the committed error page"
+            ))));
+        }
+    };
     let failed_url = document.unreachable_url?;
     let recorded = watch.document(&document.loader_id)?;
     Some(error_page_outcome(failed_url, Some(recorded), redirects))
@@ -242,6 +251,7 @@ fn error_page_outcome(
             headers: recorded.headers,
             body: String::new(),
             body_bytes: Vec::new(),
+            request_id: None,
             ready: true,
         }),
         redirects,

@@ -209,7 +209,7 @@ async fn run_session(
     if let Some(stop) = navigate_and_wait(page, watch, url, config).await? {
         return Ok(no_document_result(&stop, actions));
     }
-    ensure_committed_page_is_readable(page, watch).await?;
+    ensure_committed_page_is_readable(page, watch, config.browser.timeout).await?;
     if let Some(ref script) = config.browser.eval_script {
         let budget = config.browser.timeout;
         match tokio::time::timeout(budget, evaluate_json(page, script)).await {
@@ -244,8 +244,18 @@ async fn run_session(
     })
 }
 
-async fn ensure_committed_page_is_readable(page: &chromiumoxide::Page, watch: &Watch) -> Result<(), CrawlError> {
-    let document = committed_document(page).await?;
+async fn ensure_committed_page_is_readable(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    budget: Duration,
+) -> Result<(), CrawlError> {
+    let document = tokio::time::timeout(budget, committed_document(page))
+        .await
+        .map_err(|_| {
+            CrawlError::browser_timeout(format!(
+                "browser timed out after {budget:?} checking the committed document before interaction actions"
+            ))
+        })??;
     let Some(failed_url) = document.unreachable_url else {
         return Ok(());
     };
