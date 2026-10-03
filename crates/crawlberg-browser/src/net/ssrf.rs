@@ -30,7 +30,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
+pub const DEFAULT_DENY_NET_CIDRS: &[&str] = &[
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -537,6 +537,15 @@ mod tests {
         validate("http://127.0.0.1/", false)
             .await
             .expect("loopback must be permitted when private networks are allowed");
+    }
+
+    #[test]
+    fn exported_deny_net_cidrs_has_a_length_independent_slice_type() {
+        trait LengthIndependentDenyList {}
+        impl LengthIndependentDenyList for &[&str] {}
+
+        fn assert_length_independent<T: LengthIndependentDenyList>(_: T) {}
+        assert_length_independent(DEFAULT_DENY_NET_CIDRS);
     }
 
     #[test]
