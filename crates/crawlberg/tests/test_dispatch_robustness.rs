@@ -3,8 +3,8 @@
 //! Coverage gaps addressed:
 //!
 //! - T11 / M8: `soft_http_errors` × `BypassThenBrowser` interaction.
-//!   Pins the semantics of whether `soft_http_errors = true` short-circuits
-//!   escalation when a plain 403 arrives (no WAF signal, no challenge body).
+//!   ~keep Pins that `soft_http_errors = true` does not short-circuit escalation
+//!   ~keep when a plain 403 arrives (no WAF signal, no challenge body).
 //!
 //! Tests T10 (EWMA oscillation) and T12 (LearningRetryPolicy invalid URL) are
 //! NOT included here because `EwmaDomainState` and `LearningRetryPolicy` are
@@ -99,15 +99,10 @@ fn allow_private_config() -> CrawlConfig {
     CrawlConfig::builder().allow_private_networks(true).build()
 }
 
-/// When `soft_http_errors = true`, a plain 403 (no WAF signal, no challenge
-/// body) must be short-circuited to `Ok(ScrapeResult { status_code: 403 })`
-/// **before** the retry policy runs. The bypass provider must NOT be called.
-///
-/// Implementation note: `engine/mod.rs` checks `soft_http_errors` at the
-/// `Err(CrawlError::Forbidden)` arm and returns early with a synthesised
-/// response. Escalation is a code path after that arm — it is never reached.
+/// ~keep `soft_http_errors` changes only a terminal refusal. A default-policy
+/// ~keep escalation still reaches the bypass tier, whose successful response wins.
 #[tokio::test]
-async fn soft_http_403_does_not_escalate_when_soft_errors_enabled() {
+async fn soft_http_403_escalates_before_soft_error_reporting() {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/forbidden"))
@@ -120,20 +115,23 @@ async fn soft_http_403_does_not_escalate_when_soft_errors_enabled() {
 
     let result = engine.scrape(&format!("{}/forbidden", mock.uri())).await;
 
-    assert!(
-        result.is_ok(),
-        "soft_http_errors = true must convert 403 to Ok; got Err: {:?}",
-        result.err()
-    );
-    let page = result.unwrap();
+    let page = result.unwrap_or_else(|err| panic!("bypass success must propagate as Ok, got {err:?}"));
     assert_eq!(
-        page.status_code, 403,
-        "synthesised response must carry status_code = 403"
+        page.status_code, 200,
+        "the bypass response must replace the refused 403"
+    );
+    assert_eq!(
+        page.html, "<html><body>bypass content</body></html>",
+        "the result must contain the bypass response body"
+    );
+    assert!(
+        !page.browser_used,
+        "the bypass tier must not be reported as browser rendering"
     );
     assert_eq!(
         provider.calls(),
-        0,
-        "bypass must NOT be called when soft_http_errors short-circuits escalation"
+        1,
+        "soft error reporting must not skip default-policy escalation"
     );
 }
 
