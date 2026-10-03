@@ -1048,8 +1048,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crawl_can_override_the_server_robots_policy() {
+    async fn crawl_can_override_the_server_robots_policy_without_fetching_robots() {
         let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/robots.txt"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_raw("User-agent: *\nDisallow: /private\n", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/private"))
             .respond_with(
@@ -1063,7 +1070,20 @@ mod tests {
         };
         let server = CrawlbergMcp::with_config(config);
 
-        let result = server
+        let refused = server
+            .crawl(Parameters(super::super::params::CrawlParams {
+                url: format!("{}/private", mock.uri()),
+                max_depth: None,
+                max_pages: None,
+                format: None,
+                stay_on_domain: None,
+                respect_robots_txt: None,
+            }))
+            .await
+            .expect("robots refusal is a tool error, not a protocol error");
+        assert_eq!(refused.is_error, Some(true), "the server default must refuse the seed");
+
+        let allowed = server
             .crawl(Parameters(super::super::params::CrawlParams {
                 url: format!("{}/private", mock.uri()),
                 max_depth: None,
@@ -1075,6 +1095,23 @@ mod tests {
             .await
             .expect("the robots override permits the crawl");
 
-        assert_ne!(result.is_error, Some(true), "crawl result: {result:?}");
+        assert_ne!(allowed.is_error, Some(true), "the override must permit the crawl");
+        let requests = mock.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.url.path() == "/robots.txt")
+                .count(),
+            1,
+            "only the control crawl may request robots.txt"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.url.path() == "/private")
+                .count(),
+            1,
+            "only the robots-disabled crawl may fetch the disallowed page"
+        );
     }
 }
