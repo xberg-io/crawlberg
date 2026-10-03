@@ -395,6 +395,62 @@ mod tests {
     }
 
     #[test]
+    fn an_uppercase_proxy_scheme_keeps_separate_credentials() {
+        let config = CrawlConfig {
+            proxy: Some(proxy("HTTP://proxy.test:8080", Some("alice"), Some("s3cr3t"))),
+            ..CrawlConfig::default()
+        };
+        let native = build_native_config(&config, PAGE, Vec::new(), test_validator(&config))
+            .expect("the native config must build");
+        let proxy = native.proxy.expect("the native config must carry the proxy");
+
+        assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/");
+        assert_eq!(
+            proxy
+                .credentials()
+                .map(|credentials| (credentials.username.as_str(), credentials.password.as_str())),
+            Some(("alice", "s3cr3t"))
+        );
+    }
+
+    #[test]
+    fn an_uppercase_proxy_scheme_decodes_and_redacts_url_credentials() {
+        let encoded_password = "p%40ss%3Aw%2Ford";
+        let decoded_password = "p@ss:w/ord";
+        let config = CrawlConfig {
+            proxy: Some(proxy(
+                &format!("HTTP://alice:{encoded_password}@proxy.test:8080"),
+                None,
+                None,
+            )),
+            ..CrawlConfig::default()
+        };
+        let native = build_native_config(&config, PAGE, Vec::new(), test_validator(&config))
+            .expect("the native config must build");
+        let native_debug = format!("{native:?}");
+        let proxy = native.proxy.expect("the native config must carry the proxy");
+        let proxy_debug = format!("{proxy:?}");
+
+        assert_eq!(proxy.address().as_str(), "http://proxy.test:8080/");
+        assert_eq!(
+            proxy
+                .credentials()
+                .map(|credentials| (credentials.username.as_str(), credentials.password.as_str())),
+            Some(("alice", decoded_password))
+        );
+        for (surface, debug) in [("native config", native_debug), ("upstream proxy", proxy_debug)] {
+            assert!(
+                !debug.contains(encoded_password),
+                "{surface} debug leaked the encoded password: {debug}"
+            );
+            assert!(
+                !debug.contains(decoded_password),
+                "{surface} debug leaked the decoded password: {debug}"
+            );
+        }
+    }
+
+    #[test]
     fn a_credential_free_proxy_is_returned_as_parsed() {
         let plain = CrawlConfig {
             proxy: Some(proxy("http://proxy:8080", None, None)),
