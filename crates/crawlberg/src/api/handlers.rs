@@ -196,11 +196,11 @@ pub async fn crawl_handler(
     if let Some(pages) = req.max_pages {
         validate_max_pages(pages, state.security.max_pages_ceiling)?;
     }
-    ensure_job_capacity(&state)?;
 
     let mut config = state.engine.config.clone();
     apply_crawl_overrides(&mut config, &req)?;
     let crawl_engine = rebuild_engine_with_config(&state.engine, config)?;
+    ensure_job_capacity(&state)?;
 
     let job_id = state.jobs.create_job();
     spawn_crawl_job(job_id, state.jobs.clone(), crawl_engine, req.url.clone());
@@ -214,16 +214,19 @@ pub async fn crawl_handler(
     ))
 }
 
-/// Refuse an `include_paths`/`exclude_paths` pattern that needs look-around or a backreference.
+/// Validate caller-supplied `include_paths`/`exclude_paths` before creating a crawl job.
 ///
 /// ~keep Such a pattern runs on a backtracking engine, and its cost grows faster than linearly
 /// with the URL. A REST caller is not trusted to choose one. Patterns in the server's own config
 /// are not checked here: they come from the operator.
-fn refuse_backtracking_patterns(field: &str, patterns: &[String]) -> Result<(), ApiError> {
+fn validate_caller_path_patterns(field: &str, patterns: &[String]) -> Result<(), ApiError> {
     for pattern in patterns {
-        if crate::helpers::PathPattern::new(pattern).is_ok_and(|compiled| compiled.needs_backtracking()) {
+        let safe_pattern = crate::net::redact_url_credentials(pattern);
+        let compiled = crate::helpers::PathPattern::new(pattern)
+            .map_err(|_| ApiError::bad_request(format!("{field} pattern \"{safe_pattern}\" does not compile")))?;
+        if compiled.needs_backtracking() {
             return Err(ApiError::bad_request(format!(
-                "{field} pattern \"{pattern}\" uses look-around or a backreference, \
+                "{field} pattern \"{safe_pattern}\" uses look-around or a backreference, \
                  which the REST API does not accept"
             )));
         }
@@ -244,11 +247,11 @@ fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) -> Result
         config.content.preprocessing_preset = "aggressive".to_owned();
     }
     if let Some(ref includes) = req.include_paths {
-        refuse_backtracking_patterns("includePaths", includes)?;
+        validate_caller_path_patterns("includePaths", includes)?;
         config.include_paths = includes.clone();
     }
     if let Some(ref excludes) = req.exclude_paths {
-        refuse_backtracking_patterns("excludePaths", excludes)?;
+        validate_caller_path_patterns("excludePaths", excludes)?;
         config.exclude_paths = excludes.clone();
     }
     if let Some(match_query) = req.path_patterns_match_query {

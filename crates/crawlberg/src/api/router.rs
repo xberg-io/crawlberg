@@ -291,6 +291,14 @@ mod tests {
             .expect("valid request")
     }
 
+    fn crawl_router_and_state() -> (Router, Arc<ApiState>) {
+        let state = Arc::new(ApiState::with_security(test_engine(), ApiSecurityConfig::default()));
+        let router = Router::new()
+            .route("/v1/crawl", post(handlers::crawl_handler))
+            .with_state(state.clone());
+        (router, state)
+    }
+
     async fn body_json(response: Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -493,27 +501,58 @@ mod tests {
         }
     }
 
-    /// A malformed pattern is not a look-around pattern. As on `main`, the request is accepted and
-    /// the crawl job fails when it compiles the pattern.
     #[tokio::test]
-    async fn crawl_with_a_malformed_path_pattern_is_not_refused_as_look_around() {
-        let router = create_router_with_security(test_engine(), ApiSecurityConfig::default());
+    async fn crawl_with_a_malformed_path_pattern_returns_400_without_creating_a_job() {
+        for field in ["includePaths", "excludePaths"] {
+            let (router, state) = crawl_router_and_state();
+            let response = call(
+                router,
+                json_post(
+                    "/v1/crawl",
+                    serde_json::json!({ "url": "http://127.0.0.1:9/", field: ["a{2,1}"] }),
+                ),
+            )
+            .await;
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = body_json(response).await;
+            assert_eq!(body["success"], false, "body: {body}");
+            assert_eq!(body["error"]["code"], "BAD_REQUEST", "body: {body}");
+            let message = body["error"]["message"].as_str().unwrap_or_default();
+            assert_eq!(
+                message,
+                format!(r#"{field} pattern "a{{2,1}}" does not compile"#),
+                "the error must name the field and safe rejected pattern"
+            );
+            assert!(state.jobs.is_empty(), "an invalid request must not create a job");
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_path_pattern_error_redacts_url_credentials() {
+        let (router, state) = crawl_router_and_state();
         let response = call(
             router,
             json_post(
                 "/v1/crawl",
-                serde_json::json!({ "url": "http://127.0.0.1:9/", "excludePaths": ["a{2,1}"] }),
+                serde_json::json!({
+                    "url": "http://127.0.0.1:9/",
+                    "includePaths": ["^https://user:REST-PW-284@example.com/["]
+                }),
             ),
         )
         .await;
 
-        let status = response.status();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = body_json(response).await;
+        assert_eq!(body["error"]["code"], "BAD_REQUEST", "body: {body}");
+        let message = body["error"]["message"].as_str().unwrap_or_default();
         assert_eq!(
-            status,
-            StatusCode::ACCEPTED,
-            "a malformed pattern must not be refused as look-around: {body}"
+            message, r#"includePaths pattern "[address hidden: it may carry credentials]" does not compile"#,
+            "the error must identify the field without exposing credentials"
         );
+        assert!(!message.contains("REST-PW-284"), "credential leaked: {body}");
+        assert!(state.jobs.is_empty(), "an invalid request must not create a job");
     }
 
     #[tokio::test]
