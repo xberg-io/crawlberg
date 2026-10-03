@@ -830,9 +830,14 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
-        let mut modes = vec![crate::types::BrowserMode::Always, crate::types::BrowserMode::Stealth];
         #[cfg(feature = "browser")]
-        modes.push(crate::types::BrowserMode::Auto);
+        let modes = [
+            crate::types::BrowserMode::Always,
+            crate::types::BrowserMode::Stealth,
+            crate::types::BrowserMode::Auto,
+        ];
+        #[cfg(not(feature = "browser"))]
+        let modes = [crate::types::BrowserMode::Always, crate::types::BrowserMode::Stealth];
         for mode in modes {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let addr = listener.local_addr().expect("addr");
