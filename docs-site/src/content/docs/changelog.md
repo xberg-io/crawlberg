@@ -265,6 +265,10 @@ title: "Changelog"
   reads of the table. A process that runs after the last read is still not seen. This applies to
   the Chromiumoxide backend. (#585)
 
+- **The native browser fetched a blank stylesheet or script address as the page itself.** An
+  empty address, or one made only of URL-parser whitespace, is now skipped before resolution, so
+  it produces no duplicate request or network event. (#270)
+
 - **Native-browser subresources ignored the document's base address.** A relative stylesheet,
   classic script or module script under `<base href="/assets/">` was fetched relative to
   the page address instead. These subresources now resolve against the first `<base href>`,

@@ -136,6 +136,9 @@ impl Page {
     /// Parse a sub-resource reference against the document base URL; `None` when it does not parse or
     /// carries userinfo, which is refused before anything logs or fetches it.
     fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
+        if reference.chars().all(|character| character <= '\u{20}') {
+            return None;
+        }
         Url::options()
             .base_url(self.document_base_url.as_ref().or(self.url.as_ref()))
             .parse(reference)

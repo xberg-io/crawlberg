@@ -1366,6 +1366,31 @@ async fn an_invalid_first_base_href_falls_back_to_the_page_address() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn blank_script_and_stylesheet_addresses_are_not_requested() {
+    let html = "<html><head><link rel=\"stylesheet\" href=\"&#9;&#10;&#13; \"></head><body>\
+                <script src=\"\"></script><script src=\" &#9; \"></script>\
+                <script type=\"module\" src=\"&#10;&#13;\"></script>\
+                </body></html>";
+    let (page, requests) = navigate_intercepted_recording(html, &[]).await;
+
+    assert_eq!(requests.len(), 1, "only the document is requested: {requests:?}");
+    assert!(event_urls(&page, "Stylesheet").is_empty());
+    assert!(event_urls(&page, "Script").is_empty());
+}
+
+#[test]
+fn only_url_parser_whitespace_counts_as_a_blank_subresource_address() {
+    let mut page = test_page();
+    page.url = Some(Url::parse("https://example.com/page").expect("valid page URL"));
+
+    assert_eq!(page.resolve_subresource_url("\0\u{001f}\t\r\n "), None);
+    assert_eq!(
+        page.resolve_subresource_url("\u{00a0}"),
+        Some("https://example.com/%C2%A0".to_string())
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn stylesheets_are_collected_into_the_css_global() {
     let html = "<html><head>\
                 <link rel=\"stylesheet\" href=\"/one.css\">\
