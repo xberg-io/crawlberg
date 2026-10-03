@@ -320,6 +320,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replaces_inline_data_destinations_for_links_and_embedded_media() {
+        let html = r#"
+            <p><a href="data:text/plain;base64,LINK_PAYLOAD">download</a></p>
+            <video src="data:video/mp4;base64,VIDEO_PAYLOAD">video fallback</video>
+            <audio src="data:audio/mpeg;base64,AUDIO_PAYLOAD">audio fallback</audio>
+            <iframe src="data:text/html;base64,IFRAME_PAYLOAD"></iframe>
+            <p><svg width="1" height="1"><title>logo</title><rect width="1" height="1"/></svg></p>
+        "#;
+        let md = markdown_at(html, "https://example.com/").await;
+        let visible_lines: Vec<_> = md.lines().filter(|line| !line.is_empty()).collect();
+        assert_eq!(visible_lines, ["download", "video fallback", "audio fallback", "logo"]);
+        assert!(
+            !md.contains("data:"),
+            "inline data destination leaked into markdown: {md}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_script_base_href_resolves_relative_links_against_the_page_url() {
         let md = markdown_at(
             r#"<html><head><base href="javascript:alert(1)"></head><body><p><a href="leaf.html">leaf</a></p></body></html>"#,
