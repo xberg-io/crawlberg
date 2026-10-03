@@ -986,17 +986,42 @@ mod tests {
     }
 
     /// ~keep Regression: a refused `http://user:pass@host/` once leaked the credential into
-    /// API error bodies, MCP payloads and tracing fields. This drives a real SSRF refusal
-    /// through the public entry point, which admits the URL before any fetch sees it.
+    /// API error bodies, MCP payloads and tracing fields. Pinning the policy keeps concurrent
+    /// environment tests from admitting the metadata address before this assertion sees it.
     #[tokio::test]
     async fn http_fetch_ssrf_rejection_does_not_leak_url_credentials() {
-        let engine = crate::CrawlEngine::builder().build().expect("engine must build");
+        let config = CrawlConfig {
+            ssrf: SsrfPolicy::default(),
+            ssrf_deny_private_explicit: Some(true),
+            ..CrawlConfig::default()
+        };
+        let engine = crate::CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build");
         let url = "http://alice:hunter2@169.254.169.254/latest/meta-data/";
 
         let err = match engine.scrape(url).await {
             Err(e) => e,
-            Ok(_) => panic!("the link-local metadata address must be refused by the default policy"),
+            Ok(_) => panic!("the link-local metadata address must be refused by the pinned policy"),
         };
+
+        let CrawlError::SsrfPolicyViolation {
+            url: refused_url,
+            reason,
+            ..
+        } = &err
+        else {
+            panic!("the metadata address must be refused before any request, got {err:?}");
+        };
+        assert_eq!(
+            refused_url, "http://***:***@169.254.169.254/latest/meta-data/",
+            "the refusal must name only the redacted metadata URL"
+        );
+        assert_eq!(
+            reason, "denied by SSRF policy: link_local",
+            "the metadata address must be refused as link-local before any request"
+        );
 
         let rendered = format!("{err}\n{err:?}");
         assert!(
