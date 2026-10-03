@@ -73,6 +73,7 @@ pub struct Page {
     pub id: String,
     pub frame_id: String,
     pub url: Option<Url>,
+    document_base_url: Option<Url>,
     pub dom: Option<DomTree>,
     pub js: Option<BrowserJsRuntime>,
     pub lifecycle: LifecycleState,
@@ -111,6 +112,7 @@ impl Page {
             id,
             frame_id,
             url: None,
+            document_base_url: None,
             dom: None,
             js: None,
             lifecycle: LifecycleState::Idle,
@@ -131,11 +133,11 @@ impl Page {
         self.intercept_enabled && crate::net::interceptor::matches_block_pattern(&self.intercept_block_patterns, url)
     }
 
-    /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
+    /// Parse a sub-resource reference against the document base URL; `None` when it does not parse or
     /// carries userinfo, which is refused before anything logs or fetches it.
     fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
         Url::options()
-            .base_url(self.url.as_ref())
+            .base_url(self.document_base_url.as_ref().or(self.url.as_ref()))
             .parse(reference)
             .ok()
             .filter(|url| !crate::net::credential::has_userinfo(url))
@@ -175,12 +177,14 @@ impl Page {
         }
 
         // ~keep Thread the context proxy into ES modules and JS fetch/XHR so page JS honors upstream proxy settings.
+        let page_url = self.url_string();
+        let document_base_url = self.document_base_url.as_ref().map_or(page_url.as_str(), Url::as_str);
         let mut rt = BrowserJsRuntime::with_base_url_proxy_and_ssrf(
-            &self.url_string(),
+            document_base_url,
             self.context.proxy.clone(),
             self.http_client.ssrf.clone(),
         );
-        rt.set_url(&self.url_string());
+        rt.set_url(&page_url);
         rt.set_title(&self.title);
 
         #[cfg(feature = "stealth")]
@@ -309,7 +313,9 @@ impl Page {
     }
     pub fn navigate_blank(&mut self) {
         self.js = None;
-        self.url = Some(Url::parse("about:blank").unwrap());
+        let url = Url::parse("about:blank").unwrap();
+        self.document_base_url = Some(url.clone());
+        self.url = Some(url);
         self.dom = Some(parse_html("<!DOCTYPE html><html><head></head><body></body></html>"));
         self.title = String::new();
         self.lifecycle = LifecycleState::Loaded;

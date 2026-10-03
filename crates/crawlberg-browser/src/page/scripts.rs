@@ -232,7 +232,10 @@ impl Page {
                 };
                 self.load_remote_module(&full_url).await;
             } else if !module_script.inline.is_empty() {
-                let base = self.url_string();
+                let base = self
+                    .document_base_url
+                    .as_ref()
+                    .map_or_else(|| self.url_string(), String::from);
                 if let Some(js) = &mut self.js
                     && let Err(error) = js.load_inline_module(&module_script.inline, &base).await
                 {

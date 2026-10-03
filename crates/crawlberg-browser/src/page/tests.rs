@@ -1309,6 +1309,63 @@ async fn a_subresource_address_that_does_not_parse_is_skipped() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn subresources_resolve_against_the_first_base_href() {
+    let html = "<html><head>\
+                <base href=\"/assets/\"><base href=\"/wrong/\">\
+                <link rel=\"stylesheet\" href=\"theme.css\"></head><body>\
+                <script src=\"classic.js\"></script>\
+                <script type=\"module\" src=\"module.js\"></script>\
+                </body></html>";
+    let classic = push("classic");
+    let module = push("module");
+    let base = serve(routes(&[
+        ("/pages/index.html", "text/html", html),
+        ("/assets/theme.css", "text/css", "body{color:green}"),
+        ("/assets/classic.js", "text/javascript", &classic),
+        ("/assets/module.js", "text/javascript", &module),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&format!("{base}/pages/index.html"))
+        .await
+        .expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["classic", "module"]);
+    assert_eq!(
+        event_urls(&page, "Stylesheet"),
+        vec![format!("{base}/assets/theme.css")]
+    );
+    assert_eq!(
+        event_urls(&page, "Script"),
+        vec![format!("{base}/assets/classic.js"), format!("{base}/assets/module.js"),]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_invalid_first_base_href_falls_back_to_the_page_address() {
+    let classic = push("classic");
+    let base = serve(routes(&[
+        (
+            "/pages/index.html",
+            "text/html",
+            "<html><head><base href=\"http://[::1\"><base href=\"/wrong/\"></head>\
+             <body><script src=\"classic.js\"></script></body></html>",
+        ),
+        ("/pages/classic.js", "text/javascript", &classic),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&format!("{base}/pages/index.html"))
+        .await
+        .expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["classic"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{base}/pages/classic.js")]);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn stylesheets_are_collected_into_the_css_global() {
     let html = "<html><head>\
                 <link rel=\"stylesheet\" href=\"/one.css\">\

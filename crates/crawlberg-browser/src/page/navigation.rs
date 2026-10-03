@@ -40,6 +40,7 @@ impl Page {
 
         self.lifecycle = LifecycleState::Loading;
         self.url = Some(url.clone());
+        self.document_base_url = None;
         self.network_events.clear();
 
         self.enforce_robots(&url, initiator.as_ref()).await?;
@@ -63,6 +64,7 @@ impl Page {
 
         let body_text = String::from_utf8_lossy(&response.body).to_string();
         let dom = parse_html(&body_text);
+        self.document_base_url = self.base_url_from_dom(&dom);
         self.title = dom
             .query_selector("title")
             .ok()
@@ -97,6 +99,23 @@ impl Page {
         self.wait_for_network_idle(wait_until).await;
 
         Ok(redirects)
+    }
+
+    fn base_url_from_dom(&self, dom: &DomTree) -> Option<Url> {
+        let page_url = self.url.as_ref()?;
+        let href = dom
+            .query_selector_all("base")
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|node_id| dom.get_node(node_id)?.get_attribute("href").map(str::to_owned));
+        let Some(href) = href else {
+            return Some(page_url.clone());
+        };
+        Url::options()
+            .base_url(Some(page_url))
+            .parse(&href)
+            .ok()
+            .or_else(|| Some(page_url.clone()))
     }
 
     /// Apply the context's `robots.txt` policy, fetching and caching the file on first use.

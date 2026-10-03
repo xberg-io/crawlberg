@@ -264,6 +264,12 @@ title: "Changelog"
   the processes it found. It also logs a warning when the processes keep changing for eight
   reads of the table. A process that runs after the last read is still not seen. This applies to
   the Chromiumoxide backend. (#585)
+
+- **Native-browser subresources ignored the document's base address.** A relative stylesheet,
+  classic script or module script under `<base href="/assets/">` was fetched relative to
+  the page address instead. These subresources now resolve against the first `<base href>`,
+  falling back to the page address when that base does not parse. (#265)
+
 - **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
   found the page's base with a second parser. That parser read markup inside `<title>`,
   `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so

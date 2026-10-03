@@ -267,6 +267,11 @@ All notable changes to crawlberg are documented here.
   reads of the table. A process that runs after the last read is still not seen. This applies to
   the Chromiumoxide backend. (#585)
 
+- **Native-browser subresources ignored the document's base address.** A relative stylesheet,
+  classic script or module script under `<base href="/assets/">` was fetched relative to
+  the page address instead. These subresources now resolve against the first `<base href>`,
+  falling back to the page address when that base does not parse. (#265)
+
 - **Inline data no longer bloats markdown output.** An image whose source is a `data:` URL becomes
   its alt text, and an inline SVG becomes its title. Links keep their visible text without the
   destination, video and audio keep their fallback content, and an iframe with only an inline
