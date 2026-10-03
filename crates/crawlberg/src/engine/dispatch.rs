@@ -249,11 +249,9 @@ impl CrawlEngine {
         use crate::types::EscalationReason;
         let source = crate::http::HttpStatus(status);
         match reason {
-            EscalationReason::WafBlocked { vendor } => CrawlError::waf_blocked_with_source(
-                vendor.clone(),
-                format!("waf/blocked: {vendor} detected at {url}"),
-                source,
-            ),
+            EscalationReason::WafBlocked { vendor } => {
+                CrawlError::waf_blocked_with_source(vendor.clone(), format!("{vendor} detected at {url}"), source)
+            }
             EscalationReason::SoftBlock => CrawlError::forbidden_with_source(format!("soft_block: {url}"), source),
             EscalationReason::RenderNeeded => {
                 CrawlError::unsupported(format!("js_render_needed but no browser tier available: {url}"))
@@ -387,6 +385,29 @@ impl CrawlEngine {
             "dispatch.policy" = policy,
             "dispatch.content_density" = content_density,
         );
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::CrawlEngine;
+    use crate::types::EscalationReason;
+
+    #[test]
+    fn a_waf_escalation_renders_one_prefix_and_keeps_its_status() {
+        let error = CrawlEngine::escalation_reason_to_error(
+            &EscalationReason::WafBlocked {
+                vendor: "cloudflare".to_owned(),
+            },
+            "https://example.com/",
+            503,
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "forbidden: waf/blocked: cloudflare detected at https://example.com/"
+        );
+        assert_eq!(crate::http::error_status(&error), Some(503));
     }
 }
 

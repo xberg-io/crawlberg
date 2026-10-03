@@ -558,7 +558,7 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
         NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Proxy => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Connection | NetworkErrorKind::Other if is_body_data_loss(&e, &chain) => {
-            CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
+            CrawlError::data_loss_with_source(e.to_string(), e)
         }
         NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Other => CrawlError::other_with_source(format!("[network:{tag}] {e}"), e),
@@ -612,7 +612,7 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
         NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Proxy => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Connection | NetworkErrorKind::Other if is_body_data_loss(&e, &chain) => {
-            CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
+            CrawlError::data_loss_with_source(e.to_string(), e)
         }
         NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Other => CrawlError::other_with_source(format!("[network:{tag}] {e}"), e),
@@ -853,9 +853,18 @@ mod tests {
                 .expect("client build must not fail");
             let response = client.get(&url).send().await.expect("response headers must arrive");
             let raw_err = response.text().await.expect_err("truncated body read must fail");
-            let msg = classify_reqwest_error(raw_err).to_string();
+            let raw_message = raw_err.to_string();
+            let error = classify_reqwest_error(raw_err);
 
-            assert!(msg.contains("data_loss:"), "expected 'data_loss:' in '{msg}'");
+            assert_eq!(error.to_string(), format!("data_loss: {raw_message}"));
+
+            use std::error::Error as _;
+            let source = error.source().expect("data loss must expose its source");
+            let original = source.source().expect("the source wrapper must expose reqwest's error");
+            assert!(
+                original.downcast_ref::<reqwest::Error>().is_some(),
+                "the concrete source must remain the reqwest body error"
+            );
         }
 
         /// Every keyword the classifier scans for must be inert when it comes from the URL.

@@ -703,7 +703,7 @@ async fn read_validated_body(
         && expected - body_bytes.len() > BODY_SHORTFALL_TOLERANCE_BYTES
     {
         return Err(CrawlError::data_loss(format!(
-            "data_loss: expected {expected} bytes, got {}",
+            "expected {expected} bytes, got {}",
             body_bytes.len()
         )));
     }
@@ -726,8 +726,7 @@ fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
     let is_body_error = is_body_error || e.is_body();
 
     if is_body_error {
-        let message = format!("data_loss: {e}");
-        CrawlError::data_loss_with_source(message, e)
+        CrawlError::data_loss_with_source(e.to_string(), e)
     } else {
         classify_reqwest_error(e)
     }
@@ -1419,10 +1418,7 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
             "expected a cloudflare WafBlocked, got {error:?}"
         );
-        assert!(
-            error.to_string().contains("waf/blocked detected: cloudflare"),
-            "unexpected message: {error}"
-        );
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected: cloudflare");
     }
 
     /// A 503 stamped by a WAF vendor header is a challenge, not a server fault, so it must
@@ -1440,10 +1436,7 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "datadome"),
             "expected a datadome WafBlocked, got {error:?}"
         );
-        assert!(
-            error.to_string().contains("waf/blocked detected on 503: datadome"),
-            "unexpected message: {error}"
-        );
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected on 503: datadome");
     }
 
     /// A 503 that only fingerprints once its body is read is still a challenge. This is the
@@ -1466,9 +1459,11 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
             "expected a cloudflare WafBlocked, got {error:?}"
         );
-        assert!(
-            error.to_string().contains("waf/blocked detected on 503: cloudflare"),
-            "unexpected message: {error}"
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected on 503: cloudflare");
+        assert_eq!(
+            status::error_status(&error),
+            Some(503),
+            "the response status must remain the source"
         );
     }
 
@@ -1486,10 +1481,7 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "perimeterx"),
             "expected a perimeterx WafBlocked, got {error:?}"
         );
-        assert!(
-            error.to_string().contains("waf/blocked detected on 429: perimeterx"),
-            "unexpected message: {error}"
-        );
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected on 429: perimeterx");
     }
 
     /// A 503 or 429 carrying no WAF signal must come out of the new classification step
@@ -1550,11 +1542,9 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "datadome"),
             "expected a datadome WafBlocked, got {error:?}"
         );
-        assert!(
-            error
-                .to_string()
-                .contains("waf/blocked detected on 2xx (header): datadome"),
-            "unexpected message: {error}"
+        assert_eq!(
+            error.to_string(),
+            "forbidden: waf/blocked: detected on 2xx (header): datadome"
         );
     }
 
@@ -1570,11 +1560,9 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
             "expected a cloudflare WafBlocked, got {error:?}"
         );
-        assert!(
-            error
-                .to_string()
-                .contains("waf/blocked detected on 2xx (body): cloudflare"),
-            "unexpected message: {error}"
+        assert_eq!(
+            error.to_string(),
+            "forbidden: waf/blocked: detected on 2xx (body): cloudflare"
         );
     }
 

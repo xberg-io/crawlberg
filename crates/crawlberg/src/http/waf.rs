@@ -211,7 +211,7 @@ pub(super) fn sitemap_2xx_error(
 /// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
 fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
     let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
-    let message = format!("waf/blocked detected on 2xx ({}): {}", evidence.label(), signal.vendor);
+    let message = format!("detected on 2xx ({}): {}", evidence.label(), signal.vendor);
     Some(waf_block(response.status, signal.vendor, message))
 }
 

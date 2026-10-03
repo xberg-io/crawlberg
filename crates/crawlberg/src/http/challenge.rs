@@ -92,14 +92,14 @@ fn waf_blocked(status: u16, vendor: String) -> CrawlError {
 
 /// The freeform part of a WAF block's message.
 ///
-/// ~keep 403 keeps its original wording verbatim: `waf/blocked detected: VENDOR` is what
-/// existing log-grep patterns match. The statuses added by crawlberg#169 name themselves, so a
-/// challenge served with 429 or 503 is distinguishable in a log from a plain 403 block.
+/// ~keep The [`CrawlError::WafBlocked`] display supplies the stable `waf/blocked:` tag. This
+/// builder returns only the freeform message so that tag appears exactly once. The statuses added
+/// by crawlberg#169 name themselves, distinguishing a 429 or 503 challenge from a plain 403 block.
 fn challenge_message(status: u16, vendor: &str) -> String {
     if status == FORBIDDEN_STATUS {
-        format!("waf/blocked detected: {vendor}")
+        format!("detected: {vendor}")
     } else {
-        format!("waf/blocked detected on {status}: {vendor}")
+        format!("detected on {status}: {vendor}")
     }
 }
 
@@ -120,16 +120,10 @@ mod tests {
     }
 
     #[test]
-    fn a_403_block_message_is_unchanged_while_the_new_statuses_name_themselves() {
-        assert_eq!(challenge_message(403, "cloudflare"), "waf/blocked detected: cloudflare");
-        assert_eq!(
-            challenge_message(503, "cloudflare"),
-            "waf/blocked detected on 503: cloudflare"
-        );
-        assert_eq!(
-            challenge_message(429, "datadome"),
-            "waf/blocked detected on 429: datadome"
-        );
+    fn a_403_block_message_omits_the_status_while_the_new_statuses_name_themselves() {
+        assert_eq!(challenge_message(403, "cloudflare"), "detected: cloudflare");
+        assert_eq!(challenge_message(503, "cloudflare"), "detected on 503: cloudflare");
+        assert_eq!(challenge_message(429, "datadome"), "detected on 429: datadome");
     }
 
     #[test]

@@ -161,8 +161,7 @@ fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
     #[cfg(not(target_arch = "wasm32"))]
     let is_body_error = is_body_error || e.is_body();
     if is_body_error {
-        let message = format!("data_loss: {e}");
-        CrawlError::data_loss_with_source(message, e)
+        CrawlError::data_loss_with_source(e.to_string(), e)
     } else {
         classify_reqwest_error(e)
     }
@@ -185,7 +184,7 @@ fn content_length_shortfall_error(
         .and_then(|s| s.parse::<usize>().ok())?;
     if body_len < expected && expected - body_len > CONTENT_LENGTH_SHORTFALL_TOLERANCE {
         return Some(CrawlError::data_loss(format!(
-            "data_loss: expected {expected} bytes, got {body_len}"
+            "expected {expected} bytes, got {body_len}"
         )));
     }
     None
@@ -414,9 +413,16 @@ mod tests {
         let error = content_length_shortfall_error(&headers, body_len, false).expect("data loss expected");
         assert!(
             matches!(&error, CrawlError::DataLoss { message, .. }
-                if message == &format!("data_loss: expected 1000 bytes, got {body_len}")),
+                if message == &format!("expected 1000 bytes, got {body_len}")),
             "got {error:?}"
         );
+        assert_eq!(
+            error.to_string(),
+            format!("data_loss: expected 1000 bytes, got {body_len}")
+        );
+
+        use std::error::Error as _;
+        assert!(error.source().is_none(), "a measured shortfall has no underlying error");
     }
 
     #[test]
