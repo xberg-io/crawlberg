@@ -250,6 +250,20 @@ All notable changes to crawlberg are documented here.
   session now ends its CDP client when the connection breaks, every command that waits fails at
   once, and `interact` returns an error. (#577)
 
+- **A browser pool kept a crashed Chrome, and a scrape waited on a broken browser connection.**
+  The pool and the one-shot scrape had the same CDP client defect as `interact` (#577): after the
+  connection to Chrome broke, every command that waited on it waited without end. The pool
+  launches a new Chrome only when that client has ended, so after a crash every page request
+  failed and `shutdown` waited forever. Now both end the CDP client at the first connection
+  error, and log that error as a warning. A page request that finds the old Chrome gone gets a
+  new Chrome, and a scrape ends with an error that says the browser's connection closed. (#581)
+
+- **A browser command that got no answer waited without end.** With the Chromiumoxide backend,
+  the CDP client fails a command after its 30-second request timeout only when something else
+  wakes the client, and on a connection with no other traffic nothing did. So a command Chrome
+  never answered held a crawl or an `interact` session forever. crawlberg now wakes the client
+  each second, and such a command fails with a timeout within twice the request timeout. (#586)
+
 - **A browser read of the committed document ignored `browser.timeout`.** `browser.timeout`
   bounded only the navigation. The reads after it, of the HTML, the committed document and the
   screenshot, run in the page's renderer, so a page that keeps the renderer's main thread busy held

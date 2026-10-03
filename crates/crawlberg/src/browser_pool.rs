@@ -801,6 +801,8 @@ struct BrowserState {
     /// to `browser` until it is stopped.
     firewall: BrowserFirewall,
     handler_handle: JoinHandle<()>,
+    /// Whether the handler has ended, which is when the pool replaces this browser.
+    handler_end: HandlerEnd,
     user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
     /// Set once the pool has logged that this browser's sockets go unchecked.
@@ -812,7 +814,8 @@ struct BrowserState {
 /// ~keep This distinction is the whole point of the return value: a killed Chrome never
 /// ~keep answers the CDP `Browser.close` its handler loop is waiting on, so teardown has to
 /// ~keep treat the two cases differently (xberg-io/crawlberg#146). `#[must_use]` sits on the
-/// ~keep type so a call site that discards the outcome is a warning, not a silent 5-second wait.
+/// ~keep type so a call site that discards the outcome is a warning, not a silent wait of up to
+/// ~keep 5 seconds.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserCloseOutcome {
@@ -840,7 +843,20 @@ impl BrowserState {
     }
 }
 
-/// Run the CDP handler of a browser on its own task, until its websocket fails or ends.
+/// How often the task that runs a CDP handler polls it while the connection is quiet.
+///
+/// ~keep chromiumoxide 0.9.1 fails a command that got no answer from a periodic job inside
+/// ~keep `Handler::poll_next` (`src/handler/mod.rs`). The job's timer (`src/handler/job.rs`) is
+/// ~keep reset when it fires and is not polled again in that pass, so it has no waker until
+/// ~keep something else polls the handler. On a quiet connection nothing does, and a command
+/// ~keep Chrome never answered waited forever (xberg-io/crawlberg#586). A poll on this interval
+/// ~keep gives the timer its waker again. The command then fails with `CdpError::Timeout` when
+/// ~keep the timer next fires after the request timeout has passed, so within twice that timeout.
+/// ~keep `StreamExt::next` only borrows the handler, so a poll that a tick drops loses nothing.
+/// ~keep The cost is one wake each second for each browser.
+const HANDLER_WAKE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Run the CDP handler of a browser on its own task, until its websocket fails.
 ///
 /// ~keep chromiumoxide 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) reports a broken
 /// ~keep websocket, as when Chrome dies, as one `CdpError::Ws` error, and then returns
@@ -851,32 +867,131 @@ impl BrowserState {
 /// ~keep page's context (xberg-io/crawlberg#577). Ending the task drops the handler, so every command
 /// ~keep and event stream of the browser ends with an error at once. The handler's other errors leave
 /// ~keep the connection usable (a binary frame is `CdpError::UnexpectedWsMessage`, `src/conn.rs`), so
-/// ~keep the loop goes on past them.
-pub(crate) fn spawn_handler(mut handler: Handler) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some(event) = handler.next().await {
-            if matches!(event, Err(chromiumoxide::error::CdpError::Ws(_))) {
+/// ~keep the loop goes on past them. Every `CdpError::Ws` is final here: async-tungstenite 0.32.1
+/// ~keep ends its stream at any read error (`WebSocketStream::poll_next` sets `ended`), and the
+/// ~keep write errors that leave a socket open (`Capacity`, `WriteBufferFull`) cannot happen,
+/// ~keep because chromiumoxide sets no message or frame limit (`src/conn.rs`) and tungstenite
+/// ~keep 0.28.0's write buffer has none. The pool launches a new browser only once this handler has
+/// ~keep ended, so a parked loop also kept a crashed Chrome in the pool for good
+/// ~keep (xberg-io/crawlberg#581). A websocket closed with a Close handshake gives no error: the
+/// ~keep handler stays pending until the next command, whose send fails with `CdpError::Ws`, and
+/// ~keep the loop ends then.
+pub(crate) fn spawn_handler(handler: Handler) -> JoinHandle<()> {
+    spawn_watched_handler(handler).0
+}
+
+/// [`spawn_handler`], with the state that tells whether the handler has ended.
+pub(crate) fn spawn_watched_handler(handler: Handler) -> (JoinHandle<()>, HandlerEnd) {
+    spawn_handler_then(handler, std::future::ready(()))
+}
+
+/// [`spawn_watched_handler`], whose task awaits `after_end` once the handler is dropped. A pool
+/// test holds the task open there.
+fn spawn_handler_then(
+    handler: Handler,
+    after_end: impl std::future::Future<Output = ()> + Send + 'static,
+) -> (JoinHandle<()>, HandlerEnd) {
+    let end = HandlerEnd::default();
+    let mut watched = WatchedHandler {
+        end: end.clone(),
+        handler,
+    };
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok(event) = tokio::time::timeout(HANDLER_WAKE_INTERVAL, watched.handler.next()).await else {
+                continue;
+            };
+            let Some(event) = event else {
+                break;
+            };
+            if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
+                let cause = websocket_error_text(error);
+                tracing::warn!(error = %cause, "the browser's CDP websocket failed; its CDP handler ends");
+                let _ = watched.end.0.cause.set(cause);
                 break;
             }
         }
-    })
+        drop(watched);
+        after_end.await;
+    });
+    (handle, end)
+}
+
+/// Whether the CDP handler of a browser has ended: its loop stopped or its task was aborted.
+///
+/// ~keep Dropping the handler is what fails the commands that wait on it, and a task counts as
+/// ~keep finished only after its future is dropped. A page request woken by its failed command
+/// ~keep on another thread read `JoinHandle::is_finished` as false, so the pool kept the dead
+/// ~keep browser for that request and its retry failed (xberg-io/crawlberg#581). This state is
+/// ~keep set before the handler drops, so a caller that sees a command fail for that reason
+/// ~keep always sees it set.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HandlerEnd(Arc<HandlerEndState>);
+
+#[derive(Debug, Default)]
+struct HandlerEndState {
+    ended: AtomicBool,
+    cause: std::sync::OnceLock<String>,
+}
+
+impl HandlerEnd {
+    pub(crate) fn has_ended(&self) -> bool {
+        self.0.ended.load(Ordering::Acquire)
+    }
+
+    /// The websocket error the handler stopped on. `None` while it runs, and after an abort.
+    pub(crate) fn cause(&self) -> Option<&str> {
+        self.0.cause.get().map(String::as_str)
+    }
+}
+
+/// What a log line and an error message say about the websocket error a handler stopped on: its
+/// `Display`, and the kind of the I/O error under it when there is one.
+///
+/// ~keep Never its `Debug`: for tungstenite's `WriteBufferFull` that prints the whole CDP message,
+/// ~keep which can hold a URL with credentials. The `Display` of an error from an open connection
+/// ~keep (`Io`, `Protocol`, `Capacity`, `Utf8`) holds no message text and no URL.
+fn websocket_error_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let kind = std::iter::successors(Some(error), |error| error.source())
+        .find_map(|error| error.downcast_ref::<std::io::Error>())
+        .map(std::io::Error::kind);
+    match kind {
+        Some(kind) => format!("{error} ({kind:?})"),
+        None => error.to_string(),
+    }
+}
+
+/// A handler that sets its [`HandlerEnd`] before it drops.
+///
+/// ~keep `Drop::drop` runs before the fields drop, so `end` is set before `handler` drops and
+/// ~keep fails its commands, whether the loop stopped or the task was aborted.
+struct WatchedHandler {
+    end: HandlerEnd,
+    handler: Handler,
+}
+
+impl Drop for WatchedHandler {
+    fn drop(&mut self) {
+        self.end.0.ended.store(true, Ordering::Release);
+    }
 }
 
 /// Stop the task running the CDP handler loop of a browser that has just been closed.
 ///
 /// A browser that exited on its own ends its handler loop, so that case waits briefly for the
-/// loop to finish and aborts it only if it overruns. A killed browser never will, so its handler
-/// is aborted at once.
+/// loop to finish and aborts it only if it overruns. A killed browser has nothing left to send,
+/// so its handler is aborted at once.
 ///
 /// ~keep Dropping a `JoinHandle` detaches its task rather than stopping it, so simply
 /// ~keep discarding the timeout result leaked one handler loop per relaunch — unbounded
 /// ~keep for a domain that keeps crashing Chrome.
-/// ~keep The `Killed` shortcut is not an optimisation of a wait that would have succeeded:
-/// ~keep chromiumoxide 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) returns
-/// ~keep `Ready(None)` only when a `Browser.close` response arrives while it is `closing`. A
-/// ~keep closed websocket makes its `while let Ready(Some(_))` loop fall through to
-/// ~keep `Poll::Pending`, so after a kill the loop parks for good and this wait always burned
-/// ~keep the full `HANDLER_SHUTDOWN_TIMEOUT` before aborting anyway (xberg-io/crawlberg#146).
+/// ~keep The `Killed` shortcut does not wait on the handler to notice the kill: chromiumoxide
+/// ~keep 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) returns `Ready(None)` only when a
+/// ~keep `Browser.close` response arrives while it is `closing`, which a killed Chrome never sends.
+/// ~keep A loop that went on past the websocket error then parked for good, and this wait burned
+/// ~keep the full `HANDLER_SHUTDOWN_TIMEOUT` (xberg-io/crawlberg#146). [`spawn_handler`] now ends
+/// ~keep at that error (xberg-io/crawlberg#581), but the process is gone either way, so the abort
+/// ~keep does not depend on the error arriving.
 async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: BrowserCloseOutcome) {
     if close_outcome == BrowserCloseOutcome::Killed {
         handle.abort();
@@ -997,7 +1112,7 @@ async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
 /// ~keep process only connected to, so only `release_browser` calls this, for a launched one.
 ///
 /// Returns which of the two happened, so the caller can hand it to [`stop_handler_after_close`]
-/// instead of waiting on a handler loop that a killed process will never end.
+/// instead of waiting on a handler loop that a killed process will never close cleanly.
 pub(crate) async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) -> BrowserCloseOutcome {
     let closed = tokio::time::timeout(shutdown_timeout, async {
         let _ = browser.close().await;
@@ -1264,6 +1379,10 @@ pub struct BrowserPool {
     shutdown: AtomicBool,
     /// Lock-free health signal updated whenever browser state changes.
     healthy: AtomicBool,
+    /// While `true`, the task of each handler this pool starts stays open after its handler
+    /// has ended, so a test can ask for a page in that state.
+    #[cfg(test)]
+    hold_handler_end: tokio::sync::watch::Sender<bool>,
 }
 
 impl BrowserPool {
@@ -1277,6 +1396,8 @@ impl BrowserPool {
             page_semaphore: semaphore,
             shutdown: AtomicBool::new(false),
             healthy: AtomicBool::new(false),
+            #[cfg(test)]
+            hold_handler_end: tokio::sync::watch::Sender::new(false),
         })
     }
 
@@ -1390,7 +1511,7 @@ impl BrowserPool {
     ) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
 
-        if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
+        if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_end.has_ended()) {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
                 old.firewall.stop().await;
@@ -1419,7 +1540,7 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        if guard.as_ref().is_some_and(|bs| !bs.handler_handle.is_finished()) {
+        if guard.as_ref().is_some_and(|bs| !bs.handler_end.has_ended()) {
             return Ok(());
         }
 
@@ -1436,7 +1557,7 @@ impl BrowserPool {
 
     /// Launch (or connect to) a Chrome process according to the pool config.
     async fn launch_browser(&self) -> Result<BrowserState, CrawlError> {
-        let (browser, mut handler, data_dir) = if let Some(ref endpoint) = self.config.browser_endpoint {
+        let (browser, handler, data_dir) = if let Some(ref endpoint) = self.config.browser_endpoint {
             let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, connect_endpoint(endpoint))
                 .await
                 .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))??;
@@ -1459,7 +1580,15 @@ impl BrowserPool {
             (browser, handler, Some(user_data_dir))
         };
 
-        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        #[cfg(not(test))]
+        let (handler_handle, handler_end) = spawn_watched_handler(handler);
+        #[cfg(test)]
+        let (handler_handle, handler_end) = {
+            let mut hold = self.hold_handler_end.subscribe();
+            spawn_handler_then(handler, async move {
+                let _ = hold.wait_for(|held| !*held).await;
+            })
+        };
         let browser = Arc::new(browser);
         let firewall = match BrowserFirewall::start(
             Arc::clone(&browser),
@@ -1490,6 +1619,7 @@ impl BrowserPool {
             browser,
             firewall,
             handler_handle,
+            handler_end,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
             remote_warned: std::sync::Once::new(),

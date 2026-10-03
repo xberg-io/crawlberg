@@ -10,12 +10,13 @@ use chromiumoxide::browser::Browser;
 use chromiumoxide::cdp::browser_protocol::target::TargetId;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
-use self::launch::{UserDataDir, launch_or_connect};
+use self::launch::{Launched, UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, ExternalTabCleanup, kill_browser, release_browser};
+use crate::browser_pool::{
+    BrowserPool, ExternalTabCleanup, HandlerEnd, kill_browser, release_browser, spawn_watched_handler,
+};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::egress::Egress;
@@ -338,14 +339,26 @@ async fn one_shot_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let (browser, mut handler, data_dir, egress, profile_hold) =
-        match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
-            Ok(Ok(launched)) => launched,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => return Err(overall_deadline_error(overall_timeout)),
-        };
+    let launched = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
+        Ok(Ok(launched)) => launched,
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Err(overall_deadline_error(overall_timeout)),
+    };
+    fetch_launched(launched, deadline, url, config, prior_cookies, want_screenshot).await
+}
 
-    let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+/// Fetch `url` in a browser [`launch_or_connect`] returned, before `deadline`, then tear the
+/// browser down.
+async fn fetch_launched(
+    (browser, handler, data_dir, egress, profile_hold): Launched,
+    deadline: tokio::time::Instant,
+    url: &str,
+    config: &CrawlConfig,
+    prior_cookies: Option<&[CookieInfo]>,
+    want_screenshot: bool,
+) -> Result<BrowserPage, CrawlError> {
+    let overall_timeout = config.browser.overall_timeout;
+    let (handler_handle, handler_end) = spawn_watched_handler(handler);
     let origin = BrowserOrigin::of_session(
         config.browser.endpoint.as_deref(),
         matches!(data_dir, Some(UserDataDir::Scratch(_))),
@@ -383,7 +396,27 @@ async fn one_shot_fetch(
     // ~keep end on their own but are not bounded by it (a reap of 6.6 s and a removal of 11.9 s
     // ~keep at loads of 720 to 1064). So that background task always finishes, later than
     // ~keep `shutdown_timeout` on a busy host.
-    fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
+    fetch_outcome
+        .unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
+        .map_err(|error| connection_closed_error(error, &handler_end))
+}
+
+/// `error`, saying that the browser's CDP connection closed when that is why the fetch failed.
+///
+/// ~keep A command that waits when the handler ends fails with chromiumoxide's channel error
+/// ~keep ("oneshot canceled", "send failed because receiver is gone"), which names no cause. The
+/// ~keep handler's end is set before any command fails for it, so it is read here without a race.
+fn connection_closed_error(error: CrawlError, handler_end: &HandlerEnd) -> CrawlError {
+    match error {
+        CrawlError::BrowserError { message, source } if handler_end.has_ended() => {
+            let message = match handler_end.cause() {
+                Some(cause) => format!("the browser's CDP connection closed ({cause}): {message}"),
+                None => format!("the browser's CDP connection closed: {message}"),
+            };
+            CrawlError::BrowserError { message, source }
+        }
+        other => other,
+    }
 }
 
 /// Everything one [`one_shot_fetch`] has to tear down, owned by a single value whose `Drop`
