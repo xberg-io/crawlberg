@@ -142,27 +142,59 @@ async fn pooled_fetch_fails_near_the_overall_deadline_when_navigation_stalls() {
 
 #[tokio::test]
 #[serial_test::serial(pooled_browser_deadline)]
-async fn a_timed_out_terminal_redirect_is_not_reused_for_the_follow_up_fetch() {
-    let test_name = "a_timed_out_terminal_redirect_is_not_reused_for_the_follow_up_fetch";
+async fn a_terminal_redirect_with_a_stalled_body_is_not_reused_for_the_follow_up_fetch() {
+    let test_name = "a_terminal_redirect_with_a_stalled_body_is_not_reused_for_the_follow_up_fetch";
     let base = spawn_stalled_redirect_server();
     let pool = BrowserPool::new(BrowserPoolConfig::default());
+    match pool.warm().await {
+        Ok(()) => {}
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("warming the pool must either succeed or report a missing Chrome: {error:?}"),
+    }
     let mut config = stalled_pooled_config(Arc::clone(&pool));
-    config.browser.timeout = Duration::from_secs(2);
+    config.browser.timeout = Duration::from_secs(5);
     config.browser.overall_timeout = Duration::from_secs(15);
+    config.browser.shutdown_timeout = Duration::from_millis(500);
     config.browser.session_affinity = true;
     config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
     let engine = create_engine(Some(config)).expect("engine must build");
 
-    match scrape(&engine, &format!("{base}/redirect")).await {
+    let sink: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let capture = tracing::subscriber::set_default(MessageCapture {
+        sink: Arc::clone(&sink),
+    });
+    let redirect_url = format!("{base}/redirect");
+    let started = Instant::now();
+    let redirect = scrape(&engine, &redirect_url).await;
+    let elapsed = started.elapsed();
+    drop(capture);
+    match redirect {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
             pool.shutdown().await;
             return;
         }
-        Err(CrawlError::BrowserTimeout { .. }) => {}
-        Ok(page) => panic!("an incomplete terminal redirect must not become reusable success: {page:?}"),
-        Err(error) => panic!("the incomplete terminal redirect must time out: {error:?}"),
+        Ok(page) => assert_eq!(
+            (page.status_code, page.html.as_str(), page.final_url.as_str()),
+            (302, "", redirect_url.as_str()),
+            "{test_name}: the redirect headers must return without waiting for its stalled body"
+        ),
+        Err(error) => panic!("{test_name}: the terminal redirect must succeed immediately: {error:?}"),
     }
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "{test_name}: the redirect headers must return before the 5s navigation timeout, took {elapsed:?}"
+    );
+    let messages = sink.lock().expect("sink mutex must not be poisoned").clone();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("releasing a pooled browser page")),
+        "{test_name}: the terminal redirect page must be released instead of parked; captured messages: {messages:?}"
+    );
 
     let follow_up = scrape(&engine, &format!("{base}/ok"))
         .await
