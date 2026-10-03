@@ -272,6 +272,12 @@ All notable changes to crawlberg are documented here.
   destination, video and audio keep their fallback content, and an iframe with only an inline
   address disappears. Elements with ordinary addresses are unchanged. (#97, #120)
 
+- **A redirect header with a non-ASCII byte was dropped.** Header collection accepted visible
+  ASCII only, so a `Location` or `Refresh` value containing an `obs-text` byte disappeared and
+  its redirect was missed. Response field values now use the browser's byte-preserving
+  isomorphic decode in both HTTP fetch paths, and direct `Location` handling uses the same
+  decode. (#278)
+
 - **Relative links in the markdown resolved against a `<base>` that was not one.** The markdown
   found the page's base with a second parser. That parser read markup inside `<title>`,
   `<script>` and `<style>` as tags and counted a `<base>` inside `<svg>` or `<template>`, so

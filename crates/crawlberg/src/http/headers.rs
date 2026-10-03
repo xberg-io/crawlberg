@@ -1,8 +1,9 @@
 //! Header-map conversion and the metadata extracted from response headers.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::net::cookie::validate_cookie_domain;
@@ -85,18 +86,27 @@ pub(crate) fn extract_response_meta_from_hashmap(
     }
 }
 
-/// Build a `HashMap<String, Vec<String>>` of lowercase header names to values from a
-/// `reqwest::HeaderMap`, dropping values that aren't valid UTF-8 (mirrors the header
-/// filtering `HttpResponse.headers` has always applied on this path).
-pub(super) fn build_headers_map(headers: &HeaderMap) -> HashMap<String, Vec<String>> {
+/// Decode an HTTP field value as browsers expose it.
+///
+/// ~keep HTTP permits `obs-text` bytes above ASCII. Browser header lists preserve those bytes by
+/// ~keep isomorphic decoding (one byte to the same-valued Unicode scalar), rather than treating
+/// ~keep them as UTF-8 and replacing or dropping them.
+pub(crate) fn decode_header_value(value: &HeaderValue) -> Cow<'_, str> {
+    value
+        .to_str()
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|_| Cow::Owned(value.as_bytes().iter().copied().map(char::from).collect()))
+}
+
+/// Build a `HashMap<String, Vec<String>>` of lowercase header names to browser-decoded values
+/// from a `reqwest::HeaderMap`.
+pub(crate) fn build_headers_map(headers: &HeaderMap) -> HashMap<String, Vec<String>> {
     let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
     for (name, value) in headers.iter() {
-        if let Ok(v) = value.to_str() {
-            headers_map
-                .entry(name.as_str().to_lowercase())
-                .or_default()
-                .push(v.to_string());
-        }
+        headers_map
+            .entry(name.as_str().to_lowercase())
+            .or_default()
+            .push(decode_header_value(value).into_owned());
     }
     headers_map
 }
@@ -104,6 +114,53 @@ pub(super) fn build_headers_map(headers: &HeaderMap) -> HashMap<String, Vec<Stri
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use reqwest::header::{LOCATION, SET_COOKIE};
+
+    #[test]
+    fn response_headers_isomorphically_decode_non_ascii_bytes() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            LOCATION,
+            HeaderValue::from_bytes(b"/caf\xe9").expect("an obs-text Location must be valid"),
+        );
+        headers.append(
+            "refresh",
+            HeaderValue::from_bytes(b"0; url=/cr\xe8me").expect("an obs-text Refresh must be valid"),
+        );
+        headers.append(
+            "x-opaque",
+            HeaderValue::from_bytes(b"\x80\xc3\xa9\xff").expect("obs-text bytes must be valid"),
+        );
+
+        let decoded = build_headers_map(&headers);
+
+        assert_eq!(decoded.get("location"), Some(&vec!["/caf\u{e9}".to_owned()]));
+        assert_eq!(decoded.get("refresh"), Some(&vec!["0; url=/cr\u{e8}me".to_owned()]));
+        assert_eq!(
+            decoded["x-opaque"].first().map(|value| {
+                value
+                    .chars()
+                    .map(|character| u8::try_from(u32::from(character)).expect("isomorphic scalar must fit in a byte"))
+                    .collect::<Vec<_>>()
+            }),
+            Some(b"\x80\xc3\xa9\xff".to_vec()),
+            "decoding must preserve each field byte rather than reinterpret it as UTF-8"
+        );
+    }
+
+    #[test]
+    fn decoded_sensitive_response_headers_stay_redacted_in_debug_output() {
+        let mut headers = HeaderMap::new();
+        let mut cookie = HeaderValue::from_bytes(b"session=secret-\xff").expect("an obs-text cookie must be valid");
+        cookie.set_sensitive(true);
+        headers.insert(SET_COOKIE, cookie);
+
+        let decoded = build_headers_map(&headers);
+        let rendered = format!("{:?}", crate::net::redact::RedactedHeaders(&decoded));
+
+        assert!(!rendered.contains("secret"), "sensitive value leaked: {rendered}");
+        assert!(rendered.contains(crate::net::redact::REDACTED_PLACEHOLDER));
+    }
 
     /// Build a `set-cookie` headers `HashMap` with a single raw `Set-Cookie` value, as
     /// `extract_cookies_from_hashmap` expects to receive from the fetch layer.

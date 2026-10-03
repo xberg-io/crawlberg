@@ -1102,6 +1102,7 @@ mod tests {
         selector.direct_host("localhost");
         let ssrf = allow_all();
         let context = FetchContext {
+            page_url: "http://origin.test/start".to_owned(),
             cookie_jar: None,
             in_flight: None,
             intercept: None,

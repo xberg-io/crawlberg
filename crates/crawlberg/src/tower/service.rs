@@ -102,20 +102,6 @@ fn content_type_of(resp: &reqwest::Response) -> String {
         .to_owned()
 }
 
-/// Collect response headers into a lowercase-keyed multi-map, dropping non-UTF-8 values.
-fn collect_headers(resp: &reqwest::Response) -> HashMap<String, Vec<String>> {
-    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
-    for (name, value) in resp.headers().iter() {
-        if let Ok(v) = value.to_str() {
-            headers
-                .entry(name.as_str().to_lowercase())
-                .or_default()
-                .push(v.to_string());
-        }
-    }
-    headers
-}
-
 /// Build the `CrawlResponse` for a 3xx without classifying it; a failed body read yields an
 /// empty body rather than an error, because the caller only needs the status and headers.
 async fn read_redirect_response(
@@ -223,7 +209,7 @@ async fn do_fetch(
 
     let status = resp.status().as_u16();
     let content_type = content_type_of(&resp);
-    let headers = collect_headers(&resp);
+    let headers = crate::http::build_headers_map(resp.headers());
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if is_redirect_status(status) {

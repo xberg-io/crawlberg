@@ -18,13 +18,12 @@ use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
-use headers::build_headers_map;
-
 pub(crate) use body::{
     effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
 };
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::{build_client, request_client};
+pub(crate) use headers::build_headers_map;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
@@ -616,8 +615,7 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
 fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<RedirectTarget> {
     let location = headers
         .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)?;
+        .map(headers::decode_header_value)?;
 
     Some(match crate::net::userinfo::resolve(current_url, &location) {
         Some(next_url) if is_fetchable_scheme(&next_url) => RedirectTarget::Follow(next_url),
@@ -747,6 +745,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::{Arc, Once};
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
     use wiremock::matchers::{method, path};
@@ -756,8 +755,6 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
         let address = listener.local_addr().expect("listener must have an address");
         tokio::spawn(async move {
-            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
             if let Ok((mut socket, _)) = listener.accept().await {
                 let mut request = [0_u8; 1024];
                 let _ = socket.read(&mut request).await;
@@ -1814,6 +1811,83 @@ mod tests {
             panic!("the Location must be followed");
         };
         assert_eq!(next.as_str(), "http://example.com/end");
+    }
+
+    #[test]
+    fn a_redirect_location_with_an_obs_text_byte_is_followed() {
+        let current = url::Url::parse("http://example.com/start").expect("test URL must parse");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::LOCATION,
+            reqwest::header::HeaderValue::from_bytes(b"/caf\xe9").expect("an obs-text Location must be valid"),
+        );
+
+        let Some(RedirectTarget::Follow(next)) = redirect_target(&current, &headers) else {
+            panic!("the non-ASCII Location must be followed");
+        };
+
+        assert_eq!(next.as_str(), "http://example.com/caf%C3%A9");
+    }
+
+    async fn read_request_path(socket: &mut tokio::net::TcpStream) -> String {
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 512];
+            let read = socket.read(&mut chunk).await.expect("request must be readable");
+            assert_ne!(read, 0, "request headers ended before their terminator");
+            request.extend_from_slice(&chunk[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&request)
+            .lines()
+            .next()
+            .and_then(|line| line.split_ascii_whitespace().nth(1))
+            .expect("request line must name a path")
+            .to_owned()
+    }
+
+    async fn serve_obs_text_redirect_chain(listener: TcpListener) -> Vec<String> {
+        let responses: [&[u8]; 3] = [
+            b"HTTP/1.1 302 Found\r\nLocation: /caf\xe9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nRefresh: 0; url=/cr\xe8me\r\nContent-Type: text/html\r\nContent-Length: 6\r\nConnection: close\r\n\r\nmiddle",
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal",
+        ];
+        let mut paths = Vec::new();
+        for response in responses {
+            let (mut socket, _) = listener.accept().await.expect("request must arrive");
+            paths.push(read_request_path(&mut socket).await);
+            socket.write_all(response).await.expect("response must be writable");
+            socket.flush().await.expect("response must flush");
+        }
+        paths
+    }
+
+    #[tokio::test]
+    async fn http_fetch_follows_obs_text_location_and_refresh_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
+        let address = listener.local_addr().expect("listener must have an address");
+        let server = tokio::spawn(serve_obs_text_redirect_chain(listener));
+
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let fetched = http_fetch_with(
+            &format!("http://{address}/start"),
+            &config,
+            &HashMap::new(),
+            &client,
+            RefreshRedirects::Follow,
+        )
+        .await
+        .expect("both non-ASCII redirect headers must be followed");
+
+        assert_eq!(fetched.response.status, 200);
+        assert_eq!(fetched.response.body, "final");
+        assert_eq!(
+            server.await.expect("server task must finish"),
+            ["/start", "/caf%C3%A9", "/cr%C3%A8me"]
+        );
     }
 
     /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of the plain fetch)
