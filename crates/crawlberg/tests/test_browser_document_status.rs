@@ -578,9 +578,15 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
         ("/file", "file:///etc/hostname"),
         ("/app", "myapp://open"),
     ] {
+        let body = format!("<p>{route}-redirect-body</p>");
         Mock::given(method("GET"))
             .and(path(route))
-            .respond_with(ResponseTemplate::new(302).append_header("location", target))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .append_header("location", target)
+                    .append_header("x-redirect-marker", route)
+                    .set_body_raw(body, "text/html"),
+            )
             .mount(&site)
             .await;
     }
@@ -596,11 +602,13 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             return;
         };
         let page = result.unwrap_or_else(|error| panic!("{test_name}: {target}: {error:?}"));
+        let expected_body = format!("<p>{route}-redirect-body</p>");
         assert_eq!(
             (page.status_code, page.html.as_str()),
-            (302, ""),
+            (302, expected_body.as_str()),
             "{test_name}: {target}"
         );
+        assert_eq!(page.content_type, "text/html", "{test_name}: {target}");
         assert_eq!(page.redirect_count, 0, "{test_name}: {target}");
         assert!(
             page.final_url.ends_with(route),
@@ -608,6 +616,34 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             page.final_url
         );
     }
+}
+
+#[tokio::test]
+async fn chromiumoxide_returns_a_late_non_web_redirect_response() {
+    let test_name = "chromiumoxide_returns_a_late_non_web_redirect_response";
+    let body = "<p>late-redirect-body</p>";
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        late_navigation_config(),
+        "<script>setTimeout(() => location.assign('/late'), 300)</script>",
+        vec![(
+            "/late",
+            ResponseTemplate::new(302)
+                .append_header("location", "mailto:someone@example.com")
+                .append_header("x-redirect-marker", "late")
+                .set_body_raw(body, "text/html"),
+        )],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/late").await;
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert_eq!((page.status_code, page.html.as_str()), (302, body), "{test_name}");
+    assert_eq!(page.content_type, "text/html", "{test_name}");
+    assert_eq!(page.redirect_count, 1, "{test_name}");
+    assert!(page.final_url.ends_with("/late"), "{test_name}: {}", page.final_url);
 }
 
 /// A document an iframe commits is not the page's: after an iframe loads during the extra wait,

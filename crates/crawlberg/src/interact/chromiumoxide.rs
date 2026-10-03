@@ -267,10 +267,10 @@ async fn read_page_html(page: &chromiumoxide::Page, what: &str) -> Result<(Strin
     read_one_document(|| committed_document(page), || page_content(page, what)).await
 }
 
-/// The result of a navigation that ended on a response without a document: the URL that
-/// answered, no HTML, and a failed result per action, since there is no page to act on.
+/// The result of a navigation that ended on a terminal response: its URL and body, and a failed
+/// result per action, since crawlberg stopped the navigation before an actionable page.
 ///
-/// ~keep `scrape` reports the same response as a page with its status and an empty body.
+/// ~keep `scrape` reports the same response as a page, including a redirect response's body.
 /// ~keep `InteractionResult` has no status, so the action errors carry it.
 fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> InteractionResult {
     let error = format!(
@@ -289,7 +289,7 @@ fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> Interac
                 error: Some(error.clone()),
             })
             .collect(),
-        final_html: String::new(),
+        final_html: stop.body.clone(),
         final_url: stop.url.clone(),
         screenshot: None,
         screenshot_base64: None,
@@ -342,7 +342,7 @@ async fn navigate_and_wait(
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
-        return Ok(Some(stop));
+        return Ok(Some(watch.read_stopped_response(page, stop).await?));
     }
     resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
 
@@ -355,6 +355,9 @@ async fn navigate_and_wait(
     watch.settle().await;
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
+    if let Some(stop) = watch.take_stopped_response() {
+        return Ok(Some(watch.read_stopped_response(page, stop).await?));
     }
     // ~keep The redirect limit bounds the navigation to `url`. A navigation an action starts is
     // ~keep the caller's own, so it is not counted.

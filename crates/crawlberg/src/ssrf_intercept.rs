@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
@@ -28,7 +30,8 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    Cookie, CookieParam, ErrorReason, Headers, ResourceType, TimeSinceEpoch,
+    Cookie, CookieParam, ErrorReason, GetResponseBodyParams as NetworkGetResponseBodyParams, Headers, RequestId,
+    ResourceType, TimeSinceEpoch,
 };
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
 use chromiumoxide::cdp::browser_protocol::storage::{
@@ -45,7 +48,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
 use crate::html::is_fetchable_scheme;
-use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
+use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES, effective_max_body_size};
 use crate::net::LOGGED_REFUSALS;
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -120,7 +123,7 @@ pub(crate) struct InterceptOutcome {
     goto_unsettled: bool,
 }
 
-/// A main-frame response the navigation ends on without a document, reported as is.
+/// A main-frame response the navigation ends on, reported as it arrived.
 ///
 /// ~keep The headers are read by `browser::navigation`, which needs the `browser` feature;
 /// ~keep a `browser-chromiumoxide`-only build has just `interact`, which reads the URL and status.
@@ -131,14 +134,20 @@ pub(crate) struct StoppedResponse {
     pub(crate) status: u16,
     /// Response headers, keyed by lowercase name.
     pub(crate) headers: HashMap<String, Vec<String>>,
+    pub(crate) body: String,
+    pub(crate) body_bytes: Vec<u8>,
+    pub(crate) body_request_id: Option<RequestId>,
 }
 
 impl std::fmt::Debug for StoppedResponse {
     /// Redacted: a sensitive header value, such as a `Set-Cookie`, prints as `***`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { url, status, headers } = self;
+        let Self {
+            url, status, headers, ..
+        } = self;
+        let url = crate::net::redact_url_credentials(url);
         f.debug_struct("StoppedResponse")
-            .field("url", url)
+            .field("url", &url)
             .field("status", status)
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
             .finish()
@@ -998,6 +1007,46 @@ impl Watch {
         }
     }
 
+    pub(crate) fn take_stopped_response(&self) -> Option<StoppedResponse> {
+        lock(&self.page.outcome).stopped_response.take()
+    }
+
+    pub(crate) async fn read_stopped_response(
+        &self,
+        page: &chromiumoxide::Page,
+        mut stop: StoppedResponse,
+    ) -> Result<StoppedResponse, CrawlError> {
+        let Some(request_id) = stop.body_request_id.take() else {
+            return Ok(stop);
+        };
+        let response = page
+            .execute(NetworkGetResponseBodyParams::new(request_id))
+            .await
+            .map_err(|error| {
+                CrawlError::browser_error(format!(
+                    "failed to read the stopped response body from {}: {error}",
+                    crate::net::redact_url_credentials(&stop.url)
+                ))
+            })?
+            .result;
+        let mut body_bytes = if response.base64_encoded {
+            BASE64.decode(response.body).map_err(|error| {
+                CrawlError::browser_error(format!(
+                    "failed to decode the stopped response body from {}: {error}",
+                    crate::net::redact_url_credentials(&stop.url)
+                ))
+            })?
+        } else {
+            response.body.into_bytes()
+        };
+        if let Some(max_size) = effective_max_body_size(&self.page.config) {
+            body_bytes.truncate(max_size);
+        }
+        stop.body = String::from_utf8_lossy(&body_bytes).into_owned();
+        stop.body_bytes = body_bytes;
+        Ok(stop)
+    }
+
     /// The redirects the main frame has followed since the watch began: HTTP redirects, and
     /// the navigations after the first.
     #[cfg(feature = "browser")]
@@ -1636,6 +1685,13 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     let request_id = event.request_id.clone();
     let _ = match verdict {
+        Verdict::RenderRedirect(headers) => {
+            let mut params = ContinueResponseParams::new(request_id);
+            params.response_code = Some(200);
+            params.response_phrase = Some("OK".to_owned());
+            params.response_headers = Some(headers);
+            browser.execute(params).await.map(drop)
+        }
         Verdict::Continue(_) if is_response_stage(event) => {
             browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
         }
@@ -1661,6 +1717,8 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
+    /// ~keep Render a terminal redirect's body without letting Chrome follow its Location.
+    RenderRedirect(Vec<HeaderEntry>),
     /// Fail it with `BlockedByClient`.
     Refuse,
     /// ~keep Drop a navigation the page must not wait on, so it keeps its document.
@@ -1839,9 +1897,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// How a paused document response is answered, recording the status and headers of each
 /// main-frame document response. Only the response of the committed document is kept beside the
 /// new one. A main-frame redirect is counted while it is within `limit`. Past the limit, a
-/// redirect of the requested navigation is recorded and failed, as the HTTP fetch stops on it; a
-/// redirect of a navigation the page started is dropped. A main-frame response of the requested
-/// navigation that Chrome does not commit is also recorded and failed.
+/// redirect of the requested navigation is recorded and rendered without its `Location`, as the
+/// HTTP fetch stops on it; a redirect of a navigation the page started is dropped. A main-frame
+/// response of the requested navigation that Chrome does not commit is also recorded and failed.
 ///
 /// ~keep Such a response from a later navigation is dropped, so it cannot keep the requested
 /// ~keep navigation waiting for a load event that will never arrive.
@@ -1852,9 +1910,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep Chrome commits no document for a 204, 205 or 304, so no load event fires and
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
 /// ~keep Chrome commit its error page, which ends `goto` at once.
-/// ~keep A redirect to a non-web address cannot produce another paused request for the listener
-/// ~keep to stop on, so it ends on the redirect response before Chrome hands it to an app or
-/// ~keep reports an unsafe redirect.
+/// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
+/// ~keep Its response is continued as a 200 without `Location`, so Chrome consumes its body but
+/// ~keep cannot hand the target to an app; callers still receive the original status and headers.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -1874,15 +1932,18 @@ fn main_frame_verdict(
     {
         record_main_frame_response(&mut state, network_id.as_ref(), status, is_redirect, headers);
     }
+    let mut render_redirect = false;
     let stop = match status {
         Some(code) if is_redirect => {
             if !has_fetchable_redirect_target(&event.request.url, headers) {
+                render_redirect = true;
                 code
             } else if spend_redirect(&mut state, limit) {
                 return Verdict::Continue(None);
             } else if state.first_document_arrived {
                 return Verdict::Abort;
             } else {
+                render_redirect = true;
                 code
             }
         }
@@ -1898,11 +1959,24 @@ fn main_frame_verdict(
         }
     };
     state.stopped_response = Some(StoppedResponse {
-        url: event.request.url.clone(),
+        url: crate::net::redact_url_credentials(&event.request.url),
         status: stop,
         headers: header_map(headers),
+        body: String::new(),
+        body_bytes: Vec::new(),
+        body_request_id: render_redirect.then(|| event.network_id.clone()).flatten(),
     });
-    Verdict::Refuse
+    if render_redirect {
+        Verdict::RenderRedirect(
+            headers
+                .iter()
+                .filter(|header| !header.name.eq_ignore_ascii_case("location"))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Verdict::Refuse
+    }
 }
 
 /// Whether a request the policy allows may go out. The first main-frame document request is the
@@ -2319,7 +2393,7 @@ mod tests {
         ));
         assert!(matches!(
             main_frame_verdict(&redirect("B"), &main_frame, 1, &state),
-            Verdict::Refuse
+            Verdict::RenderRedirect(_)
         ));
         assert_eq!(
             state
@@ -2354,16 +2428,38 @@ mod tests {
             "myapp://open",
         ] {
             let state = Mutex::new(InterceptOutcome::default());
-            let event = main_frame_redirect("SEED", target);
-            assert!(matches!(
-                main_frame_verdict(&event, &main_frame, 10, &state),
-                Verdict::Refuse
-            ));
+            let mut event = main_frame_redirect("SEED", target);
+            event
+                .response_headers
+                .as_mut()
+                .expect("redirect headers")
+                .push(super::HeaderEntry::new("X-Redirect-Marker", "kept"));
+            let Verdict::RenderRedirect(rendered_headers) = main_frame_verdict(&event, &main_frame, 10, &state) else {
+                panic!("the terminal redirect must be rendered without being followed");
+            };
+            assert!(
+                rendered_headers
+                    .iter()
+                    .all(|header| !header.name.eq_ignore_ascii_case("location")),
+                "Chrome must not receive the redirect target: {rendered_headers:?}"
+            );
+            assert!(
+                rendered_headers
+                    .iter()
+                    .any(|header| header.name.eq_ignore_ascii_case("x-redirect-marker")),
+                "ordinary response headers must reach Chrome: {rendered_headers:?}"
+            );
             let state = state.into_inner().expect("state lock");
             let stopped = state.stopped_response.expect("the redirect response must be kept");
             assert_eq!(
                 (stopped.status, stopped.url.as_str()),
                 (302, event.request.url.as_str())
+            );
+            assert_eq!(stopped.headers["location"], [target]);
+            assert_eq!(stopped.headers["x-redirect-marker"], ["kept"]);
+            assert!(
+                stopped.body_request_id.is_some(),
+                "the response body must be retrievable"
             );
             assert_eq!(state.redirects_followed, 0, "{target} is not followed");
         }
@@ -2550,9 +2646,12 @@ mod tests {
         ]);
         let outcome = InterceptOutcome {
             stopped_response: Some(super::StoppedResponse {
-                url: "https://example.com/".to_owned(),
+                url: format!("https://user:{SECRET}@example.com/"),
                 status: 204,
                 headers: headers.clone(),
+                body: SECRET.to_owned(),
+                body_bytes: SECRET.as_bytes().to_vec(),
+                body_request_id: None,
             }),
             documents: std::collections::HashMap::from([(
                 "loader-1".to_owned(),

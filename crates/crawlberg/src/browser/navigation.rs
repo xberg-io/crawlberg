@@ -118,13 +118,7 @@ async fn render(
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
-        let redirects = watch.redirects_followed();
-        return Ok(BrowserPage {
-            response: stopped_response(stop),
-            redirects,
-            redirected: redirects > 0,
-            refused: Vec::new(),
-        });
+        return stopped_browser_page(page, watch, stop).await;
     }
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         if matches!(error, CrawlError::BrowserError { .. })
@@ -137,6 +131,9 @@ async fn render(
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
+    }
+    if let Some(stop) = watch.take_stopped_response() {
+        return stopped_browser_page(page, watch, stop).await;
     }
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
@@ -181,6 +178,21 @@ async fn render(
         },
         redirects,
         redirected,
+        refused: Vec::new(),
+    })
+}
+
+async fn stopped_browser_page(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    stop: StoppedResponse,
+) -> Result<BrowserPage, CrawlError> {
+    let stop = watch.read_stopped_response(page, stop).await?;
+    let redirects = watch.redirects_followed();
+    Ok(BrowserPage {
+        response: stopped_response(stop),
+        redirects,
+        redirected: redirects > 0,
         refused: Vec::new(),
     })
 }
@@ -232,6 +244,9 @@ fn error_page_outcome(
             url: failed_url,
             status: recorded.status,
             headers: recorded.headers,
+            body: String::new(),
+            body_bytes: Vec::new(),
+            body_request_id: None,
         }),
         redirects,
         redirected: recorded.redirects > 0,
@@ -239,8 +254,7 @@ fn error_page_outcome(
     })
 }
 
-/// The response a navigation stopped on without a document, with no body, as the HTTP
-/// fetch path reports it.
+/// The response a navigation stopped on, as the HTTP fetch path reports it.
 fn stopped_response(stop: StoppedResponse) -> HttpResponse {
     let content_type = stop
         .headers
@@ -251,8 +265,8 @@ fn stopped_response(stop: StoppedResponse) -> HttpResponse {
     HttpResponse {
         status: stop.status,
         content_type,
-        body: String::new(),
-        body_bytes: Vec::new(),
+        body: stop.body,
+        body_bytes: stop.body_bytes,
         headers: stop.headers,
         browser_extras: None,
         final_url: stop.url,
