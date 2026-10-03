@@ -99,32 +99,36 @@ fn auth_identity(config: &CrawlConfig) -> String {
 /// silently serving unrelated sessions (see [`ClientCacheKey`]).
 #[derive(Default)]
 struct ClientCache {
-    clients: Mutex<HashMap<ClientCacheKey, reqwest::Client>>,
+    clients: Mutex<HashMap<ClientCacheKey, std::sync::Arc<StaticClients>>>,
 }
 
 impl ClientCache {
     /// The cached client for `config`'s identity, built and cached on a miss.
     fn get_or_build(&self, config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
-        let key = ClientCacheKey::from_config(config);
-        if let Ok(clients) = self.clients.lock()
-            && let Some(client) = clients.get(&key)
-        {
-            return Ok(client.clone());
-        }
-
-        let client = build_static_client(config)?;
-
-        self.insert(key, &client);
-
-        Ok(client)
+        Ok(self.get_or_build_set(config)?.client.clone())
     }
 
-    /// Store `client` under `key`, clearing the cache wholesale once it is full.
-    fn insert(&self, key: ClientCacheKey, client: &reqwest::Client) {
-        let Ok(mut clients) = self.clients.lock() else {
+    fn get_or_build_set(&self, config: &CrawlConfig) -> Result<std::sync::Arc<StaticClients>, CrawlError> {
+        let key = ClientCacheKey::from_config(config);
+        if let Ok(clients) = self.clients.lock()
+            && let Some(clients) = clients.get(&key)
+        {
+            return Ok(std::sync::Arc::clone(clients));
+        }
+
+        let clients = std::sync::Arc::new(StaticClients::new(config)?);
+
+        self.insert(key, &clients);
+
+        Ok(clients)
+    }
+
+    /// Store `clients` under `key`, clearing the cache wholesale once it is full.
+    fn insert(&self, key: ClientCacheKey, clients: &std::sync::Arc<StaticClients>) {
+        let Ok(mut cache) = self.clients.lock() else {
             return;
         };
-        insert_bounded(&mut clients, key, client.clone());
+        insert_bounded(&mut cache, key, std::sync::Arc::clone(clients));
     }
 
     /// Whether a client is cached for `config`'s identity.
@@ -135,6 +139,60 @@ impl ClientCache {
             .lock()
             .map(|clients| clients.contains_key(&key))
             .unwrap_or(false)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct StaticClients {
+    client: reqwest::Client,
+    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
+    environment: Mutex<HashMap<EnvironmentProxyIdentity, reqwest::Client>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl StaticClients {
+    fn new(config: &CrawlConfig) -> Result<Self, CrawlError> {
+        let jar = new_cookie_jar(config);
+        let client = build_static_client(config, jar.clone())?;
+        Ok(Self {
+            client,
+            jar,
+            environment: Mutex::new(HashMap::new()),
+        })
+    }
+
+    fn environment_client(
+        &self,
+        config: &CrawlConfig,
+        proxy: &EnvironmentProxy,
+    ) -> Result<reqwest::Client, CrawlError> {
+        let identity = proxy.identity();
+        if let Ok(clients) = self.environment.lock()
+            && let Some(client) = clients.get(&identity)
+        {
+            return Ok(client.clone());
+        }
+        let client = configure_environment_client(config, proxy, self.jar.clone())?
+            .build()
+            .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
+        if let Ok(mut clients) = self.environment.lock() {
+            insert_bounded(&mut clients, identity, client.clone());
+        }
+        Ok(client)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct StaticClients {
+    client: reqwest::Client,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl StaticClients {
+    fn new(config: &CrawlConfig) -> Result<Self, CrawlError> {
+        Ok(Self {
+            client: build_static_client(config)?,
+        })
     }
 }
 
@@ -172,9 +230,10 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
 
 /// The client for one request to `url`.
 ///
-/// Without a `proxy_provider` this is `client`. With one, the provider is asked once, its
-/// proxy is checked once, and the request gets the client for that proxy, or the direct
-/// client when the provider answers `None`. A proxy that cannot be used is an error.
+/// With a `proxy_provider`, the provider is asked once and the request gets the checked
+/// client for its answer; `None` is the provider's explicit direct route, while an unusable
+/// proxy is an error. Without a provider, the system proxy matcher selects either a proxy
+/// client or the direct `client`.
 ///
 /// ~keep The pick is made here, above reqwest, and never in a reqwest custom proxy: reqwest
 /// ~keep asks a custom proxy up to three times for one request (for the request headers and
@@ -190,6 +249,14 @@ pub(crate) fn request_client(
     if let Some(provider) = &config.proxy_provider {
         let proxy = crate::proxy::pick_proxy(provider.as_ref(), url.host_str().unwrap_or(""))?;
         return provider_clients(config, provider).client(config, proxy.as_ref());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if config.proxy.is_none()
+        && let Some(proxy) = EnvironmentProxy::for_url(url)?
+    {
+        return client_cache()
+            .get_or_build_set(config)?
+            .environment_client(config, &proxy);
     }
     let _ = (config, url);
     Ok(client.clone())
@@ -242,6 +309,62 @@ fn admitted_identity(proxy: &crate::proxy::AdmittedProxy) -> String {
     format!("{}\n{username}\n{password}", proxy.address().as_url())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct EnvironmentProxy {
+    admitted: crate::proxy::AdmittedProxy,
+    authorization: Option<reqwest::header::HeaderValue>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl EnvironmentProxy {
+    /// Select and admit the environment or operating-system proxy for `url`.
+    ///
+    /// ~keep Selection happens above reqwest so a proxy client can omit
+    /// [`crate::net::resolver::PolicyResolver`],
+    /// while a `NO_PROXY` request keeps the direct client's resolver. Letting reqwest select
+    /// inside one client makes the resolver mistake a private proxy for a private target.
+    fn for_url(url: &url::Url) -> Result<Option<Self>, CrawlError> {
+        let Ok(destination) = url.as_str().parse() else {
+            return Ok(None);
+        };
+        let Some(intercepted) = hyper_util::client::proxy::matcher::Matcher::from_system().intercept(&destination)
+        else {
+            return Ok(None);
+        };
+        let admitted = crate::proxy::admit_proxy(&crate::types::ProxyConfig {
+            url: intercepted.uri().to_string(),
+            ..crate::types::ProxyConfig::default()
+        })?;
+        crate::proxy::ensure_supported_scheme(admitted.address())?;
+        Ok(Some(Self {
+            admitted,
+            authorization: intercepted.basic_auth().cloned(),
+        }))
+    }
+
+    fn identity(&self) -> EnvironmentProxyIdentity {
+        EnvironmentProxyIdentity {
+            address: admitted_identity(&self.admitted),
+            authorization: self.authorization.as_ref().map(|value| value.as_bytes().to_vec()),
+        }
+    }
+
+    fn reqwest_proxy(&self) -> Result<reqwest::Proxy, CrawlError> {
+        let proxy = self.admitted.reqwest_proxy()?;
+        Ok(match &self.authorization {
+            Some(authorization) => proxy.custom_http_auth(authorization.clone()),
+            None => proxy,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(PartialEq, Eq, Hash)]
+struct EnvironmentProxyIdentity {
+    address: String,
+    authorization: Option<Vec<u8>>,
+}
+
 /// Process-wide cache of [`ProviderClients`], keyed by [`ClientCacheKey`] with the
 /// provider's identity as its proxy.
 #[cfg(not(target_arch = "wasm32"))]
@@ -281,9 +404,12 @@ fn build_static_client(_config: &CrawlConfig) -> Result<reqwest::Client, CrawlEr
 
 /// Build the client for a config with at most a static proxy.
 #[cfg(not(target_arch = "wasm32"))]
-fn build_static_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+fn build_static_client(
+    config: &CrawlConfig,
+    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
+) -> Result<reqwest::Client, CrawlError> {
     let proxy = config.proxy.as_ref().map(crate::proxy::admit_proxy).transpose()?;
-    configure_client(config, proxy.as_ref(), new_cookie_jar(config))?
+    configure_client(config, proxy.as_ref(), jar)?
         .build()
         .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))
 }
@@ -330,12 +456,30 @@ fn configure_client(
     match proxy {
         Some(proxy) => builder = builder.proxy(proxy.reqwest_proxy()?),
         None => {
-            builder = builder.dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
-                config.ssrf.clone(),
-            )));
+            builder = builder
+                .no_proxy()
+                .dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
+                    config.ssrf.clone(),
+                )));
         }
     }
 
+    Ok(builder)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn configure_environment_client(
+    config: &CrawlConfig,
+    proxy: &EnvironmentProxy,
+    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
+) -> Result<reqwest::ClientBuilder, CrawlError> {
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(config.request_timeout)
+        .proxy(proxy.reqwest_proxy()?);
+    if let Some(jar) = jar {
+        builder = builder.cookie_provider(jar);
+    }
     Ok(builder)
 }
 
