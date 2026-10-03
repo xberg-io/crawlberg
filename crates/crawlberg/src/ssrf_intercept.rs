@@ -139,7 +139,23 @@ pub(crate) struct StoppedResponse {
     pub(crate) body: String,
     pub(crate) body_bytes: Vec<u8>,
     pub(crate) request_id: Option<FetchRequestId>,
+    pub(crate) navigation_aborted: bool,
     pub(crate) ready: bool,
+}
+
+impl InterceptOutcome {
+    pub(crate) fn take_intentional_abort(&mut self) -> Option<StoppedResponse> {
+        if self.blocked.is_none()
+            && self
+                .stopped_response
+                .as_ref()
+                .is_some_and(|response| response.navigation_aborted)
+        {
+            self.stopped_response.take()
+        } else {
+            None
+        }
+    }
 }
 
 impl std::fmt::Debug for StoppedResponse {
@@ -1726,7 +1742,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
-    /// ~keep Capture a terminal redirect's body, then commit an inert internal document.
+    /// ~keep Capture a terminal redirect's body, then abort before Chrome can follow or render it.
     RenderRedirect,
     /// ~keep Replace a response that cannot commit with an inert document, then report it as sent.
     Stop,
@@ -1753,8 +1769,10 @@ async fn render_terminal_redirect(
             Vec::new()
         }
     };
-    fulfill_inert_document(browser, event.request_id.clone())
+    browser
+        .execute(FailRequestParams::new(event.request_id.clone(), ErrorReason::Aborted))
         .await
+        .map(drop)
         .map(|_| {
             complete_stopped_response(in_flight, &event.request_id, Some(body));
         })
@@ -2039,9 +2057,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. An empty inert internal document
 /// ~keep ends `goto`; callers still receive the original no-document response.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
-/// ~keep Its body is captured through a bounded stream, then Chrome receives an empty, sandboxed
-/// ~keep text document without the original headers. Callers still receive the original status,
-/// ~keep headers, URL and captured body, while none of that body can execute in the renderer.
+/// ~keep Its body is captured through a bounded stream, then the intercepted response is aborted.
+/// ~keep Callers still receive the original status, headers, URL and captured body, while Chrome
+/// ~keep cannot follow its `Location` or execute any response content or navigation headers.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -2094,6 +2112,7 @@ fn main_frame_verdict(
         body: String::new(),
         body_bytes: Vec::new(),
         request_id: Some(event.request_id.clone()),
+        navigation_aborted: render_redirect,
         ready: false,
     });
     if render_redirect {
@@ -2570,6 +2589,7 @@ mod tests {
             );
             assert_eq!(stopped.headers["location"], [target]);
             assert_eq!(stopped.headers["x-redirect-marker"], ["kept"]);
+            assert!(stopped.navigation_aborted);
             assert_eq!(state.redirects_followed, 0, "{target} is not followed");
         }
     }
@@ -2591,6 +2611,15 @@ mod tests {
                 .as_ref()
                 .expect("stopped response")
                 .ready
+        );
+        assert!(
+            !state
+                .lock()
+                .expect("state lock")
+                .stopped_response
+                .as_ref()
+                .expect("stopped response")
+                .navigation_aborted
         );
 
         complete_stopped_response_outcome(&state, &event.request_id, None);
@@ -2634,6 +2663,7 @@ mod tests {
                 body: String::new(),
                 body_bytes: Vec::new(),
                 request_id: Some(new.clone()),
+                navigation_aborted: true,
                 ready: false,
             }),
             ..InterceptOutcome::default()
@@ -2841,6 +2871,7 @@ mod tests {
                 body: SECRET.to_owned(),
                 body_bytes: SECRET.as_bytes().to_vec(),
                 request_id: None,
+                navigation_aborted: false,
                 ready: true,
             }),
             documents: std::collections::HashMap::from([(

@@ -377,7 +377,11 @@ async fn navigate_and_wait(
     .await;
 
     watch.settle().await;
-    let intercepted = watch.take_outcome();
+    let mut intercepted = watch.take_outcome();
+    if let Some(stop) = intercepted.take_intentional_abort() {
+        watch.mark_unsettled();
+        return Ok(Some(stop));
+    }
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         watch.mark_unsettled();
         return Err(error);
@@ -397,6 +401,9 @@ async fn navigate_and_wait(
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
+        if stop.navigation_aborted {
+            watch.mark_unsettled();
+        }
         return Ok(Some(stop));
     }
     // ~keep The redirect limit bounds the navigation to `url`. A navigation an action starts is

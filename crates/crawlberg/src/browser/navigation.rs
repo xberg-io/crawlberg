@@ -115,7 +115,11 @@ async fn render(
     .await;
 
     watch.settle().await;
-    let intercepted = watch.take_outcome();
+    let mut intercepted = watch.take_outcome();
+    if let Some(stop) = intercepted.take_intentional_abort() {
+        watch.mark_unsettled();
+        return Ok(stopped_browser_page(watch, stop));
+    }
     if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
         watch.mark_unsettled();
         if matches!(error, CrawlError::BrowserError { .. })
@@ -134,6 +138,9 @@ async fn render(
     }
     watch.settle().await;
     if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
+        if stop.navigation_aborted {
+            watch.mark_unsettled();
+        }
         return Ok(stopped_browser_page(watch, stop));
     }
 
@@ -252,6 +259,7 @@ fn error_page_outcome(
             body: String::new(),
             body_bytes: Vec::new(),
             request_id: None,
+            navigation_aborted: false,
             ready: true,
         }),
         redirects,
