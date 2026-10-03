@@ -4,7 +4,9 @@
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
 
-use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeCookie as NBCookie, ProxyCredentials, UpstreamProxy};
+use crawlberg_browser::adapter::{
+    NativeBrowserExecutor, NativeCookie as NBCookie, NativeRenderState, ProxyCredentials, UpstreamProxy,
+};
 use tracing::Instrument as _;
 
 use crate::error::CrawlError;
@@ -27,17 +29,16 @@ pub(crate) async fn native_browser_fetch(
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
-    let mut jar = to_native_cookies(prior_cookies);
-    native_browser_render(url, config, &mut jar, native_executor).await
+    let mut state = NativeRenderState::new(&to_native_cookies(prior_cookies));
+    native_browser_render(url, config, &mut state, native_executor).await
 }
 
-/// Render `url` with the native backend, starting from the cookies in `jar` and leaving in it the
-/// jar the render ended with. The records keep their `secure` and `http_only` flags, so a chain
-/// of renders carries its cookies from one render to the next as one browser would.
+/// Render `url` with the native backend, retaining the cookie jar and previous document site in
+/// `state` so separate refresh-hop renders behave as one browser navigation chain.
 pub(crate) async fn native_browser_render(
     url: &str,
     config: &CrawlConfig,
-    jar: &mut Vec<NBCookie>,
+    state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
@@ -59,7 +60,7 @@ pub(crate) async fn native_browser_render(
     }
     let _guard = SessionGuard;
 
-    native_browser_fetch_inner(url, config, jar, native_executor)
+    native_browser_fetch_inner(url, config, state, native_executor)
         .instrument(span)
         .await
 }
@@ -67,7 +68,7 @@ pub(crate) async fn native_browser_render(
 async fn native_browser_fetch_inner(
     url: &str,
     config: &CrawlConfig,
-    jar: &mut Vec<NBCookie>,
+    state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     if config.browser.endpoint.is_some() {
@@ -91,17 +92,20 @@ async fn native_browser_fetch_inner(
     }
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-    let native_config = build_native_config(config, url, jar.clone(), ssrf)?;
+    let native_config = build_native_config(config, url, Vec::new(), ssrf)?;
 
     let timeout = config.browser.timeout;
-    let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
-        let message = e.to_string();
-        if message.contains("timed out") {
-            CrawlError::browser_timeout(format!("browser timed out after {timeout:?}"))
-        } else {
-            CrawlError::browser_error(format!("native browser render failed: {message}"))
-        }
-    })?;
+    let rendered = native_executor
+        .render_url_with_state(url, &native_config, state)
+        .await
+        .map_err(|e| {
+            let message = e.to_string();
+            if message.contains("timed out") {
+                CrawlError::browser_timeout(format!("browser timed out after {timeout:?}"))
+            } else {
+                CrawlError::browser_error(format!("native browser render failed: {message}"))
+            }
+        })?;
 
     if config.browser.wait == BrowserWait::Fixed {
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -134,8 +138,6 @@ async fn native_browser_fetch_inner(
             .collect(),
         cookies: rendered.cookies.iter().cloned().map(cookie_info_from_native).collect(),
     };
-    *jar = rendered.cookies;
-
     let refused = crate::net::browser_policy::take_refused(&refused);
     let response = HttpResponse {
         status,

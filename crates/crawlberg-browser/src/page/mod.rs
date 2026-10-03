@@ -160,6 +160,14 @@ impl Page {
             .fetch_following_from(reqwest::Method::GET, url, None, max_redirects, initiator)
             .await
     }
+
+    async fn do_fetch_subresource(&self, url: &Url) -> Result<Response, NetError> {
+        #[cfg(feature = "stealth")]
+        if let Some(ref stealth) = self.stealth_client {
+            return stealth.fetch_subresource(url, self.url.as_ref()).await;
+        }
+        self.http_client.fetch_subresource(url, self.url.as_ref()).await
+    }
     fn init_js(&mut self) {
         // ~keep Recreate the JS realm every navigation so prior-page handlers cannot run in the next document.
         if self.js.is_some() {

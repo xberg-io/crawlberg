@@ -8,7 +8,7 @@ use reqwest::{Client, Method};
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::net::cookies::CookieJar;
+use crate::net::cookies::{CookieJar, CookieRequestContext};
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
@@ -453,6 +453,28 @@ impl HttpClient {
         max_redirects: Option<usize>,
         initiator: Option<&Url>,
     ) -> Result<Response, NetError> {
+        self.fetch_following_with_context(initial_method, url, initial_body, max_redirects, initiator, true)
+            .await
+    }
+
+    pub(crate) async fn fetch_subresource(
+        &self,
+        url: &Url,
+        site_for_cookies: Option<&Url>,
+    ) -> Result<Response, NetError> {
+        self.fetch_following_with_context(Method::GET, url, None, None, site_for_cookies, false)
+            .await
+    }
+
+    async fn fetch_following_with_context(
+        &self,
+        initial_method: Method,
+        url: &Url,
+        initial_body: Option<Vec<u8>>,
+        max_redirects: Option<usize>,
+        site_for_cookies: Option<&Url>,
+        top_level: bool,
+    ) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
@@ -478,13 +500,16 @@ impl HttpClient {
                 cb(&request_info);
             }
 
-            let headers = self
-                .request_headers(&current_url, initiator, is_safe_method(&method))
-                .await;
+            let context = if top_level {
+                CookieRequestContext::top_level(site_for_cookies, is_safe_method(&method))
+            } else {
+                CookieRequestContext::subresource(site_for_cookies)
+            };
+            let headers = self.request_headers(&current_url, context).await;
             let resp = self.send_request(&current_url, &method, body.as_ref(), headers).await?;
 
             let status = resp.status();
-            self.store_response_cookies(&resp, &current_url);
+            self.store_response_cookies(&resp, &current_url, context);
             let response_headers = collect_response_headers(&resp);
 
             if status.is_redirection()
@@ -535,10 +560,10 @@ impl HttpClient {
         }
     }
 
-    fn store_response_cookies(&self, response: &reqwest::Response, url: &Url) {
+    fn store_response_cookies(&self, response: &reqwest::Response, url: &Url, context: CookieRequestContext<'_>) {
         for value in response.headers().get_all(reqwest::header::SET_COOKIE) {
             if let Ok(set_cookie) = value.to_str() {
-                self.cookie_jar.set_cookie(set_cookie, url);
+                self.cookie_jar.set_cookie_for_request(set_cookie, url, context);
             }
         }
     }
@@ -566,12 +591,10 @@ impl HttpClient {
 
     /// Build the outgoing header set: browser fingerprint, then jar cookies, then the
     /// caller's extra headers, which are applied last and therefore win.
-    async fn request_headers(&self, url: &Url, initiator: Option<&Url>, safe_method: bool) -> HeaderMap {
+    async fn request_headers(&self, url: &Url, context: CookieRequestContext<'_>) -> HeaderMap {
         let mut headers = browser_fingerprint_headers(&self.user_agent.read().await.clone());
 
-        let cookie_header = self
-            .cookie_jar
-            .get_cookie_header_for_navigation(url, initiator, safe_method);
+        let cookie_header = self.cookie_jar.get_cookie_header_for_request(url, context);
         if !cookie_header.is_empty()
             && let Ok(value) = HeaderValue::from_str(&cookie_header)
         {

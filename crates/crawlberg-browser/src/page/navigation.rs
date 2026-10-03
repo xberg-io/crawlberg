@@ -114,10 +114,7 @@ impl Page {
         if self.context.robots_cache.is_allowed(&origin, "/robots.txt") {
             let robots_url = format!("{origin}/robots.txt");
             if let Ok(robots_url) = Url::parse(&robots_url)
-                && let Ok(resp) = self
-                    .http_client
-                    .fetch_following_from(reqwest::Method::GET, &robots_url, None, None, initiator)
-                    .await
+                && let Ok(resp) = self.http_client.fetch_subresource(&robots_url, initiator).await
                 && resp.status == ROBOTS_OK_STATUS
             {
                 let body = String::from_utf8_lossy(&resp.body);
@@ -206,15 +203,15 @@ impl Page {
 
     /// Fetch every permitted stylesheet concurrently and record a network event for each.
     async fn load_stylesheets(&mut self, dom: &DomTree) -> Vec<String> {
-        let client = self.http_client.clone();
+        let page = &*self;
         let css_futures: Vec<_> = self
             .allowed_stylesheet_urls(dom)
             .into_iter()
-            .map(|url_str| {
-                let client = client.clone();
+            .map(move |url_str| {
+                let page = page;
                 async move {
                     let parsed = Url::parse(&url_str).unwrap_or_else(|_| Url::parse("about:blank").unwrap());
-                    match client.fetch(&parsed).await {
+                    match page.do_fetch_subresource(&parsed).await {
                         Ok(resp) => Some((url_str, resp)),
                         Err(e) => {
                             tracing::debug!("Failed to fetch stylesheet {}: {}", url_str, e);

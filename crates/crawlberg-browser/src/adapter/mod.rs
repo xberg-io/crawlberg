@@ -13,6 +13,7 @@ pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
 use crate::lifecycle::WaitUntil;
+use crate::net::CookieJar;
 use crate::page::Page;
 use crate::redact::{REDACTED, RedactedHeaders, RedactedValues};
 
@@ -26,6 +27,9 @@ use snapshot::{
 };
 
 /// A cookie passed into or captured from the native browser.
+/// ~keep Opaque cookie and site-for-cookies state for a native navigation chain whose hops are
+/// ~keep rendered as separate jobs. This preserves internal cookie attributes without adding
+/// ~keep fields to the source-compatible [`NativeCookie`] transport type.
 #[derive(Clone)]
 pub struct NativeCookie {
     pub name: String,
@@ -36,6 +40,27 @@ pub struct NativeCookie {
     pub http_only: bool,
     /// Sent to `domain` only, not to its subdomains: the page set it without a `Domain` attribute.
     pub host_only: bool,
+}
+
+#[derive(Clone)]
+#[cfg_attr(alef, alef(skip))]
+pub struct NativeRenderState {
+    cookie_jar: Arc<CookieJar>,
+    site_for_cookies: Option<url::Url>,
+}
+
+impl NativeRenderState {
+    /// ~keep Create a fresh navigation state seeded with embedder-supplied cookies.
+    pub fn new(prior_cookies: &[NativeCookie]) -> Self {
+        let cookie_jar = Arc::new(CookieJar::new());
+        for cookie in prior_cookies {
+            cookie_jar.set_parsed_cookie(cookie);
+        }
+        Self {
+            cookie_jar,
+            site_for_cookies: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for NativeCookie {
@@ -427,7 +452,16 @@ pub async fn interact_url(
 
 async fn render_url_local(url: &str, config: &NativeBrowserConfig) -> Result<RenderedPage, PageError> {
     let context = create_context(config).await?;
-    render_with_context(url, config, context).await
+    render_with_context(url, config, context, None).await
+}
+
+async fn render_url_local_with_state(
+    url: &str,
+    config: &NativeBrowserConfig,
+    state: NativeRenderState,
+) -> Result<RenderedPage, PageError> {
+    let context = create_context_with_cookie_jar(config, state.cookie_jar).await?;
+    render_with_context(url, config, context, state.site_for_cookies).await
 }
 
 async fn interact_url_local(
@@ -498,18 +532,30 @@ async fn interact_url_local(
 }
 
 async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserContext>, PageError> {
+    let context = create_context_with_cookie_jar(config, Arc::new(CookieJar::new())).await?;
+    for cookie in &config.prior_cookies {
+        context.cookie_jar.set_parsed_cookie(cookie);
+    }
+    Ok(context)
+}
+
+async fn create_context_with_cookie_jar(
+    config: &NativeBrowserConfig,
+    cookie_jar: Arc<CookieJar>,
+) -> Result<Arc<BrowserContext>, PageError> {
     let ssrf: Arc<dyn SsrfValidator> = config
         .ssrf
         .clone()
         .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
     let proxy = config.effective_proxy()?;
-    let mut context = BrowserContext::with_ssrf(
+    let mut context = BrowserContext::with_ssrf_and_cookie_jar(
         "crawlberg".to_string(),
         proxy,
         config.stealth,
         config.user_agent.clone(),
         ssrf,
         config.allow_file_access,
+        cookie_jar,
     )?;
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {
@@ -520,14 +566,14 @@ async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserConte
         .http_client
         .set_extra_headers(config.extra_headers.clone())
         .await;
+    #[cfg(feature = "stealth")]
+    if let Some(stealth) = &context.stealth_client {
+        stealth.set_extra_headers(config.extra_headers.clone()).await;
+    }
     context
         .http_client
         .set_origin_headers(config.origin_headers.clone())
         .await;
-
-    for cookie in &config.prior_cookies {
-        context.cookie_jar.set_parsed_cookie(cookie);
-    }
 
     Ok(context)
 }
@@ -536,8 +582,10 @@ async fn render_with_context(
     url: &str,
     config: &NativeBrowserConfig,
     context: Arc<BrowserContext>,
+    site_for_cookies: Option<url::Url>,
 ) -> Result<RenderedPage, PageError> {
     let mut page = Page::new("page-1".to_string(), context.clone());
+    page.url = site_for_cookies;
     configure_page_interception(&mut page, config);
     let redirects = navigate_configured(&mut page, url, config).await?;
 

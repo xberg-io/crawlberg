@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::net::cookies::CookieRequestContext;
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_for_url};
@@ -561,6 +562,7 @@ fn blocked_response(url: &str, error: Option<String>) -> String {
 /// Page state a fetch needs, read out of the `RefCell` in one borrow so none is held
 /// across an await point.
 struct FetchContext {
+    page_url: String,
     cookie_jar: Option<Arc<CookieJar>>,
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
@@ -595,6 +597,7 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
     };
 
     Some(FetchContext {
+        page_url: gs.url.clone(),
         cookie_jar: gs.cookie_jar.clone(),
         in_flight: gs.http_client.as_ref().map(|c| c.in_flight.clone()),
         intercept,
@@ -847,13 +850,15 @@ async fn send_one_hop(
         req = req.header("Origin", &cors.page_origin);
     }
 
-    // ~keep Same-origin only: sending the jar's cookies on a cross-origin fetch would leak
-    // them to a third party, which `credentials: "omit"` semantics forbid.
-    if !cors.is_cross_origin
+    // ~keep Same-origin only: the fetch bridge implements the platform's default
+    // ~keep `credentials: "same-origin"` mode, including after a redirect changes origin.
+    if same_origin(&context.page_url, current_url)
         && let Some(ref jar) = context.cookie_jar
         && let Ok(parsed_url) = url::Url::parse(current_url)
     {
-        let cookie_header = jar.get_cookie_header(&parsed_url);
+        let page_url = url::Url::parse(&context.page_url).ok();
+        let cookie_header =
+            jar.get_cookie_header_for_request(&parsed_url, CookieRequestContext::subresource(page_url.as_ref()));
         if !cookie_header.is_empty() {
             req = req.header("Cookie", &cookie_header);
         }
@@ -895,14 +900,26 @@ async fn send_one_hop(
 }
 
 fn store_response_cookies(context: &FetchContext, current_url: &str, response: &reqwest::Response) {
+    if !same_origin(&context.page_url, current_url) {
+        return;
+    }
     if let Some(ref jar) = context.cookie_jar
         && let Ok(parsed_url) = url::Url::parse(current_url)
     {
+        let page_url = url::Url::parse(&context.page_url).ok();
+        let request_context = CookieRequestContext::subresource(page_url.as_ref());
         for val in response.headers().get_all(reqwest::header::SET_COOKIE) {
             if let Ok(s) = val.to_str() {
-                jar.set_cookie(s, &parsed_url);
+                jar.set_cookie_for_request(s, &parsed_url, request_context);
             }
         }
+    }
+}
+
+fn same_origin(page_url: &str, request_url: &str) -> bool {
+    match (url::Url::parse(page_url), url::Url::parse(request_url)) {
+        (Ok(page), Ok(request)) => page.origin() == request.origin(),
+        _ => false,
     }
 }
 

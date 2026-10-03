@@ -8,7 +8,8 @@ use std::time::Duration;
 use crate::page::PageError;
 
 use super::{
-    NativeBrowserConfig, NativeInteractionResult, NativePageAction, RenderedPage, interact_url_local, render_url_local,
+    NativeBrowserConfig, NativeInteractionResult, NativePageAction, NativeRenderState, RenderedPage,
+    interact_url_local, render_url_local, render_url_local_with_state,
 };
 
 const DEFAULT_NATIVE_WORKER_LIMIT: usize = 8;
@@ -76,6 +77,12 @@ enum NativeBrowserJob {
     Render {
         url: String,
         config: NativeBrowserConfig,
+        reply: tokio::sync::oneshot::Sender<Result<RenderedPage, PageError>>,
+    },
+    RenderWithState {
+        url: String,
+        config: NativeBrowserConfig,
+        state: NativeRenderState,
         reply: tokio::sync::oneshot::Sender<Result<RenderedPage, PageError>>,
     },
     Interact {
@@ -152,6 +159,28 @@ impl NativeBrowserExecutor {
         result.await.map_err(|_| {
             PageError::NetworkError("native browser worker stopped before returning render result".to_owned())
         })?
+    }
+
+    /// ~keep Render one hop while retaining cookies and the previous document's site for the next hop.
+    pub async fn render_url_with_state(
+        &self,
+        url: &str,
+        config: &NativeBrowserConfig,
+        state: &mut NativeRenderState,
+    ) -> Result<RenderedPage, PageError> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        let job = NativeBrowserJob::RenderWithState {
+            url: url.to_owned(),
+            config: config.clone(),
+            state: state.clone(),
+            reply,
+        };
+        self.send_job(job).await?;
+        let rendered = result.await.map_err(|_| {
+            PageError::NetworkError("native browser worker stopped before returning render result".to_owned())
+        })??;
+        state.site_for_cookies = url::Url::parse(&rendered.final_url).ok();
+        Ok(rendered)
     }
 
     /// Navigate to a URL and execute page actions.
@@ -243,6 +272,14 @@ fn run_native_worker(
             match job {
                 NativeBrowserJob::Render { url, config, reply } => {
                     let _ = reply.send(render_url_local(&url, &config).await);
+                }
+                NativeBrowserJob::RenderWithState {
+                    url,
+                    config,
+                    state,
+                    reply,
+                } => {
+                    let _ = reply.send(render_url_local_with_state(&url, &config, state).await);
                 }
                 NativeBrowserJob::Interact {
                     url,

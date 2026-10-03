@@ -78,7 +78,26 @@ impl BrowserContext {
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
     ) -> Result<Self, NetError> {
-        let cookie_jar = Arc::new(CookieJar::new());
+        Self::with_ssrf_and_cookie_jar(
+            id,
+            proxy,
+            stealth,
+            user_agent,
+            ssrf,
+            allow_file_access,
+            Arc::new(CookieJar::new()),
+        )
+    }
+
+    pub(crate) fn with_ssrf_and_cookie_jar(
+        id: String,
+        proxy: Option<UpstreamProxy>,
+        stealth: bool,
+        user_agent: Option<String>,
+        ssrf: Arc<dyn SsrfValidator>,
+        allow_file_access: bool,
+        cookie_jar: Arc<CookieJar>,
+    ) -> Result<Self, NetError> {
         let client = HttpClient::with_ssrf(cookie_jar.clone(), proxy.as_ref(), ssrf, allow_file_access)?;
         // ~keep Share the plain client's SSRF policy: the stealth path is an
         // alternate transport, not an alternate policy.

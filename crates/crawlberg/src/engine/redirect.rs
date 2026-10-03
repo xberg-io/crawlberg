@@ -444,10 +444,10 @@ pub(crate) async fn follow_redirects(
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
     let mut browser_used = false;
-    // ~keep Each native hop is its own render, so the chain carries the jar from one to the next,
-    // ~keep as a single browser session would: the refresh target gets the refresh page's cookies.
+    // ~keep Each native hop is its own render, so the chain carries cookies and the previous
+    // ~keep document's site from one to the next, as a single browser session would.
     #[cfg(feature = "browser-native")]
-    let mut native_jar: Vec<crawlberg_browser::adapter::NativeCookie> = Vec::new();
+    let mut native_state = crawlberg_browser::adapter::NativeRenderState::new(&[]);
     // ~keep A hop the chain leaves still sent its page's requests, so the result lists what the
     // ~keep SSRF check refused on every hop, not only on the page the chain lands on.
     let mut refused_on_earlier_hops: Vec<String> = Vec::new();
@@ -485,7 +485,7 @@ pub(crate) async fn follow_redirects(
                     .await
             }
             #[cfg(feature = "browser-native")]
-            Hop::NativeRender => hop_engine.native_render(&chain.current_url, &mut native_jar).await,
+            Hop::NativeRender => hop_engine.native_render(&chain.current_url, &mut native_state).await,
         };
         let (mut resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,
@@ -812,6 +812,92 @@ mod tests {
     use crate::tracing_capture::{assert_logged_without_secret, capture_events};
 
     const MAX_REDIRECTS: usize = 5;
+
+    #[cfg(feature = "browser-native")]
+    #[tokio::test]
+    async fn native_refresh_hops_preserve_same_site_state_between_fresh_renders() {
+        use std::sync::{Arc, Mutex};
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let port = addr.port();
+        let refresh = |target: &str| {
+            format!("<html><head><meta http-equiv='refresh' content='0; url={target}'></head><body></body></html>")
+        };
+        let start_body = "refresh header".to_owned();
+        let middle_body = refresh(&format!("http://127.0.0.1:{port}/finish"));
+        let response = |body: &str, cookies: &str| {
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{cookies}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let routes = Arc::new(HashMap::from([
+            (
+                "/start".to_owned(),
+                response(
+                    &start_body,
+                    &format!(
+                        "Refresh: 0; url=http://localhost:{port}/middle\r\n\
+                         Set-Cookie: strict=1; Path=/; SameSite=Strict\r\n\
+                     Set-Cookie: lax=1; Path=/; SameSite=Lax\r\n",
+                    ),
+                ),
+            ),
+            ("/middle".to_owned(), response(&middle_body, "")),
+            ("/finish".to_owned(), response("done", "")),
+        ]));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let routes = routes.clone();
+                let requests = server_requests.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 8192];
+                    let read = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    let path = request.split_whitespace().nth(1).unwrap_or("/");
+                    requests.lock().expect("lock").push(request);
+                    let response = routes.get(path).cloned().unwrap_or_else(|| {
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    });
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let mut config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+        config.browser.backend = crate::types::BrowserBackend::Native;
+        config.browser.mode = crate::types::BrowserMode::Always;
+        config.browser.timeout = std::time::Duration::from_secs(10);
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        engine
+            .scrape(&format!("http://{addr}/start"))
+            .await
+            .expect("the native refresh chain must succeed");
+
+        let requests = requests.lock().expect("lock");
+        let finish = requests
+            .iter()
+            .find(|request| request.starts_with("GET /finish "))
+            .expect("the final refresh target must be requested")
+            .to_lowercase();
+        assert!(
+            finish.contains("cookie: lax=1"),
+            "Lax must be sent on the top-level GET: {finish}"
+        );
+        assert!(
+            !finish.contains("strict=1"),
+            "Strict must be withheld across sites: {finish}"
+        );
+    }
 
     /// ~keep A public crawl refuses a seed that does not parse before this policy runs, so the
     /// ~keep crawl-level test cannot reach the unparseable branch. Both branches are driven here.

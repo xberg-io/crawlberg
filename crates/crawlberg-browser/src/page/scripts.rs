@@ -160,15 +160,15 @@ impl Page {
         &self,
         scripts: &[ScriptInfo],
     ) -> std::collections::HashMap<usize, (String, String, Response)> {
-        let client = self.http_client.clone();
+        let page = self;
         let fetch_futures: Vec<_> = self
             .allowed_script_urls(scripts)
             .into_iter()
-            .map(|(index, url)| {
-                let client = client.clone();
+            .map(move |(index, url)| {
+                let page = page;
                 async move {
                     let parsed = Url::parse(&url).unwrap_or_else(|_| Url::parse("about:blank").unwrap());
-                    match client.fetch(&parsed).await {
+                    match page.do_fetch_subresource(&parsed).await {
                         Ok(response) => Some((index, url, response)),
                         Err(error) => {
                             tracing::warn!("Failed to fetch script {}: {}", url, error);

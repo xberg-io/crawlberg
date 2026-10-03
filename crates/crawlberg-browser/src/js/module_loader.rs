@@ -13,6 +13,7 @@ use deno_core::ModuleSpecifier;
 use deno_core::error::ModuleLoaderError;
 
 use crate::js::ops::{JsOpState, SharedState};
+use crate::net::cookies::CookieRequestContext;
 use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::matches_block_pattern;
@@ -131,6 +132,8 @@ impl ModuleLoader for BrowserModuleLoader {
         let origin_headers = state.origin_headers();
         let block_patterns = state.intercept_block_patterns.clone();
         let user_agent = state.user_agent.clone();
+        let cookie_jar = state.cookie_jar.clone();
+        let page_url = ModuleSpecifier::parse(&state.url).ok();
         drop(state);
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {
@@ -165,6 +168,15 @@ impl ModuleLoader for BrowserModuleLoader {
                 if let Some(user_agent) = &user_agent {
                     request = request.header(reqwest::header::USER_AGENT, user_agent.as_str());
                 }
+                if page_url.as_ref().is_some_and(|page| page.origin() == current.origin())
+                    && let Some(jar) = &cookie_jar
+                {
+                    let cookie_header = jar
+                        .get_cookie_header_for_request(&current, CookieRequestContext::subresource(page_url.as_ref()));
+                    if !cookie_header.is_empty() {
+                        request = request.header(reqwest::header::COOKIE, cookie_header);
+                    }
+                }
                 for (name, value) in origin_headers.iter().flat_map(|scoped| scoped.headers_for(&current)) {
                     request = request.header(name.as_str(), value.as_str());
                 }
@@ -172,6 +184,16 @@ impl ModuleLoader for BrowserModuleLoader {
                     .send()
                     .await
                     .map_err(|e| io_err(format!("Failed to fetch module {}: {}", url, error_with_causes(&e))))?;
+                if page_url.as_ref().is_some_and(|page| page.origin() == current.origin())
+                    && let Some(jar) = &cookie_jar
+                {
+                    let context = CookieRequestContext::subresource(page_url.as_ref());
+                    for value in resp.headers().get_all(reqwest::header::SET_COOKIE) {
+                        if let Ok(set_cookie) = value.to_str() {
+                            jar.set_cookie_for_request(set_cookie, &current, context);
+                        }
+                    }
+                }
                 let Some(next) = resp
                     .status()
                     .is_redirection()

@@ -21,7 +21,7 @@ struct CookieEntry {
     domain: String,
     secure: bool,
     http_only: bool,
-    same_site: Option<SameSite>,
+    same_site: SameSite,
     /// Set without a `Domain` attribute, so sent to its own host only (RFC 6265 section 5.3
     /// step 6), not to the host's subdomains.
     host_only: bool,
@@ -30,15 +30,44 @@ struct CookieEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SameSite {
+    Default,
     Strict,
     Lax,
     None,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct NavigationContext<'a> {
-    initiator: Option<&'a Url>,
+pub(crate) struct CookieRequestContext<'a> {
+    site_for_cookies: Option<&'a Url>,
     safe_method: bool,
+    top_level: bool,
+}
+
+impl<'a> CookieRequestContext<'a> {
+    pub(crate) fn top_level(site_for_cookies: Option<&'a Url>, safe_method: bool) -> Self {
+        Self {
+            site_for_cookies,
+            safe_method,
+            top_level: true,
+        }
+    }
+
+    pub(crate) fn subresource(site_for_cookies: Option<&'a Url>) -> Self {
+        Self {
+            site_for_cookies,
+            safe_method: true,
+            top_level: false,
+        }
+    }
+
+    fn is_cross_site(self, request_url: &Url) -> bool {
+        self.site_for_cookies
+            .is_some_and(|site| !schemeful_same_site(site, request_url))
+    }
+
+    fn allows_storage(self, policy: SameSite, request_url: &Url) -> bool {
+        policy == SameSite::None || !self.is_cross_site(request_url) || self.top_level
+    }
 }
 
 impl CookieEntry {
@@ -54,22 +83,13 @@ impl CookieEntry {
         }
     }
 
-    fn same_site_allows(&self, request_url: &Url, navigation: Option<NavigationContext<'_>>) -> bool {
-        let Some(policy) = self.same_site else {
-            return true;
-        };
-        let Some(navigation) = navigation else {
-            return true;
-        };
-        let cross_site = navigation
-            .initiator
-            .is_some_and(|initiator| !schemeful_same_site(initiator, request_url));
-        if !cross_site {
+    fn same_site_allows(&self, request_url: &Url, context: CookieRequestContext<'_>) -> bool {
+        if !context.is_cross_site(request_url) {
             return true;
         }
-        match policy {
+        match self.same_site {
             SameSite::Strict => false,
-            SameSite::Lax => navigation.safe_method,
+            SameSite::Default | SameSite::Lax => context.top_level && context.safe_method,
             SameSite::None => true,
         }
     }
@@ -83,12 +103,16 @@ impl CookieJar {
     }
 
     pub fn set_cookie(&self, set_cookie_str: &str, url: &Url) {
+        self.set_cookie_for_request(set_cookie_str, url, CookieRequestContext::top_level(None, true));
+    }
+
+    pub(crate) fn set_cookie_for_request(&self, set_cookie_str: &str, url: &Url, context: CookieRequestContext<'_>) {
         let Some((name, value, attribute_list)) = split_cookie_string(set_cookie_str) else {
             return;
         };
         let mut attributes = CookieAttributes::defaults_for(url);
         attributes.apply_all(attribute_list);
-        if !attributes.may_be_set_by(&name, url) {
+        if !attributes.may_be_set_by(&name, url) || !context.allows_storage(attributes.same_site, url) {
             return;
         }
         self.commit(name, value, attributes, url);
@@ -143,19 +167,10 @@ impl CookieJar {
     }
 
     pub fn get_cookie_header(&self, url: &Url) -> String {
-        self.get_cookie_header_for_request(url, None)
+        self.get_cookie_header_for_request(url, CookieRequestContext::top_level(None, true))
     }
 
-    pub(crate) fn get_cookie_header_for_navigation(
-        &self,
-        url: &Url,
-        initiator: Option<&Url>,
-        safe_method: bool,
-    ) -> String {
-        self.get_cookie_header_for_request(url, Some(NavigationContext { initiator, safe_method }))
-    }
-
-    fn get_cookie_header_for_request(&self, url: &Url, navigation: Option<NavigationContext<'_>>) -> String {
+    pub(crate) fn get_cookie_header_for_request(&self, url: &Url, context: CookieRequestContext<'_>) -> String {
         let host = url.host_str().unwrap_or("");
         let path = url.path();
         let is_secure = url.scheme() == "https";
@@ -184,7 +199,7 @@ impl CookieJar {
                 if !path_matches(path, &entry.path) {
                     continue;
                 }
-                if !entry.same_site_allows(url, navigation) {
+                if !entry.same_site_allows(url, context) {
                     continue;
                 }
                 matching.push(format!("{}={}", entry.name, entry.value));
@@ -222,7 +237,7 @@ impl CookieJar {
                 domain: cookie.domain.clone(),
                 secure: cookie.secure,
                 http_only: cookie.http_only,
-                same_site: None,
+                same_site: SameSite::Default,
                 host_only: false,
                 expires: None,
             };
@@ -300,7 +315,7 @@ impl CookieJar {
             domain: domain.clone(),
             secure: cookie.secure,
             http_only: cookie.http_only,
-            same_site: None,
+            same_site: SameSite::Default,
             host_only: cookie.host_only,
             expires: None,
         };
@@ -393,7 +408,7 @@ struct CookieAttributes {
     secure: bool,
     http_only: bool,
     expires: Option<u64>,
-    same_site: Option<SameSite>,
+    same_site: SameSite,
 }
 
 impl CookieAttributes {
@@ -406,7 +421,7 @@ impl CookieAttributes {
             secure: false,
             http_only: false,
             expires: None,
-            same_site: None,
+            same_site: SameSite::Default,
         }
     }
 
@@ -448,10 +463,10 @@ impl CookieAttributes {
             }
             "samesite" => {
                 self.same_site = match value.to_ascii_lowercase().as_str() {
-                    "strict" => Some(SameSite::Strict),
-                    "lax" => Some(SameSite::Lax),
-                    "none" => Some(SameSite::None),
-                    _ => None,
+                    "strict" => SameSite::Strict,
+                    "lax" => SameSite::Lax,
+                    "none" => SameSite::None,
+                    _ => SameSite::Default,
                 };
             }
             _ => {}
@@ -470,7 +485,7 @@ impl CookieAttributes {
         if self.secure && url.scheme() != "https" {
             return false;
         }
-        if self.same_site == Some(SameSite::None) && !self.secure {
+        if self.same_site == SameSite::None && !self.secure {
             return false;
         }
         let prefix = name.get(..PREFIX_HOST.len()).unwrap_or("");
@@ -1091,13 +1106,14 @@ mod tests {
         jar.set_cookie("none=1; Path=/; SameSite=None; Secure", &destination);
         let cross_site = Url::parse("https://other.example.net/start").unwrap();
 
-        let get_header = jar.get_cookie_header_for_navigation(&destination, Some(&cross_site), true);
+        let get_header =
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::top_level(Some(&cross_site), true));
         let mut get_cookies: Vec<&str> = get_header.split("; ").collect();
         get_cookies.sort_unstable();
         assert_eq!(get_cookies, ["lax=1", "none=1"]);
 
         assert_eq!(
-            jar.get_cookie_header_for_navigation(&destination, Some(&cross_site), false),
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::top_level(Some(&cross_site), false),),
             "none=1"
         );
     }
@@ -1110,13 +1126,13 @@ mod tests {
 
         let sibling = Url::parse("https://shop.example.co.uk/start").unwrap();
         assert_eq!(
-            jar.get_cookie_header_for_navigation(&destination, Some(&sibling), true),
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::top_level(Some(&sibling), true),),
             "strict=1"
         );
 
         let insecure = Url::parse("http://shop.example.co.uk/start").unwrap();
         assert_eq!(
-            jar.get_cookie_header_for_navigation(&destination, Some(&insecure), true),
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::top_level(Some(&insecure), true),),
             ""
         );
     }
@@ -1129,5 +1145,45 @@ mod tests {
         jar.set_cookie("accepted=1; SameSite=None; Secure", &url);
 
         assert_eq!(jar.get_cookie_header(&url), "accepted=1");
+    }
+
+    #[test]
+    fn default_and_invalid_same_site_values_are_lax_like() {
+        let jar = CookieJar::new();
+        let destination = Url::parse("https://example.com/finish").unwrap();
+        let cross_site = Url::parse("https://other.test/start").unwrap();
+        jar.set_cookie("default=1; Secure", &destination);
+        jar.set_cookie("invalid=1; SameSite=maybe; Secure", &destination);
+
+        let top_level_get = CookieRequestContext::top_level(Some(&cross_site), true);
+        let mut cookies: Vec<&str> = jar
+            .get_cookie_header_for_request(&destination, top_level_get)
+            .split("; ")
+            .collect();
+        cookies.sort_unstable();
+        assert_eq!(cookies, ["default=1", "invalid=1"]);
+        assert_eq!(
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::top_level(Some(&cross_site), false),),
+            ""
+        );
+        assert_eq!(
+            jar.get_cookie_header_for_request(&destination, CookieRequestContext::subresource(Some(&cross_site)),),
+            ""
+        );
+    }
+
+    #[test]
+    fn cross_site_subresource_cannot_store_restricted_same_site_cookies() {
+        let jar = CookieJar::new();
+        let resource = Url::parse("https://cdn.example/image").unwrap();
+        let top_level = Url::parse("https://other.test/page").unwrap();
+        let context = CookieRequestContext::subresource(Some(&top_level));
+
+        jar.set_cookie_for_request("strict=1; SameSite=Strict; Secure", &resource, context);
+        jar.set_cookie_for_request("lax=1; SameSite=Lax; Secure", &resource, context);
+        jar.set_cookie_for_request("default=1; Secure", &resource, context);
+        jar.set_cookie_for_request("none=1; SameSite=None; Secure", &resource, context);
+
+        assert_eq!(jar.get_cookie_header(&resource), "none=1");
     }
 }

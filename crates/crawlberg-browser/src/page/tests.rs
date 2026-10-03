@@ -2070,6 +2070,111 @@ async fn cross_site_script_navigations_withhold_strict_but_send_lax_cookies() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn cross_site_scripts_and_styles_withhold_restricted_same_site_cookies() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let port = addr.port();
+    let html = format!(
+        "<html><head><link rel='stylesheet' href='http://127.0.0.1:{port}/style.css'></head>\
+         <body><script src='http://127.0.0.1:{port}/script.js'></script></body></html>"
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", &html)),
+            ("/style.css", &ok_response("text/css", "body{}")),
+            (
+                "/script.js",
+                &ok_response("text/javascript", "globalThis.loaded = true;"),
+            ),
+        ]),
+    );
+    let mut page = test_page();
+    let resource = Url::parse(&format!("http://127.0.0.1:{port}/")).expect("valid resource URL");
+    page.context
+        .cookie_jar
+        .set_cookie("strict=1; SameSite=Strict", &resource);
+    page.context.cookie_jar.set_cookie("lax=1; SameSite=Lax", &resource);
+    page.context.cookie_jar.set_cookie("default=1", &resource);
+
+    page.navigate(&format!("http://localhost:{port}/"))
+        .await
+        .expect("the page and its subresources must load");
+
+    let requests = requests.lock().expect("lock");
+    for path in ["/style.css", "/script.js"] {
+        let request = requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must be requested: {requests:?}"))
+            .to_lowercase();
+        assert!(
+            !request.contains("cookie:"),
+            "{path} received cross-site cookies: {request}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cross_site_post_navigation_withholds_lax_and_default_cookies() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let requests = serve_raw_recording(listener, raw(&[("/submit", &ok_response("text/html", "done"))]));
+    let target = Url::parse(&format!("http://{addr}/submit")).expect("valid target URL");
+    let mut page = test_page();
+    page.url = Some(Url::parse("http://localhost/source").expect("valid source URL"));
+    page.context.cookie_jar.set_cookie("lax=1; SameSite=Lax", &target);
+    page.context.cookie_jar.set_cookie("default=1", &target);
+
+    page.navigate_with_wait_post(target.as_str(), crate::lifecycle::WaitUntil::Load, "POST", "a=1")
+        .await
+        .expect("the POST navigation must succeed");
+
+    let requests = requests.lock().expect("lock");
+    let request = requests.first().expect("the POST must reach the server").to_lowercase();
+    assert!(request.starts_with("post /submit "), "unexpected request: {request}");
+    assert!(
+        !request.contains("cookie:"),
+        "the cross-site POST received Lax cookies: {request}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn http_redirects_keep_the_original_navigation_site_for_same_site() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let redirect = "HTTP/1.1 302 Found\r\nLocation: /finish\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[("/start", redirect), ("/finish", &ok_response("text/html", "done"))]),
+    );
+    let target = Url::parse(&format!("http://{addr}/start")).expect("valid target URL");
+    let mut page = test_page();
+    page.url = Some(Url::parse("http://localhost/source").expect("valid source URL"));
+    page.context.cookie_jar.set_cookie("strict=1; SameSite=Strict", &target);
+    page.context.cookie_jar.set_cookie("lax=1; SameSite=Lax", &target);
+
+    page.navigate(target.as_str())
+        .await
+        .expect("the redirect must be followed");
+
+    let requests = requests.lock().expect("lock");
+    let finish = requests
+        .iter()
+        .find(|request| request.starts_with("GET /finish "))
+        .expect("the redirect target must be requested")
+        .to_lowercase();
+    assert!(
+        finish.contains("cookie: lax=1"),
+        "Lax must be sent on the top-level GET: {finish}"
+    );
+    assert!(
+        !finish.contains("strict=1"),
+        "the redirect must not reset the initiating site: {finish}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");

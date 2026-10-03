@@ -15,7 +15,7 @@ use url::Url;
 #[cfg(feature = "stealth")]
 use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
-use crate::net::cookies::CookieJar;
+use crate::net::cookies::{CookieJar, CookieRequestContext};
 #[cfg(feature = "stealth")]
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
@@ -183,6 +183,26 @@ impl StealthHttpClient {
         max_redirects: Option<usize>,
         initiator: Option<&Url>,
     ) -> Result<Response, NetError> {
+        self.fetch_following_with_context(url, max_redirects, initiator, true)
+            .await
+    }
+
+    pub(crate) async fn fetch_subresource(
+        &self,
+        url: &Url,
+        site_for_cookies: Option<&Url>,
+    ) -> Result<Response, NetError> {
+        self.fetch_following_with_context(url, None, site_for_cookies, false)
+            .await
+    }
+
+    async fn fetch_following_with_context(
+        &self,
+        url: &Url,
+        max_redirects: Option<usize>,
+        site_for_cookies: Option<&Url>,
+        top_level: bool,
+    ) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)?;
 
@@ -193,9 +213,12 @@ impl StealthHttpClient {
         for _ in 0..requests {
             let mut req = self.client_for(&current_url)?.get(current_url.as_str());
 
-            let cookie_header = self
-                .cookie_jar
-                .get_cookie_header_for_navigation(&current_url, initiator, true);
+            let context = if top_level {
+                CookieRequestContext::top_level(site_for_cookies, true)
+            } else {
+                CookieRequestContext::subresource(site_for_cookies)
+            };
+            let cookie_header = self.cookie_jar.get_cookie_header_for_request(&current_url, context);
             if !cookie_header.is_empty() {
                 req = req.header("Cookie", &cookie_header);
             }
@@ -221,7 +244,7 @@ impl StealthHttpClient {
 
             for val in resp.headers().get_all("set-cookie") {
                 if let Ok(s) = val.to_str() {
-                    self.cookie_jar.set_cookie(s, &current_url);
+                    self.cookie_jar.set_cookie_for_request(s, &current_url, context);
                 }
             }
 
@@ -550,6 +573,34 @@ mod tests {
                 .is_some_and(|r| r.starts_with("GET http://origin.test/page ")),
             "the proxy must receive the absolute-form request, got {seen:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn stealth_navigation_applies_same_site_to_the_initiating_site() {
+        let (addr, requests) =
+            recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
+        let jar = Arc::new(CookieJar::new());
+        let target = format!("http://{addr}/").parse::<Url>().expect("valid target URL");
+        jar.set_cookie("strict=1; SameSite=Strict", &target);
+        jar.set_cookie("lax=1; SameSite=Lax", &target);
+        jar.set_cookie("default=1", &target);
+        let client =
+            StealthHttpClient::with_ssrf(jar, None, Arc::new(AllowAll)).expect("no proxy, so the client must build");
+        let initiator = Url::parse("http://localhost/source").expect("valid initiator URL");
+
+        client
+            .fetch_following_from(&target, None, Some(&initiator))
+            .await
+            .expect("the navigation must succeed");
+
+        let requests = requests.lock().expect("lock");
+        let request = requests.first().expect("the server must receive one request");
+        assert!(
+            request.contains("cookie: lax=1") || request.contains("cookie: default=1"),
+            "{request}"
+        );
+        assert!(request.contains("lax=1") && request.contains("default=1"), "{request}");
+        assert!(!request.contains("strict=1"), "{request}");
     }
 
     /// Serves `response` to every connection on a fresh loopback port, recording each request head.
