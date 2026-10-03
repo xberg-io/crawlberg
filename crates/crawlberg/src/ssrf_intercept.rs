@@ -20,16 +20,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
     EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
-    RequestId as FetchRequestId, RequestPattern, RequestStage, TakeResponseBodyAsStreamParams,
+    RequestId as FetchRequestId, RequestPattern, RequestStage,
 };
-use chromiumoxide::cdp::browser_protocol::io::{CloseParams as CloseStreamParams, ReadParams as ReadStreamParams};
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, Headers, ResourceType, TimeSinceEpoch,
 };
@@ -48,7 +45,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
 use crate::html::is_fetchable_scheme;
-use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES, effective_max_body_size};
+use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
 use crate::net::LOGGED_REFUSALS;
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -58,8 +55,6 @@ use crate::types::CrawlConfig;
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
-
-const RESPONSE_BODY_CHUNK_SIZE: usize = 64 * 1024;
 
 /// How long closing a watched page and its popups may take before the watch ends anyway.
 ///
@@ -1682,7 +1677,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             } else {
                 verdict
             };
-            if matches!(verdict, Verdict::Abort) {
+            if matches!(verdict, Verdict::Abort | Verdict::RenderRedirect) {
                 lock(&page.outcome).navigation_dropped = true;
             }
             (verdict, Some(in_flight))
@@ -1709,7 +1704,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     let request_id = event.request_id.clone();
     let _ = match verdict {
-        Verdict::RenderRedirect => render_terminal_redirect(browser, event, _in_flight.as_ref()).await,
+        Verdict::RenderRedirect => abort_terminal_redirect(browser, event, _in_flight.as_ref()).await,
         Verdict::Continue(_) if is_response_stage(event) => {
             browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
         }
@@ -1742,7 +1737,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
-    /// ~keep Capture a terminal redirect's body, then abort before Chrome can follow or render it.
+    /// ~keep Abort a terminal redirect before Chrome can follow or render it.
     RenderRedirect,
     /// ~keep Replace a response that cannot commit with an inert document, then report it as sent.
     Stop,
@@ -1752,29 +1747,17 @@ enum Verdict {
     Abort,
 }
 
-async fn render_terminal_redirect(
+async fn abort_terminal_redirect(
     browser: &Browser,
     event: &EventRequestPaused,
     in_flight: Option<&InFlight>,
 ) -> Result<(), chromiumoxide::error::CdpError> {
-    let max_size = in_flight.and_then(|request| effective_max_body_size(&request.0.config));
-    let body = match read_response_stream(browser, event.request_id.clone(), max_size).await {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(
-                url = %crate::net::redact_url_credentials(&event.request.url),
-                %error,
-                "failed to read a terminal redirect body; returning the response with an empty body"
-            );
-            Vec::new()
-        }
-    };
     browser
         .execute(FailRequestParams::new(event.request_id.clone(), ErrorReason::Aborted))
         .await
         .map(drop)
         .map(|_| {
-            complete_stopped_response(in_flight, &event.request_id, Some(body));
+            complete_stopped_response(in_flight, &event.request_id, None);
         })
 }
 
@@ -1814,61 +1797,6 @@ fn complete_stopped_response_outcome(
         }
         stop.ready = true;
     }
-}
-
-async fn read_response_stream(
-    browser: &Browser,
-    request_id: FetchRequestId,
-    max_size: Option<usize>,
-) -> Result<Vec<u8>, String> {
-    let stream = browser
-        .execute(TakeResponseBodyAsStreamParams::new(request_id))
-        .await
-        .map_err(|error| error.to_string())?
-        .result
-        .stream;
-    let result = async {
-        let mut body = Vec::new();
-        loop {
-            if response_stream_done(false, body.len(), max_size) {
-                break;
-            }
-            let remaining = max_size.map_or(RESPONSE_BODY_CHUNK_SIZE, |limit| limit.saturating_sub(body.len()));
-            let mut params = ReadStreamParams::new(stream.clone());
-            params.size = Some(remaining.min(RESPONSE_BODY_CHUNK_SIZE) as i64);
-            let chunk = browser.execute(params).await.map_err(|error| error.to_string())?.result;
-            append_response_stream_chunk(&mut body, chunk.data, chunk.base64_encoded.unwrap_or(false), max_size)?;
-            if response_stream_done(chunk.eof, body.len(), max_size) {
-                break;
-            }
-        }
-        Ok(body)
-    }
-    .await;
-    let _ = browser.execute(CloseStreamParams::new(stream)).await;
-    result
-}
-
-fn append_response_stream_chunk(
-    body: &mut Vec<u8>,
-    data: String,
-    base64_encoded: bool,
-    max_size: Option<usize>,
-) -> Result<(), String> {
-    let mut bytes = if base64_encoded {
-        BASE64.decode(data).map_err(|error| error.to_string())?
-    } else {
-        data.into_bytes()
-    };
-    if let Some(limit) = max_size {
-        bytes.truncate(limit.saturating_sub(body.len()));
-    }
-    body.extend(bytes);
-    Ok(())
-}
-
-fn response_stream_done(eof: bool, body_len: usize, max_size: Option<usize>) -> bool {
-    eof || max_size.is_some_and(|limit| body_len >= limit)
 }
 
 /// A paused request of a watched page, counted in the page's `in_flight` while it lives.
@@ -2057,9 +1985,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. An empty inert internal document
 /// ~keep ends `goto`; callers still receive the original no-document response.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
-/// ~keep Its body is captured through a bounded stream, then the intercepted response is aborted.
-/// ~keep Callers still receive the original status, headers, URL and captured body, while Chrome
-/// ~keep cannot follow its `Location` or execute any response content or navigation headers.
+/// ~keep It is aborted at the response headers, before Chrome can follow its `Location` or execute
+/// ~keep response content or navigation headers. Callers receive its original status, headers and
+/// ~keep URL with an empty body: taking the body stream lets Chrome begin processing it.
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
@@ -2070,6 +1998,13 @@ fn main_frame_verdict(
         return Verdict::Continue(None);
     }
     let mut state = lock(state);
+    if state
+        .stopped_response
+        .as_ref()
+        .is_some_and(|response| response.request_id.as_ref() != Some(&event.request_id))
+    {
+        state.stopped_response = None;
+    }
     let headers = event.response_headers.as_deref().unwrap_or_default();
     let status = event.response_status_code.and_then(|code| u16::try_from(code).ok());
     let is_redirect = status.is_some_and(|code| REDIRECT_STATUSES.contains(&code))
@@ -2222,8 +2157,8 @@ mod tests {
     use super::{
         BrowserOrigin, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome,
         Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict, WatchedPage, adopt_target,
-        append_response_stream_chunk, complete_stopped_response_outcome, lock, main_frame_verdict, navigation_verdict,
-        release, require_main_frame, response_stream_done, ssrf_verdict,
+        complete_stopped_response_outcome, lock, main_frame_verdict, navigation_verdict, release, require_main_frame,
+        ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2634,24 +2569,6 @@ mod tests {
     }
 
     #[test]
-    fn response_stream_chunks_decode_and_stop_at_the_cap_or_eof() {
-        let mut body = Vec::new();
-        append_response_stream_chunk(&mut body, "abcdef".to_owned(), false, Some(3)).expect("plain chunk");
-        assert_eq!(body, b"abc");
-        assert!(response_stream_done(false, body.len(), Some(3)));
-
-        let mut body = Vec::new();
-        append_response_stream_chunk(&mut body, "aGVsbG8=".to_owned(), true, Some(10)).expect("base64 chunk");
-        assert_eq!(body, b"hello");
-        assert!(!response_stream_done(false, body.len(), Some(10)));
-        assert!(response_stream_done(true, body.len(), Some(10)));
-
-        let mut unchanged = b"prefix".to_vec();
-        assert!(append_response_stream_chunk(&mut unchanged, "%%%".to_owned(), true, None).is_err());
-        assert_eq!(unchanged, b"prefix");
-    }
-
-    #[test]
     fn an_older_response_completion_cannot_complete_its_replacement() {
         let old = FetchRequestId::new("OLD");
         let new = FetchRequestId::new("NEW");
@@ -2682,6 +2599,25 @@ mod tests {
         let stopped = outcome.stopped_response.expect("new response");
         assert!(stopped.ready);
         assert_eq!(stopped.body_bytes, b"new");
+    }
+
+    #[test]
+    fn a_later_normal_response_clears_an_older_stopped_response() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        let terminal = main_frame_redirect("TERMINAL", "mailto:someone@example.com");
+        assert!(matches!(
+            main_frame_verdict(&terminal, &main_frame, 10, &state),
+            Verdict::RenderRedirect
+        ));
+
+        let normal = main_frame_response("NORMAL", 200);
+        assert!(matches!(
+            main_frame_verdict(&normal, &main_frame, 10, &state),
+            Verdict::Continue(None)
+        ));
+        complete_stopped_response_outcome(&state, &terminal.request_id, Some(b"stale".to_vec()));
+        assert!(state.into_inner().expect("state lock").stopped_response.is_none());
     }
 
     #[test]

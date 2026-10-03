@@ -978,9 +978,10 @@ All notable changes to crawlberg are documented here.
   the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
 - **A redirect to a non-web address still failed or timed out with the Chromiumoxide backend.**
   Chrome either refused such a redirect or waited for an external application. Browser mode now
-  returns the 3xx response, including its body, status, headers and URL, matching HTTP mode without
-  following the `Location`. This also applies when a page script starts the redirect after its
-  initial load. The body is captured with the configured size bound and cannot execute in Chrome.
+  returns the original 3xx status, headers and URL without following the `Location`. This also
+  applies when a page script starts the redirect after its initial load. Its body is empty in this
+  backend: asking Chrome to stream a redirect body lets its renderer begin processing active
+  content before the interception can abort it, so safe interception must stop at the headers.
   (#471)
 - **The Chromiumoxide interaction renderer script ignored `browser.timeout`.** A configured
   post-navigation `eval_script` could wait for chromiumoxide's fixed 30-second command deadline
