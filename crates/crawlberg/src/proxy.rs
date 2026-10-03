@@ -128,32 +128,24 @@ pub(crate) fn native_render_proxy(
         return admit_proxy(proxy).map(Some);
     }
     if let Some(provider) = &config.proxy_provider {
-        return Ok(pick_proxy(provider.as_ref(), host));
+        return pick_proxy(provider.as_ref(), host);
     }
     config.proxy.as_ref().map(admit_proxy).transpose()
 }
 
 /// Asks `provider` once for the proxy of a request to `host`, and checks that proxy.
 ///
-/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list), so
-/// ~keep it is not logged. A refused proxy also goes direct, which bypasses whatever egress
-/// ~keep control the proxy enforces, so it is logged at ERROR. The proxy URL is not logged: a
-/// ~keep URL the check refuses can hold a password it cannot redact, and the target host
-/// ~keep already names the request that went direct. The check's own error never shows it.
+/// ~keep `None` from the provider routes this host direct on purpose (a no-proxy list). A
+/// ~keep configured proxy that cannot be used is an error: falling back to a direct connection
+/// ~keep would bypass the egress control the provider enforces.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn pick_proxy(provider: &dyn ProxyProvider, host: &str) -> Option<AdmittedProxy> {
-    let proxy = provider.next_proxy(host)?;
-    match admit_proxy(&proxy) {
-        Ok(admitted) => Some(admitted),
-        Err(error) => {
-            tracing::error!(
-                target_host = %host,
-                %error,
-                "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
-            );
-            None
-        }
-    }
+pub(crate) fn pick_proxy(provider: &dyn ProxyProvider, host: &str) -> Result<Option<AdmittedProxy>, CrawlError> {
+    let Some(proxy) = provider.next_proxy(host) else {
+        return Ok(None);
+    };
+    let admitted = admit_proxy(&proxy)?;
+    ensure_supported_scheme(admitted.address())?;
+    Ok(Some(admitted))
 }
 
 /// A proxy as Chrome takes it.

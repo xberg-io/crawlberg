@@ -425,13 +425,13 @@ async fn a_provider_proxy_with_an_unencoded_password_is_refused_with_an_error_th
         };
         let result = fetch_through_provider(&mock, proxy).await;
         let recorded = take();
+        let error = result
+            .as_ref()
+            .expect_err("a refused provider proxy must fail instead of sending direct")
+            .to_string();
         assert!(
-            recorded.iter().any(|field| field.contains("bypassing the proxy")),
-            "{url}: the refused proxy must be reported: {recorded:?}"
-        );
-        assert!(
-            recorded.iter().any(|field| field.contains("percent-encode")),
-            "{url}: the report must name the fix: {recorded:?}"
+            error.contains("percent-encode"),
+            "{url}: the error must name the fix: {error}"
         );
         let shown = format!("{recorded:?} {result:?}");
         for part in ["FIX385D-TAIL", "pa@127"] {
@@ -440,6 +440,13 @@ async fn a_provider_proxy_with_an_unencoded_password_is_refused_with_an_error_th
         assert!(
             proxy_authorizations(&mock).await.is_empty(),
             "{url}: a refused proxy must get no credentials"
+        );
+        assert!(
+            mock.received_requests()
+                .await
+                .expect("the mock records requests")
+                .is_empty(),
+            "{url}: a refused proxy must not fall back to a direct request"
         );
     }
 }

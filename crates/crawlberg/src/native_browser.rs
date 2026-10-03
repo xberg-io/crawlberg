@@ -499,15 +499,24 @@ mod tests {
     }
 
     #[test]
-    fn a_render_goes_direct_when_the_provider_picks_no_proxy_or_one_it_refuses() {
-        for picked in [None, Some(proxy("http://operator:4242#tail@proxy:1", None, None))] {
-            let crawl_wide = CrawlConfig {
-                proxy: Some(proxy("http://crawl-proxy:1", None, None)),
-                ..CrawlConfig::default()
-            };
-            let (config, _) = with_provider(crawl_wide, picked);
-            assert_eq!(resolved(&config), None);
-        }
+    fn a_render_goes_direct_when_the_provider_picks_no_proxy() {
+        let crawl_wide = CrawlConfig {
+            proxy: Some(proxy("http://crawl-proxy:1", None, None)),
+            ..CrawlConfig::default()
+        };
+        let (config, _) = with_provider(crawl_wide, None);
+        assert_eq!(resolved(&config), None);
+    }
+
+    #[test]
+    fn a_render_refuses_an_invalid_proxy_from_the_provider() {
+        let (config, _) = with_provider(
+            CrawlConfig::default(),
+            Some(proxy("http://operator:4242#tail@proxy:1", None, None)),
+        );
+        let error =
+            native_proxy(&config, PAGE).expect_err("an invalid provider proxy must fail instead of sending direct");
+        assert!(error.to_string().contains("percent-encode"), "{error}");
     }
 
     #[test]

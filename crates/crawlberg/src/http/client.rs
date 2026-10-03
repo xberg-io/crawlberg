@@ -174,7 +174,7 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
 ///
 /// Without a `proxy_provider` this is `client`. With one, the provider is asked once, its
 /// proxy is checked once, and the request gets the client for that proxy, or the direct
-/// client when the provider answers `None` or its proxy is refused.
+/// client when the provider answers `None`. A proxy that cannot be used is an error.
 ///
 /// ~keep The pick is made here, above reqwest, and never in a reqwest custom proxy: reqwest
 /// ~keep asks a custom proxy up to three times for one request (for the request headers and
@@ -188,7 +188,7 @@ pub(crate) fn request_client(
 ) -> Result<reqwest::Client, CrawlError> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(provider) = &config.proxy_provider {
-        let proxy = crate::proxy::pick_proxy(provider.as_ref(), url.host_str().unwrap_or(""));
+        let proxy = crate::proxy::pick_proxy(provider.as_ref(), url.host_str().unwrap_or(""))?;
         return provider_clients(config, provider).client(config, proxy.as_ref());
     }
     let _ = (config, url);
@@ -618,6 +618,29 @@ mod tests {
         let url = url::Url::parse("http://page.example.com:8080/a").expect("test URL must parse");
         let _client = request_client(&client, &config, &url).expect("client must build");
         assert_eq!(*provider.0.lock().expect("hosts lock"), ["page.example.com"]);
+    }
+
+    #[test]
+    fn a_request_refuses_an_unsupported_proxy_from_the_provider() {
+        let config = CrawlConfig {
+            proxy_provider: Some(std::sync::Arc::new(crate::proxy::StaticProxyProvider::new(vec![
+                ProxyConfig {
+                    url: "ftp://proxy.test:21".to_owned(),
+                    ..ProxyConfig::default()
+                },
+            ]))),
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("the provider's direct client must build");
+        let url = url::Url::parse("https://page.example.com/").expect("test URL must parse");
+
+        let error = request_client(&client, &config, &url)
+            .expect_err("an unsupported provider proxy must fail instead of sending direct");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid_config: invalid proxy URL scheme 'ftp': expected http or https"
+        );
     }
 
     /// A keep-alive HTTP proxy on a local port that answers every request with `200 ok` and
