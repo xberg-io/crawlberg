@@ -12,6 +12,7 @@
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crawlberg::{
@@ -247,20 +248,60 @@ fn devtools_get(port: u16, path: &str) -> Option<String> {
     }
 }
 
-/// Accept connections and hold each one open without a response, so a navigation stalls.
-fn spawn_stalling_server() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
-    let addr = listener.local_addr().expect("test server should have local addr");
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { break };
-            std::thread::spawn(move || {
-                let _stream = stream;
-                std::thread::sleep(Duration::from_secs(3600));
-            });
+/// A server that accepts requests and holds their sockets open without answering.
+struct StallingServer {
+    addr: std::net::SocketAddr,
+    stop: std::sync::Arc<AtomicBool>,
+    connections: std::sync::Arc<std::sync::Mutex<Vec<TcpStream>>>,
+    listener: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StallingServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let addr = listener.local_addr().expect("test server should have local addr");
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let connections = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let thread_stop = std::sync::Arc::clone(&stop);
+        let thread_connections = std::sync::Arc::clone(&connections);
+        let listener = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::Acquire) {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                if !thread_stop.load(Ordering::Acquire) {
+                    thread_connections
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(stream);
+                }
+            }
+        });
+        Self {
+            addr,
+            stop,
+            connections,
+            listener: Some(listener),
         }
-    });
-    format!("http://{addr}/")
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/", self.addr)
+    }
+}
+
+impl Drop for StallingServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        let _ = TcpStream::connect(self.addr);
+        if let Some(listener) = self.listener.take() {
+            let _ = listener.join();
+        }
+        self.connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
 }
 
 async fn page_server() -> MockServer {
@@ -317,7 +358,8 @@ async fn one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome(
         return;
     };
     let pages_before = chrome.page_count();
-    let url = spawn_stalling_server();
+    let server = StallingServer::start();
+    let url = server.url();
     let mut config = endpoint_config(&chrome.ws_url);
     config.browser.timeout = Duration::from_secs(30);
     config.browser.overall_timeout = Duration::from_secs(2);
@@ -345,7 +387,8 @@ async fn dropping_a_one_shot_fetch_closes_its_target_in_the_external_chrome() {
     let Some(mut chrome) = ExternalChrome::start(TEST_NAME) else {
         return;
     };
-    let url = spawn_stalling_server();
+    let server = StallingServer::start();
+    let url = server.url();
     let mut config = endpoint_config(&chrome.ws_url);
     // ~keep Both deadlines outlast the test so only the caller's drop can start teardown.
     config.browser.timeout = Duration::from_secs(120);
