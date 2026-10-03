@@ -685,6 +685,10 @@ pub(crate) fn rendered_status_outcome(
 /// rather than as ordinary framing slack.
 const BODY_SHORTFALL_TOLERANCE_BYTES: usize = 100;
 
+fn measured_shortfall_error(expected: usize, actual: usize) -> CrawlError {
+    CrawlError::data_loss(format!("expected {expected} bytes, got {actual}"))
+}
+
 /// Read the response body under the configured cap and reject a short transfer.
 async fn read_validated_body(
     config: &CrawlConfig,
@@ -702,10 +706,7 @@ async fn read_validated_body(
         && body_bytes.len() < expected
         && expected - body_bytes.len() > BODY_SHORTFALL_TOLERANCE_BYTES
     {
-        return Err(CrawlError::data_loss(format!(
-            "expected {expected} bytes, got {}",
-            body_bytes.len()
-        )));
+        return Err(measured_shortfall_error(expected, body_bytes.len()));
     }
 
     Ok(body_bytes)
@@ -745,6 +746,57 @@ mod tests {
     use tokio_rustls::TlsAcceptor;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn truncated_body_reqwest_error() -> reqwest::Error {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
+        let address = listener.local_addr().expect("listener must have an address");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0_u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 500000\r\n\r\ntruncated")
+                    .await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        reqwest::Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("response headers must arrive")
+            .bytes()
+            .await
+            .expect_err("the truncated body must fail")
+    }
+
+    #[tokio::test]
+    async fn a_plain_http_body_error_renders_one_prefix_and_keeps_its_source() {
+        let raw_error = truncated_body_reqwest_error().await;
+        let raw_message = raw_error.to_string();
+        let error = classify_body_read_error(raw_error);
+
+        assert_eq!(error.to_string(), format!("data_loss: {raw_message}"));
+
+        use std::error::Error as _;
+        let source = error.source().expect("data loss must expose its source");
+        let original = source.source().expect("the source wrapper must expose reqwest's error");
+        assert!(original.downcast_ref::<reqwest::Error>().is_some());
+    }
+
+    #[test]
+    fn a_plain_http_measured_shortfall_renders_one_prefix_without_a_source() {
+        let error = measured_shortfall_error(1000, 899);
+
+        assert_eq!(error.to_string(), "data_loss: expected 1000 bytes, got 899");
+
+        use std::error::Error as _;
+        assert!(error.source().is_none());
+    }
+
     #[tokio::test]
     async fn http_fetch_enforces_config_timeout_without_client_default() {
         const REQUEST_TIMEOUT: Duration = Duration::from_millis(50);

@@ -1590,7 +1590,7 @@ mod tests {
         // the file was not read in either case and "unavailable" would be the wrong reading.
         let outcome = outcome_for_fetch_error(&CrawlError::waf_blocked(
             "cloudflare",
-            "waf/blocked detected on 2xx (body): cloudflare",
+            "detected on 2xx (body): cloudflare",
         ));
         assert!(
             is_disallow_all(&outcome),
@@ -1634,7 +1634,7 @@ mod tests {
             CrawlError::bad_gateway("bad_gateway"),
             CrawlError::data_loss("data_loss"),
             CrawlError::other("other"),
-            CrawlError::waf_blocked("cloudflare", "waf/blocked detected on 2xx (body): cloudflare"),
+            CrawlError::waf_blocked("cloudflare", "detected on 2xx (body): cloudflare"),
         ] {
             let outcome = outcome_for_fetch_error(&error);
             assert!(is_disallow_all(&outcome), "{error} must still fail closed");

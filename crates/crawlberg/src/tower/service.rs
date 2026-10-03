@@ -307,6 +307,48 @@ impl Service<CrawlRequest> for HttpFetchService {
 mod tests {
     use super::*;
 
+    async fn truncated_body_reqwest_error() -> reqwest::Error {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
+        let address = listener.local_addr().expect("listener must have an address");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0_u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 500000\r\n\r\ntruncated")
+                    .await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        reqwest::Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("response headers must arrive")
+            .bytes()
+            .await
+            .expect_err("the truncated body must fail")
+    }
+
+    #[tokio::test]
+    async fn a_tower_body_error_renders_one_prefix_and_keeps_its_source() {
+        let raw_error = truncated_body_reqwest_error().await;
+        let raw_message = raw_error.to_string();
+        let error = classify_body_read_error(raw_error);
+
+        assert_eq!(error.to_string(), format!("data_loss: {raw_message}"));
+
+        use std::error::Error as _;
+        let source = error.source().expect("data loss must expose its source");
+        let original = source.source().expect("the source wrapper must expose reqwest's error");
+        assert!(original.downcast_ref::<reqwest::Error>().is_some());
+    }
+
     #[tokio::test]
     async fn a_request_url_with_userinfo_is_refused_before_the_network() {
         use wiremock::matchers::method;

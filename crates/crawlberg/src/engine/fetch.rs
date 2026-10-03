@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn soft_error_status_reports_403_for_a_waf_block_without_a_response_status() {
-        let blocked = CrawlError::waf_blocked("cloudflare", "waf/blocked: cloudflare");
+        let blocked = CrawlError::waf_blocked("cloudflare", "cloudflare detected");
         assert_eq!(soft_error_status(&blocked), Some(403));
     }
 

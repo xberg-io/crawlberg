@@ -106,11 +106,11 @@ mod tests {
         let cases = [
             (CrawlError::forbidden_with_source("forbidden", HttpStatus(403)), 403_u16),
             (
-                CrawlError::waf_blocked_with_source("datadome", "waf/blocked on 429", HttpStatus(429)),
+                CrawlError::waf_blocked_with_source("datadome", "detected on 429: datadome", HttpStatus(429)),
                 429,
             ),
             (
-                CrawlError::waf_blocked_with_source("cloudflare", "waf/blocked on 503", HttpStatus(503)),
+                CrawlError::waf_blocked_with_source("cloudflare", "detected on 503: cloudflare", HttpStatus(503)),
                 503,
             ),
         ];
