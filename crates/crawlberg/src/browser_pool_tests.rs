@@ -1765,40 +1765,105 @@ async fn kill_browser_ends_only_the_browser_it_launched() {
     );
 }
 
+/// How many members of `family` are neither stopped nor zombies.
+fn members_running(family: &ChromeFamily) -> usize {
+    let mut system = System::new();
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&family.members));
+    family
+        .members
+        .iter()
+        .filter(|pid| {
+            system
+                .process(**pid)
+                .is_some_and(|process| !matches!(process.status(), ProcessStatus::Stop | ProcessStatus::Zombie))
+        })
+        .count()
+}
+
+/// Start `script` in a shell, with `marker` as its `$0`.
+///
+/// ~keep Every script of these tests starts its commands in the background and waits with the
+/// ~keep `wait` builtin. A shell such as dash starts a foreground command with `vfork`, and a
+/// ~keep shell inside `vfork` cannot take a stop while its child is stopped before the child
+/// ~keep starts its program: it reads as running, and 1 collection in 1054 under load ended
+/// ~keep with such a shell. A background command is started with `fork`.
+fn start_family(script: &str, marker: &str) -> std::process::Child {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .arg(marker)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("sh must start")
+}
+
+/// A shell with two children. None of them forks, so a test decides which member runs.
+fn start_idle_family() -> std::process::Child {
+    start_family("sleep 60 & sleep 60 & wait", "crawlberg-idle-family")
+}
+
+/// Continue the stopped process `pid`, and wait for at most five seconds until it reads as
+/// running. Returns whether it does.
+fn resume(pid: Pid) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut system = System::new();
+        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
+        let Some(process) = system.process(pid) else {
+            return false;
+        };
+        if process.status() != ProcessStatus::Stop {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        process.kill_with(Signal::Continue);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// How many live children the process `parent` has.
+fn children_of(parent: Pid) -> usize {
+    let mut system = System::new();
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::All);
+    system
+        .processes()
+        .values()
+        .filter(|process| process.parent() == Some(parent) && process.status() != ProcessStatus::Zombie)
+        .count()
+}
+
+/// Whether a captured log holds a line that contains `text`.
+fn logged(fields: &[(String, String)], text: &str) -> bool {
+    fields.iter().any(|(_, value)| value.contains(text))
+}
+
+/// The line that is logged for a member that did not take its stop.
+const UNSTOPPED: &str = "did not take its stop in two waits";
+/// The line that is logged for a family whose walks ran out.
+const UNSETTLED: &str = "did not come to rest";
+
 /// A family that keeps forking is stopped as it is found, and every member has taken its stop when
 /// the collection returns, so a child forked while the family is collected cannot slip past the
 /// kill.
 #[test]
+#[serial_test::serial(chrome_family_log)]
 fn a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind() {
     let test_name = "a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind";
     if !cfg!(unix) {
         return;
     }
     let marker = format!("crawlberg-family-test-{}", std::process::id());
-    let mut parent = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("while :; do sh -c 'sleep 2; :' \"$0\" & sleep 0.01; done")
-        .arg(&marker)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("sh must start");
+    let mut parent = start_family(
+        "while :; do sh -c 'sleep 2 & wait' \"$0\" & sleep 0.01 & wait $!; done",
+        &marker,
+    );
     std::thread::sleep(Duration::from_millis(200));
 
     let family = ChromeFamily::freeze(parent.id());
-    let running = {
-        let mut system = System::new();
-        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&family.members));
-        family
-            .members
-            .iter()
-            .filter(|pid| {
-                system
-                    .process(**pid)
-                    .is_some_and(|process| !matches!(process.status(), ProcessStatus::Stop | ProcessStatus::Zombie))
-            })
-            .count()
-    };
+    let running = members_running(&family);
     family.kill();
     let gone = family.wait(Duration::from_secs(5));
     let _ = parent.wait();
@@ -1819,6 +1884,253 @@ fn a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind() {
         survivors, 0,
         "{test_name}: no child forked while the family was collected may survive the kill"
     );
+}
+
+/// A family at rest is collected without a warning: every member reads as stopped in the first
+/// wait.
+///
+/// ~keep This holds the read of the status into a new `System`. With a kept `System`, sysinfo on
+/// ~keep macOS never shows a stop, every wait runs out, and the collection ends with the warning
+/// ~keep for a member that did not take its stop. Linux reads the status on every refresh, so
+/// ~keep only the macOS run of this test can fail for that.
+#[test]
+#[serial_test::serial(chrome_family_log)]
+fn a_family_at_rest_is_collected_without_a_warning() {
+    let test_name = "a_family_at_rest_is_collected_without_a_warning";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut parent = start_idle_family();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let (family, fields) = crate::tracing_capture::capture_events(|| ChromeFamily::freeze(parent.id()));
+    let running = members_running(&family);
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+
+    assert!(
+        family.members.len() > 2,
+        "{test_name}: the family must hold the shell and its children, got {}",
+        family.members.len()
+    );
+    assert!(
+        fields.is_empty(),
+        "{test_name}: a family at rest must be collected without a log line, got {fields:?}"
+    );
+    assert_eq!(
+        running, 0,
+        "{test_name}: every member must have its stop, {running} still ran"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
+}
+
+/// A member that runs again after the family was seen at rest is stopped again and stays in the
+/// list the collection waits for, and a walk taken while a member ran is not the last one: every
+/// member has its stop when the collection returns.
+///
+/// ~keep On macOS a stop sent to a process that is starting a program does not always hold
+/// ~keep (xberg-io/crawlberg#585). The test makes that happen on every Unix: it continues one
+/// ~keep member right after each of the first two waits that have a member to wait for.
+#[test]
+#[serial_test::serial(chrome_family_log)]
+fn a_member_that_runs_again_after_its_stop_is_stopped_again() {
+    let test_name = "a_member_that_runs_again_after_its_stop_is_stopped_again";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut parent = start_idle_family();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let mut resumed: Vec<Pid> = Vec::new();
+    let mut waited_for_resumed = true;
+    let mut waits = 0;
+    let family = ChromeFamily::freeze_with(parent.id(), |stopping| {
+        waits += 1;
+        waited_for_resumed &= resumed.iter().all(|member| stopping.contains(member));
+        let stopped = ChromeFamily::settle(stopping);
+        if let (true, Some(member)) = (resumed.len() < 2, stopping.last())
+            && resume(*member)
+        {
+            resumed.push(*member);
+        }
+        stopped
+    });
+    let running = members_running(&family);
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+
+    assert!(
+        family.members.len() > 2,
+        "{test_name}: the family must hold the shell and its children, got {}",
+        family.members.len()
+    );
+    assert!(
+        waited_for_resumed,
+        "{test_name}: every wait after a member ran again must be for that member too"
+    );
+    assert!(
+        waits > 3,
+        "{test_name}: the collection must wait and walk once more each time a member ran, got {waits} waits"
+    );
+    assert_eq!(
+        resumed.len(),
+        2,
+        "{test_name}: the test must have made a stopped member run again twice"
+    );
+    assert_eq!(
+        running, 0,
+        "{test_name}: a member that ran again must have its stop when the collection returns, {running} still ran"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
+}
+
+/// A walk taken after one wait that ran out is not the last one, because a member that still ran
+/// during it can have forked a child it did not see. The collection waits and walks once more.
+#[test]
+#[serial_test::serial(chrome_family_log)]
+fn a_walk_after_a_wait_that_ran_out_is_not_the_last_one() {
+    let test_name = "a_walk_after_a_wait_that_ran_out_is_not_the_last_one";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut parent = start_idle_family();
+    std::thread::sleep(Duration::from_millis(200));
+
+    // ~keep The first wait has no member to wait for. The second one waits for the whole family
+    // ~keep and is then reported as run out.
+    let mut waits = 0;
+    let (family, fields) = crate::tracing_capture::capture_events(|| {
+        ChromeFamily::freeze_with(parent.id(), |stopping| {
+            waits += 1;
+            ChromeFamily::settle(stopping) && waits != 2
+        })
+    });
+    let running = members_running(&family);
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+
+    assert!(
+        family.members.len() > 2,
+        "{test_name}: the family must hold the shell and its children, got {}",
+        family.members.len()
+    );
+    assert!(
+        waits > 2,
+        "{test_name}: the collection must wait and walk once more after the wait that ran out, got {waits} waits"
+    );
+    assert!(
+        fields.is_empty(),
+        "{test_name}: one wait that ran out must not end the collection with a warning, got {fields:?}"
+    );
+    assert_eq!(
+        running, 0,
+        "{test_name}: every member must have its stop, {running} still ran"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
+}
+
+/// A member that does not take its stop does not hold the collection for every walk: after two
+/// waits in a row that ran out, with no new member in the walk after each, the collection ends
+/// and logs the member.
+///
+/// ~keep A process inside `vfork` on Linux is such a member. The test reports every wait as
+/// ~keep run out, which is what the collection sees of it.
+#[test]
+#[serial_test::serial(chrome_family_log)]
+fn a_member_that_does_not_take_its_stop_ends_the_collection_after_two_waits() {
+    let test_name = "a_member_that_does_not_take_its_stop_ends_the_collection_after_two_waits";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut parent = start_idle_family();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let mut waits = 0;
+    let (family, fields) = crate::tracing_capture::capture_events(|| {
+        ChromeFamily::freeze_with(parent.id(), |_| {
+            waits += 1;
+            false
+        })
+    });
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+
+    assert!(
+        family.members.len() > 2,
+        "{test_name}: the family must hold the shell and its children, got {}",
+        family.members.len()
+    );
+    assert_eq!(
+        waits, 3,
+        "{test_name}: the collection must end after the first wait, which has no member, and two waits that ran out"
+    );
+    assert!(
+        logged(&fields, UNSTOPPED) && !logged(&fields, UNSETTLED),
+        "{test_name}: the collection must log the member that did not take its stop, got {fields:?}"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
+}
+
+/// A family in which a member runs and forks before every walk is never taken as at rest, and not
+/// as a member that cannot take its stop either: the collection uses every walk and logs that the
+/// family did not come to rest.
+///
+/// ~keep The wait of the test continues every member, waits until the shell has one more child,
+/// ~keep and reports that the wait ran out, so every walk finds a new member.
+#[test]
+#[serial_test::serial(chrome_family_log)]
+fn a_family_that_forks_before_every_walk_uses_every_walk_and_is_logged() {
+    let test_name = "a_family_that_forks_before_every_walk_uses_every_walk_and_is_logged";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut parent = start_family(
+        "while :; do sleep 5 & sleep 0.05 & wait $!; done",
+        "crawlberg-forking-family",
+    );
+    let shell = Pid::from_u32(parent.id());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let mut waits = 0;
+    let mut forked = true;
+    let (family, fields) = crate::tracing_capture::capture_events(|| {
+        ChromeFamily::freeze_with(parent.id(), |stopping| {
+            waits += 1;
+            if !stopping.is_empty() {
+                let before = children_of(shell);
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut grew = false;
+                while !grew && std::time::Instant::now() < deadline {
+                    for member in stopping {
+                        resume(*member);
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    grew = children_of(shell) > before;
+                }
+                forked &= grew;
+            }
+            false
+        })
+    });
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+
+    assert!(forked, "{test_name}: the shell must have forked before every walk");
+    assert_eq!(
+        waits,
+        ChromeFamily::WALKS,
+        "{test_name}: a family that forks before every walk must use every walk"
+    );
+    assert!(
+        logged(&fields, UNSETTLED) && !logged(&fields, UNSTOPPED),
+        "{test_name}: the collection must log that the family did not come to rest, got {fields:?}"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
 }
 
 /// The kill ends every process the browser started, not only the main process: Chrome is launched
@@ -1909,12 +2221,12 @@ fn the_wait_for_a_stop_ends_when_it_is_taken_or_at_its_bound() {
     let (report, waited) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
-        ChromeFamily::settle(&mut System::new(), &members);
-        let _ = report.send(started.elapsed());
+        let settled = ChromeFamily::settle(&members);
+        let _ = report.send((started.elapsed(), settled));
     });
     let waited = waited.recv_timeout(ChromeFamily::SETTLE * 5);
     let started = std::time::Instant::now();
-    ChromeFamily::settle(&mut System::new(), &members[..1]);
+    let settled = ChromeFamily::settle(&members[..1]);
     let settled_in = started.elapsed();
     let _ = stopped.kill();
     let _ = stopped.wait();
@@ -1923,12 +2235,12 @@ fn the_wait_for_a_stop_ends_when_it_is_taken_or_at_its_bound() {
 
     assert!(sent, "{test_name}: the stop must be sent");
     assert!(
-        matches!(waited, Ok(waited) if waited >= ChromeFamily::SETTLE),
-        "{test_name}: the wait must last until its bound while a member has not taken its stop, got {waited:?}"
+        matches!(waited, Ok((waited, false)) if waited >= ChromeFamily::SETTLE),
+        "{test_name}: the wait must last until its bound while a member has not taken its stop, and say that it ran out, got {waited:?}"
     );
     assert!(
-        settled_in < ChromeFamily::SETTLE,
-        "{test_name}: the wait must end once every member has taken its stop, it took {settled_in:?}"
+        settled && settled_in < ChromeFamily::SETTLE,
+        "{test_name}: the wait must end once every member has taken its stop, and say so: it took {settled_in:?} and returned {settled}"
     );
 }
 

@@ -1197,9 +1197,9 @@ pub(crate) async fn kill_browser(
 /// ~keep OS offers no one signal for the whole tree, and a process found after its parent died
 /// ~keep has been given to `init`. The tree is walked through each process's parent instead,
 /// ~keep every member is stopped as it is found, and the walks repeat until one finds no new
-/// ~keep member once every member has taken its stop: a stopped process cannot fork, so none
-/// ~keep is missed. The walks are capped for a platform without `Signal::Stop` (Windows),
-/// ~keep where a process that keeps forking would never settle.
+/// ~keep member between two reads that find every member stopped: a stopped process cannot
+/// ~keep fork, so none is missed. The walks are capped for a platform without `Signal::Stop`
+/// ~keep (Windows), where a process that keeps forking would never settle.
 /// ~keep The wait is bounded by what is left of `shutdown_timeout` after the kill. The
 /// ~keep collection, the kill and the reap of the main process before it, and the removal of the
 /// ~keep profile after it, are not, so a kill can take longer than `shutdown_timeout` in all
@@ -1220,11 +1220,37 @@ impl ChromeFamily {
     }
 
     /// Collect the family of the process `main`, stopping each member as it is found. Every member
-    /// has taken its stop, or is gone, when this returns.
+    /// has taken its stop, or is gone, when this returns, with two exceptions, and each is logged:
+    /// a member that did not take its stop in two waits, and a family that did not come to rest
+    /// within [`Self::WALKS`] walks.
     fn freeze(main: u32) -> Self {
+        Self::freeze_with(main, Self::settle)
+    }
+
+    /// [`Self::freeze`], waiting for the stops through `settle`, so that a test can act on the
+    /// family between a wait and the walk after it.
+    ///
+    /// ~keep The family is at rest after a walk that finds no new member, when the wait before
+    /// ~keep it found every member stopped and a read after it finds every member stopped. A
+    /// ~keep stop does not always hold. On macOS, a stop sent to a process that is starting a
+    /// ~keep program can be lost: the process never stops, or reads as stopped and then runs
+    /// ~keep again. A probe that walks and stops a forking shell family the same way found a
+    /// ~keep member that ran after its stop in 8 of 840 runs on macOS 14, and in 2 of them a
+    /// ~keep child of that member that no walk saw (xberg-io/crawlberg#585). So a member that
+    /// ~keep runs after a walk gets the stop again, and the collection waits and walks once more.
+    /// ~keep A member can also be unable to take a stop. On Linux, a process inside `vfork`
+    /// ~keep sleeps in the kernel until its child starts a program, and the child is stopped
+    /// ~keep too. Such a member reads as running in every wait, and waiting for it in all eight
+    /// ~keep walks took 7.1 s. The collection ends without it when two waits in a row ran out
+    /// ~keep and the walk after each found no new member, which takes about 2 s.
+    /// ~keep One window remains: a member that runs after the last read is not seen.
+    fn freeze_with(main: u32, mut settle: impl FnMut(&[Pid]) -> bool) -> Self {
         let mut system = System::new();
         let mut members: Vec<Pid> = Vec::new();
+        let mut stopping: Vec<Pid> = Vec::new();
+        let mut waits_run_out = 0;
         for _ in 0..Self::WALKS {
+            let stopped = settle(&stopping);
             Self::refresh(&mut system, ProcessesToUpdate::All);
             let mut found = vec![Pid::from_u32(main)];
             let mut next = 0;
@@ -1244,10 +1270,27 @@ impl ChromeFamily {
                 .filter(|pid| !members.contains(pid))
                 .filter_map(|pid| system.process(*pid))
                 .collect();
-            if new.is_empty() {
-                break;
+            // ~keep A member that runs after the walk gets the stop again here, and stays in
+            // ~keep the list that the next wait and the next read are for.
+            let running = Self::running(&stopping, |process| {
+                process.kill_with(Signal::Stop);
+            });
+            if new.is_empty() && stopped && running == 0 {
+                return Self { members };
             }
-            let mut stopping = Vec::new();
+            waits_run_out = if stopped || !new.is_empty() {
+                0
+            } else {
+                waits_run_out + 1
+            };
+            if waits_run_out == 2 {
+                tracing::warn!(
+                    main,
+                    members = members.len(),
+                    "a Chrome process did not take its stop in two waits; a child it forks later can outlive the kill"
+                );
+                return Self { members };
+            }
             for process in new {
                 // ~keep A process gone by the time it is stopped is no member: its pid can be
                 // ~keep reused, and the kill must never reach a stranger. A platform without the
@@ -1261,13 +1304,18 @@ impl ChromeFamily {
                     Some(false) => {}
                 }
             }
-            Self::settle(&mut system, &stopping);
         }
+        tracing::warn!(
+            main,
+            members = members.len(),
+            walks = Self::WALKS,
+            "a Chrome process family did not come to rest; a process it forked meanwhile can outlive the kill"
+        );
         Self { members }
     }
 
     /// Wait until every process in `stopping` has taken its stop or is gone, for at most
-    /// [`Self::SETTLE`].
+    /// [`Self::SETTLE`]. Returns whether every one has.
     ///
     /// ~keep A stop is taken when the process next runs, and under load that is later than the
     /// ~keep next walk: 50 ms after the collection, 4 of some 60 members still ran in 4 runs of
@@ -1275,24 +1323,40 @@ impl ChromeFamily {
     /// ~keep is in the table before the parent returns from the fork, and the parent takes the
     /// ~keep stop only on that return, so a walk taken once every member has stopped finds every
     /// ~keep child, and one taken before that can miss one. The bound covers a process in an
-    /// ~keep uninterruptible sleep, which takes the stop only when it wakes.
-    fn settle(system: &mut System, stopping: &[Pid]) {
+    /// ~keep uninterruptible sleep, which takes the stop only when it wakes. After a wait that
+    /// ~keep ran out the collection goes on: see [`Self::freeze_with`] for when it ends.
+    fn settle(stopping: &[Pid]) -> bool {
         let deadline = std::time::Instant::now() + Self::SETTLE;
-        loop {
-            Self::refresh(system, ProcessesToUpdate::Some(stopping));
-            let running = stopping.iter().any(|pid| {
-                system.process(*pid).is_some_and(|process| {
-                    !matches!(
-                        process.status(),
-                        ProcessStatus::Stop | ProcessStatus::Zombie | ProcessStatus::Dead
-                    )
-                })
-            });
-            if !running || std::time::Instant::now() >= deadline {
-                return;
+        while Self::running(stopping, |_| {}) != 0 {
+            if std::time::Instant::now() >= deadline {
+                return false;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+        true
+    }
+
+    /// Call `each` with every process in `stopping` that runs: it has not taken its stop and is
+    /// not gone. Returns how many run.
+    ///
+    /// ~keep The status is read into a new `System` each time. On macOS, sysinfo 0.39 reads the
+    /// ~keep status of a process only when it first sees the process. After that it reports
+    /// ~keep the state of a thread, and reports a state it cannot read as running, so a kept
+    /// ~keep `System` never shows a stop there.
+    fn running(stopping: &[Pid], mut each: impl FnMut(&Process)) -> usize {
+        let mut system = System::new();
+        Self::refresh(&mut system, ProcessesToUpdate::Some(stopping));
+        stopping
+            .iter()
+            .filter_map(|pid| system.process(*pid))
+            .filter(|process| {
+                !matches!(
+                    process.status(),
+                    ProcessStatus::Stop | ProcessStatus::Zombie | ProcessStatus::Dead
+                )
+            })
+            .inspect(|process| each(process))
+            .count()
     }
 
     /// Kill every member.
