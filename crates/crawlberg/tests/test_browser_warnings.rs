@@ -17,7 +17,6 @@ use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, HostMatcher, PageAction, create_engine,
     interact, scrape,
 };
-use tokio_stream::StreamExt;
 use wiremock::matchers::{any, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -140,14 +139,14 @@ async fn interact_closes_the_browser_it_launched() {
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(error) => Err(error),
     };
-    let (browser, mut handler) = match launched {
+    let (browser, handler) = match launched {
         Ok(launched) => launched,
         Err(error) => {
             announce_chrome_skip(test_name, &error);
             return;
         }
     };
-    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler = common::spawn_handler(handler);
     drop(browser);
     handler.abort();
     // ~keep A browser an earlier test of this binary let go can warn late; wait that out.

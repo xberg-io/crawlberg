@@ -318,7 +318,6 @@ async fn a_parked_page_is_not_reused_for_a_crawl_with_another_proxy() {
 
 #[tokio::test]
 async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_proxy() {
-    use futures::StreamExt as _;
     let name = "a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_proxy";
     let profile = tempfile::tempdir().expect("a temp profile directory");
     let launched = chromiumoxide::BrowserConfig::builder()
@@ -331,14 +330,14 @@ async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_p
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
-    let (mut chrome, mut handler) = match launched {
+    let (mut chrome, handler) = match launched {
         Ok(launched) => launched,
         Err(reason) => {
             announce_chrome_skip(name, &reason);
             return;
         }
     };
-    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler = common::spawn_handler(handler);
     let (address, seen) = spawn_proxy().await;
     let mut config = render_config(proxy_at(address, None, None));
     config.browser.endpoint = Some(chrome.websocket_address().clone());
@@ -545,7 +544,6 @@ async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_pooled_proxy_context(
 /// with the crawl's proxy, and the SSRF check still refuses its requests to a denied address.
 #[tokio::test]
 async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context() {
-    use futures::StreamExt as _;
     let name = "the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context";
     let profile = tempfile::tempdir().expect("a temp profile directory");
     let launched = chromiumoxide::BrowserConfig::builder()
@@ -558,14 +556,14 @@ async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_conte
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
-    let (mut chrome, mut handler) = match launched {
+    let (mut chrome, handler) = match launched {
         Ok(launched) => launched,
         Err(reason) => {
             announce_chrome_skip(name, &reason);
             return;
         }
     };
-    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler = common::spawn_handler(handler);
     let (denied, accepted) = denied_listener().await;
     let (address, seen) = spawn_proxy_with_image(denied.clone()).await;
     let mut config = render_config(proxy_at(address, None, None));
@@ -596,7 +594,6 @@ async fn launch_endpoint_chrome(
     profile: &std::path::Path,
     flags: &[String],
 ) -> Option<(chromiumoxide::Browser, tokio::task::JoinHandle<()>)> {
-    use futures::StreamExt as _;
     let mut builder = chromiumoxide::BrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -609,10 +606,7 @@ async fn launch_endpoint_chrome(
         Err(e) => Err(e),
     };
     match launched {
-        Ok((chrome, mut handler)) => Some((
-            chrome,
-            tokio::spawn(async move { while handler.next().await.is_some() {} }),
-        )),
+        Ok((chrome, handler)) => Some((chrome, common::spawn_handler(handler))),
         Err(reason) => {
             announce_chrome_skip(name, &reason);
             None

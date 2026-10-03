@@ -151,7 +151,6 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     });
     let mut endpoint = None;
     if matches!(via, Via::Endpoint) {
-        use futures::StreamExt as _;
         let dir = tempfile::tempdir().expect("a temp profile directory");
         let launched = match chromiumoxide::BrowserConfig::builder()
             .no_sandbox()
@@ -164,14 +163,14 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
                 .map_err(|error| error.to_string()),
             Err(error) => Err(error),
         };
-        let (chrome, mut handler) = match launched {
+        let (chrome, handler) = match launched {
             Ok(launched) => launched,
             Err(reason) => {
                 announce_chrome_skip(test_name, &reason);
                 return None;
             }
         };
-        let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let handler = common::spawn_handler(handler);
         config.browser.endpoint = Some(chrome.websocket_address().clone());
         endpoint = Some((chrome, handler, dir));
     }

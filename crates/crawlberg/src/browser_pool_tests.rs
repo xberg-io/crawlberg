@@ -828,11 +828,11 @@ async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
 /// ~keep The browser's exit is read from its own handle, not from the process scan under test.
 pub(crate) async fn assert_dropping_the_profile_stops_its_chrome<P>(
     mut browser: Browser,
-    mut handler: Handler,
+    handler: Handler,
     profile: P,
     path: std::path::PathBuf,
 ) {
-    let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_handle = spawn_handler(handler);
 
     drop(profile);
     let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
@@ -902,7 +902,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
             .chrome_executable(&launcher)
             .build()
             .expect("a config naming its executable must build");
-        let (mut browser, mut handler, dir) = match dir.launch(config).await {
+        let (mut browser, handler, dir) = match dir.launch(config).await {
             Ok(launched) => launched,
             Err(error) => panic!(
                 "{} must launch as {} did: {error}",
@@ -910,7 +910,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
                 chrome.display()
             ),
         };
-        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let handler_handle = spawn_handler(handler);
         let mut bystander = spawn_bystander(&user_data_dir_flag(&path));
 
         drop(dir);
@@ -1146,7 +1146,7 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
             return;
         }
     };
-    let (mut browser, mut handler) = match Browser::launch(browser_config).await {
+    let (mut browser, handler) = match Browser::launch(browser_config).await {
         Ok(pair) => pair,
         Err(error) => {
             eprintln!(
@@ -1156,7 +1156,7 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
             return;
         }
     };
-    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_task = spawn_handler(handler);
 
     let pid = browser
         .get_mut_child()
@@ -1246,10 +1246,13 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
             return;
         }
     };
+    // ~keep Kept as the plain loop, which a killed Chrome never ends: the release must not wait on
+    // ~keep it (#146). A loop that ends at the websocket error would hide a release that waits again.
     let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
-    let page = browser
-        .new_page("about:blank")
+    // ~keep Bounded here: the plain loop never fails this command if the Chrome dies first.
+    let page = tokio::time::timeout(PROCESS_TEST_WAIT, browser.new_page("about:blank"))
         .await
+        .expect("a launched Chrome must answer the request for a tab within the wait")
         .expect("a launched Chrome must open a tab");
     let tab = page.target_id().clone();
     let pid = browser
@@ -1321,7 +1324,7 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    let (mut owner, mut owner_handler) = match launched {
+    let (mut owner, owner_handler) = match launched {
         Ok(pair) => pair,
         Err(error) => {
             eprintln!(
@@ -1331,11 +1334,13 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
             return;
         }
     };
-    let owner_task = tokio::spawn(async move { while owner_handler.next().await.is_some() {} });
+    let owner_task = spawn_handler(owner_handler);
 
     let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
         .await
         .expect("connecting to the launched Chrome must succeed");
+    // ~keep Kept as the plain loop: the assertion reads this task's end as the release's abort, and
+    // ~keep a loop that ends at a websocket error would also end if the release closed the Chrome.
     let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
     let handler_abort = handler_task.abort_handle();
 
@@ -1381,10 +1386,7 @@ async fn launch_config(test_name: &str, builder: BrowserConfigBuilder) -> Option
         Err(error) => Err(error),
     };
     match launched {
-        Ok((browser, mut handler)) => {
-            let task = tokio::spawn(async move { while handler.next().await.is_some() {} });
-            Some((browser, task))
-        }
+        Ok((browser, handler)) => Some((browser, spawn_handler(handler))),
         Err(error) => {
             eprintln!("skipping {test_name} because no usable Chrome was found: {error}");
             None
@@ -1775,7 +1777,7 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    let (mut owner, mut owner_handler) = match launched {
+    let (mut owner, owner_handler) = match launched {
         Ok(pair) => pair,
         Err(error) => {
             eprintln!(
@@ -1785,10 +1787,12 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
             return;
         }
     };
-    let owner_task = tokio::spawn(async move { while owner_handler.next().await.is_some() {} });
+    let owner_task = spawn_handler(owner_handler);
     let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
         .await
         .expect("connecting to the launched Chrome must succeed");
+    // ~keep Kept as the plain loop: the assertion reads this task's end as the release's abort, and
+    // ~keep a loop that ends at a websocket error would also end if the release closed the Chrome.
     let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
     let handler_abort = handler_task.abort_handle();
     let profile = std::env::temp_dir().join(format!("crawlberg-kill-fallback-profile-{}", std::process::id()));
@@ -1829,14 +1833,14 @@ async fn a_launched_browser_opens_no_startup_tab() {
             return;
         }
     };
-    let (mut browser, mut handler) = match launched {
+    let (mut browser, handler) = match launched {
         Ok(pair) => pair,
         Err(error) => {
             eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
             return;
         }
     };
-    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_task = spawn_handler(handler);
     tokio::time::sleep(Duration::from_millis(1000)).await;
     let pages: Vec<String> = browser
         .fetch_targets()
