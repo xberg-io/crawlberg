@@ -8,7 +8,6 @@ use selectors::matching::{
     ElementSelectorFlags, MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags,
 };
 use selectors::parser::{self, ParseRelative, SelectorParseErrorKind};
-use selectors::visitor::SelectorVisitor;
 use selectors::{Element, OpaqueElement, SelectorList};
 
 use crate::dom::tree::{DomTree, NodeData, NodeId};
@@ -101,21 +100,12 @@ pub enum PseudoClass {
 }
 
 impl parser::NonTSPseudoClass for PseudoClass {
-    type Impl = CssSelector;
-
     fn is_active_or_hover(&self) -> bool {
         matches!(self, PseudoClass::Hover | PseudoClass::Active)
     }
 
     fn is_user_action_state(&self) -> bool {
         matches!(self, PseudoClass::Hover | PseudoClass::Active | PseudoClass::Focus)
-    }
-
-    fn visit<V>(&self, _visitor: &mut V) -> bool
-    where
-        V: SelectorVisitor<Impl = Self::Impl>,
-    {
-        true
     }
 }
 
@@ -138,9 +128,7 @@ pub enum PseudoElement {
     After,
 }
 
-impl parser::PseudoElement for PseudoElement {
-    type Impl = CssSelector;
-}
+impl parser::PseudoElement for PseudoElement {}
 
 impl ToCss for PseudoElement {
     fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
@@ -155,13 +143,9 @@ pub struct CssSelectorParser;
 
 impl<'i> parser::Parser<'i> for CssSelectorParser {
     type Impl = CssSelector;
-    type Error = SelectorParseErrorKind<'i>;
+    type Error = SelectorParseErrorKind;
 
-    fn parse_non_ts_pseudo_class(
-        &self,
-        _location: cssparser::SourceLocation,
-        name: CowRcStr<'i>,
-    ) -> Result<PseudoClass, cssparser::ParseError<'i, Self::Error>> {
+    fn parse_non_ts_pseudo_class(&self, name: CowRcStr<'i>) -> Result<PseudoClass, cssparser::ParseError<Self::Error>> {
         match name.as_ref() {
             "hover" => Ok(PseudoClass::Hover),
             "active" => Ok(PseudoClass::Active),
@@ -169,10 +153,9 @@ impl<'i> parser::Parser<'i> for CssSelectorParser {
             "enabled" => Ok(PseudoClass::Enabled),
             "disabled" => Ok(PseudoClass::Disabled),
             "checked" => Ok(PseudoClass::Checked),
-            _ => Err(cssparser::ParseError {
-                kind: cssparser::ParseErrorKind::Custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)),
-                location: _location,
-            }),
+            _ => Err(cssparser::ParseError::custom(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement,
+            )),
         }
     }
 }
@@ -464,8 +447,7 @@ impl<'a> Element for DomElement<'a> {
 }
 
 pub fn parse_selector(selector: &str) -> Result<SelectorList<CssSelector>, String> {
-    let mut parser_input = cssparser::ParserInput::new(selector);
-    let mut parser = cssparser::Parser::new(&mut parser_input);
+    let mut parser = cssparser::Parser::new(selector);
     SelectorList::parse(&CssSelectorParser, &mut parser, ParseRelative::No)
         .map_err(|e| format!("Failed to parse selector '{}': {:?}", selector, e))
 }
