@@ -59,11 +59,17 @@ async fn an_unparseable_provider_proxy_url_fails_instead_of_sending_direct() {
         .expect("engine must build");
 
     let seed_url = format!("{}/", mock.uri());
-    let error = engine
+    let result = engine
         .crawl(&seed_url)
         .await
-        .expect_err("an unusable provider proxy must fail the crawl")
-        .to_string();
+        .expect("a per-crawl request failure is reported in CrawlResult");
+    assert!(
+        result.pages.is_empty(),
+        "a refused provider proxy must produce no pages"
+    );
+    let error = result
+        .error
+        .expect("an unusable provider proxy must record the crawl error");
     assert!(error.contains("invalid proxy URL"), "unexpected error: {error}");
     assert!(
         !error.contains(PROXY_PASSWORD),
@@ -121,7 +127,7 @@ async fn a_refused_provider_proxy_fails_each_request_instead_of_sending_direct()
         .expect_err("a refused provider proxy must fail the map instead of sending direct")
         .to_string();
     for error in [scrape_error, map_error] {
-        assert!(error.contains("percent-encode"), "unexpected error: {error}");
+        assert!(error.contains("invalid proxy URL"), "unexpected error: {error}");
         assert!(
             !error.contains(PROXY_PASSWORD),
             "the error shows the proxy password: {error}"
