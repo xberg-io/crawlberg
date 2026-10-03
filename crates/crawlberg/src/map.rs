@@ -194,9 +194,17 @@ async fn urls_from_direct_response(
 
     if is_xml {
         if is_sitemap_index(&resp.body) {
-            // ~keep Walked from the URL that served it: a refresh that led here is not followed
-            // ~keep again by the sitemap fetch, so the requested URL would give back the page.
-            return fetch_sitemap_tree(&resp.final_url, context, config.map_limit).await;
+            return process_sitemap_response(
+                &SitemapDocument {
+                    url: &resp.final_url,
+                    final_url: &resp.final_url,
+                    body: &resp.body,
+                    body_bytes: &resp.body_bytes,
+                },
+                context,
+                config.map_limit,
+            )
+            .await;
         }
         let urls = collect_urlset_entries(&resp.final_url, &resp.body, context, config.map_limit);
         if !urls.is_empty() {
@@ -320,6 +328,8 @@ pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, filter: &MapFilter, l
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::tracing_capture::{assert_logged_without_secret, capture_events};
     use crate::types::CrawlConfig;
@@ -1297,6 +1307,52 @@ mod tests {
             .iter()
             .filter(|request| request.url.path() == route)
             .count()
+    }
+
+    #[tokio::test]
+    async fn map_fetches_a_direct_sitemap_index_only_for_its_initial_attempts() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let attempts = AtomicUsize::new(0);
+        let index = sitemap_index(&["nested.xml"]);
+        Mock::given(method("GET"))
+            .and(path("/index.xml"))
+            .respond_with(move |_request: &wiremock::Request| {
+                if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(500)
+                } else {
+                    ResponseTemplate::new(200)
+                        .set_body_string(index.clone())
+                        .append_header("content-type", "application/xml")
+                }
+            })
+            .mount(&mock)
+            .await;
+        mount_body(&mock, "/nested.xml", "application/xml", sitemap_index(&["leaf.xml"])).await;
+        mount_body(
+            &mock,
+            "/leaf.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-leaf".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            retry_count: 1,
+            retry_initial_delay_ms: 1,
+            retry_max_delay_ms: 1,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&format!("{base}/index.xml"), &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-leaf".to_owned()]);
+        assert_eq!(
+            request_count(&mock, "/index.xml").await,
+            2,
+            "the direct index should receive one failed attempt and one retry, but no tree-walk refetch"
+        );
+        assert_eq!(request_count(&mock, "/nested.xml").await, 1);
+        assert_eq!(request_count(&mock, "/leaf.xml").await, 1);
     }
 
     #[tokio::test]
