@@ -45,11 +45,11 @@ fn folded_lines(data: &std::collections::HashMap<pprof::Frames, isize>) -> Vec<S
 }
 
 #[cfg(feature = "profiling")]
-fn write_flamegraph<W>(report: &pprof::Report, writer: W) -> std::io::Result<()>
+fn write_flamegraph<W>(data: &std::collections::HashMap<pprof::Frames, isize>, writer: W) -> std::io::Result<()>
 where
     W: std::io::Write,
 {
-    let lines = folded_lines(&report.data);
+    let lines = folded_lines(data);
     if lines.is_empty() {
         return Ok(());
     }
@@ -128,7 +128,8 @@ impl ProfileGuard {
         let file = File::create(&self.output_path)
             .map_err(|e| Error::Profiling(format!("failed to create flamegraph file: {e}")))?;
 
-        write_flamegraph(&report, file).map_err(|e| Error::Profiling(format!("failed to write flamegraph: {e}")))?;
+        write_flamegraph(&report.data, file)
+            .map_err(|e| Error::Profiling(format!("failed to write flamegraph: {e}")))?;
 
         Ok(())
     }
@@ -161,7 +162,7 @@ impl Drop for ProfileGuard {
 
         match File::create(&self.output_path) {
             Ok(file) => {
-                if let Err(e) = write_flamegraph(&report, file) {
+                if let Err(e) = write_flamegraph(&report.data, file) {
                     tracing::warn!(error = %e, "failed to write flamegraph on drop");
                 }
             }
@@ -179,11 +180,24 @@ impl Drop for ProfileGuard {
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use std::collections::HashMap;
+    use std::io::{self, Write};
     use std::time::SystemTime;
 
     use pprof::{Frames, Symbol};
 
-    use super::folded_lines;
+    use super::{folded_lines, write_flamegraph};
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("expected write failure"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn symbol(name: &str) -> Symbol {
         Symbol {
@@ -237,5 +251,31 @@ mod tests {
         data.insert(frames("", 42, &[]), 1);
 
         assert_eq!(folded_lines(&data), vec!["42 1"]);
+    }
+
+    #[test]
+    fn write_flamegraph_should_render_svg() {
+        let mut data = HashMap::new();
+        data.insert(frames("worker", 1, &[&["leaf"], &["root"]]), 3);
+        let mut output = Vec::new();
+
+        write_flamegraph(&data, &mut output).expect("flamegraph should render");
+
+        let svg = String::from_utf8(output).expect("flamegraph should be UTF-8 SVG");
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("root"));
+        assert!(svg.contains("leaf"));
+        assert!(svg.contains("</svg>"));
+    }
+
+    #[test]
+    fn write_flamegraph_should_return_writer_error() {
+        let mut data = HashMap::new();
+        data.insert(frames("worker", 1, &[&["leaf"], &["root"]]), 3);
+
+        let error = write_flamegraph(&data, FailingWriter).expect_err("writer failure should propagate");
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "expected write failure");
     }
 }
