@@ -1274,6 +1274,82 @@ async fn a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes() {
     );
 }
 
+/// Relaunching a pool connection whose handler ended reconnects to the caller's Chrome without
+/// stopping that Chrome.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_running() {
+    let executable = match default_executable(DetectionOptions::default()) {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!(
+                "skipping relaunching_an_external_pool_connection_leaves_the_callers_chrome_running: \
+                 no Chrome executable: {error}"
+            );
+            return;
+        }
+    };
+    let owner_dir = ScratchProfileDir::create("crawlberg-external-owner-test-", Some(&executable))
+        .expect("the external Chrome's profile directory must be created");
+    let owner_config = build_pool_launch_builder(owner_dir.path(), &BrowserPoolConfig::default())
+        .expect("the default pool configuration must build")
+        .chrome_executable(executable)
+        .build()
+        .expect("the external Chrome configuration must build");
+    let (mut owner, owner_handler, owner_dir) = owner_dir
+        .launch(owner_config)
+        .await
+        .expect("the detected Chrome executable must launch");
+    let owner_task = spawn_handler(owner_handler);
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some(owner.websocket_address().clone()),
+        ..BrowserPoolConfig::default()
+    });
+    pool.warm().await.expect("the pool must connect to the external Chrome");
+
+    {
+        let state = pool.state.lock().await;
+        let state = state.as_ref().expect("a warm pool must hold a browser connection");
+        assert!(
+            state.user_data_dir.is_none(),
+            "the pool must treat the connected Chrome as external"
+        );
+        state.handler_handle.abort();
+    }
+    let handler_deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
+    while !pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|state| state.handler_end.has_ended())
+    {
+        assert!(
+            tokio::time::Instant::now() < handler_deadline,
+            "the aborted pool connection's handler must end"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    pool.relaunch_browser()
+        .await
+        .expect("the pool must reconnect after its handler ends");
+    let page = pool
+        .acquire_page()
+        .await
+        .expect("the relaunched connection must open a page");
+    page.close().await;
+    pool.shutdown().await;
+
+    tokio::time::timeout(Duration::from_secs(5), owner.version())
+        .await
+        .expect("the caller's Chrome must answer after pool relaunch and shutdown")
+        .expect("the caller's Chrome version request must succeed");
+    let _ = owner.kill().await;
+    owner_task.abort();
+    drop(owner_dir);
+}
+
 /// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
