@@ -41,37 +41,37 @@ pub(crate) const NAMED_SCHEMES: [&str; 21] = [
 /// What a [`SsrfError::DisallowedScheme`] carries for a scheme not in [`NAMED_SCHEMES`].
 const UNNAMED_SCHEME: &str = "unrecognized";
 
-/// Private / metadata / loopback CIDRs that are denied by default, as source strings.
+/// Private / metadata / loopback CIDRs denied by default, paired with their stable reasons.
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "169.254.0.0/16",
-    "0.0.0.0/8",
-    "224.0.0.0/4",
+pub(crate) const DEFAULT_DENY_NET_RULES: &[(&str, &str)] = &[
+    ("127.0.0.0/8", "loopback"),
+    ("10.0.0.0/8", "private_network"),
+    ("172.16.0.0/12", "private_network"),
+    ("192.168.0.0/16", "private_network"),
+    ("169.254.0.0/16", "link_local"),
+    ("0.0.0.0/8", "unspecified"),
+    ("224.0.0.0/4", "multicast"),
     // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
-    "240.0.0.0/4",
+    ("240.0.0.0/4", "private_network"),
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
-    "100.64.0.0/10",
-    "::1/128",
+    ("100.64.0.0/10", "private_network"),
+    ("::1/128", "loopback"),
     // ~keep The IPv6 analogue of 0.0.0.0: a kernel routes connect(::) to a local address, so it
     // ~keep is denied for the same reason 0.0.0.0/8 is. `::1/128` matches only loopback, not `::`.
-    "::/128",
-    "fe80::/10",
-    "fc00::/7",
-    "ff00::/8",
+    ("::/128", "unspecified"),
+    ("fe80::/10", "link_local"),
+    ("fc00::/7", "unique_local"),
+    ("ff00::/8", "multicast"),
 ];
 
 /// Private / metadata / loopback CIDRs that are denied by default.
-static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
-    DEFAULT_DENY_NET_CIDRS
+static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|| {
+    DEFAULT_DENY_NET_RULES
         .iter()
-        .map(|cidr| cidr.parse().expect("literal CIDR"))
+        .map(|(cidr, reason)| (cidr.parse().expect("literal CIDR"), *reason))
         .collect()
 });
 
@@ -229,16 +229,21 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
 
 /// The first address a connection to `ip` can reach that the default deny-list covers and
 /// `allowlist` does not permit: `ip` itself, then each IPv4 address it embeds.
-fn denied_address(ip: IpAddr, allowlist: &[HostMatcher]) -> Option<IpAddr> {
+fn denied_address(ip: IpAddr, allowlist: &[HostMatcher]) -> Option<(IpAddr, &'static str)> {
     let embedded = match ip {
         IpAddr::V6(v6) => Some(embedded_ipv4s(v6).map(IpAddr::V4)),
         IpAddr::V4(_) => None,
     };
     std::iter::once(ip)
         .chain(embedded.into_iter().flatten())
-        .find(|candidate| {
-            !allowlist.iter().any(|m| m.matches_ip(candidate))
-                && DEFAULT_DENY_NETS.iter().any(|net| net.contains(candidate))
+        .find_map(|candidate| {
+            if allowlist.iter().any(|matcher| matcher.matches_ip(&candidate)) {
+                return None;
+            }
+            DEFAULT_DENY_NETS
+                .iter()
+                .find(|(net, _)| net.contains(&candidate))
+                .map(|(_, reason)| (candidate, *reason))
         })
 }
 
@@ -256,44 +261,9 @@ pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
 /// with `fe80::/10` allowlisted, `fe80::5efe:10.0.0.5` is denied for the `10.0.0.5` it
 /// carries, not for being link-local.
 pub(crate) fn classify_private_ip(ip: IpAddr, allowlist: &[HostMatcher]) -> &'static str {
-    // ~keep Classify the address actually routed to, so ::ffff:127.0.0.1 reports
-    // "loopback" rather than falling through to the generic IPv6 arm.
-    match denied_address(ip, allowlist).unwrap_or(ip) {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            match octets[0] {
-                127 => "loopback",
-                10 => "private_network",
-                172 if octets[1] >= 16 && octets[1] <= 31 => "private_network",
-                192 if octets[1] == 168 => "private_network",
-                169 if octets[1] == 254 => "link_local",
-                0 => "unspecified",
-                224..=239 => "multicast",
-                _ => "private_network",
-            }
-        }
-        IpAddr::V6(ipv6) => {
-            let segments = ipv6.segments();
-            match segments[0] {
-                0x0000
-                    if segments[1] == 0
-                        && segments[2] == 0
-                        && segments[3] == 0
-                        && segments[4] == 0
-                        && segments[5] == 0
-                        && segments[6] == 0
-                        && segments[7] == 1 =>
-                {
-                    "loopback"
-                }
-                0x0000 if ipv6.segments() == [0; 8] => "unspecified",
-                0xfe80..=0xfebf => "link_local",
-                0xfc00..=0xfdff => "unique_local",
-                0xff00..=0xffff => "multicast",
-                _ => "private_network",
-            }
-        }
-    }
+    denied_address(ip, allowlist)
+        .or_else(|| denied_address(ip, &[]))
+        .map_or("private_network", |(_, reason)| reason)
 }
 
 #[cfg(test)]
@@ -326,6 +296,19 @@ mod tests {
         "tftp",
         "about",
     ];
+
+    #[test]
+    fn every_default_deny_rule_reports_the_reason_stored_with_it() {
+        for &(cidr, expected_reason) in DEFAULT_DENY_NET_RULES {
+            let net = cidr.parse::<IpNet>().expect("literal CIDR");
+            let actual = denied_address(net.network(), &[]).map(|(_, reason)| reason);
+            assert_eq!(
+                actual,
+                Some(expected_reason),
+                "{cidr} must report the reason stored in its deny-list row"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn every_listed_scheme_is_named_in_the_refusal() {

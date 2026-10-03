@@ -108,7 +108,10 @@ mod tests {
         // ~keep The browser crate keeps its own copy for standalone use. If the two
         // drift, the fallback validator silently enforces a different policy.
         let browser: Vec<&str> = crawlberg_browser::adapter::DEFAULT_DENY_NET_CIDRS.to_vec();
-        let core: Vec<&str> = crate::net::ssrf::DEFAULT_DENY_NET_CIDRS.to_vec();
+        let core: Vec<&str> = crate::net::ssrf::DEFAULT_DENY_NET_RULES
+            .iter()
+            .map(|(cidr, _)| *cidr)
+            .collect();
         assert_eq!(
             core, browser,
             "crawlberg and crawlberg-browser default deny-lists have drifted"

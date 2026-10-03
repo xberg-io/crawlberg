@@ -23,7 +23,7 @@ pub use validate::validate_url;
 // ~keep `net::browser_policy` deny-list and named-scheme parity tests. Ungated, either is an
 // ~keep unused import in the builds that lack that consumer, which -D warnings rejects.
 #[cfg(all(test, feature = "browser-native"))]
-pub(crate) use validate::{DEFAULT_DENY_NET_CIDRS, NAMED_SCHEMES};
+pub(crate) use validate::{DEFAULT_DENY_NET_RULES, NAMED_SCHEMES};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use validate::{classify_private_ip, is_ip_permitted};
 
@@ -909,12 +909,9 @@ mod tests {
             .filter_map(|span| span.strip_prefix('"')?.strip_suffix('"'))
             .filter(|reason| !reason.starts_with("disallowed scheme"))
             .collect();
-        let produced: std::collections::BTreeSet<&str> = validate::DEFAULT_DENY_NET_CIDRS
+        let produced: std::collections::BTreeSet<&str> = validate::DEFAULT_DENY_NET_RULES
             .iter()
-            .map(|cidr| {
-                let net: ipnet::IpNet = cidr.parse().expect("literal CIDR");
-                classify_private_ip(net.network(), &[])
-            })
+            .map(|(_, reason)| *reason)
             .collect();
         assert_eq!(
             documented.len(),
