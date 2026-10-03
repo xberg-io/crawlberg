@@ -1,8 +1,7 @@
 use std::time::Duration;
 
 use crawlberg_browser::adapter::{
-    NativeActionResult, NativeBrowserConfig, NativeBrowserExecutor, NativeBrowserWait, NativeCookie,
-    NativeInteractionResult, NativePageAction, NativeScrollDirection,
+    NativeActionResult, NativeBrowserExecutor, NativeInteractionResult, NativePageAction, NativeScrollDirection,
 };
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
@@ -26,7 +25,7 @@ pub(super) async fn run(
     );
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-    let native_config = build_native_config(config, url, ssrf)?;
+    let native_config = crate::native_browser::build_native_config(config, url, Vec::new(), ssrf)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -66,40 +65,6 @@ pub(super) async fn run(
     Ok(InteractionResult {
         ssrf_refused_urls: refused,
         ..map_result(native_result)
-    })
-}
-
-#[allow(deprecated)]
-fn build_native_config(
-    config: &CrawlConfig,
-    url: &str,
-    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
-) -> Result<NativeBrowserConfig, CrawlError> {
-    let wait_until = match config.browser.wait {
-        BrowserWait::NetworkIdle => NativeBrowserWait::NetworkIdle,
-        BrowserWait::Selector => NativeBrowserWait::Selector,
-        BrowserWait::Fixed => NativeBrowserWait::Load,
-    };
-
-    Ok(NativeBrowserConfig {
-        user_agent: config.user_agent.clone(),
-        timeout: config.browser.timeout,
-        wait_until,
-        extra_headers: std::collections::HashMap::new(),
-        respect_robots_txt: config.respect_robots_txt,
-        stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
-        proxy: crate::native_browser::native_proxy(config, url)?,
-        proxy_url: None,
-        prior_cookies: Vec::<NativeCookie>::new(),
-        block_url_patterns: config.browser.block_url_patterns.clone(),
-        eval_script: config.browser.eval_script.clone(),
-        wait_selector: config.browser.wait_selector.clone(),
-        robots_user_agent: config.browser.robots_user_agent.clone(),
-        capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(ssrf),
-        allow_file_access: false,
-        origin_headers: crate::net::credentials::origin_headers(config),
-        max_redirects: Some(config.max_redirects),
     })
 }
 
@@ -266,8 +231,8 @@ mod native_worker_hang_tests {
 
 #[cfg(test)]
 mod credential_scope_tests {
-    use super::build_native_config;
-    use crate::types::{AuthConfig, CrawlConfig};
+    use crate::native_browser::build_native_config;
+    use crate::types::{AuthConfig, CrawlConfig, ProxyConfig};
 
     #[test]
     fn a_bearer_token_and_the_custom_headers_are_scoped_to_the_seed_host() {
@@ -277,12 +242,18 @@ mod credential_scope_tests {
                 token: "secret-token".to_owned(),
             }),
             custom_headers: std::collections::HashMap::from([("x-custom".to_owned(), "value".to_owned())]),
+            proxy: Some(ProxyConfig {
+                url: "http://proxy.example:8080".to_owned(),
+                username: Some("proxy-user".to_owned()),
+                password: Some("proxy-password".to_owned()),
+            }),
             credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
             ..CrawlConfig::default()
         };
 
         let (ssrf, _) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-        let native = build_native_config(&config, "http://example.com/", ssrf).expect("an admitted config must build");
+        let native = build_native_config(&config, "http://example.com/", Vec::new(), ssrf)
+            .expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),
@@ -300,5 +271,12 @@ mod credential_scope_tests {
                 ("Authorization".to_owned(), "Bearer secret-token".to_owned()),
             ]
         );
+        let proxy = native.proxy.expect("the interaction config must retain its proxy");
+        assert_eq!(proxy.address().as_str(), "http://proxy.example:8080/");
+        let credentials = proxy
+            .credentials()
+            .expect("the interaction config must retain proxy credentials");
+        assert_eq!(credentials.username, "proxy-user");
+        assert_eq!(credentials.password, "proxy-password");
     }
 }

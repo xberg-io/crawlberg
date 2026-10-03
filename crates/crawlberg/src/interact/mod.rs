@@ -42,7 +42,7 @@ pub(crate) fn encode_screenshot_base64(bytes: &[u8]) -> String {
 /// check on the target URL lives here, once, rather than duplicated into
 /// `chromiumoxide::run`/`native::run`. The chromiumoxide backend otherwise enforced no
 /// SSRF policy at all (xberg-io/crawlberg#74); the native backend already carries its own
-/// interception via `NativeBrowserConfig.ssrf` (see `native::build_native_config`), but
+/// interception via `NativeBrowserConfig.ssrf` (see `native_browser::build_native_config`), but
 /// that only guards navigation/redirects, not this seed URL, so it never doubles up with
 /// the check below -- a rejected seed URL fails here before either backend runs.
 pub(crate) async fn run(
