@@ -526,11 +526,8 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        #[cfg(feature = "browser-native")]
-        native_state.set_site_for_cookies(&chain.current_url);
-
         let mut page_scan = None;
-        let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects, &mut page_scan) else {
+        let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
             prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
@@ -539,11 +536,16 @@ pub(crate) async fn follow_redirects(
             ))));
         };
 
+        #[cfg(feature = "browser-native")]
+        if next.commits_document {
+            native_state.set_site_for_cookies(&chain.current_url);
+        }
+
         if let Some(landing) = resp.landed.as_mut() {
             refused_on_earlier_hops.append(&mut landing.refused);
         }
         chain
-            .advance_to(target, target_key, 1, resp.headers, &engine.config.ssrf)
+            .advance_to(next.target, next.target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
     }
 }
@@ -706,19 +708,46 @@ impl RedirectSignals for crate::http::HttpResponse {
 /// ~keep never pays to parse the body looking for a meta refresh.
 ///
 /// The meta refresh check leaves its read of the body in `page_scan`.
+struct NextRedirect {
+    target: Url,
+    target_key: String,
+    commits_document: bool,
+}
+
+fn next_redirect(
+    resp: &crate::tower::CrawlResponse,
+    chain: &RedirectChain,
+    max_redirects: usize,
+    page_scan: &mut Option<PageScan>,
+) -> Option<NextRedirect> {
+    if chain.redirect_count >= max_redirects {
+        return None;
+    }
+    let unseen = |target: Url| chain.unseen_key(target.as_str()).map(|key| (target, key));
+    if let Some((target, target_key)) = http_redirect_target(resp, &chain.current_url).and_then(unseen) {
+        return Some(NextRedirect {
+            target,
+            target_key,
+            commits_document: false,
+        });
+    }
+    refresh_redirect_target(resp, &chain.current_url, |target| chain.unseen_key(target), page_scan).map(
+        |(target, target_key)| NextRedirect {
+            target,
+            target_key,
+            commits_document: true,
+        },
+    )
+}
+
+#[cfg(test)]
 fn next_redirect_target(
     resp: &crate::tower::CrawlResponse,
     chain: &RedirectChain,
     max_redirects: usize,
     page_scan: &mut Option<PageScan>,
 ) -> Option<(Url, String)> {
-    if chain.redirect_count >= max_redirects {
-        return None;
-    }
-    let unseen = |target: Url| chain.unseen_key(target.as_str()).map(|key| (target, key));
-    http_redirect_target(resp, &chain.current_url)
-        .and_then(unseen)
-        .or_else(|| refresh_redirect_target(resp, &chain.current_url, |target| chain.unseen_key(target), page_scan))
+    next_redirect(resp, chain, max_redirects, page_scan).map(|next| (next.target, next.target_key))
 }
 
 /// The next unvisited URL a `Refresh` header or a `<meta http-equiv="refresh">` in `resp` points
@@ -892,7 +921,11 @@ mod tests {
                             *attempt += 1;
                             *attempt
                         };
-                        let response = if auto && attempt == 1 {
+                        let response = if auto && path == "/middle" && attempt == 1 {
+                            format!(
+                                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/finish\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            )
+                        } else if auto && attempt == 1 {
                             "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
                         } else {
                             routes.get(&path).cloned().unwrap_or_else(|| {
@@ -905,7 +938,7 @@ mod tests {
             });
             let mut config = crate::CrawlConfig::builder().allow_private_networks(true).build();
             config.browser.backend = crate::types::BrowserBackend::Native;
-            config.browser.mode = mode;
+            config.browser.mode = mode.clone();
             config.browser.timeout = std::time::Duration::from_secs(10);
             let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
 
@@ -925,10 +958,17 @@ mod tests {
                 finish.contains("cookie: lax=1"),
                 "Lax must be sent on the top-level GET in {mode:?}: {finish}"
             );
-            assert!(
-                !finish.contains("strict=1"),
-                "Strict must be withheld across sites in {mode:?}: {finish}"
-            );
+            if mode == crate::types::BrowserMode::Auto {
+                assert!(
+                    finish.contains("strict=1"),
+                    "HTTP Location must retain the original same-site initiator in {mode:?}: {finish}"
+                );
+            } else {
+                assert!(
+                    !finish.contains("strict=1"),
+                    "Strict must be withheld across sites in {mode:?}: {finish}"
+                );
+            }
         }
     }
 
