@@ -1991,7 +1991,7 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
 /// ~keep At the response headers, its status is rewritten to an internal 200 and every original
 /// ~keep header is replaced by a sandboxed `text/plain` set. Chrome can neither follow the
-/// ~keep `Location`/`Refresh` headers nor execute the body; callers receive the original status,
+/// ~keep non-web `Location` nor execute the body; callers receive the original status,
 /// ~keep headers and URL with an empty body.
 fn main_frame_verdict(
     event: &EventRequestPaused,

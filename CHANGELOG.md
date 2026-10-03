@@ -981,7 +981,7 @@ All notable changes to crawlberg are documented here.
   returns the original 3xx status, headers and URL without following the `Location`. This also
   applies when a page script starts the redirect after its initial load. Its body is empty in this
   backend: at the response headers Chrome receives an internal 200 with only sandboxed plain-text
-  headers, so it cannot act on `Location`, `Refresh`, attachment or HTML content.
+  headers, so it cannot act on the non-web `Location`, attachment or HTML content.
   (#471)
 - **The Chromiumoxide interaction renderer script ignored `browser.timeout`.** A configured
   post-navigation `eval_script` could wait for chromiumoxide's fixed 30-second command deadline

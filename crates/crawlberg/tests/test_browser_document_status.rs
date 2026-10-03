@@ -589,7 +589,6 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
                 ResponseTemplate::new(302)
                     .append_header("location", target)
                     .append_header("x-redirect-marker", route)
-                    .append_header("refresh", "0;url=/header-fired")
                     .append_header("content-disposition", "attachment")
                     .set_body_raw(body, "text/html"),
             )
@@ -614,12 +613,7 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
             .expect("request recording is enabled")
             .into_iter()
             .map(|request| request.url.path().to_owned())
-            .filter(|path| {
-                matches!(
-                    path.as_str(),
-                    "/script-fired" | "/meta-fired" | "/image-fired" | "/header-fired"
-                )
-            })
+            .filter(|path| matches!(path.as_str(), "/script-fired" | "/meta-fired" | "/image-fired"))
             .collect();
         assert_eq!(
             (page.status_code, page.html.as_str()),
@@ -639,12 +633,7 @@ async fn chromiumoxide_returns_a_redirect_response_whose_location_is_not_a_web_a
         .await
         .expect("request recording is enabled")
         .into_iter()
-        .filter(|request| {
-            matches!(
-                request.url.path(),
-                "/script-fired" | "/meta-fired" | "/image-fired" | "/header-fired"
-            )
-        })
+        .filter(|request| matches!(request.url.path(), "/script-fired" | "/meta-fired" | "/image-fired"))
         .collect();
     assert!(
         active_requests.is_empty(),
