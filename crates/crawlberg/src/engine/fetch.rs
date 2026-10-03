@@ -282,13 +282,13 @@ impl CrawlEngine {
         &self,
         url: &str,
         forced_user_agent: Option<&str>,
-        mut native_state: Option<&mut NativeRenderState>,
+        native_state: Option<&mut NativeRenderState>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if self.request_will_use_browser() {
             #[cfg(feature = "browser-native")]
             if self.config.browser.backend == BrowserBackend::Native
-                && let Some(state) = native_state.as_deref_mut()
+                && let Some(state) = native_state
             {
                 return self.native_render(url, state).await;
             }

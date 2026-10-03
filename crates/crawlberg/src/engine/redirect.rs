@@ -711,6 +711,7 @@ impl RedirectSignals for crate::http::HttpResponse {
 struct NextRedirect {
     target: Url,
     target_key: String,
+    #[cfg(feature = "browser-native")]
     commits_document: bool,
 }
 
@@ -728,6 +729,7 @@ fn next_redirect(
         return Some(NextRedirect {
             target,
             target_key,
+            #[cfg(feature = "browser-native")]
             commits_document: false,
         });
     }
@@ -735,6 +737,7 @@ fn next_redirect(
         |(target, target_key)| NextRedirect {
             target,
             target_key,
+            #[cfg(feature = "browser-native")]
             commits_document: true,
         },
     )
