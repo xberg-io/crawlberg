@@ -116,6 +116,9 @@ async fn render(
 
     watch.settle().await;
     let mut intercepted = watch.take_outcome();
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
     if let Some(stop) = intercepted.take_intentional_terminal() {
         watch.mark_unsettled();
         return Ok(stopped_browser_page(watch, stop));
@@ -137,11 +140,17 @@ async fn render(
         tokio::time::sleep(extra).await;
     }
     watch.settle().await;
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
     if let Some(stop) = watch.take_stopped_response_within(timeout).await? {
         if stop.terminal_intercepted {
             watch.mark_unsettled();
         }
         return Ok(stopped_browser_page(watch, stop));
+    }
+    if let Some(outcome) = recorded_error_page(watch, watch.redirects_followed()) {
+        return outcome;
     }
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
@@ -213,6 +222,9 @@ async fn answered_error_page(
     redirects: usize,
     budget: Duration,
 ) -> Option<Result<BrowserPage, CrawlError>> {
+    if let Some(outcome) = recorded_error_page(watch, redirects) {
+        return Some(outcome);
+    }
     let document = match tokio::time::timeout(budget, committed_document(page)).await {
         Ok(Ok(document)) => document,
         Ok(Err(_)) => return None,
@@ -224,6 +236,11 @@ async fn answered_error_page(
     };
     let failed_url = document.unreachable_url?;
     let recorded = watch.document(&document.loader_id)?;
+    Some(error_page_outcome(failed_url, Some(recorded), redirects))
+}
+
+fn recorded_error_page(watch: &Watch, redirects: usize) -> Option<Result<BrowserPage, CrawlError>> {
+    let (failed_url, recorded) = watch.committed_error_response()?;
     Some(error_page_outcome(failed_url, Some(recorded), redirects))
 }
 

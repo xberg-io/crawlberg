@@ -1107,7 +1107,7 @@ impl Watch {
                     return event;
                 }
             }
-            std::future::pending::<Arc<EventFrameNavigated>>().await;
+            std::future::pending::<Arc<EventFrameNavigated>>().await
         };
         tokio::pin!(error_page_committed);
         tokio::select! {
