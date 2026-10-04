@@ -98,7 +98,7 @@ pub struct BrowserConfig {
     /// Browser backend used to render JavaScript-heavy pages.
     pub backend: BrowserBackend,
     /// CDP WebSocket endpoint for connecting to an external browser instance.
-    /// Crawlberg disconnects during teardown but never closes the external browser process.
+    /// Crawlberg disconnects during teardown but never closes the external browser process. <!-- ~keep -->
     pub endpoint: Option<String>,
     /// Timeout for browser page load and rendering (in milliseconds when serialized).
     #[serde(with = "duration_ms")]

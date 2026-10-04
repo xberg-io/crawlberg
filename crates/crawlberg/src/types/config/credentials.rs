@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
-    /// Proxy URL (e.g. "http://proxy:8080").
+    /// Proxy URL (e.g. "http://proxy:8080"). <!-- ~keep -->
     pub url: String,
     /// Optional username for proxy authentication.
     pub username: Option<String>,
