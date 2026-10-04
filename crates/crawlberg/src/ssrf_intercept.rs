@@ -98,6 +98,8 @@ pub(crate) struct InterceptOutcome {
     pub(crate) documents: HashMap<String, DocumentResponse>,
     /// The loader id of the document the main frame committed last, from `Page.frameNavigated`.
     committed_loader: Option<String>,
+    /// The failed URL of that committed document when it is Chrome's error page.
+    committed_unreachable_url: Option<String>,
     /// The network request id of the main-frame navigation whose redirects are being counted,
     /// and how many it has followed. A redirect of another navigation replaces it, and any
     /// document response clears it.
@@ -1102,14 +1104,22 @@ impl Watch {
         let error_page_committed = async {
             while let Some(event) = commits.next().await {
                 if event.frame.id == main_frame && event.frame.unreachable_url.is_some() {
-                    return;
+                    return event;
                 }
             }
-            std::future::pending::<()>().await;
+            std::future::pending::<Arc<EventFrameNavigated>>().await;
         };
+        tokio::pin!(error_page_committed);
         tokio::select! {
             biased;
-            loaded = page.goto(url) => loaded.map(drop),
+            navigated = &mut error_page_committed => {
+                record_commit(&self.page, &navigated);
+                #[cfg(feature = "browser")]
+                {
+                    lock(&self.page.outcome).goto_unsettled = true;
+                }
+                Ok(())
+            }
             () = stopped_after_a_drop => {
                 #[cfg(feature = "browser")]
                 {
@@ -1117,13 +1127,14 @@ impl Watch {
                 }
                 Ok(())
             }
-            () = error_page_committed => {
-                #[cfg(feature = "browser")]
+            loaded = page.goto(url) => {
+                if loaded.is_err()
+                    && let Ok(navigated) = tokio::time::timeout(ACTION_SETTLE_LIMIT, &mut error_page_committed).await
                 {
-                    lock(&self.page.outcome).goto_unsettled = true;
+                    record_commit(&self.page, &navigated);
                 }
-                Ok(())
-            }
+                loaded.map(drop)
+            },
         }
     }
 
@@ -1154,6 +1165,11 @@ impl Watch {
     /// ~keep no document for a 204 or a 2xx download, so the page keeps showing the previous one.
     pub(crate) fn document(&self, loader_id: &str) -> Option<DocumentResponse> {
         lock(&self.page.outcome).documents.get(loader_id).cloned()
+    }
+
+    /// The response paired with Chrome's currently committed main-frame error page.
+    pub(crate) fn committed_error_response(&self) -> Option<(String, DocumentResponse)> {
+        committed_error_response(&lock(&self.page.outcome))
     }
 
     /// The first main-frame document request the check refused since the watch began.
@@ -1531,8 +1547,25 @@ fn commits_of(
 /// Record the loader of a document `page`'s main frame committed.
 fn record_commit(page: &WatchedPage, navigated: &EventFrameNavigated) {
     if navigated.frame.id == page.main_frame {
-        lock(&page.outcome).committed_loader = Some(navigated.frame.loader_id.clone().into());
+        record_main_frame_commit(
+            &page.outcome,
+            navigated.frame.loader_id.as_ref(),
+            navigated.frame.unreachable_url.as_deref(),
+        );
     }
+}
+
+fn record_main_frame_commit(state: &Mutex<InterceptOutcome>, loader_id: &str, unreachable_url: Option<&str>) {
+    let mut state = lock(state);
+    state.committed_loader = Some(loader_id.to_owned());
+    state.committed_unreachable_url = unreachable_url.map(str::to_owned);
+}
+
+fn committed_error_response(state: &InterceptOutcome) -> Option<(String, DocumentResponse)> {
+    let failed_url = state.committed_unreachable_url.clone()?;
+    let loader_id = state.committed_loader.as_deref()?;
+    let response = state.documents.get(loader_id)?.clone();
+    Some((failed_url, response))
 }
 
 /// Stop watching `page` once its watch has ended. Its parked page is let go; a target it
@@ -2668,6 +2701,34 @@ mod tests {
             Some(&vec!["A".to_owned()]),
             "headers are recorded with the status, keyed by lowercase name"
         );
+    }
+
+    #[test]
+    fn an_error_page_commit_is_paired_with_its_recorded_success_response() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("BROKEN", 200), &main_frame, 0, &state),
+            Verdict::Continue(None)
+        ));
+        record_main_frame_commit(&state, "BROKEN", Some("http://example.com/broken"));
+
+        let (failed_url, response) = committed_error_response(&state.lock().expect("state lock"))
+            .expect("the error-page commit must retain its matching response");
+        assert_eq!(failed_url, "http://example.com/broken");
+        assert_eq!(response.status, 200);
+    }
+
+    #[test]
+    fn a_normal_commit_clears_the_recorded_error_page() {
+        let state = Mutex::new(InterceptOutcome::default());
+        record_main_frame_commit(&state, "BROKEN", Some("http://example.com/broken"));
+        record_main_frame_commit(&state, "RECOVERED", None);
+
+        let state = state.into_inner().expect("state lock");
+        assert_eq!(state.committed_loader.as_deref(), Some("RECOVERED"));
+        assert_eq!(state.committed_unreachable_url, None);
+        assert!(committed_error_response(&state).is_none());
     }
 
     #[test]

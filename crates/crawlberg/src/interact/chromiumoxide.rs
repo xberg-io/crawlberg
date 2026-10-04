@@ -249,6 +249,9 @@ async fn ensure_committed_page_is_readable(
     watch: &Watch,
     budget: Duration,
 ) -> Result<(), CrawlError> {
+    if let Some(error) = unreadable_committed_success_error(watch) {
+        return Err(error);
+    }
     let document = tokio::time::timeout(budget, committed_document(page))
         .await
         .map_err(|_| {
@@ -268,10 +271,18 @@ async fn ensure_committed_page_is_readable(
 fn unreadable_success_error(document: &CommittedDocument, watch: &Watch) -> Option<CrawlError> {
     let failed_url = document.unreachable_url.as_deref()?;
     let response = watch.document(&document.loader_id)?;
-    (200..300).contains(&response.status).then(|| {
+    unreadable_response_error(failed_url, response.status)
+}
+
+fn unreadable_committed_success_error(watch: &Watch) -> Option<CrawlError> {
+    let (failed_url, response) = watch.committed_error_response()?;
+    unreadable_response_error(&failed_url, response.status)
+}
+
+fn unreadable_response_error(failed_url: &str, status: u16) -> Option<CrawlError> {
+    (200..300).contains(&status).then(|| {
         CrawlError::browser_error(format!(
-            "Chrome could not read the body of the HTTP {} response from {}",
-            response.status,
+            "Chrome could not read the body of the HTTP {status} response from {}",
             crate::net::redact_url_credentials(failed_url)
         ))
     })
@@ -282,6 +293,9 @@ async fn classify_unreadable_success_within(
     watch: &Watch,
     budget: Duration,
 ) -> Option<CrawlError> {
+    if let Some(error) = unreadable_committed_success_error(watch) {
+        return Some(error);
+    }
     let document = tokio::time::timeout(budget, committed_document(page))
         .await
         .ok()?
