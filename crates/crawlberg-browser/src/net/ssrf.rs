@@ -16,67 +16,49 @@ use std::sync::LazyLock;
 use ipnet::IpNet;
 use url::Url;
 
-/// Private / metadata / loopback CIDRs denied by [`DefaultSsrfValidator`].
-///
-/// Kept in sync with `crawlberg::net::ssrf::DEFAULT_DENY_NETS` by the parity test in
-/// that module, which compares it against [`DEFAULT_DENY_NET_CIDRS`].
-static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|| {
-    DEFAULT_DENY_NET_CIDRS
-        .iter()
-        .zip(DENY_NET_REASONS)
-        .map(|(cidr, reason)| (cidr.parse().expect("literal CIDR"), reason))
-        .collect()
-});
+macro_rules! define_default_deny_net_rules {
+    ($($cidr:literal => $reason:literal),+ $(,)?) => {
+        /// Private / metadata / loopback CIDRs denied by [`DefaultSsrfValidator`], paired
+        /// with the stable reason each refusal reports.
+        pub const DEFAULT_DENY_NET_RULES: &[(&str, &str)] = &[$(($cidr, $reason)),+];
 
-/// The deny-list as source strings, exported so `crawlberg` can assert the two copies
-/// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: &[&str] = &[
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "169.254.0.0/16",
-    "0.0.0.0/8",
-    "224.0.0.0/4",
+        /// The deny-list as source strings.
+        ///
+        /// This remains exported separately for source compatibility. It and
+        /// [`DEFAULT_DENY_NET_RULES`] are emitted from the same rows.
+        pub const DEFAULT_DENY_NET_CIDRS: &[&str] = &[$($cidr),+];
+    };
+}
+
+define_default_deny_net_rules! {
+    "127.0.0.0/8" => "loopback",
+    "10.0.0.0/8" => "private_network",
+    "172.16.0.0/12" => "private_network",
+    "192.168.0.0/16" => "private_network",
+    "169.254.0.0/16" => "link_local",
+    "0.0.0.0/8" => "unspecified",
+    "224.0.0.0/4" => "multicast",
     // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
-    "240.0.0.0/4",
+    "240.0.0.0/4" => "private_network",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
-    "100.64.0.0/10",
-    "::1/128",
+    "100.64.0.0/10" => "private_network",
+    "::1/128" => "loopback",
     // ~keep The IPv6 analogue of 0.0.0.0: a kernel routes connect(::) to a local address, so it
     // ~keep is denied for the same reason 0.0.0.0/8 is. `::1/128` matches only loopback, not `::`.
-    "::/128",
-    "fe80::/10",
-    "fc00::/7",
-    "ff00::/8",
-];
+    "::/128" => "unspecified",
+    "fe80::/10" => "link_local",
+    "fc00::/7" => "unique_local",
+    "ff00::/8" => "multicast",
+}
 
-/// The denial reason each entry of [`DEFAULT_DENY_NET_CIDRS`] reports, in the same order.
-///
-/// ~keep These are the reason strings `crawlberg::net::ssrf`'s `classify_private_ip`
-/// produces, restated as a table rather than re-derived from the octets, so this crate
-/// carries no second copy of the classification logic. The deny-nets are pairwise disjoint,
-/// so the entry that matches is the entry that classifies. Sizing the array from
-/// `DEFAULT_DENY_NET_CIDRS` makes adding a range without a reason a compile error, and
-/// [`DEFAULT_DENY_NETS`] pairs the two at construction so no later lookup can miss and
-/// return "not denied" for an address that is.
-const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
-    "loopback",
-    "private_network",
-    "private_network",
-    "private_network",
-    "link_local",
-    "unspecified",
-    "multicast",
-    "private_network",
-    "private_network",
-    "loopback",
-    "unspecified",
-    "link_local",
-    "unique_local",
-    "multicast",
-];
+/// Parsed deny rules used by [`DefaultSsrfValidator`].
+static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|| {
+    DEFAULT_DENY_NET_RULES
+        .iter()
+        .map(|(cidr, reason)| (cidr.parse().expect("literal CIDR"), *reason))
+        .collect()
+});
 
 /// Refused schemes a refusal names. Any other scheme is not shown: an address written without
 /// a scheme, such as `user:token@host`, parses with its user name as the scheme.

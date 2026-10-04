@@ -8,7 +8,9 @@ pub use crate::net::OriginHeaders;
 pub use crate::net::proxy::{
     ProxyCredentials, ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, UpstreamProxy, check_proxy_url,
 };
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
+pub use crate::net::ssrf::{
+    DEFAULT_DENY_NET_CIDRS, DEFAULT_DENY_NET_RULES, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator,
+};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
