@@ -18,6 +18,7 @@ on:
       - "rust-toolchain.toml"
       - "Taskfile.yml"
       - ".task/languages/rust.yml"
+      - ".task/workflows/dev-cycle.yml"
       # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
       # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
       # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
@@ -28,6 +29,7 @@ on:
       # ~keep a vendored header, or only the check, skipped the very gate it changed.
       - "packages/**/crawlberg.h"
       - "scripts/ci/check-vendored-headers.sh"
+      - "scripts/ci/check-alef-generated.sh"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
   # ~keep before merging any PR that needs its own CI.
@@ -48,6 +50,7 @@ on:
   #     - "rust-toolchain.toml"
   #     - "Taskfile.yml"
   #     - ".task/languages/rust.yml"
+  #     - ".task/workflows/dev-cycle.yml"
   #     # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
   #     # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
   #     # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
@@ -58,6 +61,7 @@ on:
   #     # ~keep a vendored header, or only the check, skipped the very gate it changed.
   #     - "packages/**/crawlberg.h"
   #     - "scripts/ci/check-vendored-headers.sh"
+  #     - "scripts/ci/check-alef-generated.sh"
   workflow_dispatch:
 
 concurrency:
@@ -276,14 +280,33 @@ jobs:
       - name: Run Rust lint checks
         run: task rust:lint:check
 
+      # ~keep Alef's Poly-owned comparison delegates C and shell formatting to these external
+      # ~keep binaries. The direct action revision and requested versions are pinned, but the action
+      # ~keep still uses a nested setup-uv tag and downloads these tools without repo-pinned digests.
+      - name: Install generated-file formatters
+        uses: xberg-io/actions/setup-c-cpp-tools@186952571503f5d7af97675e2cb88d0344e9b9df
+        with:
+          clang-format-version: "22.1.8"
+          install-cppcheck: "false"
+          install-shellcheck: "false"
+          shfmt-version: "3.14.1"
+
       - name: Run C lint checks
         run: task c:lint:check
+
+      # ~keep Pin the direct action revision and requested Poly version. The installer verifies
+      # ~keep the archive against a checksum fetched from the same release, while its nested cache
+      # ~keep action and that mutable checksum asset remain external trust boundaries.
+      - name: Install Poly
+        uses: Goldziher/poly@601463a7592beb1e3f00b18816aea4e15b0d7007
+        with:
+          version: "0.28.2"
 
       - name: Install alef
         uses: xberg-io/actions/install-alef@v1
 
-      - name: Verify binding API parity
-        run: alef verify --exit-code
+      - name: Verify generated bindings and Poly-owned formatting coverage
+        run: task alef:verify
 
       # ~keep The list this step used to carry named one path, packages/go/include/crawlberg.h,
       # ~keep which crates/crawlberg-ffi/build.rs writes in the same call as the canonical header

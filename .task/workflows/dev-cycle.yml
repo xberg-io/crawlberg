@@ -19,7 +19,7 @@ tasks:
   alef:verify:
     desc: Check Alef-generated files are up to date
     cmds:
-      - alef verify --exit-code
+      - ./scripts/ci/check-alef-generated.sh
 
   alef:build:
     desc: Build all language bindings
