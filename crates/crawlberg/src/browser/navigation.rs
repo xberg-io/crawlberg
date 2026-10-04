@@ -779,15 +779,22 @@ mod tests {
             .goto(fixture.url("/one"))
             .await
             .expect("the first document must load");
-        let waited = crate::chrome_frame::NAVIGATE_AFTER_SELECTOR_ROOT
-            .scope(
-                std::cell::Cell::new(Some(fixture.url("/two"))),
-                wait_for_selector(&fixture.page, "[data-selector-ready='yes']"),
-            )
+        let (waited, retries) = crate::chrome_frame::STALE_SELECTOR_ROOT_RETRIES
+            .scope(std::cell::Cell::new(0), async {
+                let waited = crate::chrome_frame::NAVIGATE_AFTER_SELECTOR_ROOT
+                    .scope(
+                        std::cell::Cell::new(Some(fixture.url("/two"))),
+                        wait_for_selector(&fixture.page, "[data-selector-ready='yes']"),
+                    )
+                    .await;
+                let retries = crate::chrome_frame::STALE_SELECTOR_ROOT_RETRIES.with(std::cell::Cell::get);
+                (waited, retries)
+            })
             .await;
         fixture.stop().await;
 
         waited.expect("the selector wait must retry against the replacement document");
+        assert_eq!(retries, 1, "the stale-root recovery branch must run exactly once");
     }
 
     /// A document committed between the render's read of the HTML and its read of the committed

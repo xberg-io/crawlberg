@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::dom::{NodeId, QuerySelectorParams};
 use chromiumoxide::cdp::browser_protocol::page::GetFrameTreeParams;
+use chromiumoxide::error::CdpError;
 
 use crate::error::CrawlError;
 
@@ -20,10 +21,7 @@ const READ_ATTEMPTS: usize = 3;
 const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 /// Wait until `selector` matches the current document.
-pub(crate) async fn wait_for_selector(
-    page: &chromiumoxide::Page,
-    selector: &str,
-) -> Result<(), chromiumoxide::error::CdpError> {
+pub(crate) async fn wait_for_selector(page: &chromiumoxide::Page, selector: &str) -> Result<(), CdpError> {
     loop {
         let root = page.get_document().await?.node_id;
         #[cfg(test)]
@@ -32,7 +30,9 @@ pub(crate) async fn wait_for_selector(
             Ok(response) => response.result.node_id,
             Err(error) => {
                 let current_root = page.get_document().await?.node_id;
-                if current_root != root {
+                if current_root != root && is_stale_selector_root_error(&error) {
+                    #[cfg(test)]
+                    record_stale_selector_root_retry();
                     continue;
                 }
                 return Err(error);
@@ -45,10 +45,26 @@ pub(crate) async fn wait_for_selector(
     }
 }
 
+fn is_stale_selector_root_error(error: &CdpError) -> bool {
+    matches!(
+        error,
+        CdpError::Chrome(error)
+            if error.code == -32000 && error.message == "Could not find node with given id"
+    )
+}
+
 #[cfg(test)]
 tokio::task_local! {
     /// A URL committed once between a selector wait's root lookup and query. ~keep
     pub(crate) static NAVIGATE_AFTER_SELECTOR_ROOT: std::cell::Cell<Option<String>>;
+
+    /// The stale-root recovery count for a selector-wait test. ~keep
+    pub(crate) static STALE_SELECTOR_ROOT_RETRIES: std::cell::Cell<usize>;
+}
+
+#[cfg(test)]
+fn record_stale_selector_root_retry() {
+    let _ = STALE_SELECTOR_ROOT_RETRIES.try_with(|retries| retries.set(retries.get() + 1));
 }
 
 #[cfg(test)]
@@ -207,6 +223,28 @@ pub(crate) fn error_page_error(failed_url: &str) -> CrawlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_concrete_stale_node_protocol_error_is_retryable() {
+        assert!(is_stale_selector_root_error(&CdpError::Chrome(
+            chromiumoxide::types::Error {
+                code: -32000,
+                message: "Could not find node with given id".to_owned(),
+            }
+        )));
+        assert!(!is_stale_selector_root_error(&CdpError::Chrome(
+            chromiumoxide::types::Error {
+                code: -32000,
+                message: "DOM Error while querying".to_owned(),
+            }
+        )));
+        assert!(!is_stale_selector_root_error(&CdpError::Chrome(
+            chromiumoxide::types::Error {
+                code: -32602,
+                message: "Could not find node with given id".to_owned(),
+            }
+        )));
+    }
 
     fn document(loader_id: &str) -> CommittedDocument {
         CommittedDocument {

@@ -53,9 +53,7 @@ impl Respond for SelectorGate {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn browser_selector_waits_for_a_delayed_match() {
-    let test_name = "browser_selector_waits_for_a_delayed_match";
+async fn gated_page() -> (MockServer, Arc<AtomicBool>, Arc<AtomicUsize>) {
     let site = MockServer::start().await;
     let gate_open = Arc::new(AtomicBool::new(false));
     let gate_observed = Arc::new(AtomicUsize::new(0));
@@ -86,6 +84,23 @@ async fn browser_selector_waits_for_a_delayed_match() {
         })
         .mount(&site)
         .await;
+    (site, gate_open, gate_observed)
+}
+
+async fn wait_until_gate_is_observed(observed: &AtomicUsize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while observed.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the loaded page must poll the closed selector gate");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn browser_selector_waits_for_a_delayed_match() {
+    let test_name = "browser_selector_waits_for_a_delayed_match";
+    let (site, gate_open, gate_observed) = gated_page().await;
     let mut config = config(Duration::from_secs(5));
     config.browser.wait = BrowserWait::Selector;
     config.browser.wait_selector = Some("[data-ready='yes']".to_owned());
@@ -94,19 +109,11 @@ async fn browser_selector_waits_for_a_delayed_match() {
 
     let scrape_page = scrape(&engine, &url);
     tokio::pin!(scrape_page);
-    let gate_handshake = async {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while gate_observed.load(Ordering::SeqCst) == 0 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-    };
+    let gate_handshake = wait_until_gate_is_observed(&gate_observed);
     tokio::pin!(gate_handshake);
     let result = tokio::select! {
         result = &mut scrape_page => result,
-        handshake = &mut gate_handshake => {
-            handshake.expect("the loaded page must poll the closed selector gate");
+        () = &mut gate_handshake => {
             gate_open.store(true, Ordering::SeqCst);
             scrape_page.await
         }
@@ -124,13 +131,25 @@ async fn browser_selector_waits_for_a_delayed_match() {
 #[tokio::test(flavor = "multi_thread")]
 async fn interaction_navigation_waits_for_its_configured_selector() {
     let test_name = "interaction_navigation_waits_for_its_configured_selector";
-    let site = page("<html data-ready=\"yes\"><body><p>ready</p></body></html>").await;
+    let (site, gate_open, gate_observed) = gated_page().await;
     let mut config = config(Duration::from_secs(5));
     config.browser.wait = BrowserWait::Selector;
     config.browser.wait_selector = Some("[data-ready='yes']".to_owned());
     let engine = create_engine(Some(config)).expect("the engine must build");
 
-    let result = match interact(&engine, &site.uri(), vec![PageAction::Scrape]).await {
+    let interact_page = interact(&engine, &site.uri(), vec![PageAction::Scrape]);
+    tokio::pin!(interact_page);
+    let gate_handshake = wait_until_gate_is_observed(&gate_observed);
+    tokio::pin!(gate_handshake);
+    let result = tokio::select! {
+        result = &mut interact_page => result,
+        () = &mut gate_handshake => {
+            gate_open.store(true, Ordering::SeqCst);
+            interact_page.await
+        }
+    };
+
+    let result = match result {
         Ok(result) => result,
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
