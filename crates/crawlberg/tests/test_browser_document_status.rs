@@ -1141,6 +1141,53 @@ async fn ping_pong_site() -> MockServer {
     site
 }
 
+/// ~keep A document replacement can cancel a CDP command while the handler stays live. A dead
+/// ~keep handler prefixes the same inner message with the closed-connection cause; that is a failure.
+fn is_document_replacement_error(message: &str) -> bool {
+    if message.starts_with("the browser's CDP connection closed") {
+        return false;
+    }
+    if message.contains("navigated to a new document") {
+        return true;
+    }
+    let Some(channel_error) = message.strip_prefix("failed to read the committed document: ") else {
+        return false;
+    };
+    matches!(
+        channel_error,
+        "oneshot canceled" | "send failed because receiver is gone"
+    )
+}
+
+#[test]
+fn continuous_navigation_should_accept_only_live_connection_command_cancellations() {
+    for (message, expected) in [
+        ("the page navigated to a new document during each of 3 reads", true),
+        ("failed to read the committed document: oneshot canceled", true),
+        (
+            "failed to read the committed document: send failed because receiver is gone",
+            true,
+        ),
+        ("failed to read the committed document: unrelated failure", false),
+        (
+            "the browser's CDP connection closed (websocket reset): oneshot canceled",
+            false,
+        ),
+        (
+            "the browser's CDP connection closed: send failed because receiver is gone",
+            false,
+        ),
+        (
+            "the browser's CDP connection closed: the page navigated to a new document",
+            false,
+        ),
+        ("navigation failed: oneshot canceled", false),
+        ("failed to extract HTML: send failed because receiver is gone", false),
+    ] {
+        assert_eq!(is_document_replacement_error(message), expected, "{message}");
+    }
+}
+
 /// A page that keeps navigating is reported as one document: its status and its HTML belong to
 /// `/one`, or both to `/two`, and so does the final URL read after them. A page that navigates
 /// during each read may fail the fetch instead, but never pairs one document's HTML with
@@ -1157,7 +1204,7 @@ async fn chromiumoxide_reports_the_status_html_and_url_of_one_document() {
         let page = match result {
             Ok(page) => page,
             Err(error) if chrome_missing(test_name, &error) => return,
-            Err(CrawlError::BrowserError { message, .. }) if message.contains("navigated to a new document") => {
+            Err(CrawlError::BrowserError { message, .. }) if is_document_replacement_error(&message) => {
                 continue;
             }
             Err(error) => panic!("{test_name}: attempt {attempt}: {error:?}"),
@@ -1225,7 +1272,7 @@ async fn chromiumoxide_reports_a_page_that_keeps_navigating_without_waiting_for_
         match scrape(&browser, &format!("{}/blank?ms=40", site.uri())).await {
             Ok(_) => {}
             Err(error) if chrome_missing(test_name, &error) => return,
-            Err(CrawlError::BrowserError { message, .. }) if message.contains("navigated to a new document") => {}
+            Err(CrawlError::BrowserError { message, .. }) if is_document_replacement_error(&message) => {}
             Err(error) => panic!("{test_name}: attempt {attempt}: {error:?}"),
         }
         assert!(
