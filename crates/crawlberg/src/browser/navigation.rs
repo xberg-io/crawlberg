@@ -567,6 +567,7 @@ mod tests {
 
     fn error_page(status: u16, redirects: usize) -> Result<HttpResponse, CrawlError> {
         let recorded = DocumentResponse {
+            url: "https://example.com/dl".to_owned(),
             status,
             headers: HashMap::from([("content-type".to_owned(), vec!["text/plain".to_owned()])]),
             redirects,
@@ -634,6 +635,7 @@ mod tests {
     #[test]
     fn an_error_page_for_a_success_response_names_its_status() {
         let recorded = DocumentResponse {
+            url: "https://example.com/broken".to_owned(),
             status: 200,
             headers: HashMap::new(),
             redirects: 0,

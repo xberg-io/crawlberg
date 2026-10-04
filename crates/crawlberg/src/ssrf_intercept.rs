@@ -28,7 +28,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     RequestId as FetchRequestId, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    Cookie, CookieParam, ErrorReason, Headers, ResourceType, TimeSinceEpoch,
+    Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
 };
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
 use chromiumoxide::cdp::browser_protocol::storage::{
@@ -100,6 +100,8 @@ pub(crate) struct InterceptOutcome {
     committed_loader: Option<String>,
     /// The failed URL of that committed document when it is Chrome's error page.
     committed_unreachable_url: Option<String>,
+    /// A recorded main-frame document response whose load Chrome reported as failed.
+    failed_document: Option<String>,
     /// The network request id of the main-frame navigation whose redirects are being counted,
     /// and how many it has followed. A redirect of another navigation replaces it, and any
     /// document response clears it.
@@ -173,6 +175,7 @@ impl std::fmt::Debug for StoppedResponse {
 #[derive(Clone)]
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
 pub(crate) struct DocumentResponse {
+    pub(crate) url: String,
     pub(crate) status: u16,
     /// Response headers, keyed by lowercase name.
     pub(crate) headers: HashMap<String, Vec<String>>,
@@ -184,6 +187,7 @@ impl std::fmt::Debug for DocumentResponse {
     /// Redacted: a sensitive header value, such as a `Set-Cookie`, prints as `***`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
+            url: _,
             status,
             headers,
             redirects,
@@ -369,6 +373,8 @@ struct WatchedPage {
     ending: AtomicBool,
     /// Requests of the page that are paused and whose answer has not been sent yet.
     in_flight: AtomicUsize,
+    /// Wakes navigation when Chrome fails a recorded main-frame document response.
+    document_failed: Notify,
 }
 
 /// The targets and frames each watched page owns.
@@ -632,10 +638,11 @@ enum Command {
     /// The check opened a page: its own target, and its browser context when it has one of its
     /// own.
     Opened(TargetId, Option<BrowserContextId>),
-    /// Watch the page, recording the documents its main frame commits from its navigation events.
+    /// Watch the page, recording main-frame commits and document load failures.
     Watch(
         Arc<WatchedPage>,
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
+        chromiumoxide::listeners::EventStream<EventLoadingFailed>,
         oneshot::Sender<Result<(), String>>,
     ),
     /// Close the page's popups, and the page itself when `close_page` is set, then stop
@@ -980,6 +987,10 @@ impl FirewallHandle {
             .event_listener::<EventFrameNavigated>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register navigation listener: {e}")))?;
+        let failures = page
+            .event_listener::<EventLoadingFailed>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
         let watched = Arc::new(WatchedPage {
             root: page.target_id().clone(),
             main_frame,
@@ -991,10 +1002,11 @@ impl FirewallHandle {
             refused_count: AtomicUsize::new(0),
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
+            document_failed: Notify::new(),
         });
         let (ack, enabled) = oneshot::channel();
         self.commands
-            .send(Command::Watch(Arc::clone(&watched), navigations, ack))
+            .send(Command::Watch(Arc::clone(&watched), navigations, failures, ack))
             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
         let watch = Watch {
             commands: self.commands.clone(),
@@ -1109,11 +1121,30 @@ impl Watch {
             }
             std::future::pending::<Arc<EventFrameNavigated>>().await
         };
+        let document_failed = async {
+            loop {
+                let notified = self.page.document_failed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if lock(&self.page.outcome).failed_document.is_some() {
+                    return;
+                }
+                notified.await;
+            }
+        };
         tokio::pin!(error_page_committed);
+        tokio::pin!(document_failed);
         tokio::select! {
             biased;
             navigated = &mut error_page_committed => {
                 record_commit(&self.page, &navigated);
+                #[cfg(feature = "browser")]
+                {
+                    lock(&self.page.outcome).goto_unsettled = true;
+                }
+                Ok(())
+            }
+            () = &mut document_failed => {
                 #[cfg(feature = "browser")]
                 {
                     lock(&self.page.outcome).goto_unsettled = true;
@@ -1128,10 +1159,13 @@ impl Watch {
                 Ok(())
             }
             loaded = page.goto(url) => {
-                if loaded.is_err()
-                    && let Ok(navigated) = tokio::time::timeout(ACTION_SETTLE_LIMIT, &mut error_page_committed).await
-                {
-                    record_commit(&self.page, &navigated);
+                if loaded.is_err() {
+                    let _ = tokio::time::timeout(ACTION_SETTLE_LIMIT, async {
+                        tokio::select! {
+                            navigated = &mut error_page_committed => record_commit(&self.page, &navigated),
+                            () = &mut document_failed => {}
+                        }
+                    }).await;
                 }
                 loaded.map(drop)
             },
@@ -1167,9 +1201,9 @@ impl Watch {
         lock(&self.page.outcome).documents.get(loader_id).cloned()
     }
 
-    /// The response paired with Chrome's currently committed main-frame error page.
+    /// The response paired with Chrome's main-frame commit or document load failure.
     pub(crate) fn committed_error_response(&self) -> Option<(String, DocumentResponse)> {
-        committed_error_response(&lock(&self.page.outcome))
+        failed_document_response(&lock(&self.page.outcome))
     }
 
     /// The first main-frame document request the check refused since the watch began.
@@ -1325,6 +1359,7 @@ async fn serve(
     let mut stopping: Option<Vec<oneshot::Sender<()>>> = None;
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
+    let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
     loop {
         if draining.is_empty()
             && let Some(stopped) = stopping.take()
@@ -1374,10 +1409,10 @@ async fn serve(
                 Some(Command::Opened(root, context)) => {
                     lock(&shared.registry).opened.insert(root, context);
                 }
-                Some(Command::Watch(_, _, ack)) if stopping.is_some() => {
+                Some(Command::Watch(_, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
-                Some(Command::Watch(page, navigated, ack)) => {
+                Some(Command::Watch(page, navigated, failed, ack)) => {
                     let mut registry = lock(&shared.registry);
                     if !registry.opened.contains_key(&page.root) {
                         drop(registry);
@@ -1390,6 +1425,7 @@ async fn serve(
                     registry.targets.push((page.root.clone(), Arc::clone(&page)));
                     drop(registry);
                     navigations.push(commits_of(&page, navigated));
+                    failures.push(failures_of(&page, failed));
                     let _ = ack.send(Ok(()));
                 }
                 Some(Command::End { page, close_page, done }) => {
@@ -1469,6 +1505,9 @@ async fn serve(
                     }
                 }
             }
+            Some((page, failed)) = failures.next(), if !failures.is_empty() => {
+                record_document_failure(&page, &failed);
+            }
             Some(done) = running.next(), if !running.is_empty() => settle(shared, done),
             Some(done) = draining.next(), if !draining.is_empty() => settle(shared, done),
         }
@@ -1528,6 +1567,7 @@ fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId>
 
 /// A main-frame commit of a watched page: the page and the navigation event.
 type Committed = (Arc<WatchedPage>, Arc<EventFrameNavigated>);
+type Failed = (Arc<WatchedPage>, Arc<EventLoadingFailed>);
 
 /// The navigation events of `page`'s own target, until its watch ends.
 fn commits_of(
@@ -1536,6 +1576,20 @@ fn commits_of(
 ) -> BoxStream<'static, Committed> {
     let page = Arc::clone(page);
     navigated
+        .take_while({
+            let page = Arc::clone(&page);
+            move |_| std::future::ready(!page.ending.load(Ordering::Acquire))
+        })
+        .map(move |event| (Arc::clone(&page), event))
+        .boxed()
+}
+
+fn failures_of(
+    page: &Arc<WatchedPage>,
+    failed: chromiumoxide::listeners::EventStream<EventLoadingFailed>,
+) -> BoxStream<'static, Failed> {
+    let page = Arc::clone(page);
+    failed
         .take_while({
             let page = Arc::clone(&page);
             move |_| std::future::ready(!page.ending.load(Ordering::Acquire))
@@ -1559,13 +1613,54 @@ fn record_main_frame_commit(state: &Mutex<InterceptOutcome>, loader_id: &str, un
     let mut state = lock(state);
     state.committed_loader = Some(loader_id.to_owned());
     state.committed_unreachable_url = unreachable_url.map(str::to_owned);
+    if unreachable_url.is_none() {
+        state.failed_document = None;
+    }
 }
 
-fn committed_error_response(state: &InterceptOutcome) -> Option<(String, DocumentResponse)> {
-    let failed_url = state.committed_unreachable_url.clone()?;
-    let loader_id = state.committed_loader.as_deref()?;
-    let response = state.documents.get(loader_id)?.clone();
-    Some((failed_url, response))
+fn failed_document_response(state: &InterceptOutcome) -> Option<(String, DocumentResponse)> {
+    if let (Some(failed_url), Some(loader_id)) = (&state.committed_unreachable_url, &state.committed_loader)
+        && let Some(response) = state.documents.get(loader_id)
+    {
+        return Some((failed_url.clone(), response.clone()));
+    }
+    let request_id = state.failed_document.as_deref()?;
+    let response = state.documents.get(request_id)?.clone();
+    Some((response.url.clone(), response))
+}
+
+fn record_document_failure(page: &WatchedPage, event: &EventLoadingFailed) {
+    if event.r#type != ResourceType::Document {
+        return;
+    }
+    let mut outcome = lock(&page.outcome);
+    if record_document_failure_outcome(
+        &mut outcome,
+        event.request_id.as_ref(),
+        event.canceled == Some(true),
+        &event.error_text,
+    ) {
+        drop(outcome);
+        page.document_failed.notify_waiters();
+    }
+}
+
+fn record_document_failure_outcome(
+    state: &mut InterceptOutcome,
+    request_id: &str,
+    canceled: bool,
+    error_text: &str,
+) -> bool {
+    if canceled || error_text.eq_ignore_ascii_case("net::ERR_ABORTED") {
+        return false;
+    }
+    if !state.documents.get(request_id).is_some_and(|response| {
+        (200..300).contains(&response.status) && !NO_DOCUMENT_STATUSES.contains(&response.status)
+    }) {
+        return false;
+    }
+    state.failed_document = Some(request_id.to_owned());
+    true
 }
 
 /// Stop watching `page` once its watch has ended. Its parked page is let go; a target it
@@ -1736,7 +1831,13 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     let request_id = event.request_id.clone();
     let _ = match verdict {
-        Verdict::RenderRedirect => continue_inert_redirect(browser, event, _in_flight.as_ref()).await,
+        Verdict::RenderRedirect | Verdict::Stop => {
+            let result = fulfill_inert_document(browser, request_id.clone()).await;
+            if result.is_ok() {
+                complete_stopped_response(_in_flight.as_ref(), &request_id, None);
+            }
+            result
+        }
         Verdict::Continue(_) if is_response_stage(event) => {
             browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
         }
@@ -1744,13 +1845,6 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             let mut params = ContinueRequestParams::new(request_id);
             params.headers = headers;
             browser.execute(params).await.map(drop)
-        }
-        Verdict::Stop => {
-            let result = fulfill_inert_document(browser, request_id.clone()).await;
-            if result.is_ok() {
-                complete_stopped_response(_in_flight.as_ref(), &request_id, None);
-            }
-            result
         }
         Verdict::Refuse => browser
             .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
@@ -1769,7 +1863,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
 enum Verdict {
     /// Let it go out, with these headers in place of its own when set.
     Continue(Option<Vec<HeaderEntry>>),
-    /// ~keep Continue a terminal redirect as inert text without navigation-triggering headers.
+    /// ~keep Replace a terminal redirect with a complete empty inert document.
     RenderRedirect,
     /// ~keep Replace a response that cannot commit with an inert document, then report it as sent.
     Stop,
@@ -1777,24 +1871,6 @@ enum Verdict {
     Refuse,
     /// ~keep Drop a navigation the page must not wait on, so it keeps its document.
     Abort,
-}
-
-async fn continue_inert_redirect(
-    browser: &Browser,
-    event: &EventRequestPaused,
-    in_flight: Option<&InFlight>,
-) -> Result<(), chromiumoxide::error::CdpError> {
-    let mut params = ContinueResponseParams::new(event.request_id.clone());
-    params.response_code = Some(200);
-    params.response_phrase = Some("OK".to_owned());
-    params.response_headers = Some(vec![
-        HeaderEntry::new("Content-Type", "text/plain; charset=utf-8"),
-        HeaderEntry::new("Content-Security-Policy", "default-src 'none'; sandbox"),
-        HeaderEntry::new("X-Content-Type-Options", "nosniff"),
-    ]);
-    browser.execute(params).await.map(drop).map(|_| {
-        complete_stopped_response(in_flight, &event.request_id, None);
-    })
 }
 
 async fn fulfill_inert_document(
@@ -2021,9 +2097,9 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. An empty inert internal document
 /// ~keep ends `goto`; callers still receive the original no-document response.
 /// ~keep A redirect to a non-web address cannot produce another paused request for the listener.
-/// ~keep At the response headers, its status is rewritten to an internal 200 and every original
-/// ~keep header is replaced by a sandboxed `text/plain` set. Chrome can neither follow the
-/// ~keep non-web `Location` nor execute the body; callers receive the original status,
+/// ~keep At the response headers, it is fulfilled as a complete empty internal 200 with a
+/// ~keep sandboxed `text/plain` header set. Chrome can neither wait on the origin body, follow
+/// ~keep the non-web `Location`, nor execute content; callers receive the original status,
 /// ~keep headers and URL with an empty body.
 fn main_frame_verdict(
     event: &EventRequestPaused,
@@ -2049,7 +2125,14 @@ fn main_frame_verdict(
     if let Some(status) = status
         && let Some(network_id) = &event.network_id
     {
-        record_main_frame_response(&mut state, network_id.as_ref(), status, is_redirect, headers);
+        record_main_frame_response(
+            &mut state,
+            network_id.as_ref(),
+            &event.request.url,
+            status,
+            is_redirect,
+            headers,
+        );
     }
     let mut render_redirect = false;
     let stop = match status {
@@ -2142,10 +2225,12 @@ fn spend_redirect(state: &mut InterceptOutcome, limit: usize) -> bool {
 fn record_main_frame_response(
     state: &mut InterceptOutcome,
     network_id: &str,
+    response_url: &str,
     status: u16,
     is_redirect: bool,
     headers: &[HeaderEntry],
 ) {
+    state.failed_document = None;
     let redirects = match state.pending_redirects.take() {
         Some((pending, count)) if pending == network_id => count,
         _ => 0,
@@ -2160,6 +2245,7 @@ fn record_main_frame_response(
     state.documents.insert(
         network_id.to_owned(),
         DocumentResponse {
+            url: crate::net::redact_url_credentials(response_url),
             status,
             headers: header_map(headers),
             redirects,
@@ -2713,7 +2799,7 @@ mod tests {
         ));
         record_main_frame_commit(&state, "BROKEN", Some("http://example.com/broken"));
 
-        let (failed_url, response) = committed_error_response(&state.lock().expect("state lock"))
+        let (failed_url, response) = failed_document_response(&state.lock().expect("state lock"))
             .expect("the error-page commit must retain its matching response");
         assert_eq!(failed_url, "http://example.com/broken");
         assert_eq!(response.status, 200);
@@ -2728,7 +2814,88 @@ mod tests {
         let state = state.into_inner().expect("state lock");
         assert_eq!(state.committed_loader.as_deref(), Some("RECOVERED"));
         assert_eq!(state.committed_unreachable_url, None);
-        assert!(committed_error_response(&state).is_none());
+        assert!(failed_document_response(&state).is_none());
+    }
+
+    #[test]
+    fn a_failed_document_load_is_paired_with_its_recorded_success_response() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("BROKEN", 200), &main_frame, 0, &state),
+            Verdict::Continue(None)
+        ));
+        assert!(record_document_failure_outcome(
+            &mut state.lock().expect("state lock"),
+            "BROKEN",
+            false,
+            "net::ERR_CONTENT_DECODING_FAILED"
+        ));
+
+        let (failed_url, response) = failed_document_response(&state.lock().expect("state lock"))
+            .expect("the load failure must retain its matching response");
+        assert_eq!(failed_url, "http://example.com/BROKEN");
+        assert_eq!(response.status, 200);
+    }
+
+    #[test]
+    fn a_later_normal_response_clears_the_failed_document_load() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("BROKEN", 200), &main_frame, 0, &state),
+            Verdict::Continue(None)
+        ));
+        assert!(record_document_failure_outcome(
+            &mut state.lock().expect("state lock"),
+            "BROKEN",
+            false,
+            "net::ERR_CONTENT_DECODING_FAILED"
+        ));
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("RECOVERED", 200), &main_frame, 0, &state),
+            Verdict::Continue(None)
+        ));
+
+        let state = state.into_inner().expect("state lock");
+        assert_eq!(state.failed_document, None);
+        assert!(failed_document_response(&state).is_none());
+    }
+
+    #[test]
+    fn a_no_document_response_is_not_recorded_as_an_unreadable_success() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("NO-CONTENT", 204), &main_frame, 0, &state),
+            Verdict::Stop
+        ));
+        assert!(!record_document_failure_outcome(
+            &mut state.lock().expect("state lock"),
+            "NO-CONTENT",
+            false,
+            "net::ERR_FAILED"
+        ));
+        assert!(failed_document_response(&state.into_inner().expect("state lock")).is_none());
+    }
+
+    #[test]
+    fn a_canceled_success_response_is_not_recorded_as_an_unreadable_document() {
+        let main_frame = FrameId::new("MAIN");
+        for (canceled, error_text) in [(true, "net::ERR_FAILED"), (false, "net::ERR_ABORTED")] {
+            let state = Mutex::new(InterceptOutcome::default());
+            assert!(matches!(
+                main_frame_verdict(&main_frame_response("SUPERSEDED", 200), &main_frame, 0, &state),
+                Verdict::Continue(None)
+            ));
+            assert!(!record_document_failure_outcome(
+                &mut state.lock().expect("state lock"),
+                "SUPERSEDED",
+                canceled,
+                error_text
+            ));
+            assert!(failed_document_response(&state.into_inner().expect("state lock")).is_none());
+        }
     }
 
     #[test]
@@ -2878,6 +3045,7 @@ mod tests {
             documents: std::collections::HashMap::from([(
                 "loader-1".to_owned(),
                 super::DocumentResponse {
+                    url: "https://example.com/".to_owned(),
                     status: 200,
                     headers,
                     redirects: 0,
