@@ -50,6 +50,7 @@ mod credentials;
 mod debug;
 mod primitives;
 mod sections;
+mod untrusted;
 
 // ~keep These names are the binding-generator surface (`crates/crawlberg-{wasm,node,py,php,ffi}`)
 // ~keep and are re-exported from `crate::types`; the submodule split must stay invisible to them.
@@ -65,6 +66,7 @@ pub(crate) use sections::executable_temp_file;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 pub(crate) use sections::warn_ignored_launch_options;
 pub use sections::{BrowserConfig, ContentConfig};
+pub use untrusted::{UNTRUSTED_CALLER_FORBIDDEN_FIELDS, reject_untrusted_fields};
 pub(crate) use sections::{check_chrome_args, check_chrome_executable};
 
 pub(crate) use primitives::duration_ms;

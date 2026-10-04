@@ -22,6 +22,7 @@ pub(crate) use config::warn_ignored_launch_options;
 pub use config::{
     AuthConfig, BrowserBackend, BrowserConfig, BrowserMode, BrowserWait, ContentConfig, ContentFilterKind, CrawlConfig,
     CrawlStrategyKind, DocumentContentEncoding, ExtractionMeta, ProxyConfig,
+    UNTRUSTED_CALLER_FORBIDDEN_FIELDS, reject_untrusted_fields,
 };
 #[cfg(feature = "browser-chromiumoxide")]
 pub(crate) use config::{check_chrome_args, check_chrome_executable, chrome_switch_name};

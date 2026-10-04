@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex};
 
 use crawlberg::traits::{CompleteEvent, ErrorEvent, EventEmitter, PageEvent};
 use crawlberg::{
-    CrawlConfig, CrawlEngine, CrawlError, CrawlEvent, EventSink, HostMatcher, SsrfError, SsrfPolicy, create_engine,
-    scrape, validate_url,
+    CrawlConfig, CrawlEngine, CrawlError, CrawlEvent, EventSink, HostMatcher, ProxyConfig, SsrfError, SsrfPolicy,
+    create_engine, scrape, validate_url,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -36,6 +36,75 @@ fn default_policy() -> SsrfPolicy {
 
 fn url(s: &str) -> url::Url {
     s.parse().expect("valid URL")
+}
+
+#[tokio::test]
+async fn adopted_operator_policy_should_refuse_each_untrusted_loopback_attack() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("operator policy was bypassed"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let mut deny_private_false = CrawlConfig::default();
+    deny_private_false.ssrf.deny_private = false;
+
+    let mut explicit_false = CrawlConfig::default();
+    explicit_false.ssrf_deny_private_explicit = Some(false);
+
+    let mut loopback_allowlist = CrawlConfig::default();
+    loopback_allowlist
+        .ssrf
+        .allowlist
+        .push(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"));
+
+    let mut loopback_proxy = CrawlConfig::default();
+    loopback_proxy.ssrf.deny_private = false;
+    loopback_proxy.proxy = Some(ProxyConfig {
+        url: mock.uri(),
+        username: None,
+        password: None,
+    });
+
+    let operator = CrawlConfig::builder().allow_private_networks(false).build();
+    for (attack, mut caller) in [
+        ("ssrf.deny_private=false", deny_private_false),
+        ("ssrf_deny_private_explicit=false", explicit_false),
+        ("loopback SSRF allowlist", loopback_allowlist),
+        ("loopback proxy", loopback_proxy),
+    ] {
+        caller.adopt_operator_egress(&operator);
+        let result = scrape(&engine(caller), &mock.uri()).await;
+        assert!(
+            matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            "{attack} must be replaced by the operator policy, got {result:?}"
+        );
+    }
+    mock.verify().await;
+}
+
+#[tokio::test]
+async fn unadopted_untrusted_policy_should_reach_the_loopback_negative_control() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("negative control reached")
+                .append_header("content-type", "text/html"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let caller = CrawlConfig::builder().allow_private_networks(true).build();
+    let result = scrape(&engine(caller), &mock.uri())
+        .await
+        .expect("without operator adoption the same loopback request must reach the mock");
+
+    assert_eq!(result.status_code, 200);
+    mock.verify().await;
 }
 
 /// validate_url must refuse loopback (127.x.x.x) URLs under the default policy.

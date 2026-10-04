@@ -123,7 +123,7 @@ pub use types::{
     ExtractionMeta, FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry, ImageInfo, ImageSource,
     InteractionResult, JsonLdEntry, LinkInfo, LinkType, MapResult, MarkdownResult, ObservedOutcome, PageMetadata,
     ProxyConfig, ResponseMeta, RetryDirective, RetryPolicy, ScrapeResult, SitemapUrl, Tier, WafClassifier,
-    WafClassifyError, WafSignal,
+    UNTRUSTED_CALLER_FORBIDDEN_FIELDS, WafClassifyError, WafSignal, reject_untrusted_fields,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{BatchCrawlStreamRequest, CrawlEvent, CrawlStreamRequest};
