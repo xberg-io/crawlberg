@@ -413,6 +413,8 @@ impl ScratchProfileDir {
         let Some(teardown) = self.0.take() else {
             return;
         };
+        #[cfg(test)]
+        tests::PROFILE_HAND_OFFS_HERE.with(|count| count.set(count.get() + 1));
         let pending = Arc::new(std::sync::Mutex::new(Some(teardown)));
         let worker_pending = Arc::clone(&pending);
         let joined = tokio::task::spawn_blocking(move || {

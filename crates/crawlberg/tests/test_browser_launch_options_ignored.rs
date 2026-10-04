@@ -117,6 +117,7 @@ async fn start_rejected_cdp_endpoint() -> (String, tokio::task::JoinHandle<()>) 
 
 #[cfg(feature = "browser")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
     let config = CrawlConfig {
@@ -140,6 +141,7 @@ async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn the_native_backend_ignores_the_launch_options_with_a_warning() {
     let config = CrawlConfig {
         browser: ignored_launch_options(BrowserConfig {
@@ -161,6 +163,7 @@ async fn the_native_backend_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
     // ~keep The pool's own chrome_path does not exist, so page acquisition fails without
     // ~keep Chrome, after the per-fetch warning is logged.
@@ -195,6 +198,7 @@ async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warning() {
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
     let config = CrawlConfig {
@@ -218,6 +222,7 @@ async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warn
 
 #[cfg(feature = "browser")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
     let (endpoint, handshake) = start_rejected_cdp_endpoint().await;
     let config = CrawlConfig {
@@ -247,6 +252,7 @@ async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn native_interact_ignores_a_browser_profile_with_a_warning() {
     let config = CrawlConfig {
         browser: BrowserConfig {
@@ -273,6 +279,7 @@ async fn native_interact_ignores_a_browser_profile_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warning() {
     let config = CrawlConfig {
         browser: ignored_launch_options(BrowserConfig {
@@ -294,6 +301,7 @@ async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warnin
 
 #[cfg(feature = "browser")]
 #[tokio::test]
+#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn the_ignored_launch_options_warning_gives_only_the_number_of_flags() {
     const SECRET: &str = "sk-live-9f8e7d6c5b4a";
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.

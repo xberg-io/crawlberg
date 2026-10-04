@@ -995,18 +995,24 @@ mod tests {
                 .next_back()
                 .expect("the final refresh target must be requested")
                 .to_lowercase();
+            let cookie_pairs = finish
+                .lines()
+                .filter_map(|line| line.strip_prefix("cookie:"))
+                .flat_map(|value| value.split(';'))
+                .map(str::trim)
+                .collect::<Vec<_>>();
             assert!(
-                finish.contains("cookie: lax=1"),
+                cookie_pairs.contains(&"lax=1"),
                 "Lax must be sent on the top-level GET in {mode:?}: {finish}"
             );
             if mode == crate::types::BrowserMode::Auto {
                 assert!(
-                    finish.contains("strict=1"),
+                    cookie_pairs.contains(&"strict=1"),
                     "HTTP Location must retain the original same-site initiator in {mode:?}: {finish}"
                 );
             } else {
                 assert!(
-                    !finish.contains("strict=1"),
+                    !cookie_pairs.contains(&"strict=1"),
                     "Strict must be withheld across sites in {mode:?}: {finish}"
                 );
             }

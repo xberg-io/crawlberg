@@ -227,11 +227,20 @@ async fn pooled_fetch_applies_the_same_read_bound() {
 #[tokio::test]
 #[serial_test::serial(browser_document_read_timeout)]
 async fn interact_fails_within_browser_timeout_when_the_renderer_is_saturated() {
-    let url = spawn_saturating_renderer_server();
+    let url = spawn_server(|path| (path == "/").then(|| html_response("<p>interaction-page</p>")));
     let engine = create_engine(Some(read_bound_config())).expect("engine must build");
+    // ~keep Installing the getter is itself an interaction action, so the initial committed-page
+    // ~keep check has finished before the final HTML read deterministically blocks in the getter.
+    let actions = vec![PageAction::ExecuteJs {
+        script: "const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML'); \
+            Object.defineProperty(Element.prototype, 'outerHTML', { configurable: true, set: descriptor.set, \
+            get: function(){ const until = Date.now() + 8000; while (Date.now() < until) {} \
+            return descriptor.get.call(this); } });"
+            .to_owned(),
+    }];
 
     let start = Instant::now();
-    let result = interact(&engine, &url, one_short_wait()).await;
+    let result = interact(&engine, &url, actions).await;
     let elapsed = start.elapsed();
 
     assert_bounded_read_error(

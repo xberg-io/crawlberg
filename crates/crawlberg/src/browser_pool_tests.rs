@@ -99,7 +99,7 @@ async fn test_acquire_after_shutdown_fails() {
 }
 
 thread_local! {
-    /// How many [`ScratchProfileDir`]s dropped on this thread, so a test can tell a site dropped one.
+    /// ~keep How many [`ScratchProfileDir`] teardowns this thread handed to a worker.
     pub(crate) static PROFILE_HAND_OFFS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many profile teardowns ran on this thread. An executor thread must see none.
     pub(crate) static PROFILE_TEARDOWNS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -118,7 +118,7 @@ pub(crate) fn fire_reuse_window_hook() {
     }
 }
 
-/// This thread's counts of dropped profile directories and of profile teardowns run on it.
+/// ~keep This thread's counts of profile teardown hand-offs and profile teardowns run on it.
 pub(crate) fn profile_drops_here() -> (usize, usize) {
     (
         PROFILE_HAND_OFFS_HERE.with(std::cell::Cell::get),
@@ -126,10 +126,10 @@ pub(crate) fn profile_drops_here() -> (usize, usize) {
     )
 }
 
-/// Assert that this thread dropped a profile directory since `before` and ran none of its teardown.
+/// ~keep Assert that this thread handed off a profile teardown since `before` and ran none of it.
 pub(crate) fn assert_profile_teardown_left_this_thread(before: (usize, usize)) {
     let (hand_offs, teardowns) = profile_drops_here();
-    assert!(hand_offs > before.0, "the site must drop a profile directory");
+    assert!(hand_offs > before.0, "the site must hand off a profile teardown");
     assert_eq!(
         teardowns, before.1,
         "the profile teardown must run on another thread, not the executor thread that dropped it"
