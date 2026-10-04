@@ -1501,6 +1501,7 @@ impl BrowserPool {
         })
     }
 
+    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
     pub(crate) fn uses_launch_options(&self, browser: &crate::types::BrowserConfig) -> bool {
         // ~keep An external endpoint owns its process flags even if both configs happen to
         // ~keep retain identical values, so those values still need the ignored-option warning.

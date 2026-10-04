@@ -346,6 +346,7 @@ pub(crate) struct FirewallHandle {
 pub(crate) struct Watch {
     commands: mpsc::UnboundedSender<Command>,
     shared: Arc<Shared>,
+    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
     browser: Weak<Browser>,
     page: Arc<WatchedPage>,
     ended: bool,
@@ -529,6 +530,7 @@ impl Registry {
 
 /// The exact context registered for `root`. An entry containing `None` is the browser's shared
 /// context; no entry is an ownership failure and must never fall back to that shared jar. ~keep
+#[cfg_attr(not(feature = "browser"), allow(dead_code))]
 fn registered_context(registry: &Registry, root: &TargetId) -> Result<Option<BrowserContextId>, CrawlError> {
     registry
         .opened
@@ -1194,6 +1196,7 @@ impl FirewallHandle {
 impl Watch {
     /// The browser context this watched page owns, or `None` when it uses the browser's shared
     /// context. Storage-domain cookie commands need this because they run at browser scope. ~keep
+    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
     pub(crate) fn cookie_store(&self) -> Result<(Arc<Browser>, Option<BrowserContextId>), CrawlError> {
         let context = registered_context(&lock(&self.shared.registry), &self.page.root)?;
         let browser = self
