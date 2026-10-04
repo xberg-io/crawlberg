@@ -9,7 +9,7 @@ use crate::{
     StaticProxyProvider,
 };
 
-const EXPECTED_FORBIDDEN_FIELDS: [&str; 12] = [
+const EXPECTED_FORBIDDEN_FIELDS: [&str; 14] = [
     "/ssrf",
     "/ssrf_deny_private_explicit",
     "/max_redirects",
@@ -18,6 +18,8 @@ const EXPECTED_FORBIDDEN_FIELDS: [&str; 12] = [
     "/browser/endpoint",
     "/browser/chrome_path",
     "/browser/chrome_args",
+    "/browser/eval_script",
+    "/browser/session_affinity",
     "/browser_profile",
     "/save_browser_profile",
     "/document_output_dir",
@@ -94,6 +96,8 @@ fn should_adopt_every_serializable_operator_owned_field() {
     caller.browser.endpoint = Some("ws://caller-browser.invalid/devtools/browser/secret".to_owned());
     caller.browser.chrome_path = Some(PathBuf::from("/caller/chrome"));
     caller.browser.chrome_args = vec!["--proxy-server=http://caller-proxy.invalid".to_owned()];
+    caller.browser.eval_script = Some("callerScript()".to_owned());
+    caller.browser.session_affinity = false;
     caller.browser_profile = Some("caller-profile".to_owned());
     caller.save_browser_profile = true;
     caller.document_output_dir = Some(PathBuf::from("/caller/documents"));
@@ -119,6 +123,8 @@ fn should_adopt_every_serializable_operator_owned_field() {
     operator.browser.endpoint = Some("wss://operator-browser.invalid/devtools/browser/capability".to_owned());
     operator.browser.chrome_path = Some(PathBuf::from("/operator/chrome"));
     operator.browser.chrome_args = vec!["--lang=de".to_owned()];
+    operator.browser.eval_script = Some("operatorScript()".to_owned());
+    operator.browser.session_affinity = true;
     operator.browser_profile = Some("operator-profile".to_owned());
     operator.save_browser_profile = false;
     operator.document_output_dir = Some(PathBuf::from("/operator/documents"));
@@ -137,6 +143,8 @@ fn should_adopt_every_serializable_operator_owned_field() {
     assert_eq!(caller.browser.endpoint, operator.browser.endpoint);
     assert_eq!(caller.browser.chrome_path, operator.browser.chrome_path);
     assert_eq!(caller.browser.chrome_args, operator.browser.chrome_args);
+    assert_eq!(caller.browser.eval_script, operator.browser.eval_script);
+    assert_eq!(caller.browser.session_affinity, operator.browser.session_affinity);
     assert_eq!(caller.browser_profile, operator.browser_profile);
     assert_eq!(caller.save_browser_profile, operator.save_browser_profile);
     assert_eq!(caller.document_output_dir, operator.document_output_dir);

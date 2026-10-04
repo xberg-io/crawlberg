@@ -19,6 +19,8 @@ pub const UNTRUSTED_CALLER_FORBIDDEN_FIELDS: &[&str] = &[
     "/browser/endpoint",
     "/browser/chrome_path",
     "/browser/chrome_args",
+    "/browser/eval_script",
+    "/browser/session_affinity",
     "/browser_profile",
     "/save_browser_profile",
     "/document_output_dir",
@@ -28,7 +30,7 @@ pub const UNTRUSTED_CALLER_FORBIDDEN_FIELDS: &[&str] = &[
 /// Reject a raw caller JSON value that sets an operator-owned field to a non-null value.
 ///
 /// The returned error identifies the forbidden JSON pointer but never formats its value, since
-/// proxy URLs, browser endpoints, Chrome arguments, and filesystem paths can contain secrets.
+/// proxy URLs, browser endpoints, scripts, Chrome arguments, and filesystem paths can contain secrets.
 #[cfg_attr(alef, alef(skip))]
 pub fn reject_untrusted_fields(value: &Value) -> Result<(), CrawlError> {
     for &pointer in UNTRUSTED_CALLER_FORBIDDEN_FIELDS {
@@ -57,6 +59,8 @@ impl CrawlConfig {
         self.browser.endpoint = operator.browser.endpoint.clone();
         self.browser.chrome_path = operator.browser.chrome_path.clone();
         self.browser.chrome_args = operator.browser.chrome_args.clone();
+        self.browser.eval_script = operator.browser.eval_script.clone();
+        self.browser.session_affinity = operator.browser.session_affinity;
         self.browser_profile = operator.browser_profile.clone();
         self.save_browser_profile = operator.save_browser_profile;
         self.document_output_dir = operator.document_output_dir.clone();
