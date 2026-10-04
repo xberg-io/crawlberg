@@ -3355,7 +3355,7 @@ mod race_tests {
     async fn target_is_open(
         browser: &Browser,
         target: &chromiumoxide::cdp::browser_protocol::target::TargetId,
-    ) -> bool {
+    ) -> chromiumoxide::error::Result<bool> {
         browser
             .execute(GetTargetsParams::default())
             .await
@@ -3366,7 +3366,6 @@ mod race_tests {
                     .iter()
                     .any(|info| info.target_id == *target)
             })
-            .unwrap_or(false)
     }
 
     /// Stopping the check must turn interception off. The listener is the only thing answering
@@ -4788,7 +4787,9 @@ mod race_tests {
         .await
         .expect("stopping the check must finish");
         let reached = served(&denied_hits).await;
-        let still_open = target_is_open(&browser, &target).await;
+        let still_open = target_is_open(&browser, &target)
+            .await
+            .expect("the browser must answer after the check stops");
         drop(page);
         close(browser).await;
         assert!(
@@ -4849,7 +4850,9 @@ mod race_tests {
         for _ in 0..200 {
             // ~keep Keep a target active so chromiumoxide delivers the closed page's destroy event.
             let _ = keepalive.evaluate("1").await;
-            page_open = target_is_open(&browser, &target).await;
+            page_open = target_is_open(&browser, &target)
+                .await
+                .expect("the browser must answer while the page closes");
             after = context_count(&browser).await;
             if after == before + 1 && !page_open {
                 disposed_after = Some(closed_at.elapsed());
@@ -4937,7 +4940,9 @@ mod race_tests {
             .and_then(|value| value.into_value::<String>().ok())
             .unwrap_or_default();
         watch.close().await;
-        let closed = !target_is_open(&browser, page.target_id()).await;
+        let closed = !target_is_open(&browser, page.target_id())
+            .await
+            .expect("the browser must answer after the watch closes");
         let in_browser = cookie_names(&browser, None).await;
         let next = firewall
             .handle()
@@ -5033,7 +5038,9 @@ mod race_tests {
         .await
         .expect("stopping the check must finish");
         let reached = served(&denied_hits).await;
-        let still_open = target_is_open(&browser, &target).await;
+        let still_open = target_is_open(&browser, &target)
+            .await
+            .expect("the browser must answer after the check stops");
         let (probe, probe_hits) = denied_listener().await;
         let _ = other
             .evaluate(format!("fetch({probe:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
@@ -5138,11 +5145,15 @@ mod race_tests {
         };
         let (firewall, page, watch) = watched_page(&browser, TestDelays::default()).await;
         let target = page.target_id().clone();
-        let open_while_watched = target_is_open(&browser, &target).await;
+        let open_while_watched = target_is_open(&browser, &target)
+            .await
+            .expect("the browser must answer while the page is watched");
         drop(watch);
         let mut still_open = true;
         for _ in 0..50 {
-            still_open = target_is_open(&browser, &target).await;
+            still_open = target_is_open(&browser, &target)
+                .await
+                .expect("the browser must answer while the watch closes");
             if !still_open {
                 break;
             }
