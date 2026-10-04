@@ -7,7 +7,7 @@ use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::cookies::CookieRequestContext;
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
-use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_for_url};
+use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_and_route_for_url};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use crate::redact::{RedactedHeaders, RedactedValues};
@@ -419,8 +419,13 @@ fn build_request_client_with_selector(
 ) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    reqwest_builder_for_url(builder, url, proxy, selector, ssrf)
-        .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?
+    let (builder, route) = reqwest_builder_and_route_for_url(builder, url, proxy, selector, ssrf)
+        .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
+    if route.resolves_target_remotely() {
+        ssrf.validate_remote_resolution(url)
+            .map_err(|error| format!("op_fetch_url blocked by SSRF policy: {error}"))?;
+    }
+    builder
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -1019,6 +1024,40 @@ mod tests {
     #[test]
     fn an_http_proxy_builds_the_client() {
         assert!(client_through("http://proxy.test:8080").is_ok());
+    }
+
+    #[test]
+    fn fetch_client_refuses_only_remote_hostname_resolution_when_policy_requires_it() {
+        #[derive(Debug)]
+        struct RefuseRemoteNames;
+
+        #[async_trait::async_trait]
+        impl SsrfValidator for RefuseRemoteNames {
+            async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn validate_remote_resolution(&self, url: &url::Url) -> Result<(), String> {
+                match url.host() {
+                    Some(url::Host::Domain(_)) => Err("configured network cannot be checked remotely".to_owned()),
+                    _ => Ok(()),
+                }
+            }
+        }
+
+        let proxy = crate::net::proxy::test_proxy("http://proxy.test:8080").expect("valid proxy");
+        let ssrf: Arc<dyn SsrfValidator> = Arc::new(RefuseRemoteNames);
+        let hostname = "http://target.example/".parse().expect("valid hostname URL");
+        let error = build_request_client(Some(&proxy), &ssrf, &hostname)
+            .expect_err("the proxy performs an unbound hostname lookup");
+        assert!(
+            error.contains("configured network cannot be checked remotely"),
+            "{error}"
+        );
+
+        let literal = "http://198.51.100.1/".parse().expect("valid literal URL");
+        build_request_client(Some(&proxy), &ssrf, &literal)
+            .expect("a literal IP is checkable before the proxy request");
     }
 
     fn allow_all() -> Arc<dyn SsrfValidator> {

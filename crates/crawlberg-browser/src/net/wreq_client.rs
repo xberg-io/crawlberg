@@ -146,11 +146,17 @@ impl StealthHttpClient {
 
     fn client_for(&self, url: &Url) -> Result<wreq::Client, NetError> {
         if self.explicit_proxy {
+            self.ssrf
+                .validate_remote_resolution(url)
+                .map_err(NetError::SsrfDenied)?;
             return Ok(self.client.clone());
         }
         let Some(proxy) = self.system_proxy_selector.proxy_for(url)? else {
             return Ok(self.client.clone());
         };
+        self.ssrf
+            .validate_remote_resolution(url)
+            .map_err(NetError::SsrfDenied)?;
         let identity = proxy.identity();
         let mut clients = self
             .environment_clients

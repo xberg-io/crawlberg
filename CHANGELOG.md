@@ -9,7 +9,9 @@ All notable changes to crawlberg are documented here.
 - `SsrfPolicy.denylist` adds deployment-specific CIDR ranges to the built-in SSRF denials.
   Configured ranges override allowlists and `deny_private = false`, apply to DNS answers and
   embedded IPv4 addresses, and are available through JSON config and
-  `CrawlConfigBuilder::ssrf_denylist_cidr`. (#110)
+  `CrawlConfigBuilder::ssrf_denylist_cidr`. Hostname requests are refused when an upstream proxy
+  or remote browser would perform the connection's DNS lookup, because that lookup cannot be
+  bound to the addresses Crawlberg checked. (#110)
 
 ## [1.9.0] - 2026-10-03
 

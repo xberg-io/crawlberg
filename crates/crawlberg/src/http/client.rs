@@ -251,18 +251,32 @@ pub(crate) fn request_client(
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(provider) = &config.proxy_provider {
         let proxy = crate::proxy::pick_proxy(provider.as_ref(), url.host_str().unwrap_or(""))?;
+        if proxy.is_some() {
+            ensure_proxy_can_enforce_denials(config, url)?;
+        }
         return provider_clients(config, provider).client(config, proxy.as_ref());
     }
     #[cfg(not(target_arch = "wasm32"))]
     if config.proxy.is_none()
         && let Some(proxy) = EnvironmentProxy::for_url(url)?
     {
+        ensure_proxy_can_enforce_denials(config, url)?;
         return client_cache()
             .get_or_build_set(config)?
             .environment_client(config, &proxy);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if config.proxy.is_some() {
+        ensure_proxy_can_enforce_denials(config, url)?;
+    }
     let _ = (config, url);
     Ok(client.clone())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_proxy_can_enforce_denials(config: &CrawlConfig, url: &url::Url) -> Result<(), CrawlError> {
+    crate::net::ssrf::validate_remote_resolution(url, &config.ssrf)
+        .map_err(|error| CrawlError::ssrf_violation(url.as_str(), error.to_string()))
 }
 
 /// The clients of one `proxy_provider` config: one for each proxy it picked, and one for
@@ -755,6 +769,40 @@ mod tests {
             ]))),
             ..CrawlConfig::default()
         }
+    }
+
+    #[test]
+    fn custom_denylist_refuses_a_hostname_at_the_proxy_request_boundary() {
+        let mut config = CrawlConfig {
+            proxy: Some(ProxyConfig {
+                url: "http://127.0.0.1:1".to_owned(),
+                ..ProxyConfig::default()
+            }),
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                denylist: vec![crate::HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("the proxy client must build");
+        let hostname = url::Url::parse("http://target.example/").expect("valid hostname URL");
+
+        let error = request_client(&client, &config, &hostname)
+            .expect_err("a proxy can resolve the target to a configured denial after local validation");
+        assert!(
+            error.to_string().contains("denied by SSRF policy: configured_network"),
+            "the custom denial must cause the boundary refusal, got {error}"
+        );
+
+        let literal = url::Url::parse("http://198.51.100.1/").expect("valid literal URL");
+        request_client(&client, &config, &literal)
+            .expect("a permitted literal address needs no remote hostname resolution");
+
+        config.proxy = None;
+        let direct = build_client(&config).expect("the direct client must build");
+        request_client(&direct, &config, &hostname)
+            .expect("the direct client's policy resolver binds validation to its connection");
     }
 
     #[test]

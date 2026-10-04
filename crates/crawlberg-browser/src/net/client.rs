@@ -363,11 +363,17 @@ impl HttpClient {
 
     async fn get_client(&self, url: &Url) -> Result<Client, NetError> {
         if self.proxy.is_some() {
+            self.ssrf
+                .validate_remote_resolution(url)
+                .map_err(NetError::SsrfDenied)?;
             return Ok(self.get_base_client().await.clone());
         }
         let Some(proxy) = self.system_proxy_selector.proxy_for(url)? else {
             return Ok(self.get_base_client().await.clone());
         };
+        self.ssrf
+            .validate_remote_resolution(url)
+            .map_err(NetError::SsrfDenied)?;
         let identity = proxy.identity();
         let mut clients = self.environment_clients.lock().await;
         if let Some(client) = clients.get(&identity) {
@@ -784,6 +790,55 @@ mod tests {
     fn client_with(validator: Arc<RecordingValidator>) -> HttpClient {
         HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, validator, false)
             .expect("no proxy, so the client must build")
+    }
+
+    #[tokio::test]
+    async fn system_proxy_refuses_a_hostname_the_policy_cannot_verify_at_connection_time() {
+        use crate::net::resolver::tests::{TestProxySelector, denied_server};
+
+        #[derive(Debug, Default)]
+        struct RefuseRemoteNames {
+            checked: Mutex<Vec<String>>,
+        }
+
+        #[async_trait::async_trait]
+        impl SsrfValidator for RefuseRemoteNames {
+            async fn validate(&self, _url: &Url) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn validate_remote_resolution(&self, url: &Url) -> Result<(), String> {
+                self.checked.lock().expect("lock").push(url.to_string());
+                match url.host() {
+                    Some(url::Host::Domain(_)) => Err("configured network cannot be checked remotely".to_owned()),
+                    _ => Ok(()),
+                }
+            }
+        }
+
+        let (proxy_port, proxy_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(&format!("http://localhost:{proxy_port}"));
+        let policy = Arc::new(RefuseRemoteNames::default());
+        let client = HttpClient::with_ssrf_and_proxy_selector(Arc::new(CookieJar::new()), policy.clone(), selector);
+
+        let error = client
+            .fetch(&"http://split.example/".parse::<Url>().expect("valid hostname URL"))
+            .await
+            .expect_err("the proxy's later hostname lookup cannot enforce the address policy");
+        assert!(matches!(error, NetError::SsrfDenied(_)));
+        assert!(
+            proxy_requests.lock().expect("lock").is_empty(),
+            "the refusal must happen before the request reaches the proxy"
+        );
+
+        client
+            .fetch(&"http://198.51.100.1/".parse::<Url>().expect("valid literal URL"))
+            .await
+            .expect("a literal IP is checkable before the proxy request");
+        assert_eq!(proxy_requests.lock().expect("lock").len(), 1);
+        assert_eq!(policy.checked.lock().expect("lock").len(), 2);
     }
 
     #[tokio::test]

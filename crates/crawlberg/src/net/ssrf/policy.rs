@@ -36,7 +36,8 @@ pub struct SsrfPolicy {
     /// ~keep Only [`HostMatcher::Cidr`] entries are valid. Configured denials are checked
     /// before permissive settings, including against IPv4 addresses embedded in IPv6 and,
     /// on native targets, every address returned by DNS. They extend the built-in deny-list
-    /// and cannot weaken it.
+    /// and cannot weaken it. A hostname is refused when an upstream proxy or remote browser
+    /// performs the connection lookup, because that lookup cannot be bound to these checks.
     #[serde(default)]
     pub denylist: Vec<HostMatcher>,
 

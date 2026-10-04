@@ -111,6 +111,13 @@ impl ProxyRoute {
             Self::Direct => "direct",
         }
     }
+
+    pub(crate) const fn resolves_target_remotely(self) -> bool {
+        match self {
+            Self::Explicit | Self::System => true,
+            Self::Direct => false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -120,16 +127,6 @@ impl SystemProxySelector for EnvironmentSystemProxySelector {
     fn proxy_for(&self, url: &url::Url) -> Result<Option<SystemProxy>, ProxyError> {
         SystemProxy::for_url(url)
     }
-}
-
-pub(crate) fn reqwest_builder_for_url(
-    builder: reqwest::ClientBuilder,
-    url: &url::Url,
-    explicit: Option<&UpstreamProxy>,
-    selector: &dyn SystemProxySelector,
-    ssrf: &Arc<dyn SsrfValidator>,
-) -> Result<reqwest::ClientBuilder, ProxyError> {
-    reqwest_builder_and_route_for_url(builder, url, explicit, selector, ssrf).map(|(builder, _)| builder)
 }
 
 pub(crate) fn reqwest_builder_and_route_for_url(
@@ -347,12 +344,14 @@ pub(crate) mod tests {
             .expect("direct route");
         assert_eq!(direct, ProxyRoute::Direct);
         assert_eq!(direct.as_str(), "direct");
+        assert!(!direct.resolves_target_remotely());
 
         selector.set_proxy("http://localhost:8080");
         let (_, system) = reqwest_builder_and_route_for_url(reqwest::Client::builder(), &url, None, &selector, &ssrf)
             .expect("system proxy route");
         assert_eq!(system, ProxyRoute::System);
         assert_eq!(system.as_str(), "system");
+        assert!(system.resolves_target_remotely());
 
         let explicit = proxy_from_url("http://localhost:8081").expect("explicit proxy");
         let (_, explicit) =
@@ -360,6 +359,7 @@ pub(crate) mod tests {
                 .expect("explicit proxy route");
         assert_eq!(explicit, ProxyRoute::Explicit);
         assert_eq!(explicit.as_str(), "explicit");
+        assert!(explicit.resolves_target_remotely());
     }
 
     #[tokio::test]

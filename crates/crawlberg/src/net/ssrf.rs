@@ -25,7 +25,9 @@ pub use validate::validate_url;
 #[cfg(all(test, feature = "browser-native"))]
 pub(crate) use validate::{DEFAULT_DENY_NET_RULES, NAMED_SCHEMES};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use validate::{classify_private_ip, custom_denial_reason, denial_reason, is_ip_permitted};
+pub(crate) use validate::{
+    classify_private_ip, custom_denial_reason, denial_reason, is_ip_permitted, validate_remote_resolution,
+};
 
 #[cfg(test)]
 pub(crate) use cases::EMBEDDED_IPV4_CASES;

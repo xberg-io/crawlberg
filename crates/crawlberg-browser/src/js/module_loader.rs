@@ -160,6 +160,10 @@ impl ModuleLoader for BrowserModuleLoader {
                     &ssrf,
                 )
                 .map_err(|e| io_err(format!("Invalid module proxy: {e}")))?;
+                if route.resolves_target_remotely() {
+                    ssrf.validate_remote_resolution(&current)
+                        .map_err(|error| io_err(format!("Module {current} blocked by SSRF policy: {error}")))?;
+                }
                 tracing::debug!(url = %current, proxy_route = route.as_str(), "loading ES module");
                 let client = builder.build().map_err(|e| io_err(format!("HTTP client error: {e}")))?;
                 let mut request = client
@@ -251,6 +255,23 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct RefuseRemoteNames;
+
+    #[async_trait::async_trait]
+    impl SsrfValidator for RefuseRemoteNames {
+        async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn validate_remote_resolution(&self, url: &url::Url) -> Result<(), String> {
+            match url.host() {
+                Some(url::Host::Domain(_)) => Err("configured network cannot be checked remotely".to_owned()),
+                _ => Ok(()),
+            }
+        }
+    }
+
     async fn module_fetch(proxy: UpstreamProxy, specifier: &str) -> Result<String, String> {
         let loader = BrowserModuleLoader::with_ssrf(
             "http://origin.test/",
@@ -297,6 +318,26 @@ mod tests {
             "the module must come from the proxy: {source}"
         );
         credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/module.js");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_module_hostname_is_refused_before_an_unbound_proxy_lookup() {
+        let proxy = crate::net::proxy::test_proxy("http://127.0.0.1:1").expect("valid proxy");
+        let loader = BrowserModuleLoader::with_ssrf(
+            "http://origin.test/",
+            Some(proxy),
+            Arc::new(RefuseRemoteNames),
+            Rc::new(RefCell::new(JsOpState::new())),
+        );
+
+        let error = load_module(&loader, "http://target.example/module.js")
+            .await
+            .expect_err("the proxy performs an unbound hostname lookup");
+
+        assert!(
+            error.contains("configured network cannot be checked remotely"),
+            "the policy refusal must happen before a proxy connection error: {error}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

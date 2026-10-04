@@ -259,6 +259,13 @@ pub(crate) enum BrowserOrigin {
 }
 
 impl BrowserOrigin {
+    const fn resolves_target_remotely(self) -> bool {
+        match self {
+            Self::Launched | Self::Killed => false,
+            Self::External => true,
+        }
+    }
+
     /// The origin of a browser reached through `endpoint`, if one is configured.
     pub(crate) fn of_endpoint(endpoint: Option<&str>) -> Self {
         if endpoint.is_some() {
@@ -2278,9 +2285,13 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
             let _ = gate.permits.acquire().await;
         }
     }
-    #[cfg(not(test))]
-    let _ = shared;
-    let (url, reason) = match ssrf_verdict(&event.request.url, &page.config.ssrf).await {
+    let (url, reason) = match ssrf_verdict_for_browser(
+        &event.request.url,
+        &page.config.ssrf,
+        shared.origin.resolves_target_remotely(),
+    )
+    .await
+    {
         Ok(parsed) => {
             if !navigation_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome) {
                 return Verdict::Abort;
@@ -2330,12 +2341,25 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
 /// at the CDP layer. A URL with userinfo is refused, as the Fetch standard does for
 /// subresources, and is recorded without it. This is the per-request decision applied to
 /// every browser-issued request.
+#[cfg(test)]
 async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<url::Url, (String, String)> {
+    ssrf_verdict_for_browser(request_url, policy, false).await
+}
+
+async fn ssrf_verdict_for_browser(
+    request_url: &str,
+    policy: &SsrfPolicy,
+    remote_resolution: bool,
+) -> Result<url::Url, (String, String)> {
     let parsed = url::Url::parse(request_url).map_err(|e| (UNPARSEABLE_URL.to_owned(), format!("invalid URL: {e}")))?;
     if userinfo::has_userinfo(&parsed) {
         let mut clean = parsed;
         userinfo::strip(&mut clean);
         return Err((clean.into(), "a URL with credentials in it is refused".to_owned()));
+    }
+    if remote_resolution {
+        crate::net::ssrf::validate_remote_resolution(&parsed, policy)
+            .map_err(|e| (parsed.to_string(), e.to_string()))?;
     }
     validate_url(&parsed, policy)
         .await
@@ -2611,7 +2635,7 @@ mod tests {
     //! and scheme rejections that require no DNS resolution or network.
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use tokio::sync::Notify;
 
@@ -2619,9 +2643,9 @@ mod tests {
         BrowserContextId, BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId,
         FrameId, HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
         WatchedPage, adopt_target, begin_ending, complete_stopped_response_outcome, events_of,
-        failed_document_response, install_watch, lock, main_frame_verdict, navigation_verdict, reconcile_created,
-        reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit, registered_context, release,
-        require_main_frame, ssrf_verdict,
+        failed_document_response, install_watch, judge, lock, main_frame_verdict, navigation_verdict,
+        reconcile_created, reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit,
+        registered_context, release, require_main_frame, ssrf_verdict, ssrf_verdict_for_browser,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2725,6 +2749,59 @@ mod tests {
         assert!(
             verdict.is_ok(),
             "the explicit allowlist must override the private-address denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_browser_refuses_hostname_when_custom_denials_cannot_be_bound_to_its_lookup() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![crate::net::ssrf::HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+
+        let error = ssrf_verdict_for_browser("http://target.example/", &policy, true)
+            .await
+            .expect_err("an external browser performs a later, unbound hostname lookup");
+        assert_eq!(error.1, "denied by SSRF policy: configured_network");
+
+        let literal = ssrf_verdict_for_browser("http://198.51.100.1/", &policy, true).await;
+        assert!(
+            literal.is_ok(),
+            "a permitted literal address remains decidable at the external-browser boundary: {literal:?}"
+        );
+
+        let no_custom_denials = SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![crate::net::ssrf::HostMatcher::exact("target.example")],
+            ..SsrfPolicy::default()
+        };
+        let hostname = ssrf_verdict_for_browser("http://target.example/", &no_custom_denials, true).await;
+        assert!(
+            hostname.is_ok(),
+            "remote hostname resolution is refused specifically when custom networks must be enforced: {hostname:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_browser_judges_the_remote_resolution_boundary_before_navigation() {
+        let mut page = watched("MAIN");
+        Arc::get_mut(&mut page).expect("the fixture has one owner").config.ssrf = SsrfPolicy {
+            allowlist: vec![crate::net::ssrf::HostMatcher::exact("localhost")],
+            denylist: vec![crate::net::ssrf::HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+        let shared = shared_with(&page, "OTHER");
+        let event = main_frame_request("http://localhost/", false);
+
+        let verdict = judge(&shared, &page, &event, Instant::now()).await;
+
+        assert!(matches!(verdict, Verdict::Refuse));
+        let outcome = page.outcome.lock().expect("outcome lock");
+        assert_eq!(
+            outcome.blocked.as_ref().map(|(_, reason)| reason.as_str()),
+            Some("denied by SSRF policy: configured_network"),
+            "without the external-browser boundary, localhost is admitted by its exact allowlist"
         );
     }
 

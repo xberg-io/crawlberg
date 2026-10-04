@@ -158,6 +158,21 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
     }
 }
 
+/// Refuse a hostname when another process will resolve it and configured deny networks exist.
+///
+/// ~keep A local validation lookup cannot constrain a proxy or remote browser's later lookup.
+/// Literal addresses need no remote lookup and remain governed by [`validate_url`]; a hostname
+/// is refused unless the connection uses the locally validated resolver path.
+pub(crate) fn validate_remote_resolution(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
+    policy.validate_denylist().map_err(SsrfError::InvalidCidr)?;
+    match url.host() {
+        Some(url::Host::Domain(_)) if !policy.denylist.is_empty() => Err(SsrfError::DeniedByPolicy {
+            reason: "configured_network",
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// Decide one address, naming the reason when the policy refuses it.
 fn check_ip(ip: IpAddr, policy: &SsrfPolicy) -> Result<(), SsrfError> {
     match denial_reason(ip, policy) {

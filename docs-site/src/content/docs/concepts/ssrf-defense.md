@@ -183,6 +183,13 @@ configuration validation. The JSON form uses the same tagged CIDR representation
 ]}}
 ```
 
+A hostname cannot be checked against an address denylist when its final DNS lookup happens in an
+upstream HTTP/SOCKS proxy or in a browser connected through `browser.endpoint`: that remote lookup
+is not bound to Crawlberg's validated addresses. With a non-empty custom denylist, Crawlberg
+therefore refuses hostname requests on those routes before they leave the process. Literal IP URLs
+remain available when their address passes the policy. Use direct egress, where Crawlberg controls
+the connection lookup, or enforce the same deny networks at the remote proxy/browser boundary.
+
 ## What happens when a request is refused
 
 Errors are typed:

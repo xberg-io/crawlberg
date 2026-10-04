@@ -98,6 +98,14 @@ pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Return `Ok(())` if `url` may be fetched.
     async fn validate(&self, url: &Url) -> Result<(), String>;
 
+    /// Return `Ok(())` when a proxy or another process may resolve `url`'s hostname.
+    ///
+    /// Validators with address-based custom policy override this to fail closed when the
+    /// remote lookup cannot be bound to the connection. Literal IP hosts remain checkable.
+    fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Resolve `host` and return the addresses a connection to it may use.
     ///
     /// The native clients connect only to the addresses this returns (see

@@ -43,6 +43,20 @@ impl CoreSsrfValidator {
             refused,
         }
     }
+
+    fn record_refusal(&self, url: &Url, reason: &str) {
+        let redacted = crate::net::redact_url_credentials(url.as_str());
+        let mut refused = self.refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        refused.count += 1;
+        // ~keep The page decides how many requests it sends, so it must not decide the log
+        // ~keep volume: the first refusals are logged one by one, and the end reports the count.
+        if refused.count <= LOGGED_REFUSALS {
+            tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
+        }
+        if refused.urls.len() < MAX_REFUSED_URLS && !refused.urls.contains(&redacted) {
+            refused.urls.push(redacted);
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -50,17 +64,16 @@ impl SsrfValidator for CoreSsrfValidator {
     async fn validate(&self, url: &Url) -> Result<(), String> {
         let verdict = validate_url(url, &self.policy).await.map_err(|e| e.to_string());
         if let Err(reason) = &verdict {
-            let redacted = crate::net::redact_url_credentials(url.as_str());
-            let mut refused = self.refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            refused.count += 1;
-            // ~keep The page decides how many requests it sends, so it must not decide the log
-            // ~keep volume: the first refusals are logged one by one, and the end reports the count.
-            if refused.count <= LOGGED_REFUSALS {
-                tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
-            }
-            if refused.urls.len() < MAX_REFUSED_URLS && !refused.urls.contains(&redacted) {
-                refused.urls.push(redacted);
-            }
+            self.record_refusal(url, reason);
+        }
+        verdict
+    }
+
+    fn validate_remote_resolution(&self, url: &Url) -> Result<(), String> {
+        let verdict =
+            crate::net::ssrf::validate_remote_resolution(url, &self.policy).map_err(|error| error.to_string());
+        if let Err(reason) = &verdict {
+            self.record_refusal(url, reason);
         }
         verdict
     }
@@ -236,6 +249,26 @@ mod tests {
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect("an allowlisted range must be permitted through the bridge");
+    }
+
+    #[test]
+    fn browser_bridge_refuses_remote_hostname_resolution_for_custom_denials() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+        let (validator, refused) = recording_validator_for(&policy);
+
+        let error = validator
+            .validate_remote_resolution(&"http://target.example/".parse::<Url>().expect("valid hostname URL"))
+            .expect_err("a remote lookup cannot enforce the custom network denial");
+        assert_eq!(error, "denied by SSRF policy: configured_network");
+        assert_eq!(take_refused(&refused), ["http://target.example/"]);
+
+        validator
+            .validate_remote_resolution(&"http://198.51.100.1/".parse::<Url>().expect("valid literal URL"))
+            .expect("a permitted literal address is fully checkable before the request");
     }
 
     #[tokio::test]
