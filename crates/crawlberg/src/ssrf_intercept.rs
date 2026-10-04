@@ -3220,6 +3220,27 @@ mod race_tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn checking_a_target_on_a_dead_chrome_returns_an_error() {
+        let test_name = "checking_a_target_on_a_dead_chrome_returns_an_error";
+        let Some(mut browser) = launch(test_name).await else {
+            return;
+        };
+        let chrome = Arc::get_mut(&mut browser).expect("the test holds the only reference to its browser");
+        let killed = chrome.kill().await;
+        assert!(
+            matches!(killed, Some(Ok(()))),
+            "the launched Chrome must be killed: {killed:?}"
+        );
+
+        let checked = target_is_open(&browser, &TargetId::new("missing"));
+        let reply = tokio::time::timeout(Duration::from_secs(20), checked).await;
+        assert!(
+            matches!(reply, Ok(Err(_))),
+            "checking a target on a dead Chrome must return an error within 20 s"
+        );
+    }
+
     /// Allow `localhost`, where the test pages are served, and refuse the loopback address.
     fn config() -> crate::types::CrawlConfig {
         crate::types::CrawlConfig::builder()
