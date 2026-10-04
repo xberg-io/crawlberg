@@ -2,8 +2,9 @@
 //! STUN probe and a host name Chrome would resolve again must not reach a denied address, on
 //! the page paths that can originate each primitive. Each WebSocket row has an allowlisted twin,
 //! and each page also fetches a denied address, which must be refused, so a row that sends nothing
-//! because the page never ran cannot pass. WebRTC has a positive control on the action path;
-//! isolated one-shot contexts do not emit the STUN probe even with the policy disabled.
+//! because the page never ran cannot pass. WebRTC positive controls use a real STUN response,
+//! and the default isolated one-shot path separately proves the launched scratch profile carries
+//! Chrome's UDP-blocking policy.
 
 #![cfg(feature = "browser")]
 
@@ -21,7 +22,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-use common::{announce_chrome_skip, announce_skip, is_missing_chrome_message};
+use common::{announce_chrome_skip, announce_skip, is_missing_chrome_message, is_snap_executable};
 
 static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const EGRESS_COMPLETION_SETUP: &str = r#"
@@ -106,8 +107,8 @@ async fn counting_tcp(address: SocketAddr) -> (SocketAddr, Arc<AtomicUsize>) {
     (bound, count)
 }
 
-/// A UDP socket on `ip` that counts datagrams.
-async fn counting_udp(ip: IpAddr) -> (u16, Arc<AtomicUsize>) {
+/// ~keep Count every probe while answering valid STUN binding requests so ICE can complete.
+async fn stun_server(ip: IpAddr) -> (u16, Arc<AtomicUsize>) {
     let socket = tokio::net::UdpSocket::bind(SocketAddr::new(ip, 0))
         .await
         .expect("the test socket must bind");
@@ -116,11 +117,89 @@ async fn counting_udp(ip: IpAddr) -> (u16, Arc<AtomicUsize>) {
     let counted = Arc::clone(&count);
     tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
-        while socket.recv_from(&mut buffer).await.is_ok() {
+        while let Ok((len, peer)) = socket.recv_from(&mut buffer).await {
             counted.fetch_add(1, Ordering::SeqCst);
+            if let Some(response) = stun_binding_success(&buffer[..len], peer) {
+                let _ = socket.send_to(&response, peer).await;
+            }
         }
     });
     (port, count)
+}
+
+fn stun_binding_success(request: &[u8], peer: SocketAddr) -> Option<Vec<u8>> {
+    const BINDING_REQUEST: [u8; 2] = [0, 1];
+    const MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xa4, 0x42];
+    if request.len() < 20 || request[..2] != BINDING_REQUEST || request[4..8] != MAGIC_COOKIE {
+        return None;
+    }
+    let message_len = usize::from(u16::from_be_bytes([request[2], request[3]]));
+    if !message_len.is_multiple_of(4) || request.len() < 20 + message_len {
+        return None;
+    }
+
+    let (family, encoded_address) = match peer.ip() {
+        IpAddr::V4(ip) => {
+            let encoded = ip
+                .octets()
+                .into_iter()
+                .zip(MAGIC_COOKIE)
+                .map(|(address, mask)| address ^ mask)
+                .collect::<Vec<_>>();
+            (1, encoded)
+        }
+        IpAddr::V6(ip) => {
+            let mut mask = [0u8; 16];
+            mask[..4].copy_from_slice(&MAGIC_COOKIE);
+            mask[4..].copy_from_slice(&request[8..20]);
+            let encoded = ip
+                .octets()
+                .into_iter()
+                .zip(mask)
+                .map(|(address, mask)| address ^ mask)
+                .collect::<Vec<_>>();
+            (2, encoded)
+        }
+    };
+    let attribute_len = encoded_address.len() + 4;
+    let attribute_len = u16::try_from(attribute_len).expect("a STUN address attribute must fit in u16");
+    let mut response = Vec::with_capacity(28 + encoded_address.len());
+    response.extend_from_slice(&[1, 1]);
+    response.extend_from_slice(&(attribute_len + 4).to_be_bytes());
+    response.extend_from_slice(&MAGIC_COOKIE);
+    response.extend_from_slice(&request[8..20]);
+    response.extend_from_slice(&[0, 0x20]);
+    response.extend_from_slice(&attribute_len.to_be_bytes());
+    response.extend_from_slice(&[0, family]);
+    response.extend_from_slice(&(peer.port() ^ 0x2112).to_be_bytes());
+    response.extend_from_slice(&encoded_address);
+    Some(response)
+}
+
+#[test]
+fn a_stun_binding_request_receives_an_xor_mapped_success_response() {
+    let request = [
+        0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+        0x0b, 0x0c,
+    ];
+    let peer = SocketAddr::from(([192, 0, 2, 1], 3478));
+    let response = stun_binding_success(&request, peer).expect("a binding request must receive a response");
+
+    assert_eq!(
+        response,
+        [
+            0x01, 0x01, 0x00, 0x0c, 0x21, 0x12, 0xa4, 0x42, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            0x0b, 0x0c, 0x00, 0x20, 0x00, 0x08, 0x00, 0x01, 0x2c, 0x84, 0xe1, 0x12, 0xa6, 0x43,
+        ]
+    );
+}
+
+#[test]
+fn a_non_stun_datagram_receives_no_response() {
+    assert_eq!(
+        stun_binding_success(b"not a STUN request", SocketAddr::from(([127, 0, 0, 1], 3478))),
+        None
+    );
 }
 
 /// A denied listener every page fetches, and the script that fetches it.
@@ -453,7 +532,7 @@ async fn a_websocket_to_an_allowed_address_connects_with_a_browser_profile() {
 /// A WebTransport session to a denied UDP port. The twin turns `deny_private` off, so the same
 /// page does send, which shows the count can see a datagram.
 async fn webtransport_row(test_name: &str, deny_private: bool) {
-    let (port, datagrams) = counting_udp(IpAddr::from([127, 0, 0, 1])).await;
+    let (port, datagrams) = stun_server(IpAddr::from([127, 0, 0, 1])).await;
     let (refused, fetch) = control().await;
     let script = format!(
         r#"
@@ -514,7 +593,7 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
         );
         return;
     };
-    let (port, datagrams) = counting_udp(ip).await;
+    let (port, datagrams) = stun_server(ip).await;
     let (refused, fetch) = control().await;
     // ~keep ICE gathering completion follows the STUN attempts instead of racing them against a
     // ~keep fixed timer; loopback STUN destinations can be rejected inside Chrome without a probe.
@@ -569,6 +648,72 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
             datagrams >= 1,
             "{test_name}: with deny_private off the same page must send"
         );
+    }
+}
+
+#[cfg(unix)]
+fn shell_quote(path: &std::path::Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
+/// ~keep Prove the ordinary one-shot branch writes WebRTC policy into its launched scratch
+/// ~keep profile even though no caller supplied a `browser_profile`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn default_one_shot_disables_non_proxied_udp_in_its_launched_profile() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let test_name = "default_one_shot_disables_non_proxied_udp_in_its_launched_profile";
+    let real_chrome = match chromiumoxide::detection::default_executable(Default::default()) {
+        Ok(path) => path,
+        Err(message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+    };
+    let real_chrome_is_snap = is_snap_executable(&real_chrome);
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let snapshot = dir.path().join("Preferences.snapshot");
+    let wrapper = dir.path().join("chrome-wrapper.sh");
+    let script = format!(
+        "#!/bin/sh\nprofile=''\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --user-data-dir=*) profile=${{arg#*=}} ;;\n  esac\ndone\ncp \"$profile/Default/Preferences\" {}\nexec {} \"$@\"\n",
+        shell_quote(&snapshot),
+        shell_quote(&real_chrome)
+    );
+    std::fs::write(&wrapper, script).expect("the wrapper must be writable");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).expect("the wrapper must be executable");
+
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&site)
+        .await;
+    let mut config = config(Vec::new());
+    assert_eq!(
+        config.browser_profile, None,
+        "the default one-shot path must be under test"
+    );
+    config.browser.chrome_path = Some(wrapper);
+    let engine = create_engine(Some(config)).expect("the engine must build");
+    let result = scrape(&engine, &format!("http://localhost:{}/", site.address().port())).await;
+
+    let preferences: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&snapshot).expect("the launched wrapper must snapshot its scratch profile preferences"),
+    )
+    .expect("the profile preferences must be JSON");
+    assert_eq!(
+        preferences.pointer("/webrtc/ip_handling_policy"),
+        Some(&serde_json::Value::String("disable_non_proxied_udp".to_owned()))
+    );
+    match result {
+        Ok(_) => {}
+        Err(CrawlError::BrowserError { message, .. })
+            if real_chrome_is_snap && message.contains("the browser did not use crawlberg's profile directory") =>
+        {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(error) => panic!("the default one-shot scrape must succeed after the policy snapshot: {error:?}"),
     }
 }
 
