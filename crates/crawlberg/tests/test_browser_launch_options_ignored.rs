@@ -16,11 +16,11 @@ use std::time::Duration;
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, PageAction, create_engine, interact, scrape};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tracing::instrument::WithSubscriber;
 
 const IGNORED_WARNING: &str = "browser.chrome_path and browser.chrome_args are ignored when";
 const IGNORED_PROFILE_WARNING: &str = "browser_profile is ignored by interact";
 
-/// Every log line written while the returned guard is alive, on this thread.
 #[derive(Clone, Default)]
 struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
 
@@ -40,9 +40,7 @@ impl CapturedLogs {
     }
 }
 
-/// Install a thread-local subscriber that records WARN and above. The tests run on tokio's
-/// current-thread runtime, so every task the fetch spawns logs through it.
-fn capture_warnings() -> (CapturedLogs, tracing::subscriber::DefaultGuard) {
+fn capture_warnings() -> (CapturedLogs, tracing::Dispatch) {
     let logs = CapturedLogs::default();
     let writer = logs.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -50,7 +48,7 @@ fn capture_warnings() -> (CapturedLogs, tracing::subscriber::DefaultGuard) {
         .with_ansi(false)
         .with_writer(move || writer.clone())
         .finish();
-    (logs, tracing::subscriber::set_default(subscriber))
+    (logs, tracing::Dispatch::new(subscriber))
 }
 
 /// Launch options that would refuse the config if they were checked: the path does not exist.
@@ -117,7 +115,6 @@ async fn start_rejected_cdp_endpoint() -> (String, tokio::task::JoinHandle<()>) 
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
     let config = CrawlConfig {
@@ -128,10 +125,14 @@ async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
         }),
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
-    let url = start_page_server().await;
-    let _ = scrape(&engine, &url).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
+        let url = start_page_server().await;
+        let _ = scrape(&engine, &url).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("browser.endpoint"),
@@ -141,7 +142,6 @@ async fn an_external_endpoint_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn the_native_backend_ignores_the_launch_options_with_a_warning() {
     let config = CrawlConfig {
         browser: ignored_launch_options(BrowserConfig {
@@ -150,10 +150,14 @@ async fn the_native_backend_ignores_the_launch_options_with_a_warning() {
         }),
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("a native config must not be refused for ignored options");
-    let url = start_page_server().await;
-    let _ = scrape(&engine, &url).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("a native config must not be refused for ignored options");
+        let url = start_page_server().await;
+        let _ = scrape(&engine, &url).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("native browser backend"),
@@ -163,7 +167,6 @@ async fn the_native_backend_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
     // ~keep The pool's own chrome_path does not exist, so page acquisition fails without
     // ~keep Chrome, after the per-fetch warning is logged.
@@ -185,10 +188,14 @@ async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
         browser_pool: Some(pool),
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("a pooled config with valid launch options must build");
-    let url = start_page_server().await;
-    let _ = scrape(&engine, &url).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("a pooled config with valid launch options must build");
+        let url = start_page_server().await;
+        let _ = scrape(&engine, &url).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("browser_pool"),
@@ -198,7 +205,6 @@ async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warning() {
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
     let config = CrawlConfig {
@@ -209,10 +215,14 @@ async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warn
         }),
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
-    let url = start_page_server().await;
-    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
+        let url = start_page_server().await;
+        let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("browser.endpoint"),
@@ -222,7 +232,6 @@ async fn interact_on_an_external_endpoint_ignores_the_launch_options_with_a_warn
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
     let (endpoint, handshake) = start_rejected_cdp_endpoint().await;
     let config = CrawlConfig {
@@ -238,11 +247,15 @@ async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
         save_browser_profile: true,
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("an interact profile config must build");
-    let url = start_page_server().await;
-    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
-    handshake.await.expect("the test CDP endpoint task should finish");
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("an interact profile config must build");
+        let url = start_page_server().await;
+        let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+        handshake.await.expect("the test CDP endpoint task should finish");
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_PROFILE_WARNING) && logs.contains("ignored-interact-profile"),
@@ -252,7 +265,6 @@ async fn chromiumoxide_interact_ignores_a_browser_profile_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn native_interact_ignores_a_browser_profile_with_a_warning() {
     let config = CrawlConfig {
         browser: BrowserConfig {
@@ -266,10 +278,14 @@ async fn native_interact_ignores_a_browser_profile_with_a_warning() {
         save_browser_profile: true,
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("a native interact profile config must build");
-    let url = start_page_server().await;
-    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("a native interact profile config must build");
+        let url = start_page_server().await;
+        let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_PROFILE_WARNING) && logs.contains("ignored-native-interact-profile"),
@@ -279,7 +295,6 @@ async fn native_interact_ignores_a_browser_profile_with_a_warning() {
 
 #[cfg(feature = "browser-native")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warning() {
     let config = CrawlConfig {
         browser: ignored_launch_options(BrowserConfig {
@@ -288,10 +303,14 @@ async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warnin
         }),
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("a native config must not be refused for ignored options");
-    let url = start_page_server().await;
-    let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("a native config must not be refused for ignored options");
+        let url = start_page_server().await;
+        let _ = interact(&engine, &url, vec![PageAction::Scrape]).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("native browser backend"),
@@ -301,7 +320,6 @@ async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warnin
 
 #[cfg(feature = "browser")]
 #[tokio::test]
-#[serial_test::serial(browser_launch_option_warning_capture)]
 async fn the_ignored_launch_options_warning_gives_only_the_number_of_flags() {
     const SECRET: &str = "sk-live-9f8e7d6c5b4a";
     // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
@@ -316,10 +334,14 @@ async fn the_ignored_launch_options_warning_gives_only_the_number_of_flags() {
         },
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let (logs, _guard) = capture_warnings();
-    let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
-    let url = start_page_server().await;
-    let _ = scrape(&engine, &url).await;
+    let (logs, subscriber) = capture_warnings();
+    async {
+        let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
+        let url = start_page_server().await;
+        let _ = scrape(&engine, &url).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let logs = logs.text();
     assert!(
         logs.contains(IGNORED_WARNING) && logs.contains("chrome_args=1 flags"),
