@@ -617,7 +617,21 @@ pub(crate) struct StopHold {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SessionRequestDefense {
     Both,
+    #[cfg_attr(
+        not(feature = "browser"),
+        expect(
+            dead_code,
+            reason = "the isolated one-shot defense test requires the browser feature"
+        )
+    )]
     Interception,
+    #[cfg_attr(
+        not(feature = "browser"),
+        expect(
+            dead_code,
+            reason = "the isolated one-shot defense test requires the browser feature"
+        )
+    )]
     Egress,
     Neither,
 }

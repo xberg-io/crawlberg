@@ -93,6 +93,24 @@ async fn a_chrome_args_flag_reaches_the_chrome_that_renders_the_page() {
     );
 }
 
+#[cfg(unix)]
+fn is_snap_executable(executable: &std::path::Path) -> bool {
+    let mut path = executable.to_path_buf();
+    for _ in 0..16 {
+        if path.starts_with("/snap") {
+            return true;
+        }
+        let Ok(target) = std::fs::read_link(&path) else {
+            return false;
+        };
+        path = match path.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+    }
+    false
+}
+
 /// `chrome_path` names the binary crawlberg launches, and a `chrome_args` flag that names a
 /// crawlberg default replaces it on the real command line: a wrapper script records its own
 /// arguments and then runs the real Chrome, which must render the page.
@@ -109,6 +127,7 @@ async fn chrome_path_is_launched_with_the_caller_flag_in_place_of_the_default() 
             return;
         }
     };
+    let real_chrome_is_snap = is_snap_executable(&real_chrome);
     let dir = std::env::temp_dir().join(format!("crawlberg-chrome-path-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir must be creatable");
     let argv_file = dir.join("wrapper-argv");
@@ -137,13 +156,16 @@ async fn chrome_path_is_launched_with_the_caller_flag_in_place_of_the_default() 
     let argv = std::fs::read_to_string(&argv_file).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
 
-    let html = result
-        .expect("scrape through the chrome_path wrapper must succeed")
-        .html;
-    assert!(
-        html.contains("ua=[crawlberg-wrapper-marker]"),
-        "the configured chrome_path must be the Chrome that rendered the page: {html}"
-    );
+    let html = match result {
+        Ok(result) => Some(result.html),
+        Err(CrawlError::BrowserError { message, .. })
+            if real_chrome_is_snap && message.contains("the browser did not use crawlberg's profile directory") =>
+        {
+            announce_chrome_skip(test_name, &message);
+            None
+        }
+        Err(error) => panic!("scrape through the chrome_path wrapper must succeed: {error:?}"),
+    };
     let argv: Vec<&str> = argv.lines().collect();
     assert!(
         argv.contains(&"--lang=fr"),
@@ -157,6 +179,16 @@ async fn chrome_path_is_launched_with_the_caller_flag_in_place_of_the_default() 
         argv.contains(&"--disable-sync"),
         "defaults the caller did not name must still reach Chrome: {argv:?}"
     );
+    assert!(
+        argv.iter().any(|arg| arg.starts_with("--user-data-dir=")),
+        "crawlberg's profile directory must reach Chrome: {argv:?}"
+    );
+    if let Some(html) = html {
+        assert!(
+            html.contains("ua=[crawlberg-wrapper-marker]"),
+            "the configured chrome_path must be the Chrome that rendered the page: {html}"
+        );
+    }
 }
 
 /// A `chrome_path` that does not exist refuses the config and names the path; crawlberg
