@@ -148,21 +148,17 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
     assert!(scrape_data.contains("clicked"));
 }
 
-/// A server with a start page at `/` that runs `late_navigation` 300 ms after it loads, and a
-/// download at `/dl` that answers 501. Chrome cannot show that download, so it commits its own
-/// error page in place of the start page.
+/// A server with a start page at `/` and a download at `/dl` that answers 501. Chrome cannot show
+/// that download, so it commits its own error page in place of the start page.
 #[cfg(feature = "browser-chromiumoxide")]
-async fn late_501_download_site(late_navigation: &str) -> MockServer {
+async fn download_error_site() -> MockServer {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            format!(
-                "<html><body><p id=\"start\">start page</p>\
-                 <script>setTimeout(() => {{ {late_navigation} }}, 300)</script></body></html>"
-            ),
-            "text/html",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<html><body><p id=\"start\">start page</p></body></html>", "text/html"),
+        )
         .mount(&mock)
         .await;
     Mock::given(method("GET"))
@@ -175,6 +171,29 @@ async fn late_501_download_site(late_navigation: &str) -> MockServer {
         .mount(&mock)
         .await;
     mock
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+fn navigate_to_download() -> PageAction {
+    PageAction::ExecuteJs {
+        script: "location.assign('/dl')".to_string(),
+    }
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+fn wait_for_download_error() -> PageAction {
+    PageAction::Wait {
+        milliseconds: Some(2000),
+        selector: None,
+    }
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+fn wait_for_start_page() -> PageAction {
+    PageAction::Wait {
+        milliseconds: None,
+        selector: Some("#start".to_string()),
+    }
 }
 
 #[cfg(feature = "browser-chromiumoxide")]
@@ -305,19 +324,13 @@ async fn chromiumoxide_interact_fails_when_a_click_navigation_gets_no_response()
 #[tokio::test]
 async fn chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_page() {
     let test_name = "chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_page";
-    let mock = late_501_download_site("location.assign('/dl')").await;
+    let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
         &engine,
         &mock.uri(),
-        vec![
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
-            PageAction::Scrape,
-        ],
+        vec![navigate_to_download(), wait_for_download_error(), PageAction::Scrape],
     )
     .await;
 
@@ -342,30 +355,20 @@ async fn chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_pa
 #[tokio::test]
 async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
     let test_name = "chromiumoxide_interact_scrape_fails_on_chrome_s_error_page";
-    // ~keep The flag stops the start page from starting the download again when the session
-    // ~keep goes back to it.
-    let mock = late_501_download_site(
-        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
-    )
-    .await;
+    let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
         &engine,
         &mock.uri(),
         vec![
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            navigate_to_download(),
+            wait_for_download_error(),
             PageAction::Scrape,
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
             },
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            wait_for_start_page(),
         ],
     )
     .await;
@@ -380,7 +383,7 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let scrape = &result.action_results[1];
+    let scrape = &result.action_results[2];
     assert_eq!(scrape.action_type, "scrape", "{test_name}");
     assert!(
         !scrape.success && scrape.data.is_none(),
@@ -405,32 +408,22 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
 #[tokio::test]
 async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
     let test_name = "chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page";
-    // ~keep The flag stops the start page from starting the download again when the session
-    // ~keep goes back to it.
-    let mock = late_501_download_site(
-        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
-    )
-    .await;
+    let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
         &engine,
         &mock.uri(),
         vec![
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            navigate_to_download(),
+            wait_for_download_error(),
             PageAction::ExecuteJs {
                 script: "document.title".to_string(),
             },
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
             },
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            wait_for_start_page(),
         ],
     )
     .await;
@@ -445,7 +438,7 @@ async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let execute_js = &result.action_results[1];
+    let execute_js = &result.action_results[2];
     assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
     assert!(
         !execute_js.success && execute_js.data.is_none(),
@@ -470,30 +463,20 @@ async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
 #[tokio::test]
 async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
     let test_name = "chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page";
-    // ~keep The flag stops the start page from starting the download again when the session
-    // ~keep goes back to it.
-    let mock = late_501_download_site(
-        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
-    )
-    .await;
+    let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
         &engine,
         &mock.uri(),
         vec![
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            navigate_to_download(),
+            wait_for_download_error(),
             PageAction::Screenshot { full_page: Some(false) },
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
             },
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            wait_for_start_page(),
         ],
     )
     .await;
@@ -508,7 +491,7 @@ async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let screenshot_action = &result.action_results[1];
+    let screenshot_action = &result.action_results[2];
     assert_eq!(screenshot_action.action_type, "screenshot", "{test_name}");
     assert!(
         !screenshot_action.success && screenshot_action.data.is_none(),
@@ -534,29 +517,19 @@ async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
 #[tokio::test]
 async fn chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once_and_fails() {
     let test_name = "chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once_and_fails";
-    // ~keep The flag stops the start page from starting the download again when the session
-    // ~keep goes back to it.
-    let mock = late_501_download_site(
-        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
-    )
-    .await;
+    let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
     let result = interact(
         &engine,
         &mock.uri(),
         vec![
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            navigate_to_download(),
+            wait_for_download_error(),
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
             },
-            PageAction::Wait {
-                milliseconds: Some(2000),
-                selector: None,
-            },
+            wait_for_start_page(),
         ],
     )
     .await;
@@ -571,7 +544,7 @@ async fn chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once
     };
 
     assert_download_requested(test_name, &mock).await;
-    let execute_js = &result.action_results[1];
+    let execute_js = &result.action_results[2];
     assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
     assert!(
         !execute_js.success && execute_js.data.is_none(),

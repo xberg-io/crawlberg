@@ -462,10 +462,21 @@ fn loopback_only(extra_wait: Option<Duration>) -> CrawlConfig {
             allowlist: vec![crawlberg::HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid")],
             ..crawlberg::SsrfPolicy::default()
         },
+        ssrf_deny_private_explicit: Some(true),
         ..config(BrowserBackend::Chromiumoxide, BrowserMode::Always)
     };
     config.browser.extra_wait = extra_wait;
     config
+}
+
+#[test]
+fn loopback_only_should_explicitly_keep_non_loopback_private_addresses_denied() {
+    let config = loopback_only(None);
+
+    assert_eq!(
+        (config.ssrf.deny_private, config.ssrf_deny_private_explicit),
+        (true, Some(true))
+    );
 }
 
 /// Scrape `/` of a site whose start page runs `script` and where each of `routes` answers its

@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserProfile, CrawlConfig,
-    CrawlError, HostMatcher, PageAction, create_engine, interact, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserProfile, BrowserWait,
+    CrawlConfig, CrawlError, HostMatcher, PageAction, create_engine, interact, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wiremock::matchers::{method, path};
@@ -23,6 +23,13 @@ mod common;
 use common::{announce_chrome_skip, announce_skip, is_missing_chrome_message};
 
 static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+const EGRESS_COMPLETION_SETUP: &str = r#"
+    window.__egressCompleted = 0;
+    window.__egressDone = () => {
+        window.__egressCompleted += 1;
+        document.documentElement.dataset.egressDone = String(window.__egressCompleted);
+    };
+"#;
 
 /// How the page is opened.
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +117,9 @@ async fn counting_udp() -> (u16, Arc<AtomicUsize>) {
 /// A denied listener every page fetches, and the script that fetches it.
 async fn control() -> (Arc<AtomicUsize>, String) {
     let (address, count) = counting_tcp(SocketAddr::from(([127, 0, 0, 1], 0))).await;
-    let script = format!("fetch('http://{address}/control', {{ mode: 'no-cors' }}).catch(() => {{}});");
+    let script = format!(
+        "fetch('http://{address}/control', {{ mode: 'no-cors' }}).then(window.__egressDone, window.__egressDone);"
+    );
     (count, script)
 }
 
@@ -131,6 +140,11 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
         .mount(&site)
         .await;
     let seed = format!("http://localhost:{}/", site.address().port());
+    let waits_for_completion = script.contains("__egressDone");
+    if waits_for_completion {
+        config.browser.wait = BrowserWait::Selector;
+        config.browser.wait_selector = Some("[data-egress-done='2']".to_owned());
+    }
     let pool = matches!(via, Via::Pooled).then(|| {
         BrowserPool::new(BrowserPoolConfig {
             chrome_args: config.browser.chrome_args.clone(),
@@ -171,14 +185,22 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     let engine = create_engine(Some(config)).expect("the engine must build");
     let outcome = match via {
         Via::Interact => {
+            let wait = if waits_for_completion {
+                PageAction::Wait {
+                    milliseconds: None,
+                    selector: Some("[data-egress-done='2']".to_owned()),
+                }
+            } else {
+                PageAction::Wait {
+                    milliseconds: Some(1500),
+                    selector: None,
+                }
+            };
             let actions = vec![
                 PageAction::ExecuteJs {
                     script: format!("{script} return 1;"),
                 },
-                PageAction::Wait {
-                    milliseconds: Some(1500),
-                    selector: None,
-                },
+                wait,
             ];
             tokio::time::timeout(Duration::from_secs(60), interact(&engine, &seed, actions))
                 .await
@@ -188,7 +210,9 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
             .await
             .map(|result| result.map(|result| result.ssrf_refused_urls)),
     };
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    if !waits_for_completion {
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+    }
     if let Some(pool) = pool {
         pool.shutdown().await;
     }
@@ -224,11 +248,49 @@ async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
     };
     let (target, reached) = counting_tcp(SocketAddr::new(ip, 0)).await;
     let (refused, fetch) = control().await;
-    let open = format!("new WebSocket('ws://{target}/ws');");
+    let open = format!(
+        r#"
+        {{
+            const socket = new WebSocket('ws://{target}/ws');
+            let finished = false;
+            const done = () => {{
+                if (!finished) {{
+                    finished = true;
+                    window.__egressDone();
+                }}
+            }};
+            socket.addEventListener('open', done);
+            socket.addEventListener('error', done);
+        }}
+        "#
+    );
     let script = if worker {
-        format!("new Worker(URL.createObjectURL(new Blob([{open:?}], {{ type: 'text/javascript' }})));{fetch}")
+        let worker_script = format!(
+            r#"
+            const socket = new WebSocket('ws://{target}/ws');
+            let finished = false;
+            const done = () => {{
+                if (!finished) {{
+                    finished = true;
+                    postMessage('done');
+                }}
+            }};
+            socket.addEventListener('open', done);
+            socket.addEventListener('error', done);
+            "#
+        );
+        format!(
+            r#"
+            {EGRESS_COMPLETION_SETUP}
+            const worker = new Worker(URL.createObjectURL(
+                new Blob([{worker_script:?}], {{ type: 'text/javascript' }})
+            ));
+            worker.addEventListener('message', window.__egressDone);
+            {fetch}
+            "#
+        )
     } else {
-        format!("{open}{fetch}")
+        format!("{EGRESS_COMPLETION_SETUP}{open}{fetch}")
     };
     let Some(listed) = run(test_name, via, &script, config(allowlist)).await else {
         return;
@@ -367,7 +429,32 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
     let (port, datagrams) = counting_udp().await;
     let (refused, fetch) = control().await;
     let script = format!(
-        "const pc = new RTCPeerConnection({{ iceServers: [{{ urls: 'stun:127.0.0.1:{port}' }}] }}); pc.createDataChannel('x'); pc.createOffer().then(o => pc.setLocalDescription(o));{fetch}"
+        r#"
+        {EGRESS_COMPLETION_SETUP}
+        const pc = new RTCPeerConnection({{
+            iceServers: [{{ urls: 'stun:127.0.0.1:{port}' }}]
+        }});
+        let finished = false;
+        const done = () => {{
+            if (!finished) {{
+                finished = true;
+                window.__egressDone();
+            }}
+        }};
+        let candidateSeen = false;
+        pc.addEventListener('icecandidate', event => {{
+            if (event.candidate && !candidateSeen) {{
+                candidateSeen = true;
+                setTimeout(done, 500);
+            }}
+        }});
+        pc.addEventListener('icegatheringstatechange', () => {{
+            if (pc.iceGatheringState === 'complete' && !candidateSeen) done();
+        }});
+        pc.createDataChannel('x');
+        pc.createOffer().then(o => pc.setLocalDescription(o)).catch(done);
+        {fetch}
+        "#
     );
     let mut config = config(Vec::new());
     config.ssrf.deny_private = deny_private;
