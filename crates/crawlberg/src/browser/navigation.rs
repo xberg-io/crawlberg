@@ -797,6 +797,26 @@ mod tests {
         assert_eq!(retries, 1, "the stale-root recovery branch must run exactly once");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn selector_wait_rechecks_after_its_first_confirmed_miss() {
+        let test_name = "selector_wait_rechecks_after_its_first_confirmed_miss";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let mut config = fixture.config.clone();
+        config.browser.wait = BrowserWait::Selector;
+        config.browser.wait_selector = Some("[data-selector-ready='yes']".to_owned());
+        let rendered = render(&fixture.url("/one"), &config, &fixture.page, &fixture.watch, false);
+        let (rendered, hook_runs) =
+            crate::chrome_frame::with_after_selector_miss("document.body.dataset.selectorReady = 'yes'", rendered)
+                .await;
+        fixture.stop().await;
+
+        let rendered = rendered.expect("the selector added after the first miss must be found");
+        assert_eq!(hook_runs, 1, "the first confirmed miss must trigger the test hook once");
+        assert!(rendered.response.body.contains("data-selector-ready=\"yes\""));
+    }
+
     /// A document committed between the render's read of the HTML and its read of the committed
     /// document does not pair the first document's HTML with the second's status and URL. The
     /// test navigates from `/one` (201) to `/two` (203) right after the HTML read. Launches a real

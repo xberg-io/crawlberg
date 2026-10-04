@@ -42,6 +42,8 @@ pub(crate) async fn wait_for_selector(page: &chromiumoxide::Page, selector: &str
         if matched != NodeId::default() {
             return Ok(());
         }
+        #[cfg(test)]
+        run_after_selector_miss(page).await;
         tokio::time::sleep(SELECTOR_POLL_INTERVAL).await;
     }
 }
@@ -61,11 +63,45 @@ tokio::task_local! {
 
     /// The stale-root recovery count for a selector-wait test. ~keep
     pub(crate) static STALE_SELECTOR_ROOT_RETRIES: std::cell::Cell<usize>;
+
+    /// JavaScript run once, and its run count, after a selector's first confirmed miss. ~keep
+    static AFTER_SELECTOR_MISS_SCRIPT: std::cell::Cell<Option<String>>;
+    static AFTER_SELECTOR_MISS_RUNS: std::cell::Cell<usize>;
 }
 
 #[cfg(test)]
 fn record_stale_selector_root_retry() {
     let _ = STALE_SELECTOR_ROOT_RETRIES.try_with(|retries| retries.set(retries.get() + 1));
+}
+
+#[cfg(test)]
+async fn run_after_selector_miss(page: &chromiumoxide::Page) {
+    let script = AFTER_SELECTOR_MISS_SCRIPT
+        .try_with(std::cell::Cell::take)
+        .ok()
+        .flatten();
+    if let Some(script) = script {
+        let _ = AFTER_SELECTOR_MISS_RUNS.try_with(|runs| runs.set(runs.get() + 1));
+        page.evaluate(script)
+            .await
+            .expect("the selector-miss test hook must run");
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn with_after_selector_miss<T>(
+    script: impl Into<String>,
+    future: impl Future<Output = T>,
+) -> (T, usize) {
+    AFTER_SELECTOR_MISS_RUNS
+        .scope(std::cell::Cell::new(0), async {
+            let output = AFTER_SELECTOR_MISS_SCRIPT
+                .scope(std::cell::Cell::new(Some(script.into())), future)
+                .await;
+            let runs = AFTER_SELECTOR_MISS_RUNS.with(std::cell::Cell::get);
+            (output, runs)
+        })
+        .await
 }
 
 #[cfg(test)]

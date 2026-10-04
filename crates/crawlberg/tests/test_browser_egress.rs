@@ -31,6 +31,9 @@ const EGRESS_COMPLETION_SETUP: &str = r#"
     };
 "#;
 const EGRESS_COMPLETION_SELECTOR: &str = "[data-egress-done='2']";
+// ~keep WebRTC and WebTransport complete through 1.5 s page timers. This wait covers those timers;
+// ~keep `run_actions` then adds its 25 ms refusal grace before the final selector assertion.
+const EGRESS_ACTION_SETTLE_MS: i64 = 2_000;
 
 /// How the page is opened.
 #[derive(Clone, Copy, Debug)]
@@ -182,13 +185,17 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
         config.browser.endpoint = Some(chrome.websocket_address().clone());
         endpoint = Some((chrome, handler, dir));
     }
-    let execute_js_must_succeed = !config.ssrf.deny_private;
+    let policy_must_refuse = config.ssrf.deny_private;
     let engine = create_engine(Some(config)).expect("the engine must build");
     let outcome = match via {
         Via::Interact => {
             let actions = vec![
                 PageAction::ExecuteJs {
                     script: format!("{script} return 1;"),
+                },
+                PageAction::Wait {
+                    milliseconds: Some(EGRESS_ACTION_SETTLE_MS),
+                    selector: None,
                 },
                 PageAction::Wait {
                     milliseconds: None,
@@ -201,33 +208,42 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
                     result.map(|result| {
                         assert_eq!(
                             result.action_results.len(),
-                            2,
-                            "{test_name}: the completion sequence must return exactly two action results: {:?}",
+                            3,
+                            "{test_name}: the completion sequence must return exactly three action results: {:?}",
                             result.action_results
                         );
-                        let execute = &result.action_results[0];
-                        let wait = &result.action_results[1];
-                        assert_eq!(
-                            execute.success, execute_js_must_succeed,
-                            "{test_name}: ExecuteJs must reflect whether the policy refused its request: {execute:?}"
-                        );
-                        assert_eq!(
-                            execute.error.is_none(),
-                            execute_js_must_succeed,
-                            "{test_name}: ExecuteJs error must agree with its outcome: {execute:?}"
-                        );
-                        if !execute_js_must_succeed {
-                            assert!(
-                                execute
+                        let pre_completion = &result.action_results[..2];
+                        let is_policy_failure = |action: &crawlberg::ActionResult| {
+                            !action.success
+                                && action
                                     .error
                                     .as_deref()
-                                    .is_some_and(|error| error.starts_with("ssrf_policy_violation:")),
-                                "{test_name}: the refused ExecuteJs must name the policy failure: {execute:?}"
+                                    .is_some_and(|error| error.starts_with("ssrf_policy_violation:"))
+                        };
+                        if policy_must_refuse {
+                            assert_eq!(
+                                pre_completion.iter().filter(|action| is_policy_failure(action)).count(),
+                                1,
+                                "{test_name}: exactly one pre-completion action must own the policy refusal: {pre_completion:?}"
+                            );
+                            assert!(
+                                pre_completion
+                                    .iter()
+                                    .all(|action| action.success || is_policy_failure(action)),
+                                "{test_name}: no pre-completion action may fail for another reason: {pre_completion:?}"
+                            );
+                        } else {
+                            assert!(
+                                pre_completion
+                                    .iter()
+                                    .all(|action| action.success && action.error.is_none()),
+                                "{test_name}: both pre-completion actions must succeed with private access allowed: {pre_completion:?}"
                             );
                         }
+                        let completion = &result.action_results[2];
                         assert!(
-                            wait.success && wait.error.is_none(),
-                            "{test_name}: the completion selector wait must succeed: {wait:?}"
+                            completion.success && completion.error.is_none(),
+                            "{test_name}: the final completion selector wait must succeed: {completion:?}"
                         );
                         result.ssrf_refused_urls
                     })

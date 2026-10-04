@@ -773,6 +773,75 @@ fn build_interact_launch_builder(
 mod tests {
     use super::*;
 
+    async fn selector_test_site() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("<html><body><p>start</p></body></html>", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        site
+    }
+
+    #[tokio::test]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn navigation_selector_wait_rechecks_after_its_first_confirmed_miss() {
+        const TEST_NAME: &str = "navigation_selector_wait_rechecks_after_its_first_confirmed_miss";
+        let site = selector_test_site().await;
+        let mut config = CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        config.browser.wait = BrowserWait::Selector;
+        config.browser.wait_selector = Some("[data-selector-ready='yes']".to_owned());
+        let (result, hook_runs) = crate::chrome_frame::with_after_selector_miss(
+            "document.body.dataset.selectorReady = 'yes'",
+            run(&site.uri(), &[PageAction::Scrape], &config),
+        )
+        .await;
+        let Some(result) = crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, result) else {
+            return;
+        };
+
+        assert_eq!(hook_runs, 1, "the navigation wait must trigger the test hook once");
+        assert!(result.final_html.contains("data-selector-ready=\"yes\""));
+        assert_eq!(result.action_results.len(), 1);
+        assert!(result.action_results[0].success);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn action_selector_wait_rechecks_after_its_first_confirmed_miss() {
+        const TEST_NAME: &str = "action_selector_wait_rechecks_after_its_first_confirmed_miss";
+        let site = selector_test_site().await;
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let actions = [PageAction::Wait {
+            milliseconds: None,
+            selector: Some("[data-selector-ready='yes']".to_owned()),
+        }];
+        let (result, hook_runs) = crate::chrome_frame::with_after_selector_miss(
+            "document.body.dataset.selectorReady = 'yes'",
+            run(&site.uri(), &actions, &config),
+        )
+        .await;
+        let Some(result) = crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, result) else {
+            return;
+        };
+
+        assert_eq!(hook_runs, 1, "the action wait must trigger the test hook once");
+        assert_eq!(result.action_results.len(), 1);
+        assert!(result.action_results[0].success);
+        assert!(result.final_html.contains("data-selector-ready=\"yes\""));
+    }
+
     /// Ten actions that send nothing never enter the request-settling poll loop.
     ///
     /// ~keep Exact per-action counts replace the shared-host wall-clock comparison that flakes
