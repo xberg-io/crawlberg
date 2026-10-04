@@ -1345,6 +1345,56 @@ async fn subresources_resolve_against_the_first_base_href() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn an_absolute_base_href_is_applied_before_interception_and_recording() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let origin = format!("http://{}", listener.local_addr().expect("addr"));
+    let html = format!(
+        "<html><head><base href=\"{origin}/assets/\">\
+         <link rel=\"stylesheet\" href=\"theme.css\"></head><body>\
+         <script src=\"blocked.js\"></script><script src=\"classic.js\"></script>\
+         <script type=\"module\" src=\"module.js\"></script>\
+         <script type=\"module\">import './inline-import.js';</script>\
+         </body></html>"
+    );
+    let classic = push("classic");
+    let module = push("module");
+    let entries = [
+        ("/pages/index.html", "text/html", html.as_str()),
+        ("/assets/theme.css", "text/css", "body{color:green}"),
+        ("/assets/blocked.js", "text/javascript", "globalThis.blocked = true"),
+        ("/assets/classic.js", "text/javascript", classic.as_str()),
+        ("/assets/module.js", "text/javascript", module.as_str()),
+        (
+            "/assets/inline-import.js",
+            "text/javascript",
+            "globalThis.order.push('inline-import')",
+        ),
+    ];
+    let base = serve_on(listener, routes(&entries));
+
+    let mut page = test_page();
+    page.intercept_enabled = true;
+    page.intercept_block_patterns = vec!["*/assets/blocked.js".to_string()];
+    page.navigate(&format!("{base}/pages/index.html"))
+        .await
+        .expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["classic", "module", "inline-import"]);
+    assert_eq!(
+        event_urls(&page, "Stylesheet"),
+        vec![format!("{origin}/assets/theme.css")]
+    );
+    let mut script_urls = event_urls(&page, "Script");
+    script_urls.sort();
+    let mut expected_script_urls = vec![
+        format!("{origin}/assets/classic.js"),
+        format!("{origin}/assets/module.js"),
+    ];
+    expected_script_urls.sort();
+    assert_eq!(script_urls, expected_script_urls);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn an_invalid_first_base_href_falls_back_to_the_page_address() {
     let classic = push("classic");
     let base = serve(routes(&[
