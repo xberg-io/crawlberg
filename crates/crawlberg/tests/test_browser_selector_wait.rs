@@ -142,7 +142,15 @@ async fn interaction_navigation_waits_for_its_configured_selector() {
     let gate_handshake = wait_until_gate_is_observed(&gate_observed);
     tokio::pin!(gate_handshake);
     let result = tokio::select! {
-        result = &mut interact_page => result,
+        result = &mut interact_page => {
+            if let Err(CrawlError::BrowserError { message, .. }) = &result
+                && is_missing_chrome_message(message)
+            {
+                announce_chrome_skip(test_name, message);
+                return;
+            }
+            panic!("{test_name}: interaction returned before the closed selector gate was opened: {result:?}");
+        }
         () = &mut gate_handshake => {
             gate_open.store(true, Ordering::SeqCst);
             interact_page.await
@@ -162,6 +170,21 @@ async fn interaction_navigation_waits_for_its_configured_selector() {
         result.action_results[0].success,
         "the scrape action must succeed: {:?}",
         result.action_results
+    );
+    assert!(
+        result.final_html.contains("data-ready=\"yes\""),
+        "got: {}",
+        result.final_html
+    );
+    assert!(
+        result.action_results[0]
+            .data
+            .as_ref()
+            .and_then(|data| data.get("html"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|html| html.contains("data-ready=\"yes\"")),
+        "the scrape action must read the ready document: {:?}",
+        result.action_results[0]
     );
 }
 

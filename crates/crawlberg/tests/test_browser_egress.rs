@@ -182,6 +182,7 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
         config.browser.endpoint = Some(chrome.websocket_address().clone());
         endpoint = Some((chrome, handler, dir));
     }
+    let execute_js_must_succeed = !config.ssrf.deny_private;
     let engine = create_engine(Some(config)).expect("the engine must build");
     let outcome = match via {
         Via::Interact => {
@@ -204,10 +205,29 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
                             "{test_name}: the completion sequence must return exactly two action results: {:?}",
                             result.action_results
                         );
+                        let execute = &result.action_results[0];
+                        let wait = &result.action_results[1];
+                        assert_eq!(
+                            execute.success, execute_js_must_succeed,
+                            "{test_name}: ExecuteJs must reflect whether the policy refused its request: {execute:?}"
+                        );
+                        assert_eq!(
+                            execute.error.is_none(),
+                            execute_js_must_succeed,
+                            "{test_name}: ExecuteJs error must agree with its outcome: {execute:?}"
+                        );
+                        if !execute_js_must_succeed {
+                            assert!(
+                                execute
+                                    .error
+                                    .as_deref()
+                                    .is_some_and(|error| error.starts_with("ssrf_policy_violation:")),
+                                "{test_name}: the refused ExecuteJs must name the policy failure: {execute:?}"
+                            );
+                        }
                         assert!(
-                            result.action_results.iter().all(|action| action.success),
-                            "{test_name}: the completion sequence must succeed: {:?}",
-                            result.action_results
+                            wait.success && wait.error.is_none(),
+                            "{test_name}: the completion selector wait must succeed: {wait:?}"
                         );
                         result.ssrf_refused_urls
                     })

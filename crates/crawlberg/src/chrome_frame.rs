@@ -28,15 +28,16 @@ pub(crate) async fn wait_for_selector(page: &chromiumoxide::Page, selector: &str
         navigate_after_selector_root(page).await;
         let matched = match page.execute(QuerySelectorParams::new(root, selector)).await {
             Ok(response) => response.result.node_id,
-            Err(error) => {
+            Err(error) if is_stale_selector_root_error(&error) => {
                 let current_root = page.get_document().await?.node_id;
-                if current_root != root && is_stale_selector_root_error(&error) {
+                if current_root != root {
                     #[cfg(test)]
                     record_stale_selector_root_retry();
                     continue;
                 }
                 return Err(error);
             }
+            Err(error) => return Err(error),
         };
         if matched != NodeId::default() {
             return Ok(());
