@@ -28,6 +28,37 @@ fn test_pool_creation() {
 }
 
 #[tokio::test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_chrome_args_flag_reaches_the_chrome_the_pool_starts() {
+    const TEST_NAME: &str = "a_chrome_args_flag_reaches_the_chrome_the_pool_starts";
+    const MARKER: &str = "crawlberg-pool-chrome-args-marker";
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_args: vec![format!("--user-agent={MARKER}")],
+        ..BrowserPoolConfig::default()
+    });
+    match pool.warm().await {
+        Ok(()) => {}
+        Err(error) if error.to_string().contains("auto detect a chrome executable") => {
+            eprintln!("skipping {TEST_NAME}: no Chrome executable: {error}");
+            return;
+        }
+        Err(error) => panic!("{TEST_NAME}: the detected Chrome must launch: {error}"),
+    }
+    let path = pool_profile_dir(&pool).await;
+    let marker_flag = format!("--user-agent={MARKER}");
+    let reached_chrome = processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(&path))
+        .iter()
+        .flat_map(|process| process.cmd())
+        .any(|argument| argument.to_string_lossy() == marker_flag);
+    pool.shutdown().await;
+
+    assert!(
+        reached_chrome,
+        "the pool's Chrome command line must carry the caller flag"
+    );
+}
+
+#[tokio::test]
 async fn test_shutdown_idempotent() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.shutdown().await;

@@ -772,6 +772,42 @@ fn build_interact_launch_builder(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn a_chrome_args_flag_reaches_the_chrome_interact_starts() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TEST_NAME: &str = "a_chrome_args_flag_reaches_the_chrome_interact_starts";
+        const MARKER: &str = "crawlberg-interact-chrome-args-marker";
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .and(header("user-agent", MARKER))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<p>marker received</p>", "text/html"))
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_args: vec![format!("--user-agent={MARKER}")],
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let result = run(&site.uri(), &[], &config).await;
+        match result {
+            Ok(result) => assert!(
+                result.final_html.contains("marker received"),
+                "the interact Chrome must request the page with the caller flag: {}",
+                result.final_html
+            ),
+            Err(CrawlError::BrowserError { message, .. }) if message.contains("auto detect a chrome executable") => {
+                eprintln!("skipping {TEST_NAME}: no Chrome executable: {message}");
+            }
+            Err(error) => panic!("{TEST_NAME}: the detected Chrome must run interact: {error}"),
+        }
+    }
+
     /// An interact run removes the profile directory of the Chrome it launched, with no Chrome
     /// process left using it.
     #[tokio::test(flavor = "multi_thread")]
