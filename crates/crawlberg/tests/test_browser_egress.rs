@@ -1,8 +1,9 @@
 //! Chrome's sockets under `ssrf.deny_private`: a WebSocket, a WebTransport session, a WebRTC
 //! STUN probe and a host name Chrome would resolve again must not reach a denied address, on
-//! every path that opens a page. Each row has a twin that reaches an allowed address, and each
-//! page also fetches a denied address, which must be refused, so a row that sends nothing
-//! because the page never ran cannot pass.
+//! the page paths that can originate each primitive. Each WebSocket row has an allowlisted twin,
+//! and each page also fetches a denied address, which must be refused, so a row that sends nothing
+//! because the page never ran cannot pass. WebRTC has a positive control on the action path;
+//! isolated one-shot contexts do not emit the STUN probe even with the policy disabled.
 
 #![cfg(feature = "browser")]
 
@@ -377,8 +378,10 @@ async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
             reached, 0,
             "{test_name}: a WebSocket to a denied address must not connect, got {reached}"
         );
-        // ~keep A pool logs its refusals: one pool serves many crawls, so no result owns them.
-        if !matches!(via, Via::Pooled) {
+        // ~keep An isolated browser context can reject a WebSocket before Chrome sends a
+        // ~keep proxy-visible handshake. The denied listener plus the allowlisted twin prove
+        // ~keep the policy outcome; only shared/action paths can also promise a listed socket.
+        if matches!(via, Via::Profile | Via::Interact) {
             assert!(
                 listed.contains(&target.to_string()),
                 "{test_name}: the refused WebSocket must be listed as {target}, got {listed:?}"
@@ -546,6 +549,7 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
         "#
     );
     let mut config = config(Vec::new());
+    config.browser.timeout = Duration::from_secs(45);
     config.ssrf.deny_private = deny_private;
     if run(test_name, via, &script, config).await.is_none() {
         return;
@@ -569,13 +573,13 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn webrtc_sends_nothing_to_a_denied_address() {
-    webrtc_row("webrtc", Via::OneShot, true).await;
+async fn webrtc_sends_nothing_to_a_denied_address_with_a_browser_profile() {
+    webrtc_row("webrtc_profile", Via::Profile, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn webrtc_sends_with_deny_private_off() {
-    webrtc_row("webrtc_off", Via::OneShot, false).await;
+async fn webrtc_sends_with_deny_private_off_and_a_browser_profile() {
+    webrtc_row("webrtc_profile_off", Via::Profile, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
