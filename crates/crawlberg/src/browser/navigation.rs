@@ -766,8 +766,8 @@ mod tests {
     }
 
     /// A document replacement between `DOM.getDocument` and `DOM.querySelector` invalidates the
-    /// old root. The selector wait retries only after verifying that Chrome now reports a new
-    /// root, then finds the selector in that new document. ~keep
+    /// old root. The selector wait retries the concrete stale-node protocol error, then finds the
+    /// selector in the replacement document. ~keep
     #[tokio::test(flavor = "multi_thread")]
     async fn selector_wait_retries_when_the_document_root_was_replaced() {
         let test_name = "selector_wait_retries_when_the_document_root_was_replaced";
@@ -806,7 +806,8 @@ mod tests {
         let mut config = fixture.config.clone();
         config.browser.wait = BrowserWait::Selector;
         config.browser.wait_selector = Some("[data-selector-ready='yes']".to_owned());
-        let rendered = render(&fixture.url("/one"), &config, &fixture.page, &fixture.watch, false);
+        let url = fixture.url("/one");
+        let rendered = render(&url, &config, &fixture.page, &fixture.watch, false);
         let (rendered, hook_runs) =
             crate::chrome_frame::with_after_selector_miss("document.body.dataset.selectorReady = 'yes'", rendered)
                 .await;

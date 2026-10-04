@@ -29,13 +29,9 @@ pub(crate) async fn wait_for_selector(page: &chromiumoxide::Page, selector: &str
         let matched = match page.execute(QuerySelectorParams::new(root, selector)).await {
             Ok(response) => response.result.node_id,
             Err(error) if is_stale_selector_root_error(&error) => {
-                let current_root = page.get_document().await?.node_id;
-                if current_root != root {
-                    #[cfg(test)]
-                    record_stale_selector_root_retry();
-                    continue;
-                }
-                return Err(error);
+                #[cfg(test)]
+                record_stale_selector_root_retry();
+                continue;
             }
             Err(error) => return Err(error),
         };

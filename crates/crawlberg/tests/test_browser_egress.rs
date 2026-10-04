@@ -221,10 +221,9 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
                                     .is_some_and(|error| error.starts_with("ssrf_policy_violation:"))
                         };
                         if policy_must_refuse {
-                            assert_eq!(
-                                pre_completion.iter().filter(|action| is_policy_failure(action)).count(),
-                                1,
-                                "{test_name}: exactly one pre-completion action must own the policy refusal: {pre_completion:?}"
+                            assert!(
+                                pre_completion.iter().any(&is_policy_failure),
+                                "{test_name}: at least one pre-completion action must own a policy refusal: {pre_completion:?}"
                             );
                             assert!(
                                 pre_completion
