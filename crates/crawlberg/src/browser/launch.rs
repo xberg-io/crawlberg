@@ -693,6 +693,66 @@ mod tests {
         );
     }
 
+    /// An unsaved named profile's scratch copy is removed when a runtime cancels its owner.
+    ///
+    /// ~keep This models a process ending immediately after its last unsaved-profile scrape: the
+    /// ~keep session teardown owns the copy, but Tokio drops that task before it can reach its
+    /// ~keep explicit cleanup (xberg-io/crawlberg#555).
+    #[test]
+    fn an_unsaved_profile_copy_is_removed_when_its_owner_task_is_cancelled() {
+        struct DeleteProfile(crate::browser_profile::BrowserProfile);
+
+        impl Drop for DeleteProfile {
+            fn drop(&mut self) {
+                let _ = self.0.delete();
+            }
+        }
+
+        let name = format!("crawlberg-cancelled-unsaved-copy-{}", std::process::id());
+        let profile = crate::browser_profile::BrowserProfile::new(&name).expect("the profile name must be valid");
+        let _guard = DeleteProfile(profile.clone());
+        profile.create().expect("the profile must be creatable");
+        std::fs::write(profile.user_data_dir.join("marker"), b"copied").expect("the profile marker must be writable");
+        let config = CrawlConfig {
+            browser_profile: Some(name),
+            save_browser_profile: false,
+            ..CrawlConfig::default()
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime must build");
+        let scratch = runtime.block_on(async {
+            let copy = resolve_user_data_dir(&config).expect("the unsaved profile must be copied");
+            let path = copy.path().to_path_buf();
+            assert_ne!(path, profile.user_data_dir, "an unsaved profile must use a copy");
+            assert_eq!(
+                std::fs::read(path.join("marker")).expect("the copied marker must be readable"),
+                b"copied"
+            );
+            let (started, entered) = tokio::sync::oneshot::channel();
+            runtime.spawn(async move {
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+                drop(copy);
+            });
+            entered.await.expect("the owner task must start");
+            path
+        });
+
+        drop(runtime);
+
+        assert!(
+            crate::browser_pool::tests::wait_for_removal(&scratch),
+            "the cancelled owner task must remove its unsaved profile copy"
+        );
+        assert_eq!(
+            std::fs::read(profile.user_data_dir.join("marker")).expect("the source marker must remain readable"),
+            b"copied",
+            "removing the unsaved copy must leave the source profile intact"
+        );
+    }
+
     /// A one-shot launch records the Chrome it starts, so dropping its profile directory stops
     /// that Chrome and removes the directory.
     #[tokio::test(flavor = "multi_thread")]
