@@ -50,8 +50,10 @@ async fn adopted_operator_policy_should_refuse_each_untrusted_loopback_attack() 
     let mut deny_private_false = CrawlConfig::default();
     deny_private_false.ssrf.deny_private = false;
 
-    let mut explicit_false = CrawlConfig::default();
-    explicit_false.ssrf_deny_private_explicit = Some(false);
+    let explicit_false = CrawlConfig {
+        ssrf_deny_private_explicit: Some(false),
+        ..CrawlConfig::default()
+    };
 
     let mut loopback_allowlist = CrawlConfig::default();
     loopback_allowlist

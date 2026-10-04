@@ -5,8 +5,7 @@ use serde_json::{Value, json};
 
 use super::{UNTRUSTED_CALLER_FORBIDDEN_FIELDS, reject_untrusted_fields};
 use crate::{
-    AuthConfig, BrowserConfig, CrawlConfig, DispatchProfile, HostMatcher, ProxyConfig, SsrfPolicy,
-    StaticProxyProvider,
+    AuthConfig, BrowserConfig, CrawlConfig, DispatchProfile, HostMatcher, ProxyConfig, SsrfPolicy, StaticProxyProvider,
 };
 
 const EXPECTED_FORBIDDEN_FIELDS: [&str; 14] = [
@@ -90,63 +89,73 @@ fn should_ignore_lookalike_keys_inside_caller_owned_values() {
 
 #[test]
 fn should_adopt_every_serializable_operator_owned_field() {
-    let mut caller = CrawlConfig::default();
-    caller.auth = Some(AuthConfig::Bearer {
-        token: "caller-token".to_owned(),
-    });
+    let mut caller = CrawlConfig {
+        auth: Some(AuthConfig::Bearer {
+            token: "caller-token".to_owned(),
+        }),
+        ssrf: SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![HostMatcher::suffix(".caller.internal")],
+            max_redirects: 99,
+            scheme_allowlist: vec!["http".to_owned()],
+        },
+        ssrf_deny_private_explicit: Some(false),
+        max_redirects: 88,
+        proxy: Some(proxy("http://caller-proxy.invalid:8000")),
+        browser: BrowserConfig {
+            proxy: Some(proxy("http://caller-browser-proxy.invalid:8001")),
+            endpoint: Some("ws://caller-browser.invalid/devtools/browser/secret".to_owned()),
+            chrome_path: Some(PathBuf::from("/caller/chrome")),
+            chrome_args: vec!["--proxy-server=http://caller-proxy.invalid".to_owned()],
+            eval_script: Some("callerScript()".to_owned()),
+            session_affinity: false,
+            ..BrowserConfig::default()
+        },
+        browser_profile: Some("caller-profile".to_owned()),
+        save_browser_profile: true,
+        document_output_dir: Some(PathBuf::from("/caller/documents")),
+        warc_output: Some(PathBuf::from("/caller/archive.warc")),
+        ..CrawlConfig::default()
+    };
     caller
         .custom_headers
         .insert("x-caller-key".to_owned(), "caller-secret".to_owned());
-    caller.ssrf = SsrfPolicy {
-        deny_private: false,
-        allowlist: vec![HostMatcher::suffix(".caller.internal")],
-        max_redirects: 99,
-        scheme_allowlist: vec!["http".to_owned()],
-    };
-    caller.ssrf_deny_private_explicit = Some(false);
-    caller.max_redirects = 88;
-    caller.proxy = Some(proxy("http://caller-proxy.invalid:8000"));
-    caller.browser.proxy = Some(proxy("http://caller-browser-proxy.invalid:8001"));
-    caller.browser.endpoint = Some("ws://caller-browser.invalid/devtools/browser/secret".to_owned());
-    caller.browser.chrome_path = Some(PathBuf::from("/caller/chrome"));
-    caller.browser.chrome_args = vec!["--proxy-server=http://caller-proxy.invalid".to_owned()];
-    caller.browser.eval_script = Some("callerScript()".to_owned());
-    caller.browser.session_affinity = false;
-    caller.browser_profile = Some("caller-profile".to_owned());
-    caller.save_browser_profile = true;
-    caller.document_output_dir = Some(PathBuf::from("/caller/documents"));
-    caller.warc_output = Some(PathBuf::from("/caller/archive.warc"));
 
-    let mut operator = CrawlConfig::default();
-    operator.auth = Some(AuthConfig::Bearer {
-        token: "operator-token".to_owned(),
-    });
+    let mut operator = CrawlConfig {
+        auth: Some(AuthConfig::Bearer {
+            token: "operator-token".to_owned(),
+        }),
+        ssrf: SsrfPolicy {
+            deny_private: true,
+            allowlist: vec![HostMatcher::suffix(".operator.internal")],
+            max_redirects: 3,
+            scheme_allowlist: vec!["https".to_owned()],
+        },
+        ssrf_deny_private_explicit: None,
+        max_redirects: 4,
+        proxy: Some(proxy("http://operator-proxy.invalid:9000")),
+        browser: BrowserConfig {
+            proxy: Some(proxy("http://operator-browser-proxy.invalid:9001")),
+            endpoint: Some("wss://operator-browser.invalid/devtools/browser/capability".to_owned()),
+            chrome_path: Some(PathBuf::from("/operator/chrome")),
+            chrome_args: vec!["--lang=de".to_owned()],
+            eval_script: Some("operatorScript()".to_owned()),
+            session_affinity: true,
+            ..BrowserConfig::default()
+        },
+        browser_profile: Some("operator-profile".to_owned()),
+        save_browser_profile: false,
+        document_output_dir: Some(PathBuf::from("/operator/documents")),
+        warc_output: Some(PathBuf::from("/operator/archive.warc")),
+        ..CrawlConfig::default()
+    };
     operator
         .custom_headers
         .insert("x-operator-key".to_owned(), "operator-secret".to_owned());
-    operator.ssrf = SsrfPolicy {
-        deny_private: true,
-        allowlist: vec![HostMatcher::suffix(".operator.internal")],
-        max_redirects: 3,
-        scheme_allowlist: vec!["https".to_owned()],
-    };
-    operator.ssrf_deny_private_explicit = None;
-    operator.max_redirects = 4;
-    operator.proxy = Some(proxy("http://operator-proxy.invalid:9000"));
-    operator.browser.proxy = Some(proxy("http://operator-browser-proxy.invalid:9001"));
-    operator.browser.endpoint = Some("wss://operator-browser.invalid/devtools/browser/capability".to_owned());
-    operator.browser.chrome_path = Some(PathBuf::from("/operator/chrome"));
-    operator.browser.chrome_args = vec!["--lang=de".to_owned()];
-    operator.browser.eval_script = Some("operatorScript()".to_owned());
-    operator.browser.session_affinity = true;
-    operator.browser_profile = Some("operator-profile".to_owned());
-    operator.save_browser_profile = false;
-    operator.document_output_dir = Some(PathBuf::from("/operator/documents"));
-    operator.warc_output = Some(PathBuf::from("/operator/archive.warc"));
 
     caller.adopt_operator_egress(&operator);
 
-    assert_eq!(caller.ssrf.deny_private, true);
+    assert!(caller.ssrf.deny_private);
     assert_eq!(caller.ssrf.allowlist, operator.ssrf.allowlist);
     assert_eq!(caller.ssrf.max_redirects, 3);
     assert_eq!(caller.ssrf.scheme_allowlist, vec!["https".to_owned()]);
@@ -193,16 +202,25 @@ fn should_adopt_every_runtime_operator_owned_field() {
     let mut caller = CrawlConfig::default();
     caller.adopt_operator_egress(&operator);
 
-    assert_eq!(caller.dispatch.as_ref().map(|profile| profile.max_total_attempts), Some(27));
+    assert_eq!(
+        caller.dispatch.as_ref().map(|profile| profile.max_total_attempts),
+        Some(27)
+    );
     assert!(Arc::ptr_eq(
         caller.proxy_provider.as_ref().expect("operator proxy provider copied"),
-        operator.proxy_provider.as_ref().expect("operator proxy provider configured")
+        operator
+            .proxy_provider
+            .as_ref()
+            .expect("operator proxy provider configured")
     ));
     #[cfg(feature = "browser")]
     {
         assert!(Arc::ptr_eq(
             caller.browser_pool.as_ref().expect("operator browser pool copied"),
-            operator.browser_pool.as_ref().expect("operator browser pool configured")
+            operator
+                .browser_pool
+                .as_ref()
+                .expect("operator browser pool configured")
         ));
         assert!(Arc::ptr_eq(
             caller
@@ -294,10 +312,10 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         dispatch: _,
         credential_scope: _,
         #[cfg(feature = "browser")]
-        browser_pool: _,
+            browser_pool: _,
         proxy_provider: _,
         #[cfg(feature = "browser")]
-        browser_session_pool: _,
+            browser_session_pool: _,
     } = CrawlConfig::default();
 
     let BrowserConfig {
