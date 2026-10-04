@@ -60,3 +60,40 @@ fn a_non_websocket_browser_endpoint_error_does_not_echo_the_endpoint() {
         "the message must name the field and nothing else"
     );
 }
+
+#[test]
+fn chrome_arg_validation_errors_do_not_echo_caller_input() {
+    for (chrome_args, expected) in [
+        (
+            vec![format!("user-agent={SECRET}")],
+            "invalid_config: browser.chrome_args entry at index 0 must start with -- followed by a flag name; \
+             write a flag with a value as --flag=value",
+        ),
+        (
+            vec![format!("--Proxy-Server={SECRET}")],
+            "invalid_config: browser.chrome_args entry at index 0 must name the flag in lowercase, as Chrome does",
+        ),
+        (
+            vec![format!("--{SECRET}=first"), format!("--{SECRET}=second")],
+            "invalid_config: browser.chrome_args entry at index 1 duplicates an earlier flag",
+        ),
+    ] {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                chrome_args,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("an invalid Chrome argument must be rejected");
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+
+        assert_eq!(display, expected);
+        assert!(!display.contains(SECRET), "Display printed caller input: {display}");
+        assert!(!debug.contains(SECRET), "Debug printed caller input: {debug}");
+    }
+}

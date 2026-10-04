@@ -2687,7 +2687,7 @@ fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_th
     for (chrome_args, expected) in [
         (
             vec!["disable-gpu"],
-            "browser: BrowserPoolConfig.chrome_args entry \"disable-gpu\" must start with --",
+            "browser: BrowserPoolConfig.chrome_args entry at index 0 must start with --",
         ),
         (
             vec!["--headless=new"],
@@ -2695,11 +2695,11 @@ fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_th
         ),
         (
             vec!["--LANG=fr"],
-            "browser: BrowserPoolConfig.chrome_args entry \"--LANG=fr\" must name the flag in lowercase",
+            "browser: BrowserPoolConfig.chrome_args entry at index 0 must name the flag in lowercase",
         ),
         (
             vec!["--enable-features=A", "--enable-features=B"],
-            "browser: BrowserPoolConfig.chrome_args sets --enable-features more than once",
+            "browser: BrowserPoolConfig.chrome_args entry at index 1 duplicates an earlier flag",
         ),
     ] {
         let err = build_pool_launch_builder(
@@ -2712,6 +2712,42 @@ fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_th
         .expect_err("the pool must refuse what CrawlConfig::validate refuses")
         .to_string();
         assert!(err.contains(expected), "{chrome_args:?}: unexpected error: {err}");
+    }
+}
+
+#[test]
+fn the_pool_launch_builder_does_not_echo_rejected_chrome_arg_input() {
+    const SECRET: &str = "sk-live-pool-9f8e7d6c5b4a";
+
+    for (chrome_args, expected) in [
+        (
+            vec![format!("proxy-server={SECRET}")],
+            "browser: BrowserPoolConfig.chrome_args entry at index 0 must start with -- followed by a flag name; \
+             write a flag with a value as --flag=value",
+        ),
+        (
+            vec![format!("--Proxy-Server={SECRET}")],
+            "browser: BrowserPoolConfig.chrome_args entry at index 0 must name the flag in lowercase, as Chrome does",
+        ),
+        (
+            vec![format!("--{SECRET}=first"), format!("--{SECRET}=second")],
+            "browser: BrowserPoolConfig.chrome_args entry at index 1 duplicates an earlier flag",
+        ),
+    ] {
+        let error = build_pool_launch_builder(
+            std::path::Path::new("/tmp/pool-test-profile"),
+            &BrowserPoolConfig {
+                chrome_args,
+                ..BrowserPoolConfig::default()
+            },
+        )
+        .expect_err("the pool must reject an invalid Chrome argument");
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+
+        assert_eq!(display, expected);
+        assert!(!display.contains(SECRET), "Display printed caller input: {display}");
+        assert!(!debug.contains(SECRET), "Debug printed caller input: {debug}");
     }
 }
 

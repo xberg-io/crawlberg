@@ -165,7 +165,7 @@ const ORDERED_VIOLATIONS: &[(&str, ConfigRepair)] = &[
         c.browser.backend = BrowserBackend::Chromiumoxide;
         c.browser.endpoint = None;
     }),
-    ("browser.chrome_args entry \"--\" must start with --", |c| {
+    ("browser.chrome_args entry at index 0 must start with --", |c| {
         c.browser.chrome_args = vec!["--disable-gpu".to_owned()]
     }),
     (
@@ -610,7 +610,7 @@ fn validate_rejects_a_chrome_arg_named_twice() {
         .expect_err("a flag named twice must be rejected")
         .to_string();
     assert!(
-        err.contains("sets --user-agent more than once"),
+        err.contains("entry at index 1 duplicates an earlier flag"),
         "unexpected error: {err}"
     );
 }

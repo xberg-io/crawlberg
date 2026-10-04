@@ -272,12 +272,14 @@ pub(crate) fn chrome_switch_name(arg: &str) -> &str {
 /// Check the entries of `BrowserConfig::chrome_args`: each is `--name` or `--name=value`, with a
 /// lowercase name that is not one of [`LAUNCH_OWNED_CHROME_SWITCHES`] and appears only once.
 /// `section` names the config that holds the list (`browser` or `BrowserPoolConfig`), so the
-/// error names the key the caller wrote.
+/// error names the configuration key the caller wrote.
+/// ~keep Errors identify a rejected entry by index without rendering it because the caller's
+/// ~keep flag name or value can contain a secret.
 // ~keep Shared by `CrawlConfig::validate` and the launch helper in `browser_pool.rs`, for the
 // ~keep same reason as `check_chrome_executable` below.
 pub(crate) fn check_chrome_args(section: &str, chrome_args: &[String]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
-    for arg in chrome_args {
+    for (index, arg) in chrome_args.iter().enumerate() {
         // ~keep Only `--name` and `--name=value` are flags. Anything else would be turned
         // ~keep into a stray `--x` flag (`["--user-agent", "x"]`), or would dodge the
         // ~keep checks below with a single-dash spelling. A bare `--` ends Chrome's switch
@@ -286,7 +288,7 @@ pub(crate) fn check_chrome_args(section: &str, chrome_args: &[String]) -> Result
         let name = chrome_switch_name(key);
         if name.is_empty() || key.starts_with('-') {
             return Err(format!(
-                "{section}.chrome_args entry {arg:?} must start with -- followed by a flag name; \
+                "{section}.chrome_args entry at index {index} must start with -- followed by a flag name; \
                  write a flag with a value as --flag=value"
             ));
         }
@@ -295,7 +297,7 @@ pub(crate) fn check_chrome_args(section: &str, chrome_args: &[String]) -> Result
         // ~keep Refusing it keeps the exact comparisons below true on every platform.
         if name.bytes().any(|b| b.is_ascii_uppercase()) {
             return Err(format!(
-                "{section}.chrome_args entry {arg:?} must name the flag in lowercase, as Chrome does"
+                "{section}.chrome_args entry at index {index} must name the flag in lowercase, as Chrome does"
             ));
         }
         // ~keep chromiumoxide keeps launch flags in a HashMap, so two values for one
@@ -306,7 +308,9 @@ pub(crate) fn check_chrome_args(section: &str, chrome_args: &[String]) -> Result
             ));
         }
         if !seen.insert(name) {
-            return Err(format!("{section}.chrome_args sets --{name} more than once"));
+            return Err(format!(
+                "{section}.chrome_args entry at index {index} duplicates an earlier flag"
+            ));
         }
     }
     Ok(())
