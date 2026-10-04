@@ -14,6 +14,10 @@ impl SsrfValidator for AllowAll {
     async fn validate(&self, _url: &Url) -> Result<(), String> {
         Ok(())
     }
+
+    fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Serves a fixed path -> (content-type, body) map over loopback.

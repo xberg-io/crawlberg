@@ -474,6 +474,10 @@ mod tests {
         async fn validate(&self, _url: &Url) -> Result<(), String> {
             Ok(())
         }
+
+        fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     fn proxied_client(proxy: &str) -> Result<StealthHttpClient, NetError> {

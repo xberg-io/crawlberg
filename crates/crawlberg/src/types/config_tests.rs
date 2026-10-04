@@ -6,6 +6,7 @@
 //! ~keep lint-exempt by accident.
 
 use super::*;
+use crate::net::ssrf::HostMatcher;
 
 /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
 /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
@@ -311,7 +312,7 @@ fn validate_rejects_non_cidr_ssrf_denylist_entries() {
 
         assert_eq!(
             error.to_string(),
-            "invalid configuration: ssrf.denylist entries must be CIDR matchers"
+            "invalid_config: ssrf.denylist entries must be CIDR matchers"
         );
     }
 }

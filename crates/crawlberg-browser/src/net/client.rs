@@ -729,6 +729,12 @@ mod tests {
                 _ => Ok(()),
             }
         }
+
+        fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+            // ~keep This test policy decides from the URL string alone, so remote DNS cannot
+            // change its decision; proxy tests intentionally permit that separate lookup.
+            Ok(())
+        }
     }
 
     /// Serves one canned response per accepted connection, recording each raw request head.
@@ -839,6 +845,43 @@ mod tests {
             .expect("a literal IP is checkable before the proxy request");
         assert_eq!(proxy_requests.lock().expect("lock").len(), 1);
         assert_eq!(policy.checked.lock().expect("lock").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn default_validator_refuses_a_proxy_hostname_unless_private_networks_are_allowed() {
+        use crate::net::resolver::tests::{TestProxySelector, denied_server};
+
+        let (proxy_port, proxy_requests) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+        let selector = Arc::new(TestProxySelector::default());
+        selector.set_proxy(&format!("http://localhost:{proxy_port}"));
+        let target = "http://public.example/".parse::<Url>().expect("valid hostname URL");
+
+        let denying = HttpClient::with_ssrf_and_proxy_selector(
+            Arc::new(CookieJar::new()),
+            Arc::new(DefaultSsrfValidator::with_deny_private(true)),
+            selector.clone(),
+        );
+        let error = denying
+            .fetch(&target)
+            .await
+            .expect_err("the default policy cannot verify the proxy's DNS answer");
+        assert!(matches!(error, NetError::SsrfDenied(_)));
+        assert!(
+            proxy_requests.lock().expect("lock").is_empty(),
+            "the default refusal must happen before the request reaches the proxy"
+        );
+
+        let permitting = HttpClient::with_ssrf_and_proxy_selector(
+            Arc::new(CookieJar::new()),
+            Arc::new(DefaultSsrfValidator::with_deny_private(false)),
+            selector,
+        );
+        permitting
+            .fetch(&target)
+            .await
+            .expect("the explicit private-network override permits remote DNS");
+        assert_eq!(proxy_requests.lock().expect("lock").len(), 1);
     }
 
     #[tokio::test]

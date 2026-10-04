@@ -3,9 +3,10 @@
 //! Chrome's request interception never sees a WebSocket handshake or a QUIC datagram, and
 //! Chrome resolves a host again after the check has passed. Through this proxy each connection
 //! is resolved once, checked with [`resolve_permitted`], and made to the checked address.
-//! Behind the crawl's own proxy a host name goes to that proxy unresolved, as the HTTP client
-//! sends it, and only an IP address is checked here. The proxy speaks SOCKS5 to Chrome, or HTTP
-//! when the crawl's proxy is an HTTP proxy, so that proxy receives the requests Chrome would send it.
+//! Behind the crawl's own proxy, only an explicitly allowlisted host name goes to that proxy
+//! unresolved. Other names fail closed when remote DNS could evade an IP denial. The proxy speaks
+//! SOCKS5 to Chrome, or HTTP when the crawl's proxy is an HTTP proxy, so that proxy receives the
+//! requests Chrome would send it.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -317,10 +318,27 @@ async fn permitted(
     upstream: &Upstream,
     refused: &Mutex<Vec<String>>,
 ) -> Option<Vec<Target>> {
-    // ~keep With an upstream proxy a name goes to it unresolved, as the HTTP client sends it:
-    // ~keep the upstream resolves it, so a name only the upstream can resolve keeps working.
+    // ~keep With an upstream proxy an explicitly trusted name goes to it unresolved, as the
+    // ~keep HTTP client sends it. Other names fail closed when its DNS could evade IP denials.
     if *upstream != Upstream::Direct && host.parse::<IpAddr>().is_err() {
-        return Some(vec![Target::Name(host.to_owned(), port)]);
+        let remote = format!("http://{host}/").parse::<url::Url>();
+        match remote {
+            Ok(url) if matches!(url.host(), Some(url::Host::Domain(_))) => {
+                match crate::net::ssrf::validate_remote_resolution(&url, policy) {
+                    Ok(()) => return Some(vec![Target::Name(host.to_owned(), port)]),
+                    Err(error) => return refuse(host, port, &error, refused),
+                }
+            }
+            Ok(_) => {
+                return refuse(
+                    host,
+                    port,
+                    &"a non-canonical IP address cannot be delegated to remote DNS",
+                    refused,
+                );
+            }
+            Err(error) => return refuse(host, port, &error, refused),
+        }
     }
     // ~keep The addresses come from this one lookup and are never looked up again, so Chrome
     // ~keep cannot reach an address other than the one the policy passed.
@@ -334,20 +352,22 @@ async fn permitted(
                 })
                 .collect(),
         ),
-        Err(error) => {
-            // ~keep An IPv6 socket is written `[::1]:80`, as a URL names its host, so the
-            // ~keep refusal matches a refused URL for the same socket.
-            let socket = match host.parse::<IpAddr>() {
-                Ok(ip) => SocketAddr::new(ip, port).to_string(),
-                Err(_) => format!("{host}:{port}"),
-            };
-            tracing::warn!(%socket, %error, "the browser's SSRF proxy refused a connection");
-            if let Ok(mut refused) = refused.lock() {
-                refused.push(socket);
-            }
-            None
-        }
+        Err(error) => refuse(host, port, &error, refused),
     }
+}
+
+fn refuse(host: &str, port: u16, error: &dyn std::fmt::Display, refused: &Mutex<Vec<String>>) -> Option<Vec<Target>> {
+    // ~keep An IPv6 socket is written `[::1]:80`, as a URL names its host, so the
+    // ~keep refusal matches a refused URL for the same socket.
+    let socket = match host.parse::<IpAddr>() {
+        Ok(ip) => SocketAddr::new(ip, port).to_string(),
+        Err(_) => format!("{host}:{port}"),
+    };
+    tracing::warn!(%socket, %error, "the browser's SSRF proxy refused a connection");
+    if let Ok(mut refused) = refused.lock() {
+        refused.push(socket);
+    }
+    None
 }
 
 /// A stream to the first of `targets` that connects, and the address it reached (unspecified
@@ -509,6 +529,10 @@ mod tests {
 
     fn loopback_cidr() -> HostMatcher {
         HostMatcher::cidr("127.0.0.0/8").expect("valid CIDR")
+    }
+
+    fn proxy_only_policy() -> SsrfPolicy {
+        policy(vec![HostMatcher::exact("proxy-only.invalid")])
     }
 
     /// Both loopback ranges. A hosts file can map `localhost` to `::1` as well as `127.0.0.1`,
@@ -705,6 +729,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_upstream_refuses_a_hostname_when_custom_denials_cannot_be_enforced() {
+        let refused = Mutex::new(Vec::new());
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
+            ..Default::default()
+        };
+
+        let targets = permitted(
+            "target.example",
+            443,
+            &policy,
+            &Upstream::HttpConnect("127.0.0.1:8080".to_owned()),
+            &refused,
+        )
+        .await;
+
+        assert!(
+            targets.is_none(),
+            "an upstream could resolve the name into the custom denial"
+        );
+        assert_eq!(
+            refused.into_inner().expect("lock"),
+            vec!["target.example:443".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_upstream_refuses_an_untrusted_hostname_under_private_denial() {
+        let refused = Mutex::new(Vec::new());
+
+        let targets = permitted(
+            "target.example",
+            443,
+            &SsrfPolicy::default(),
+            &Upstream::Socks5("127.0.0.1:1080".to_owned()),
+            &refused,
+        )
+        .await;
+
+        assert!(
+            targets.is_none(),
+            "an upstream could resolve an untrusted name into private address space"
+        );
+        assert_eq!(
+            refused.into_inner().expect("lock"),
+            vec!["target.example:443".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_upstream_never_receives_an_obfuscated_ip_as_a_name() {
+        let refused = Mutex::new(Vec::new());
+        let policy = SsrfPolicy {
+            allowlist: vec![HostMatcher::exact("2130706433")],
+            ..Default::default()
+        };
+
+        let targets = permitted(
+            "2130706433",
+            80,
+            &policy,
+            &Upstream::Socks5("127.0.0.1:1080".to_owned()),
+            &refused,
+        )
+        .await;
+
+        assert!(
+            targets.is_none(),
+            "the decimal form of 127.0.0.1 must not reach remote DNS"
+        );
+        assert_eq!(refused.into_inner().expect("lock"), vec!["2130706433:80".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn an_upstream_may_resolve_an_explicitly_allowlisted_hostname() {
+        let refused = Mutex::new(Vec::new());
+        let policy = SsrfPolicy {
+            allowlist: vec![HostMatcher::suffix(".trusted.example")],
+            ..Default::default()
+        };
+
+        let targets = permitted(
+            "api.trusted.example",
+            443,
+            &policy,
+            &Upstream::Socks4("127.0.0.1:1080".to_owned()),
+            &refused,
+        )
+        .await
+        .expect("the operator explicitly trusts the hostname");
+
+        assert_eq!(
+            targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            vec!["api.trusted.example:443".to_owned()]
+        );
+        assert!(refused.into_inner().expect("lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_environment_private_override_does_not_disable_custom_denials_for_an_upstream() {
+        let refused = Mutex::new(Vec::new());
+        // ~keep The builder's env-precedence tests prove that the override changes only
+        // deny_private. Construct that post-override policy here without a third env writer.
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
+            allowlist: vec![HostMatcher::exact("target.example")],
+            ..Default::default()
+        };
+
+        let targets = permitted(
+            "target.example",
+            443,
+            &policy,
+            &Upstream::HttpConnect("127.0.0.1:8080".to_owned()),
+            &refused,
+        )
+        .await;
+
+        assert!(
+            targets.is_none(),
+            "the private-network override and hostname allowlist must not erase a custom denial"
+        );
+        assert_eq!(
+            refused.into_inner().expect("lock"),
+            vec!["target.example:443".to_owned()]
+        );
+    }
+
+    #[tokio::test]
     async fn an_ipv6_refusal_is_written_as_a_url_names_it() {
         let denied = start(&policy(Vec::new()), None).await;
         assert!(
@@ -813,14 +968,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn each_upstream_gets_a_name_unresolved_and_only_a_permitted_address() {
+    async fn each_upstream_gets_an_allowlisted_name_unresolved_and_only_a_permitted_address() {
         let public = "93.184.215.14";
         for (kind, scheme) in [("http", "http"), ("socks5", "socks5"), ("socks4", "socks4")] {
             let (upstream, seen) = recording_upstream(kind).await;
-            let egress = start(&policy(Vec::new()), Some(&format!("{scheme}://{upstream}"))).await;
+            let egress = start(&proxy_only_policy(), Some(&format!("{scheme}://{upstream}"))).await;
             ask(&egress, "proxy-only.invalid", 443)
                 .await
-                .unwrap_or_else(|e| panic!("{kind}: a name must go to the upstream: {e}"));
+                .unwrap_or_else(|e| panic!("{kind}: an allowlisted name must go to the upstream: {e}"));
             ask(&egress, public, 443)
                 .await
                 .unwrap_or_else(|e| panic!("{kind}: a public address must go to the upstream: {e}"));
@@ -848,7 +1003,7 @@ mod tests {
     #[tokio::test]
     async fn a_plain_request_goes_to_an_http_upstream_unchanged_unless_denied() {
         let (upstream, seen) = recording_upstream("http").await;
-        let egress = start(&policy(Vec::new()), Some(&format!("http://{upstream}"))).await;
+        let egress = start(&proxy_only_policy(), Some(&format!("http://{upstream}"))).await;
         assert!(
             egress.chrome_proxy().server.starts_with("http://"),
             "Chrome must speak HTTP to it"
@@ -867,7 +1022,7 @@ mod tests {
         let passed = status_of("http://proxy-only.invalid/page").await;
         assert!(
             passed.starts_with("HTTP/1.1 200"),
-            "a name must be forwarded, got {passed:?}"
+            "an allowlisted name must be forwarded, got {passed:?}"
         );
         let denied = status_of("http://127.0.0.1:9/page").await;
         assert!(
@@ -906,7 +1061,7 @@ mod tests {
             .expect("the test listener must bind")
             .local_addr()
             .expect("a bound listener has an address");
-        let egress = start(&policy(Vec::new()), Some(&format!("http://{closed}"))).await;
+        let egress = start(&proxy_only_policy(), Some(&format!("http://{closed}"))).await;
         for (request, expected) in [
             ("GET /page HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 400"),
             (
@@ -935,7 +1090,7 @@ mod tests {
     #[tokio::test]
     async fn an_https_upstream_is_spoken_to_over_tls() {
         let (upstream, seen) = recording_upstream("tls").await;
-        let egress = start(&policy(Vec::new()), Some(&format!("https://{upstream}"))).await;
+        let egress = start(&proxy_only_policy(), Some(&format!("https://{upstream}"))).await;
         let _ = ask(&egress, "proxy-only.invalid", 443).await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert_eq!(

@@ -4,6 +4,17 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **Hostname requests through an upstream proxy or external `browser.endpoint` now fail closed
+  under IP-based SSRF denial.** With the default `deny_private = true`, add an `Exact` or `Suffix`
+  allowlist entry for each hostname whose remote DNS you trust, or set `deny_private = false`.
+  A CIDR allowlist cannot verify a DNS answer produced outside Crawlberg. A custom `denylist`
+  always wins: remote hostname resolution remains refused even for an allowlisted hostname or
+  when private networks are enabled. Literal IP URLs and direct connections retain their existing
+  address checks. Custom `crawlberg-browser` validators now inherit the same fail-closed remote-DNS
+  default and must override `validate_remote_resolution` to opt out deliberately. (#110)
+
 ### Added
 
 - `SsrfPolicy.denylist` adds deployment-specific CIDR ranges to the built-in SSRF denials.

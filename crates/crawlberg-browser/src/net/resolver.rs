@@ -286,6 +286,12 @@ pub(crate) mod tests {
             }
         }
 
+        fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+            // ~keep Proxy-selection tests deliberately model a proxy-owned lookup; direct
+            // connection tests still exercise this policy's address-level rebinding refusal.
+            Ok(())
+        }
+
         async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
             self.resolved.lock().expect("lock").push(host.to_owned());
             Self::check(DENIED).map(|()| vec![DENIED])

@@ -158,19 +158,28 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
     }
 }
 
-/// Refuse a hostname when another process will resolve it and configured deny networks exist.
+/// Refuse a hostname when another process will resolve it and could evade an IP denial.
 ///
 /// ~keep A local validation lookup cannot constrain a proxy or remote browser's later lookup.
-/// Literal addresses need no remote lookup and remain governed by [`validate_url`]; a hostname
-/// is refused unless the connection uses the locally validated resolver path.
+/// Literal addresses need no remote lookup and remain governed by [`validate_url`]. Custom
+/// denials always fail closed; the built-in denial does too unless an Exact/Suffix entry
+/// explicitly trusts the hostname that the remote resolver receives.
 pub(crate) fn validate_remote_resolution(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
     policy.validate_denylist().map_err(SsrfError::InvalidCidr)?;
-    match url.host() {
-        Some(url::Host::Domain(_)) if !policy.denylist.is_empty() => Err(SsrfError::DeniedByPolicy {
+    let Some(url::Host::Domain(host)) = url.host() else {
+        return Ok(());
+    };
+    if !policy.denylist.is_empty() {
+        return Err(SsrfError::DeniedByPolicy {
             reason: "configured_network",
-        }),
-        _ => Ok(()),
+        });
     }
+    if !policy.deny_private || policy.allowlist.iter().any(|matcher| matcher.matches_host(host)) {
+        return Ok(());
+    }
+    Err(SsrfError::DeniedByPolicy {
+        reason: "private_network",
+    })
 }
 
 /// Decide one address, naming the reason when the policy refuses it.
@@ -298,19 +307,13 @@ pub(crate) fn denial_reason(ip: IpAddr, policy: &SsrfPolicy) -> Option<&'static 
     default_denied_address(ip, &policy.allowlist).map(|(_, reason)| reason)
 }
 
-/// Test if an IP address is permitted by the SSRF policy.
-///
-/// Returns true if the IP is allowed, false if it should be rejected.
-pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
-    denial_reason(ip, policy).is_none()
-}
-
 /// Classify a denied IP into a category for error messaging.
 ///
 /// `allowlist` must be the one the deny decision used. Classifying against an empty
 /// allowlist instead names the first deny-listed candidate, which the policy may permit:
 /// with `fe80::/10` allowlisted, `fe80::5efe:10.0.0.5` is denied for the `10.0.0.5` it
 /// carries, not for being link-local.
+#[cfg(test)]
 pub(crate) fn classify_private_ip(ip: IpAddr, allowlist: &[HostMatcher]) -> &'static str {
     default_denied_address(ip, allowlist)
         .or_else(|| default_denied_address(ip, &[]))
@@ -320,6 +323,54 @@ pub(crate) fn classify_private_ip(ip: IpAddr, allowlist: &[HostMatcher]) -> &'st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn remote_url(host: &str) -> url::Url {
+        format!("http://{host}/").parse().expect("valid test URL")
+    }
+
+    #[test]
+    fn remote_resolution_refuses_an_untrusted_hostname_under_private_denial() {
+        let error = validate_remote_resolution(&remote_url("target.example"), &SsrfPolicy::default())
+            .expect_err("remote DNS could resolve the hostname into private address space");
+
+        assert!(matches!(
+            error,
+            SsrfError::DeniedByPolicy {
+                reason: "private_network"
+            }
+        ));
+    }
+
+    #[test]
+    fn remote_resolution_permits_an_explicitly_allowlisted_hostname() {
+        let policy = SsrfPolicy {
+            allowlist: vec![HostMatcher::exact("target.example")],
+            ..Default::default()
+        };
+
+        validate_remote_resolution(&remote_url("target.example"), &policy)
+            .expect("an Exact hostname allowlist explicitly trusts remote DNS");
+    }
+
+    #[test]
+    fn remote_resolution_applies_custom_denial_before_hostname_allowlist() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![HostMatcher::exact("target.example")],
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
+            ..Default::default()
+        };
+
+        let error = validate_remote_resolution(&remote_url("target.example"), &policy)
+            .expect_err("remote DNS could resolve the allowlisted hostname into the custom denial");
+
+        assert!(matches!(
+            error,
+            SsrfError::DeniedByPolicy {
+                reason: "configured_network"
+            }
+        ));
+    }
 
     /// The non-`http`/`https` half of [`NAMED_SCHEMES`], hardcoded rather than read from
     /// the const. Walking `NAMED_SCHEMES` itself would make this test a no-op against the

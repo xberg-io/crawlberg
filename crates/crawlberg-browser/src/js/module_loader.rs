@@ -253,6 +253,10 @@ mod tests {
         async fn validate(&self, _url: &url::Url) -> Result<(), String> {
             Ok(())
         }
+
+        fn validate_remote_resolution(&self, _url: &url::Url) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     #[derive(Debug)]

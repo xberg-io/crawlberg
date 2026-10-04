@@ -22,12 +22,12 @@ pub use validate::validate_url;
 // ~keep Each re-export is gated to its only consumer -- `net::resolver` (non-wasm only) and the
 // ~keep `net::browser_policy` deny-list and named-scheme parity tests. Ungated, either is an
 // ~keep unused import in the builds that lack that consumer, which -D warnings rejects.
+#[cfg(test)]
+pub(crate) use validate::classify_private_ip;
 #[cfg(all(test, feature = "browser-native"))]
 pub(crate) use validate::{DEFAULT_DENY_NET_RULES, NAMED_SCHEMES};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use validate::{
-    classify_private_ip, custom_denial_reason, denial_reason, is_ip_permitted, validate_remote_resolution,
-};
+pub(crate) use validate::{custom_denial_reason, denial_reason, validate_remote_resolution};
 
 #[cfg(test)]
 pub(crate) use cases::EMBEDDED_IPV4_CASES;

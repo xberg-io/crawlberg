@@ -100,10 +100,11 @@ pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
 
     /// Return `Ok(())` when a proxy or another process may resolve `url`'s hostname.
     ///
-    /// Validators with address-based custom policy override this to fail closed when the
-    /// remote lookup cannot be bound to the connection. Literal IP hosts remain checkable.
-    fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
-        Ok(())
+    /// ~keep The default fails closed for a hostname because a URL-only validator cannot bind its
+    /// decision to the remote DNS answer. Validators that deliberately permit remote DNS must
+    /// opt out explicitly. Literal IP hosts remain checkable.
+    fn validate_remote_resolution(&self, url: &Url) -> Result<(), String> {
+        refuse_remote_hostname(url)
     }
 
     /// Resolve `host` and return the addresses a connection to it may use.
@@ -128,6 +129,15 @@ async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
         .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
         .map(|address| address.ip())
         .collect())
+}
+
+fn refuse_remote_hostname(url: &Url) -> Result<(), String> {
+    match url.host() {
+        Some(url::Host::Domain(_)) => {
+            Err("remote hostname resolution is not allowed by this SSRF validator".to_owned())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -215,6 +225,14 @@ impl SsrfValidator for DefaultSsrfValidator {
         }
     }
 
+    fn validate_remote_resolution(&self, url: &Url) -> Result<(), String> {
+        if self.deny_private {
+            refuse_remote_hostname(url)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Refuses the host when any address it resolves to is in the deny-list.
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         let addresses = system_lookup(host).await?;
@@ -290,6 +308,16 @@ fn is_localhost_name(domain: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct UrlOnlyValidator;
+
+    #[async_trait::async_trait]
+    impl SsrfValidator for UrlOnlyValidator {
+        async fn validate(&self, _url: &Url) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     fn url(s: &str) -> Url {
         s.parse().expect("valid URL")
     }
@@ -317,6 +345,38 @@ mod tests {
         }
 
         assert!(!parse_allow_private(None), "an unset variable must deny");
+    }
+
+    #[test]
+    fn trait_default_refuses_remote_hostname_resolution() {
+        let validator = UrlOnlyValidator;
+
+        let error = validator
+            .validate_remote_resolution(&url("https://public.example/"))
+            .expect_err("a URL-only validator cannot bind remote DNS to its policy");
+        assert_eq!(
+            error,
+            "remote hostname resolution is not allowed by this SSRF validator"
+        );
+
+        validator
+            .validate_remote_resolution(&url("https://198.51.100.1/"))
+            .expect("a literal IP needs no remote hostname lookup");
+    }
+
+    #[test]
+    fn default_validator_refuses_remote_hostnames_unless_private_networks_are_allowed() {
+        let target = url("https://public.example/");
+
+        DefaultSsrfValidator::with_deny_private(true)
+            .validate_remote_resolution(&target)
+            .expect_err("remote DNS could resolve the hostname into private address space");
+        DefaultSsrfValidator::with_deny_private(false)
+            .validate_remote_resolution(&target)
+            .expect("the explicit private-network override opts out of the IP denial");
+        DefaultSsrfValidator::with_deny_private(true)
+            .validate_remote_resolution(&url("https://198.51.100.1/"))
+            .expect("a literal IP remains checkable before the proxy request");
     }
 
     #[tokio::test]

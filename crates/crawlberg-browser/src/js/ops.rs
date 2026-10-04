@@ -1016,7 +1016,7 @@ mod tests {
     use super::*;
 
     fn client_through(proxy: &str) -> Result<reqwest::Client, String> {
-        let ssrf: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::from_env());
+        let ssrf = allow_all();
         let proxy = crate::net::proxy::test_proxy(proxy).map_err(|e| e.to_string())?;
         build_request_client(Some(&proxy), &ssrf, &"http://origin.test/".parse().expect("valid URL"))
     }
@@ -1066,6 +1066,10 @@ mod tests {
         #[async_trait::async_trait]
         impl SsrfValidator for AllowAll {
             async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn validate_remote_resolution(&self, _url: &url::Url) -> Result<(), String> {
                 Ok(())
             }
         }

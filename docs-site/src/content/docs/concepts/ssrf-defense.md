@@ -157,6 +157,26 @@ Allowlist entries permit access regardless of the default denylist. A
 mismatch between hostname allowlist and resolved IPs (e.g. `Exact("svc.internal")`
 resolves to a public IP) still permits the request — the allowlist trusts the host string.
 
+### Proxies and external browsers
+
+An upstream proxy or a browser on another machine performs the connection's final DNS lookup
+outside Crawlberg. A local lookup cannot bind that remote process to the addresses the policy
+checked, so hostname traffic fails closed whenever an IP denial could be evaded:
+
+- With `deny_private = true`, an ordinary hostname is refused. Add an `Exact` or `Suffix`
+  allowlist entry only when the operator trusts that hostname's remote DNS result. A CIDR entry
+  cannot authorize remote DNS because Crawlberg never sees the resulting address.
+- With `deny_private = false`, ordinary hostnames are permitted unless a custom `denylist` is set.
+- A custom `denylist` always takes precedence. An upstream or external browser cannot resolve any
+  hostname while one is configured, even when the hostname is allowlisted or private networks are
+  enabled. Literal IP URLs remain available when their address passes the policy.
+
+This applies to configured and environment HTTP proxies, proxy providers, Chrome upstream proxies,
+and an external `browser.endpoint`. Direct connections still use Crawlberg's policy resolver, which
+checks the addresses used by the connection. To keep remote hostname resolution, use explicit
+hostname allowlists for the built-in policy, disable `deny_private`, or enforce equivalent egress
+policy at the proxy/browser boundary.
+
 ## Additional denied networks
 
 Deployments can add public or private IP ranges that must never be reached. These ranges extend
@@ -183,12 +203,9 @@ configuration validation. The JSON form uses the same tagged CIDR representation
 ]}}
 ```
 
-A hostname cannot be checked against an address denylist when its final DNS lookup happens in an
-upstream HTTP/SOCKS proxy or in a browser connected through `browser.endpoint`: that remote lookup
-is not bound to Crawlberg's validated addresses. With a non-empty custom denylist, Crawlberg
-therefore refuses hostname requests on those routes before they leave the process. Literal IP URLs
-remain available when their address passes the policy. Use direct egress, where Crawlberg controls
-the connection lookup, or enforce the same deny networks at the remote proxy/browser boundary.
+A hostname cannot be checked against a custom address denylist when its final DNS lookup happens
+outside Crawlberg. As described above, Crawlberg therefore refuses every hostname on that route
+when `denylist` is non-empty.
 
 ## What happens when a request is refused
 
@@ -233,6 +250,11 @@ browser-specific extras are kept:
   fixtures.
 - A `localhost`/`.localhost` string short-circuit runs before DNS to mitigate
   rebinding through the browser's resolver.
+
+Standalone `crawlberg-browser` uses `DefaultSsrfValidator`, which also refuses remote hostname
+resolution while private-network denial is enabled. A custom `SsrfValidator` inherits a
+fail-closed `validate_remote_resolution` implementation; an embedding that intentionally permits
+an upstream proxy to resolve hostnames must override that method explicitly.
 
 This is the same mitigation chain that fixed GHSA-8v6v-g4rh-jmcm.
 

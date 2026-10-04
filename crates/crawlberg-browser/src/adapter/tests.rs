@@ -26,6 +26,10 @@ impl SsrfValidator for AllowLoopbackValidator {
     async fn validate(&self, _url: &Url) -> Result<(), String> {
         Ok(())
     }
+
+    fn validate_remote_resolution(&self, _url: &Url) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A config whose SSRF policy admits the loopback test server.
