@@ -1765,9 +1765,9 @@ fn apply_lifecycle<'a>(
 /// Whether Chrome currently lists `target`; `None` leaves ownership unchanged and fail-closed.
 /// ~keep Chrome can change after this lock-free query: the later queued lifecycle event then
 /// ~keep applies the converging mutation (destroy removes a created ghost; create restores reuse).
-async fn target_is_live(browser: &Browser, shared: &Shared, target: &TargetId) -> Option<bool> {
+async fn target_is_live(browser: &Browser, _shared: &Shared, target: &TargetId) -> Option<bool> {
     #[cfg(test)]
-    if let Some(gate) = &shared.delays.lifecycle_query_gate {
+    if let Some(gate) = &_shared.delays.lifecycle_query_gate {
         lock(&gate.held).push(target.inner().clone());
         if let Ok(permit) = gate.permits.acquire().await {
             permit.forget();
