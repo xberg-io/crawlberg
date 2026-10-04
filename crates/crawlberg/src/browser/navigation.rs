@@ -668,10 +668,17 @@ mod tests {
 
             let site = MockServer::start().await;
             for (route, status, colour) in [("/one", 201, "red"), ("/two", 203, "blue")] {
+                let selector_marker = if route == "/two" {
+                    " data-selector-ready=\"yes\""
+                } else {
+                    ""
+                };
                 Mock::given(method("GET"))
                     .and(path(route))
                     .respond_with(ResponseTemplate::new(status).set_body_raw(
-                        format!("<html><body style=\"background:{colour}\"><p>doc{route}</p></body></html>"),
+                        format!(
+                            "<html><body{selector_marker} style=\"background:{colour}\"><p>doc{route}</p></body></html>"
+                        ),
                         "text/html",
                     ))
                     .mount(&site)
@@ -756,6 +763,31 @@ mod tests {
         } else {
             ("/two", 203)
         }
+    }
+
+    /// A document replacement between `DOM.getDocument` and `DOM.querySelector` invalidates the
+    /// old root. The selector wait retries only after verifying that Chrome now reports a new
+    /// root, then finds the selector in that new document. ~keep
+    #[tokio::test(flavor = "multi_thread")]
+    async fn selector_wait_retries_when_the_document_root_was_replaced() {
+        let test_name = "selector_wait_retries_when_the_document_root_was_replaced";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        fixture
+            .page
+            .goto(fixture.url("/one"))
+            .await
+            .expect("the first document must load");
+        let waited = crate::chrome_frame::NAVIGATE_AFTER_SELECTOR_ROOT
+            .scope(
+                std::cell::Cell::new(Some(fixture.url("/two"))),
+                wait_for_selector(&fixture.page, "[data-selector-ready='yes']"),
+            )
+            .await;
+        fixture.stop().await;
+
+        waited.expect("the selector wait must retry against the replacement document");
     }
 
     /// A document committed between the render's read of the HTML and its read of the committed

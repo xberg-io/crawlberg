@@ -196,7 +196,22 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
             ];
             tokio::time::timeout(Duration::from_secs(60), interact(&engine, &seed, actions))
                 .await
-                .map(|result| result.map(|result| result.ssrf_refused_urls))
+                .map(|result| {
+                    result.map(|result| {
+                        assert_eq!(
+                            result.action_results.len(),
+                            2,
+                            "{test_name}: the completion sequence must return exactly two action results: {:?}",
+                            result.action_results
+                        );
+                        assert!(
+                            result.action_results.iter().all(|action| action.success),
+                            "{test_name}: the completion sequence must succeed: {:?}",
+                            result.action_results
+                        );
+                        result.ssrf_refused_urls
+                    })
+                })
         }
         _ => tokio::time::timeout(Duration::from_secs(60), scrape(&engine, &seed))
             .await

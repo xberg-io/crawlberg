@@ -26,15 +26,39 @@ pub(crate) async fn wait_for_selector(
 ) -> Result<(), chromiumoxide::error::CdpError> {
     loop {
         let root = page.get_document().await?.node_id;
-        let matched = page
-            .execute(QuerySelectorParams::new(root, selector))
-            .await?
-            .result
-            .node_id;
+        #[cfg(test)]
+        navigate_after_selector_root(page).await;
+        let matched = match page.execute(QuerySelectorParams::new(root, selector)).await {
+            Ok(response) => response.result.node_id,
+            Err(error) => {
+                let current_root = page.get_document().await?.node_id;
+                if current_root != root {
+                    continue;
+                }
+                return Err(error);
+            }
+        };
         if matched != NodeId::default() {
             return Ok(());
         }
         tokio::time::sleep(SELECTOR_POLL_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// A URL committed once between a selector wait's root lookup and query. ~keep
+    pub(crate) static NAVIGATE_AFTER_SELECTOR_ROOT: std::cell::Cell<Option<String>>;
+}
+
+#[cfg(test)]
+async fn navigate_after_selector_root(page: &chromiumoxide::Page) {
+    if let Some(url) = NAVIGATE_AFTER_SELECTOR_ROOT
+        .try_with(std::cell::Cell::take)
+        .ok()
+        .flatten()
+    {
+        page.goto(url).await.expect("the test navigation must load");
     }
 }
 
