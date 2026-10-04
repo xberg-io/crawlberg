@@ -340,7 +340,8 @@ async fn read_page_html(page: &chromiumoxide::Page, what: &str) -> Result<(Strin
 /// The result of a navigation that ended on a terminal response: its URL and body, and a failed
 /// result per action, since crawlberg stopped the navigation before an actionable page.
 ///
-/// ~keep `scrape` reports the same response as a page, including a redirect response's body.
+/// ~keep `scrape` reports the original terminal response metadata, but a redirect body is
+/// ~keep intentionally empty because Chrome receives a complete synthetic inert document.
 /// ~keep `InteractionResult` has no status, so the action errors carry it.
 fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> InteractionResult {
     let error = format!(

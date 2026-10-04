@@ -102,6 +102,8 @@ pub(crate) struct InterceptOutcome {
     committed_unreachable_url: Option<String>,
     /// A recorded main-frame document response whose load Chrome reported as failed.
     failed_document: Option<String>,
+    /// The network request id of the newest main-frame document request.
+    latest_document_request: Option<String>,
     /// The network request id of the main-frame navigation whose redirects are being counted,
     /// and how many it has followed. A redirect of another navigation replaces it, and any
     /// document response clears it.
@@ -1654,6 +1656,9 @@ fn record_document_failure_outcome(
     if canceled || error_text.eq_ignore_ascii_case("net::ERR_ABORTED") {
         return false;
     }
+    if state.latest_document_request.as_deref() != Some(request_id) {
+        return false;
+    }
     if !state.documents.get(request_id).is_some_and(|response| {
         (200..300).contains(&response.status) && !NO_DOCUMENT_STATUSES.contains(&response.status)
     }) {
@@ -2187,13 +2192,15 @@ fn navigation_verdict(
     limit: usize,
     state: &Mutex<InterceptOutcome>,
 ) -> bool {
-    if *main_frame != event.frame_id
-        || event.resource_type != ResourceType::Document
-        || event.redirected_request_id.is_some()
-    {
+    if *main_frame != event.frame_id || event.resource_type != ResourceType::Document {
         return true;
     }
     let mut state = lock(state);
+    state.latest_document_request = event.network_id.as_ref().map(|id| id.as_ref().to_owned());
+    state.failed_document = None;
+    if event.redirected_request_id.is_some() {
+        return true;
+    }
     if !state.navigation_started {
         state.navigation_started = true;
         return true;
@@ -2231,6 +2238,7 @@ fn record_main_frame_response(
     headers: &[HeaderEntry],
 ) {
     state.failed_document = None;
+    state.latest_document_request = Some(network_id.to_owned());
     let redirects = match state.pending_redirects.take() {
         Some((pending, count)) if pending == network_id => count,
         _ => 0,
@@ -2858,6 +2866,30 @@ mod tests {
         ));
 
         let state = state.into_inner().expect("state lock");
+        assert_eq!(state.failed_document, None);
+        assert!(failed_document_response(&state).is_none());
+    }
+
+    #[test]
+    fn a_delayed_failure_from_an_older_document_is_ignored() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        for request_id in ["A", "B"] {
+            assert!(matches!(
+                main_frame_verdict(&main_frame_response(request_id, 200), &main_frame, 0, &state),
+                Verdict::Continue(None)
+            ));
+            record_main_frame_commit(&state, request_id, None);
+        }
+
+        assert!(!record_document_failure_outcome(
+            &mut state.lock().expect("state lock"),
+            "A",
+            false,
+            "net::ERR_CONTENT_DECODING_FAILED"
+        ));
+        let state = state.into_inner().expect("state lock");
+        assert_eq!(state.latest_document_request.as_deref(), Some("B"));
         assert_eq!(state.failed_document, None);
         assert!(failed_document_response(&state).is_none());
     }
