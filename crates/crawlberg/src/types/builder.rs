@@ -325,6 +325,7 @@ impl CrawlConfigBuilder {
     /// When `false` (default), they are denied unless explicitly allowlisted.
     pub fn allow_private_networks(mut self, allow: bool) -> Self {
         self.inner.ssrf.deny_private = !allow;
+        self.inner.ssrf_deny_private_explicit = Some(!allow);
         self
     }
 
@@ -444,6 +445,23 @@ impl DispatchProfileBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allow_private_networks_pins_the_caller_choice() {
+        let denied = CrawlConfig::builder().allow_private_networks(false).build();
+        let allowed = CrawlConfig::builder().allow_private_networks(true).build();
+
+        assert_eq!(
+            (denied.ssrf.deny_private, denied.ssrf_deny_private_explicit),
+            (true, Some(true)),
+            "allow_private_networks(false) must pin private-network denial"
+        );
+        assert_eq!(
+            (allowed.ssrf.deny_private, allowed.ssrf_deny_private_explicit),
+            (false, Some(false)),
+            "allow_private_networks(true) must pin private-network access"
+        );
+    }
 
     // ~keep These three setters had zero call sites anywhere in `crates/` or `e2e/` before
     // ~keep this module: replacing each body with `let _ = value;` left the whole suite green.

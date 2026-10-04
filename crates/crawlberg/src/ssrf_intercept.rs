@@ -760,6 +760,7 @@ impl SendingSite {
             },
             respect_robots_txt: false,
             ..CrawlConfig::builder()
+                .allow_private_networks(false)
                 .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
                 .build()
         };
@@ -3775,6 +3776,7 @@ mod race_tests {
     /// Allow `localhost`, where the test pages are served, and refuse the loopback address.
     fn config() -> crate::types::CrawlConfig {
         crate::types::CrawlConfig::builder()
+            .allow_private_networks(false)
             .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
             .build()
     }
@@ -4703,6 +4705,7 @@ mod race_tests {
             .expect("the check must open a page");
         let root = page.target_id().clone();
         let allowing = crate::types::CrawlConfig::builder()
+            .allow_private_networks(false)
             .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
             .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("a.localhost"))
             .build();
@@ -6273,7 +6276,10 @@ mod race_tests {
         .await
         .expect("the listener must start");
         let policy = config().ssrf;
-        let other = crate::types::CrawlConfig::builder().build().ssrf;
+        let other = crate::types::CrawlConfig::builder()
+            .allow_private_networks(false)
+            .build()
+            .ssrf;
         let handle = firewall.handle();
         let first = handle
             .new_page(None, Some(&policy))

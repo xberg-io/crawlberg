@@ -1816,6 +1816,7 @@ mod tests {
         let config = CrawlConfig {
             respect_robots_txt: false,
             ..CrawlConfig::builder()
+                .allow_private_networks(false)
                 .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
                 .build()
         };
@@ -2359,6 +2360,7 @@ mod tests {
         let config = CrawlConfig {
             respect_robots_txt: false,
             ..CrawlConfig::builder()
+                .allow_private_networks(false)
                 .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
                 .build()
         };
@@ -2413,6 +2415,7 @@ mod tests {
         let config = CrawlConfig {
             respect_robots_txt: true,
             ..CrawlConfig::builder()
+                .allow_private_networks(false)
                 .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
                 .build()
         };
@@ -2459,6 +2462,7 @@ mod tests {
         let config = CrawlConfig {
             respect_robots_txt: true,
             ..CrawlConfig::builder()
+                .allow_private_networks(false)
                 .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
                 .build()
         };
