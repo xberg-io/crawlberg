@@ -3236,23 +3236,14 @@ mod race_tests {
             .no_sandbox()
             .new_headless_mode()
             .user_data_dir(dir);
-        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
-            Ok(config) => Browser::launch(config).await,
-            Err(error) => {
-                eprintln!("skipping {test_name}: no usable Chrome: {error}");
-                return None;
-            }
-        };
-        match launched {
-            Ok((browser, handler)) => {
-                crate::browser_pool::spawn_handler(handler);
-                Some(Arc::new(browser))
-            }
-            Err(error) => {
-                eprintln!("skipping {test_name}: no usable Chrome: {error}");
-                None
-            }
-        }
+        let config = crate::browser_pool::tests::expect_chrome_or_skip(
+            test_name,
+            crate::browser_pool::apply_default_args(builder, &[]).build(),
+        )?;
+        let (browser, handler) =
+            crate::browser_pool::tests::expect_chrome_or_skip(test_name, Browser::launch(config).await)?;
+        crate::browser_pool::spawn_handler(handler);
+        Some(Arc::new(browser))
     }
 
     /// A command sent to a Chrome that has died ends with an error. The test's CDP handler stops

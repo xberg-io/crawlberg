@@ -758,12 +758,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn dropping_a_one_shot_launchs_profile_directory_stops_its_chrome() {
-        let (browser, handler, user_data, _egress, _hold) = match launch_or_connect(&CrawlConfig::default()).await {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let test_name = "dropping_a_one_shot_launchs_profile_directory_stops_its_chrome";
+        let Some((browser, handler, user_data, _egress, _hold)) = crate::browser_pool::tests::expect_chrome_or_skip(
+            test_name,
+            launch_or_connect(&CrawlConfig::default()).await,
+        ) else {
+            return;
         };
         let user_data = user_data.expect("a launched Chrome must have a profile directory");
         let path = user_data.path().to_path_buf();
@@ -921,13 +921,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
-        let (browser, handler, data_dir, egress, profile_hold) = match launch_or_connect(&CrawlConfig::default()).await
-        {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let test_name = "a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory";
+        let Some((browser, handler, data_dir, egress, profile_hold)) =
+            crate::browser_pool::tests::expect_chrome_or_skip(
+                test_name,
+                launch_or_connect(&CrawlConfig::default()).await,
+            )
+        else {
+            return;
         };
         let path = data_dir
             .as_ref()
@@ -987,12 +988,11 @@ mod tests {
             },
             ..CrawlConfig::builder().allow_private_networks(true).build()
         };
-        let mut launched = match launch_or_connect(&config).await {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let test_name = "a_one_shot_fetch_whose_chrome_dies_ends_at_once_and_leaves_no_profile_directory";
+        let Some(mut launched) =
+            crate::browser_pool::tests::expect_chrome_or_skip(test_name, launch_or_connect(&config).await)
+        else {
+            return;
         };
         let chrome = launched
             .0
@@ -1060,19 +1060,16 @@ mod tests {
     #[test]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     fn a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory() {
+        let test_name = "a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory";
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("a runtime must build");
         let path = runtime.block_on(async {
-            let (browser, handler, data_dir, egress, profile_hold) =
-                match launch_or_connect(&CrawlConfig::default()).await {
-                    Ok(launched) => launched,
-                    Err(error) => {
-                        eprintln!("skipping: no usable Chrome: {error}");
-                        return None;
-                    }
-                };
+            let (browser, handler, data_dir, egress, profile_hold) = crate::browser_pool::tests::expect_chrome_or_skip(
+                test_name,
+                launch_or_connect(&CrawlConfig::default()).await,
+            )?;
             let path = data_dir
                 .as_ref()
                 .map(|dir| dir.path().to_path_buf())

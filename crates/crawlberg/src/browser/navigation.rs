@@ -704,13 +704,7 @@ mod tests {
                 Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
                 Err(error) => Err(error),
             };
-            let (browser, handler) = match launched {
-                Ok(launched) => launched,
-                Err(error) => {
-                    eprintln!("skipping {test_name}: no usable Chrome: {error}");
-                    return None;
-                }
-            };
+            let (browser, handler) = crate::browser_pool::tests::expect_chrome_or_skip(test_name, launched)?;
             crate::browser_pool::spawn_handler(handler);
             let browser = Arc::new(browser);
             let mut config = CrawlConfig::builder()

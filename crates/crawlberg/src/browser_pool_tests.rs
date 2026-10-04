@@ -24,6 +24,25 @@ pub(crate) fn expect_chrome_or_skip<T, E: std::fmt::Display>(test_name: &str, re
 }
 
 #[test]
+fn detected_chrome_launch_errors_are_not_skippable() {
+    let broken = std::panic::catch_unwind(|| {
+        expect_chrome_or_skip::<(), _>(
+            "detected_chrome_launch_errors_are_not_skippable",
+            Err("browser process exited before websocket URL was resolved"),
+        )
+    });
+    assert!(broken.is_err(), "a detected but broken Chrome must fail the test");
+    assert!(
+        expect_chrome_or_skip::<(), _>(
+            "detected_chrome_launch_errors_are_not_skippable",
+            Err("Could not auto detect a chrome executable"),
+        )
+        .is_none(),
+        "an absent Chrome executable remains skippable"
+    );
+}
+
+#[test]
 fn test_config_defaults() {
     let config = BrowserPoolConfig::default();
     assert_eq!(config.max_pages, 8);
@@ -1127,9 +1146,7 @@ async fn pool_whose_handler_ended_with_its_task_held(
 ) -> Option<(Arc<BrowserPool>, std::path::PathBuf)> {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.hold_handler_end.send_replace(true);
-    if expect_chrome_or_skip(test_name, pool.warm().await).is_none() {
-        return None;
-    }
+    expect_chrome_or_skip(test_name, pool.warm().await)?;
     let old = kill_pool_chrome(&pool).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {

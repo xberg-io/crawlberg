@@ -477,7 +477,7 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     let test_name = "an_external_browser_keeps_other_clients_tabs_working";
     let private = denied_server().await;
     let d = denied_url(&private);
-    let Some(config) = common::expect_chrome_or_skip(
+    let Some(browser_config) = common::expect_chrome_or_skip(
         test_name,
         chromiumoxide::browser::BrowserConfig::builder()
             .no_sandbox()
@@ -488,7 +488,7 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         return;
     };
     let Some((other_client, handler)) =
-        common::expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(config).await)
+        common::expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(browser_config).await)
     else {
         return;
     };
