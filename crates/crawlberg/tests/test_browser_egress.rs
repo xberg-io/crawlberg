@@ -31,7 +31,7 @@ const EGRESS_COMPLETION_SETUP: &str = r#"
     };
 "#;
 const EGRESS_COMPLETION_SELECTOR: &str = "[data-egress-done='2']";
-// ~keep WebRTC and WebTransport complete through 1.5 s page timers. This wait covers those timers;
+// ~keep WebTransport completes through a 1.5 s page timer. This wait covers that timer;
 // ~keep `run_actions` then adds its 25 ms refusal grace before the final selector assertion.
 const EGRESS_ACTION_SETTLE_MS: i64 = 2_000;
 
@@ -101,9 +101,9 @@ async fn counting_tcp(address: SocketAddr) -> (SocketAddr, Arc<AtomicUsize>) {
     (bound, count)
 }
 
-/// A UDP socket on loopback that counts datagrams.
-async fn counting_udp() -> (u16, Arc<AtomicUsize>) {
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+/// A UDP socket on `ip` that counts datagrams.
+async fn counting_udp(ip: IpAddr) -> (u16, Arc<AtomicUsize>) {
+    let socket = tokio::net::UdpSocket::bind(SocketAddr::new(ip, 0))
         .await
         .expect("the test socket must bind");
     let port = socket.local_addr().expect("a bound socket has an address").port();
@@ -276,14 +276,14 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
 /// A WebSocket from the page, or from a worker it starts, to a denied address or, as the
 /// twin, to this machine's allowlisted address.
 async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
-    let (ip, allowlist) = if allowed {
-        let Some(ip) = host_ip() else {
-            announce_skip(test_name, "this machine has no address off loopback");
-            return;
-        };
-        (ip, vec![HostMatcher::cidr(format!("{ip}/32")).expect("a valid CIDR")])
+    let Some(ip) = host_ip() else {
+        announce_skip(test_name, "this machine has no address off loopback");
+        return;
+    };
+    let allowlist = if allowed {
+        vec![HostMatcher::cidr(format!("{ip}/32")).expect("a valid CIDR")]
     } else {
-        (IpAddr::from([127, 0, 0, 1]), Vec::new())
+        Vec::new()
     };
     let (target, reached) = counting_tcp(SocketAddr::new(ip, 0)).await;
     let (refused, fetch) = control().await;
@@ -422,7 +422,7 @@ async fn a_websocket_to_an_allowed_address_connects_with_a_browser_profile() {
 /// A WebTransport session to a denied UDP port. The twin turns `deny_private` off, so the same
 /// page does send, which shows the count can see a datagram.
 async fn webtransport_row(test_name: &str, deny_private: bool) {
-    let (port, datagrams) = counting_udp().await;
+    let (port, datagrams) = counting_udp(IpAddr::from([127, 0, 0, 1])).await;
     let (refused, fetch) = control().await;
     let script = format!(
         r#"
@@ -476,15 +476,19 @@ async fn webtransport_sends_with_deny_private_off() {
 /// see a datagram. A pooled Chrome has no twin: the pool writes the policy whatever the crawl's
 /// `deny_private`.
 async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
-    let (port, datagrams) = counting_udp().await;
+    let Some(ip) = host_ip() else {
+        announce_skip(test_name, "this machine has no address off loopback");
+        return;
+    };
+    let (port, datagrams) = counting_udp(ip).await;
     let (refused, fetch) = control().await;
-    // ~keep The browser-side timer starts only after setLocalDescription has initiated ICE. A
-    // ~keep root-side sleep can start before a contended Chrome has even executed the script.
+    // ~keep ICE gathering completion follows the STUN attempts instead of racing them against a
+    // ~keep fixed timer; loopback STUN destinations can be rejected inside Chrome without a probe.
     let script = format!(
         r#"
         {EGRESS_COMPLETION_SETUP}
         const pc = new RTCPeerConnection({{
-            iceServers: [{{ urls: 'stun:127.0.0.1:{port}' }}]
+            iceServers: [{{ urls: 'stun:{ip}:{port}' }}]
         }});
         let finished = false;
         const done = () => {{
@@ -493,10 +497,15 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
                 window.__egressDone();
             }}
         }};
+        pc.addEventListener('icegatheringstatechange', () => {{
+            if (pc.iceGatheringState === 'complete') done();
+        }});
         pc.createDataChannel('x');
         pc.createOffer()
             .then(o => pc.setLocalDescription(o))
-            .then(() => setTimeout(done, 1500))
+            .then(() => {{
+                if (pc.iceGatheringState === 'complete') done();
+            }})
             .catch(done);
         {fetch}
         "#
