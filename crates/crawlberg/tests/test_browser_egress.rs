@@ -163,13 +163,7 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
                 .map_err(|error| error.to_string()),
             Err(error) => Err(error),
         };
-        let (chrome, handler) = match launched {
-            Ok(launched) => launched,
-            Err(reason) => {
-                announce_chrome_skip(test_name, &reason);
-                return None;
-            }
-        };
+        let (chrome, handler) = common::expect_chrome_or_skip(test_name, launched)?;
         let handler = common::spawn_handler(handler);
         config.browser.endpoint = Some(chrome.websocket_address().clone());
         endpoint = Some((chrome, handler, dir));

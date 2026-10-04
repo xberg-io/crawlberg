@@ -11,6 +11,18 @@ use sysinfo::UpdateKind;
 
 use super::*;
 
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+pub(crate) fn expect_chrome_or_skip<T, E: std::fmt::Display>(test_name: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) if error.to_string().contains("auto detect a chrome executable") => {
+            eprintln!("skipping {test_name}: no Chrome executable: {error}");
+            None
+        }
+        Err(error) => panic!("{test_name}: setup with the detected Chrome must succeed: {error}"),
+    }
+}
+
 #[test]
 fn test_config_defaults() {
     let config = BrowserPoolConfig::default();
@@ -36,20 +48,15 @@ async fn a_chrome_args_flag_reaches_the_chrome_the_pool_starts() {
         chrome_args: vec![format!("--user-agent={MARKER}")],
         ..BrowserPoolConfig::default()
     });
-    match pool.warm().await {
-        Ok(()) => {}
-        Err(error) if error.to_string().contains("auto detect a chrome executable") => {
-            eprintln!("skipping {TEST_NAME}: no Chrome executable: {error}");
-            return;
-        }
-        Err(error) => panic!("{TEST_NAME}: the detected Chrome must launch: {error}"),
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
+        return;
     }
     let path = pool_profile_dir(&pool).await;
     let marker_flag = format!("--user-agent={MARKER}");
     let reached_chrome = processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(&path))
         .iter()
         .flat_map(|process| process.cmd())
-        .any(|argument| argument.to_string_lossy() == marker_flag);
+        .any(|argument| argument.to_string_lossy() == marker_flag.as_str());
     pool.shutdown().await;
 
     assert!(
@@ -830,26 +837,20 @@ fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
+    const TEST_NAME: &str = "removing_a_running_chromes_profile_directory_stops_that_chrome";
     let dir =
         ScratchProfileDir::create("crawlberg-running-chrome-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
-    let config = match build_pool_launch_builder(&path, &BrowserPoolConfig::default())
-        .expect("the default pool config names no binary to check")
-        .build()
-    {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("skipping: no usable Chrome: {error}");
-            return;
-        }
+    let Some(config) = expect_chrome_or_skip(
+        TEST_NAME,
+        build_pool_launch_builder(&path, &BrowserPoolConfig::default())
+            .expect("the default pool config names no binary to check")
+            .build(),
+    ) else {
+        return;
     };
-    let (browser, handler, dir) = match dir.launch(config).await {
-        Ok(launched) => launched,
-        Err(error) => {
-            eprintln!("skipping: no usable Chrome: {error}");
-            return;
-        }
-    };
+    let (browser, handler, dir) = expect_chrome_or_skip(TEST_NAME, dir.launch(config).await)
+        .expect("the detected Chrome launch either succeeds or panics");
     assert_dropping_the_profile_stops_its_chrome(browser, handler, dir, path).await;
 }
 
@@ -1004,9 +1005,9 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
+    const TEST_NAME: &str = "a_pool_dropped_without_shutdown_leaves_no_profile_directory";
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    if let Err(error) = pool.warm().await {
-        eprintln!("skipping a_pool_dropped_without_shutdown_leaves_no_profile_directory: no usable Chrome: {error}");
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
         return;
     }
     let path = pool_profile_dir(&pool).await;
@@ -1069,9 +1070,9 @@ async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down() {
+    const TEST_NAME: &str = "a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down";
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    if let Err(error) = pool.warm().await {
-        eprintln!("skipping a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down: no usable Chrome: {error}");
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
         return;
     }
     kill_pool_chrome(&pool).await;
@@ -1126,8 +1127,7 @@ async fn pool_whose_handler_ended_with_its_task_held(
 ) -> Option<(Arc<BrowserPool>, std::path::PathBuf)> {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.hold_handler_end.send_replace(true);
-    if let Err(error) = pool.warm().await {
-        eprintln!("skipping {test_name}: no usable Chrome: {error}");
+    if expect_chrome_or_skip(test_name, pool.warm().await).is_none() {
         return None;
     }
     let old = kill_pool_chrome(&pool).await;
@@ -1200,23 +1200,22 @@ fn the_text_for_a_websocket_error_names_the_io_kind_under_it() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_command_chrome_never_answers_times_out_on_a_quiet_connection() {
+    const TEST_NAME: &str = "a_command_chrome_never_answers_times_out_on_a_quiet_connection";
     use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
     use chromiumoxide::error::CdpError;
 
     let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-", None).expect("a profile directory");
-    let config = build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
-        .expect("the launch builder must build")
-        .request_timeout(Duration::from_secs(2))
-        .build()
-        .expect("the launch config must build");
-    let (mut browser, handler) = match Browser::launch(config).await {
-        Ok(launched) => launched,
-        Err(error) => {
-            eprintln!(
-                "skipping a_command_chrome_never_answers_times_out_on_a_quiet_connection: no usable Chrome: {error}"
-            );
-            return;
-        }
+    let Some(config) = expect_chrome_or_skip(
+        TEST_NAME,
+        build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
+            .expect("the launch builder must build")
+            .request_timeout(Duration::from_secs(2))
+            .build(),
+    ) else {
+        return;
+    };
+    let Some((mut browser, handler)) = expect_chrome_or_skip(TEST_NAME, Browser::launch(config).await) else {
+        return;
     };
     let handler_task = spawn_handler(handler);
     let page = browser.new_page("about:blank").await.expect("a page must open");
@@ -1438,9 +1437,9 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_pool_shut_down_leaves_no_profile_directory() {
+    const TEST_NAME: &str = "a_pool_shut_down_leaves_no_profile_directory";
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    if let Err(error) = pool.warm().await {
-        eprintln!("skipping a_pool_shut_down_leaves_no_profile_directory: no usable Chrome: {error}");
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
         return;
     }
     let path = pool_profile_dir(&pool).await;
@@ -1458,9 +1457,9 @@ async fn a_pool_shut_down_leaves_no_profile_directory() {
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
+    const TEST_NAME: &str = "a_relaunched_pool_removes_the_old_chromes_profile_directory";
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    if let Err(error) = pool.warm().await {
-        eprintln!("skipping a_relaunched_pool_removes_the_old_chromes_profile_directory: no usable Chrome: {error}");
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
         return;
     }
     let old = pool_profile_dir(&pool).await;
@@ -1541,7 +1540,7 @@ async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread(
 /// ~keep Chrome process so it cannot respond to the CDP `Browser.close` command or exit,
 /// ~keep without killing it -- `close()`/`wait()` then hang exactly as they did against
 /// ~keep the keychain-prompt report. Skipped (not failed) when this machine has no usable
-/// ~keep Chrome or `kill -STOP` is unavailable (non-Unix), matching the browser
+/// ~keep Chrome binary or `kill -STOP` is unavailable (non-Unix), matching the browser
 /// ~keep integration tests' skip convention. Requires a real Chrome binary; a fully mocked
 /// ~keep `Browser` was not practical here (`chromiumoxide::Browser` wraps a real child
 /// ~keep process and CDP connection with no test seam for either).
@@ -1551,6 +1550,7 @@ async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread(
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
+    const TEST_NAME: &str = "close_browser_within_returns_promptly_when_the_process_is_stopped";
     if !cfg!(unix) {
         eprintln!("skipping close_browser_within_returns_promptly_when_the_process_is_stopped: not unix");
         return;
@@ -1558,28 +1558,16 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
 
     let user_data_dir =
         ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
-    let browser_config = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
-        .expect("the default pool config names no binary to check")
-        .build()
-    {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!(
-                "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
-                 because no usable Chrome was found: {error}"
-            );
-            return;
-        }
+    let Some(browser_config) = expect_chrome_or_skip(
+        TEST_NAME,
+        build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
+            .expect("the default pool config names no binary to check")
+            .build(),
+    ) else {
+        return;
     };
-    let (mut browser, handler) = match Browser::launch(browser_config).await {
-        Ok(pair) => pair,
-        Err(error) => {
-            eprintln!(
-                "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
-                 because no usable Chrome was found: {error}"
-            );
-            return;
-        }
+    let Some((mut browser, handler)) = expect_chrome_or_skip(TEST_NAME, Browser::launch(browser_config).await) else {
+        return;
     };
     let handler_task = spawn_handler(handler);
 
@@ -1664,12 +1652,8 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    let (mut browser, mut handler) = match launched {
-        Ok(pair) => pair,
-        Err(error) => {
-            eprintln!("skipping {TEST_NAME} because no usable Chrome was found: {error}");
-            return;
-        }
+    let Some((mut browser, mut handler)) = expect_chrome_or_skip(TEST_NAME, launched) else {
+        return;
     };
     // ~keep Kept as the plain loop, which a killed Chrome never ends: the release must not wait on
     // ~keep it (#146). A loop that ends at the websocket error would hide a release that waits again.
@@ -1740,6 +1724,7 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
+    const TEST_NAME: &str = "release_browser_disconnects_from_a_connected_browser_without_closing_it";
     let user_data_dir =
         ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
     let launched = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
@@ -1749,15 +1734,8 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    let (mut owner, owner_handler) = match launched {
-        Ok(pair) => pair,
-        Err(error) => {
-            eprintln!(
-                "skipping release_browser_disconnects_from_a_connected_browser_without_closing_it \
-                 because no usable Chrome was found: {error}"
-            );
-            return;
-        }
+    let Some((mut owner, owner_handler)) = expect_chrome_or_skip(TEST_NAME, launched) else {
+        return;
     };
     let owner_task = spawn_handler(owner_handler);
 
@@ -1810,13 +1788,7 @@ async fn launch_config(test_name: &str, builder: BrowserConfigBuilder) -> Option
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    match launched {
-        Ok((browser, handler)) => Some((browser, spawn_handler(handler))),
-        Err(error) => {
-            eprintln!("skipping {test_name} because no usable Chrome was found: {error}");
-            None
-        }
-    }
+    expect_chrome_or_skip(test_name, launched).map(|(browser, handler)| (browser, spawn_handler(handler)))
 }
 
 /// How many live processes have `text` on their command line.
@@ -2506,6 +2478,7 @@ fn the_wait_for_a_family_holds_while_a_thread_of_a_zombie_member_runs() {
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile() {
+    const TEST_NAME: &str = "kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile";
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-kill-fallback-test-{}", std::process::id()));
     let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
@@ -2514,15 +2487,8 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
-    let (mut owner, owner_handler) = match launched {
-        Ok(pair) => pair,
-        Err(error) => {
-            eprintln!(
-                "skipping kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile \
-                 because no usable Chrome was found: {error}"
-            );
-            return;
-        }
+    let Some((mut owner, owner_handler)) = expect_chrome_or_skip(TEST_NAME, launched) else {
+        return;
     };
     let owner_task = spawn_handler(owner_handler);
     let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
@@ -2559,23 +2525,22 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn a_launched_browser_opens_no_startup_tab() {
+    const TEST_NAME: &str = "a_launched_browser_opens_no_startup_tab";
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-startup-tab-test-{}", std::process::id()));
     let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
         .build()
     {
         Ok(config) => Browser::launch(config).await,
-        Err(error) => {
-            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+        Err(error) if error.contains("auto detect a chrome executable") => {
+            eprintln!("skipping {TEST_NAME}: no Chrome executable: {error}");
             return;
         }
+        Err(error) => panic!("{TEST_NAME}: the detected Chrome configuration must build: {error}"),
     };
     let (mut browser, handler) = match launched {
         Ok(pair) => pair,
-        Err(error) => {
-            eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
-            return;
-        }
+        Err(error) => panic!("{TEST_NAME}: the detected Chrome must launch: {error}"),
     };
     let handler_task = spawn_handler(handler);
     tokio::time::sleep(Duration::from_millis(1000)).await;

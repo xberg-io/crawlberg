@@ -330,12 +330,8 @@ async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_p
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
-    let (mut chrome, handler) = match launched {
-        Ok(launched) => launched,
-        Err(reason) => {
-            announce_chrome_skip(name, &reason);
-            return;
-        }
+    let Some((mut chrome, handler)) = common::expect_chrome_or_skip(name, launched) else {
+        return;
     };
     let handler = common::spawn_handler(handler);
     let (address, seen) = spawn_proxy().await;
@@ -556,12 +552,8 @@ async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_conte
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
-    let (mut chrome, handler) = match launched {
-        Ok(launched) => launched,
-        Err(reason) => {
-            announce_chrome_skip(name, &reason);
-            return;
-        }
+    let Some((mut chrome, handler)) = common::expect_chrome_or_skip(name, launched) else {
+        return;
     };
     let handler = common::spawn_handler(handler);
     let (denied, accepted) = denied_listener().await;
@@ -605,13 +597,7 @@ async fn launch_endpoint_chrome(
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
-    match launched {
-        Ok((chrome, handler)) => Some((chrome, common::spawn_handler(handler))),
-        Err(reason) => {
-            announce_chrome_skip(name, &reason);
-            None
-        }
-    }
+    common::expect_chrome_or_skip(name, launched).map(|(chrome, handler)| (chrome, common::spawn_handler(handler)))
 }
 
 /// A Chrome proxy switch in `chrome_args` (`--proxy-server`, `--proxy-bypass-list`,

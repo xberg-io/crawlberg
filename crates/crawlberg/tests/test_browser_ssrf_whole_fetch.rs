@@ -477,24 +477,20 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     let test_name = "an_external_browser_keeps_other_clients_tabs_working";
     let private = denied_server().await;
     let d = denied_url(&private);
-    let external = match chromiumoxide::browser::BrowserConfig::builder()
-        .no_sandbox()
-        .new_headless_mode()
-        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
-        .build()
-    {
-        Ok(config) => chromiumoxide::Browser::launch(config).await,
-        Err(error) => {
-            announce_chrome_skip(test_name, &error);
-            return;
-        }
+    let Some(config) = common::expect_chrome_or_skip(
+        test_name,
+        chromiumoxide::browser::BrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+            .build(),
+    ) else {
+        return;
     };
-    let (other_client, handler) = match external {
-        Ok(pair) => pair,
-        Err(error) => {
-            announce_chrome_skip(test_name, &error.to_string());
-            return;
-        }
+    let Some((other_client, handler)) =
+        common::expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(config).await)
+    else {
+        return;
     };
     common::spawn_handler(handler);
     // ~keep The tab keeps its own tally in sessionStorage, which lasts across its reloads: a

@@ -795,17 +795,14 @@ mod tests {
             ..CrawlConfig::builder().allow_private_networks(true).build()
         };
         let result = run(&site.uri(), &[], &config).await;
-        match result {
-            Ok(result) => assert!(
-                result.final_html.contains("marker received"),
-                "the interact Chrome must request the page with the caller flag: {}",
-                result.final_html
-            ),
-            Err(CrawlError::BrowserError { message, .. }) if message.contains("auto detect a chrome executable") => {
-                eprintln!("skipping {TEST_NAME}: no Chrome executable: {message}");
-            }
-            Err(error) => panic!("{TEST_NAME}: the detected Chrome must run interact: {error}"),
-        }
+        let Some(result) = crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, result) else {
+            return;
+        };
+        assert!(
+            result.final_html.contains("marker received"),
+            "the interact Chrome must request the page with the caller flag: {}",
+            result.final_html
+        );
     }
 
     /// An interact run removes the profile directory of the Chrome it launched, with no Chrome
@@ -813,13 +810,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it() {
+        const TEST_NAME: &str = "an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it";
         let config = CrawlConfig::default();
-        let launched = match launch_or_connect(&config).await {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let Some(launched) =
+            crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, launch_or_connect(&config).await)
+        else {
+            return;
         };
         let path = launched
             .2
@@ -875,12 +871,11 @@ mod tests {
                 .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
                 .build()
         };
-        let mut launched = match launch_or_connect(&config).await {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let test_name = "an_interact_session_whose_chrome_dies_ends_with_an_error";
+        let Some(mut launched) =
+            crate::browser_pool::tests::expect_chrome_or_skip(test_name, launch_or_connect(&config).await)
+        else {
+            return;
         };
         let chrome = launched
             .0
@@ -1005,12 +1000,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn dropping_an_interact_launchs_profile_directory_stops_its_chrome() {
-        let (browser, handler, dir) = match launch_or_connect(&CrawlConfig::default()).await {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping: no usable Chrome: {error}");
-                return;
-            }
+        let test_name = "dropping_an_interact_launchs_profile_directory_stops_its_chrome";
+        let Some((browser, handler, dir)) = crate::browser_pool::tests::expect_chrome_or_skip(
+            test_name,
+            launch_or_connect(&CrawlConfig::default()).await,
+        ) else {
+            return;
         };
         let dir = dir.expect("a launched Chrome must have a profile directory");
         let path = dir.path().to_path_buf();
@@ -1264,9 +1259,7 @@ mod tests {
         .await;
         match result {
             Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. }) => {}
-            Err(CrawlError::BrowserError { message, .. })
-                if message.contains("failed to launch") || message.contains("chrome executable") =>
-            {
+            Err(CrawlError::BrowserError { message, .. }) if message.contains("auto detect a chrome executable") => {
                 eprintln!("skipping {test_name}: no usable Chrome: {message}");
                 return;
             }
@@ -1324,12 +1317,9 @@ mod tests {
             Ok(config) => Browser::launch(config).await.map_err(|e| e.to_string()),
             Err(error) => Err(error),
         };
-        let (mut browser, handler) = match launched {
-            Ok(launched) => launched,
-            Err(error) => {
-                eprintln!("skipping {test_name}: no usable Chrome: {error}");
-                return;
-            }
+        let Some((mut browser, handler)) = crate::browser_pool::tests::expect_chrome_or_skip(test_name, launched)
+        else {
+            return;
         };
         spawn_handler(handler);
         let page = browser.new_page("about:blank").await.expect("page");

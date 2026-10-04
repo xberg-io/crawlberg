@@ -139,12 +139,8 @@ async fn interact_closes_the_browser_it_launched() {
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(error) => Err(error),
     };
-    let (browser, handler) = match launched {
-        Ok(launched) => launched,
-        Err(error) => {
-            announce_chrome_skip(test_name, &error);
-            return;
-        }
+    let Some((browser, handler)) = common::expect_chrome_or_skip(test_name, launched) else {
+        return;
     };
     let handler = common::spawn_handler(handler);
     drop(browser);

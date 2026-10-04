@@ -13,22 +13,12 @@
 #[cfg(all(feature = "api", feature = "mcp"))]
 pub mod mcp;
 
-/// Whether an error message indicates the runner has no usable Chrome, rather
-/// than a genuine regression in the code under test. Three message variants are
-/// known:
+/// Whether an error message indicates the runner has no Chrome binary.
 ///
-/// - `"auto detect a chrome executable"`: no Chrome binary exists at all, so
-///   chromiumoxide reports this as a config error at build time. This is the
-///   `ubuntu-24.04-arm` CI case.
-/// - `"failed to launch browser"`: `crates/crawlberg/src/browser.rs`'s wording
-///   when a binary exists but cannot start (e.g. missing shared libraries).
-/// - `"failed to launch Chrome"`: `crates/crawlberg/src/browser_pool.rs`'s
-///   wording for the same launch-time failure, driven through an explicit
-///   `BrowserPool` instead of the one-shot launch path.
+/// ~keep Chromiumoxide reports this configuration-time error only when executable detection
+/// ~keep finds nothing. Once a binary is found, a launch error is a regression, not a skip.
 pub fn is_missing_chrome_message(message: &str) -> bool {
-    message.contains("failed to launch browser")
-        || message.contains("failed to launch Chrome")
-        || message.contains("auto detect a chrome executable")
+    message.contains("auto detect a chrome executable")
 }
 
 /// Whether an error message is crawlberg refusing a saved `browser_profile` because the Chrome on
@@ -45,6 +35,17 @@ pub fn is_saved_profile_refusal(message: &str) -> bool {
 /// in CI logs instead.
 pub fn announce_chrome_skip(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name} because no usable Chrome was found: {reason}");
+}
+
+pub fn expect_chrome_or_skip<T, E: std::fmt::Display>(test_name: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) if is_missing_chrome_message(&error.to_string()) => {
+            announce_chrome_skip(test_name, &error.to_string());
+            None
+        }
+        Err(error) => panic!("{test_name}: setup with the detected Chrome must succeed: {error}"),
+    }
 }
 
 /// Say that `test_name` did not run on this machine, and why.
@@ -80,25 +81,15 @@ pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> 
     use chromiumoxide::cdp::browser_protocol::network::CookieParam;
     use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
 
-    let config = match chromiumoxide::browser::BrowserConfig::builder()
-        .no_sandbox()
-        .new_headless_mode()
-        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
-        .build()
-    {
-        Ok(config) => config,
-        Err(error) => {
-            announce_chrome_skip(test_name, &error);
-            return None;
-        }
-    };
-    let (browser, handler) = match chromiumoxide::Browser::launch(config).await {
-        Ok(pair) => pair,
-        Err(error) => {
-            announce_chrome_skip(test_name, &error.to_string());
-            return None;
-        }
-    };
+    let config = expect_chrome_or_skip(
+        test_name,
+        chromiumoxide::browser::BrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+            .build(),
+    )?;
+    let (browser, handler) = expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(config).await)?;
     spawn_handler(handler);
     browser
         .execute(SetCookiesParams {
