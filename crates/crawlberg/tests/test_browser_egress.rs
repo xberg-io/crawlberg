@@ -22,7 +22,9 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-use common::{announce_chrome_skip, announce_skip, is_missing_chrome_message, is_snap_executable};
+#[cfg(unix)]
+use common::is_snap_executable;
+use common::{announce_chrome_skip, announce_skip, is_missing_chrome_message};
 
 static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const EGRESS_COMPLETION_SETUP: &str = r#"

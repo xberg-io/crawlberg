@@ -15,7 +15,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 mod common;
-use common::{announce_chrome_skip, is_missing_chrome_message, is_snap_executable};
+#[cfg(unix)]
+use common::is_snap_executable;
+use common::{announce_chrome_skip, is_missing_chrome_message};
 
 /// A browser-mode config that reaches the loopback test server, with the given launch options.
 fn browser_config(chrome_path: Option<std::path::PathBuf>, chrome_args: Vec<String>) -> CrawlConfig {
