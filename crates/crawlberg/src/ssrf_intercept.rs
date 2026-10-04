@@ -2288,8 +2288,8 @@ mod tests {
     use super::{
         BrowserOrigin, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome,
         Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict, WatchedPage, adopt_target,
-        complete_stopped_response_outcome, lock, main_frame_verdict, navigation_verdict, release, require_main_frame,
-        ssrf_verdict,
+        complete_stopped_response_outcome, failed_document_response, lock, main_frame_verdict, navigation_verdict,
+        record_document_failure_outcome, record_main_frame_commit, release, require_main_frame, ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2350,6 +2350,7 @@ mod tests {
             refused_count: AtomicUsize::new(0),
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
+            document_failed: Notify::new(),
         })
     }
 
