@@ -73,7 +73,7 @@ pub(crate) mod warc;
 pub use api::serve_with_config as serve_api;
 pub use bindings::{
     BatchCrawlResult, BatchCrawlResults, BatchScrapeResult, BatchScrapeResults, CrawlEngineHandle, batch_crawl,
-    batch_scrape, crawl, create_engine, interact, map_urls, scrape,
+    batch_scrape, crawl, create_engine, interact, map_urls, scrape, shutdown_engine,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use bindings::{batch_crawl_stream, crawl_stream};

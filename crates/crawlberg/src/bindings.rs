@@ -35,6 +35,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone)]
 pub struct CrawlEngineHandle {
     inner: CrawlEngine,
+    #[cfg(feature = "browser")]
+    owned_browser_pool: Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
 }
 
 impl CrawlEngineHandle {
@@ -50,7 +52,11 @@ impl CrawlEngineHandle {
     /// clients construct handles via [`create_engine`] alone.
     #[cfg_attr(alef, alef(skip))]
     pub fn from_engine(engine: CrawlEngine) -> Self {
-        Self { inner: engine }
+        Self {
+            inner: engine,
+            #[cfg(feature = "browser")]
+            owned_browser_pool: None,
+        }
     }
 }
 
@@ -189,10 +195,10 @@ pub fn create_engine(config: Option<CrawlConfig>) -> Result<CrawlEngineHandle, C
     config.validate()?;
 
     #[cfg(feature = "browser")]
-    let (config, browser_pool) = {
+    let (config, browser_pool, owned_browser_pool) = {
         let mut config = config;
-        let browser_pool = binding_browser_pool(&mut config);
-        (config, browser_pool)
+        let (browser_pool, owned_browser_pool) = binding_browser_pool(&mut config);
+        (config, browser_pool, owned_browser_pool)
     };
 
     let builder = CrawlEngine::builder().config(config);
@@ -202,28 +208,36 @@ pub fn create_engine(config: Option<CrawlConfig>) -> Result<CrawlEngineHandle, C
         None => builder,
     };
     let engine = builder.build()?;
-    Ok(CrawlEngineHandle { inner: engine })
+    Ok(CrawlEngineHandle {
+        inner: engine,
+        #[cfg(feature = "browser")]
+        owned_browser_pool,
+    })
 }
 
 #[cfg(feature = "browser")]
-fn binding_browser_pool(config: &mut CrawlConfig) -> Option<std::sync::Arc<crate::browser_pool::BrowserPool>> {
+fn binding_browser_pool(
+    config: &mut CrawlConfig,
+) -> (
+    Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
+    Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
+) {
     // ~keep A named browser profile determines Chrome's user-data directory at launch, while
     // ~keep a shared pool launches before any crawl can claim that profile.
     if config.browser.backend != crate::types::BrowserBackend::Chromiumoxide || config.browser_profile.is_some() {
-        return None;
+        return (None, None);
     }
 
     if let Some(pool) = config.browser_pool.clone() {
-        return Some(pool);
+        return (Some(pool), None);
     }
 
     // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
     // ~keep a pool permit. Binding-created pools therefore reuse Chrome, but close each page as
     // ~keep the pre-pool binding path did, until parked pages have safe lifecycle ownership.
     config.browser.session_affinity = false;
-    Some(crate::browser_pool::BrowserPool::new(binding_browser_pool_config(
-        config,
-    )))
+    let pool = crate::browser_pool::BrowserPool::new(binding_browser_pool_config(config));
+    (Some(std::sync::Arc::clone(&pool)), Some(pool))
 }
 
 #[cfg(feature = "browser")]
@@ -236,6 +250,21 @@ fn binding_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::Bro
         chrome_args: config.browser.chrome_args.clone(),
         ..defaults
     }
+}
+
+/// Shut down browser resources created by [`create_engine`].
+///
+/// The handle is consumed so it cannot be used after shutdown. A browser pool supplied by a
+/// Rust caller through [`CrawlConfig::browser_pool`] remains caller-owned and is not shut down.
+/// Shutting down one clone also disables the binding-created pool shared by its sibling clones.
+#[cfg_attr(alef, alef(skip))]
+pub async fn shutdown_engine(engine: CrawlEngineHandle) {
+    #[cfg(feature = "browser")]
+    if let Some(pool) = engine.owned_browser_pool.as_ref() {
+        pool.shutdown().await;
+    }
+
+    drop(engine);
 }
 
 /// Scrape a single URL, returning extracted page data.
@@ -390,6 +419,73 @@ mod tests {
         assert!(handle.inner.config.browser_session_pool.is_none());
     }
 
+    #[tokio::test]
+    async fn shutdown_engine_shuts_down_the_binding_created_browser_pool() {
+        let handle = create_engine(Some(CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        }))
+        .expect("binding engine must build");
+        let pool = Arc::clone(
+            handle
+                .inner
+                .config
+                .browser_pool
+                .as_ref()
+                .expect("binding engine must own a browser pool"),
+        );
+
+        shutdown_engine(handle).await;
+
+        let error = match pool.acquire_page().await {
+            Ok(_) => panic!("shutdown must make the binding-created pool reject acquisition"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "browser: pool is shut down");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn shutdown_engine_returns_after_its_chrome_process_family_exits() {
+        const TEST_NAME: &str = "shutdown_engine_returns_after_its_chrome_process_family_exits";
+        let handle = create_engine(Some(CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        }))
+        .expect("binding engine must build");
+        let pool = Arc::clone(
+            handle
+                .inner
+                .config
+                .browser_pool
+                .as_ref()
+                .expect("binding engine must own a browser pool"),
+        );
+        if crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
+            return;
+        }
+        let profile = crate::browser_pool::tests::pool_profile_dir(&pool).await;
+        let launched_processes = crate::browser_pool::tests::chrome_process_count_for_profile(&profile);
+        assert!(
+            launched_processes > 0,
+            "the regression must observe the Chrome process family before testing shutdown"
+        );
+
+        shutdown_engine(handle).await;
+
+        assert_eq!(
+            crate::browser_pool::tests::chrome_process_count_for_profile(&profile),
+            0,
+            "shutdown must not return while a Chrome-family process still uses its unique profile"
+        );
+    }
+
     #[test]
     fn binding_browser_pool_config_carries_engine_launch_options() {
         let config = CrawlConfig {
@@ -440,6 +536,10 @@ mod tests {
                 .expect("configured session pool must remain installed"),
             &session_pool
         ));
+        assert!(
+            handle.owned_browser_pool.is_none(),
+            "an externally injected pool must not become owned by the handle"
+        );
         assert!(handle.inner.config.browser.session_affinity);
     }
 

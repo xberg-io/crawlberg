@@ -1041,7 +1041,7 @@ async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
 
 /// The profile directory of the Chrome `pool` runs, which must exist and be the one that Chrome
 /// uses.
-async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
+pub(crate) async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
     let path = pool
         .state
         .lock()
@@ -1057,6 +1057,10 @@ async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
         path.display()
     );
     path
+}
+
+pub(crate) fn chrome_process_count_for_profile(path: &std::path::Path) -> usize {
+    processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)).len()
 }
 
 /// Kill the main process of the Chrome `pool` runs, and return its profile directory.

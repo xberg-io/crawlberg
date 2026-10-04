@@ -401,11 +401,37 @@ impl ScratchProfileDir {
                 "the launched Chrome's executable is unreadable; its profile teardown stops no process"
             );
         }
-        self.0.as_mut().expect("the teardown is taken only by Drop").chrome = chrome;
+        self.0.as_mut().expect("the teardown is taken only once").chrome = chrome;
     }
 
     fn teardown(&self) -> &ProfileTeardown {
-        self.0.as_ref().expect("the teardown is taken only by Drop")
+        self.0.as_ref().expect("the teardown is taken only once")
+    }
+
+    /// Run the profile teardown on the blocking pool and wait until it has finished.
+    async fn teardown_and_wait(mut self) {
+        let Some(teardown) = self.0.take() else {
+            return;
+        };
+        let pending = Arc::new(std::sync::Mutex::new(Some(teardown)));
+        let worker_pending = Arc::clone(&pending);
+        let joined = tokio::task::spawn_blocking(move || {
+            drop(take_profile_teardown(&worker_pending));
+        })
+        .await;
+        if let Err(error) = joined {
+            // ~keep A blocking task cancelled before it starts leaves the teardown in `pending`;
+            // run it here so explicit shutdown cannot return with Chrome still alive.
+            tracing::warn!(%error, "Chrome profile teardown task failed; running it synchronously");
+            drop(take_profile_teardown(&pending));
+        }
+    }
+}
+
+fn take_profile_teardown(pending: &std::sync::Mutex<Option<ProfileTeardown>>) -> Option<ProfileTeardown> {
+    match pending.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
     }
 }
 
@@ -840,7 +866,9 @@ impl BrowserState {
             Some(browser) => release_browser(browser, self.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await,
             None => self.handler_handle.abort(),
         }
-        drop(self.user_data_dir);
+        if let Some(user_data_dir) = self.user_data_dir {
+            user_data_dir.teardown_and_wait().await;
+        }
     }
 }
 
