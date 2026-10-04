@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserProfile, BrowserWait,
-    CrawlConfig, CrawlError, HostMatcher, PageAction, create_engine, interact, scrape,
+    CrawlConfig, CrawlError, HostMatcher, PageAction, SsrfPolicy, create_engine, interact, scrape, validate_url,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wiremock::matchers::{method, path};
@@ -71,11 +71,15 @@ fn config(allowlist: Vec<HostMatcher>) -> CrawlConfig {
 }
 
 /// This machine's address on its default route, which the policy denies unless allowlisted.
-fn host_ip() -> Option<IpAddr> {
+async fn host_ip() -> Option<IpAddr> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:9").ok()?;
     let ip = socket.local_addr().ok()?.ip();
-    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    let url = format!("http://{ip}/").parse().ok()?;
+    validate_url(&url, &SsrfPolicy::default()).await.is_err().then_some(ip)
 }
 
 /// A TCP listener that counts its connections and answers each with a small page.
@@ -276,8 +280,11 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
 /// A WebSocket from the page, or from a worker it starts, to a denied address or, as the
 /// twin, to this machine's allowlisted address.
 async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
-    let Some(ip) = host_ip() else {
-        announce_skip(test_name, "this machine has no address off loopback");
+    let Some(ip) = host_ip().await else {
+        announce_skip(
+            test_name,
+            "this machine has no non-loopback address denied by the default SSRF policy",
+        );
         return;
     };
     let allowlist = if allowed {
@@ -476,8 +483,11 @@ async fn webtransport_sends_with_deny_private_off() {
 /// see a datagram. A pooled Chrome has no twin: the pool writes the policy whatever the crawl's
 /// `deny_private`.
 async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
-    let Some(ip) = host_ip() else {
-        announce_skip(test_name, "this machine has no address off loopback");
+    let Some(ip) = host_ip().await else {
+        announce_skip(
+            test_name,
+            "this machine has no non-loopback address denied by the default SSRF policy",
+        );
         return;
     };
     let (port, datagrams) = counting_udp(ip).await;
