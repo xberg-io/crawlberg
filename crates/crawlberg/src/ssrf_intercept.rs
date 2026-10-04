@@ -2362,7 +2362,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_each_private_address_range() {
+    async fn rejects_rfc1918_and_loopback_addresses() {
         for url in [
             "http://10.0.0.1/",
             "http://172.16.0.1/",
@@ -2407,7 +2407,9 @@ mod tests {
     #[tokio::test]
     async fn allows_a_private_address_named_by_the_allowlist() {
         let policy = SsrfPolicy {
-            allowlist: vec![crate::net::ssrf::HostMatcher::exact("127.0.0.1")],
+            allowlist: vec![
+                crate::net::ssrf::HostMatcher::cidr("127.0.0.1/32").expect("the literal-IP CIDR must be valid"),
+            ],
             ..deny_policy()
         };
         let verdict = ssrf_verdict("http://127.0.0.1/", &policy).await;

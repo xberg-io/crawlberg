@@ -14,7 +14,15 @@ const HOLD: Duration = Duration::from_secs(1);
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn session_defense_hits(defense: SessionRequestDefense, test_name: &str) -> Option<usize> {
-    let site = SendingSite::start().await;
+    let chrome = match chromiumoxide::detection::default_executable(Default::default()) {
+        Ok(chrome) => chrome,
+        Err(message) => {
+            eprintln!("skipping {test_name}: no usable Chrome: {message}");
+            return None;
+        }
+    };
+    let mut site = SendingSite::start().await;
+    site.config.browser.chrome_path = Some(chrome);
     let (result, stop_hold) = with_session_page_left_open(
         HOLD,
         defense,
@@ -25,12 +33,6 @@ async fn session_defense_hits(defense: SessionRequestDefense, test_name: &str) -
     // ~keep post-stop window and denied-server count below remain the pass/fail signal (#570).
     match result {
         Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. } | CrawlError::BrowserTimeout { .. }) => {}
-        Err(CrawlError::BrowserError { message, .. })
-            if message.contains("failed to launch") || message.contains("chrome executable") =>
-        {
-            eprintln!("skipping {test_name}: no usable Chrome: {message}");
-            return None;
-        }
         Err(error) => panic!("{test_name}: the fetch must end: {error:?}"),
     }
     // ~keep The teardown runs in the background after the fetch returns: wait for the stop's
