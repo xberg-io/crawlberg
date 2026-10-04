@@ -1,0 +1,60 @@
+{
+	"id": "crawl_robots_header_nofollow_on",
+	"description": "Does not follow links from an X-Robots-Tag nofollow page when robots directives are respected",
+	"docs": {
+		"topic": "robots",
+		"stem": "crawl-robots-header-nofollow-on",
+		"title": "Does not follow links from an X-Robots-Tag nofollow page when robots directives are respected"
+	},
+	"tags": ["robots", "crawl", "http-header", "nofollow"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/robots.txt",
+				"status_code": 404,
+				"headers": {
+					"content-type": "text/plain"
+				},
+				"body_inline": "Not Found"
+			},
+			{
+				"path": "/",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8",
+					"x-robots-tag": "nofollow"
+				},
+				"body_inline": "<html><body><a href=\"/child\">Child</a></body></html>"
+			},
+			{
+				"path": "/child",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Child</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": true
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 1
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].nofollow_detected",
+			"value": true
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].noindex_detected",
+			"value": false
+		}
+	]
+}

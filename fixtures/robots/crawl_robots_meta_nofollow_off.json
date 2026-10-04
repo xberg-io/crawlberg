@@ -1,0 +1,56 @@
+{
+	"id": "crawl_robots_meta_nofollow_off",
+	"description": "Follows links from a meta nofollow page when robots directives are disabled while retaining detection fields",
+	"docs": {
+		"topic": "robots",
+		"stem": "crawl-robots-meta-nofollow-off",
+		"title": "Follows links from a meta nofollow page when robots directives are disabled while retaining detection fields"
+	},
+	"tags": ["robots", "crawl", "meta", "nofollow"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><head><meta name=\"robots\" content=\"nofollow\"></head><body><a href=\"/child\">Child</a></body></html>"
+			},
+			{
+				"path": "/child",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Child</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 2
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].nofollow_detected",
+			"value": true
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].noindex_detected",
+			"value": false
+		},
+		{
+			"type": "equals",
+			"field": "pages[1].nofollow_detected",
+			"value": false
+		}
+	]
+}

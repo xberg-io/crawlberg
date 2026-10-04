@@ -1,0 +1,69 @@
+{
+	"id": "crawl_robots_noindex_on",
+	"description": "Marks a noindex page and still follows its links when robots directives are respected",
+	"docs": {
+		"topic": "robots",
+		"stem": "crawl-robots-noindex-on",
+		"title": "Marks a noindex page and still follows its links when robots directives are respected"
+	},
+	"tags": ["robots", "crawl", "meta", "noindex"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/robots.txt",
+				"status_code": 404,
+				"headers": {
+					"content-type": "text/plain"
+				},
+				"body_inline": "Not Found"
+			},
+			{
+				"path": "/",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><head><meta name=\"robots\" content=\"noindex\"></head><body><a href=\"/child\">Child</a></body></html>"
+			},
+			{
+				"path": "/child",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Child</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": true
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 2
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].noindex_detected",
+			"value": true
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].nofollow_detected",
+			"value": false
+		},
+		{
+			"type": "equals",
+			"field": "pages[1].noindex_detected",
+			"value": false
+		},
+		{
+			"type": "equals",
+			"field": "pages[1].nofollow_detected",
+			"value": false
+		}
+	]
+}
