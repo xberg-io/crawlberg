@@ -179,10 +179,12 @@ async fn pooled_fetch(
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
     if !pool.uses_launch_options(&config.browser) {
-        crate::types::warn_ignored_launch_options(
-            &config.browser,
-            "a shared browser_pool is configured; the pool launches Chrome from its own BrowserPoolConfig",
-        );
+        let reason = if config.browser.endpoint.is_some() {
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally"
+        } else {
+            "a shared browser_pool is configured; the pool launches Chrome from its own BrowserPoolConfig"
+        };
+        crate::types::warn_ignored_launch_options(&config.browser, reason);
     }
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
