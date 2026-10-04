@@ -40,7 +40,7 @@ use chromiumoxide::cdp::browser_protocol::target::{
 };
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use futures::stream::{BoxStream, FuturesUnordered, SelectAll, Stream, StreamExt as _};
+use futures::stream::{BoxStream, FuturesOrdered, FuturesUnordered, SelectAll, Stream, StreamExt as _};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
@@ -393,15 +393,23 @@ struct Registry {
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
+    /// Identity token for each target's current ownership generation. ~keep
+    target_generations: HashMap<TargetId, Arc<()>>,
     /// Frames, keyed by frame id: an in-process frame as a request names it, and a frame Chrome
-    /// hosts in a target of its own as that target is created. The value is the watched page
-    /// that owns the frame, or `None` for a frame of another target. A page's frames go when
-    /// its watch is released.
-    frames: HashMap<FrameId, Option<Arc<WatchedPage>>>,
+    /// hosts in a target of its own as that target is created. Each entry names its source target
+    /// and ownership generation, so reuse cannot retain the preceding policy. ~keep
+    frames: HashMap<FrameId, FrameOwner>,
     /// Every page the check opened, by its own target, with the browser context it lives in when
     /// it has one of its own. The page goes when its watch ends with it, when Chrome destroys it,
     /// or when the check stops; a context of its own, and its popups, go with it.
     opened: HashMap<TargetId, Option<BrowserContextId>>,
+}
+
+#[derive(Clone)]
+struct FrameOwner {
+    source: TargetId,
+    generation: Arc<()>,
+    owner: Option<Arc<WatchedPage>>,
 }
 
 /// A paused request, counted from the pause until it is matched to the page that sent it, so a
@@ -451,17 +459,65 @@ impl Registry {
     }
 
     fn owner_of_frame(&self, frame: &FrameId) -> Option<Owner> {
+        let owner = self.frame_owner(frame)?.owner;
+        Some(owner.map_or(Owner::Other, Owner::Watched))
+    }
+
+    fn frame_owner(&self, frame: &FrameId) -> Option<FrameOwner> {
+        let target = TargetId::new(frame.inner());
         if let Some(page) = self.owner_of_target(frame.inner()) {
-            return Some(Owner::Watched(page));
+            return self.current_frame_owner(target, Some(page));
         }
-        if self.others.iter().any(|id| id.inner() == frame.inner()) {
-            return Some(Owner::Other);
+        if self.others.contains(&target) {
+            return self.current_frame_owner(target, None);
         }
-        self.frames.get(frame).map(|owner| {
-            owner
-                .as_ref()
-                .map_or(Owner::Other, |page| Owner::Watched(Arc::clone(page)))
+        self.frames
+            .get(frame)
+            .filter(|cached| {
+                self.target_generations
+                    .get(&cached.source)
+                    .is_some_and(|current| Arc::ptr_eq(current, &cached.generation))
+            })
+            .cloned()
+    }
+
+    fn current_frame_owner(&self, source: TargetId, owner: Option<Arc<WatchedPage>>) -> Option<FrameOwner> {
+        Some(FrameOwner {
+            generation: Arc::clone(self.target_generations.get(&source)?),
+            source,
+            owner,
         })
+    }
+
+    fn register_watched(&mut self, target: TargetId, owner: Arc<WatchedPage>) {
+        self.invalidate_frames_from(&target);
+        self.others.remove(&target);
+        self.targets.retain(|(id, _)| *id != target);
+        self.target_generations.insert(target.clone(), Arc::new(()));
+        self.targets.push((target, owner));
+    }
+
+    fn register_other(&mut self, target: TargetId) {
+        // ~keep A creation event queued before `Watch` can arrive after it; it must not demote
+        // ~keep the target whose watch is already installed to an unrestricted external target.
+        if self.targets.iter().any(|(id, _)| *id == target) || self.others.contains(&target) {
+            return;
+        }
+        self.invalidate_frames_from(&target);
+        self.others.insert(target.clone());
+        self.target_generations.insert(target, Arc::new(()));
+    }
+
+    fn remove_target(&mut self, target: &TargetId) {
+        self.invalidate_frames_from(target);
+        self.targets.retain(|(id, _)| id != target);
+        self.others.remove(target);
+        self.target_generations.remove(target);
+    }
+
+    fn invalidate_frames_from(&mut self, target: &TargetId) {
+        self.frames
+            .retain(|frame, cached| frame.inner() != target.inner() && cached.source != *target);
     }
 
     fn owns_live_target(&self, page: &Arc<WatchedPage>, keep_root: bool) -> bool {
@@ -538,6 +594,12 @@ struct TestDelays {
     disable_interception_on_stop: bool,
     /// ~keep Per action, its attribution grace and subsequent request-settling poll count.
     action_waits: Arc<Mutex<Vec<(Duration, usize)>>>,
+    /// Before a watch hands its policy to the listener, until the test gives one permit. ~keep
+    watch_handoff_gate: Option<Arc<UrlGate>>,
+    /// After frame attribution snapshots target ownership, until the test gives one permit. ~keep
+    attribute_snapshot_gate: Option<Arc<UrlGate>>,
+    /// Before a lifecycle reconciliation queries Chrome, until the test gives one permit. ~keep
+    lifecycle_query_gate: Option<Arc<UrlGate>>,
 }
 
 /// How long a stopped check keeps its browser up before the stop returns, and the URLs of the
@@ -810,11 +872,12 @@ impl BrowserFirewall {
             .execute(fetch_enable_params())
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
+        let mut registry = Registry::default();
+        for info in existing {
+            registry.register_other(info.target_id);
+        }
         let shared = Arc::new(Shared {
-            registry: Mutex::new(Registry {
-                others: existing.into_iter().map(|info| info.target_id).collect(),
-                ..Registry::default()
-            }),
+            registry: Mutex::new(registry),
             destroyed: Notify::new(),
             origin,
             context,
@@ -1087,6 +1150,13 @@ impl FirewallHandle {
             .event_listener::<EventLoadingFailed>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+        #[cfg(test)]
+        if let Some(gate) = &self.shared.delays.watch_handoff_gate {
+            lock(&gate.held).push(page.target_id().inner().clone());
+            if let Ok(permit) = gate.permits.acquire().await {
+                permit.forget();
+            }
+        }
         let watched = Arc::new(WatchedPage {
             root: page.target_id().clone(),
             main_frame,
@@ -1450,6 +1520,16 @@ struct Events {
     destroyed: chromiumoxide::listeners::EventStream<EventTargetDestroyed>,
 }
 
+enum Lifecycle {
+    Created(Arc<EventTargetCreated>),
+    Destroyed(Arc<EventTargetDestroyed>),
+}
+
+enum ReconciledLifecycle {
+    Created(Arc<EventTargetCreated>, Option<bool>),
+    Destroyed(Arc<EventTargetDestroyed>, Option<bool>),
+}
+
 /// The listener. It runs the watch commands in order, tracks the targets each watched page owns
 /// and the pages the check opened, and answers the paused requests concurrently, so a slow DNS
 /// lookup for one page does not hold up the others. Interception is turned off only on a stop,
@@ -1474,6 +1554,9 @@ async fn serve(
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
     let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
+    // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
+    // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
+    let mut lifecycles: FuturesOrdered<BoxFuture<'_, ReconciledLifecycle>> = FuturesOrdered::new();
     loop {
         if draining.is_empty()
             && let Some(stopped) = stopping.take()
@@ -1545,8 +1628,7 @@ async fn serve(
                         ));
                         continue;
                     }
-                    registry.pages.push(Arc::clone(&page));
-                    registry.targets.push((page.root.clone(), Arc::clone(&page)));
+                    install_watch(&mut registry, &page);
                     drop(registry);
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
@@ -1557,6 +1639,7 @@ async fn serve(
                 }
                 Some(Command::Stop(done)) => {
                     let stopped = stopping.get_or_insert_with(|| {
+                        lifecycles.clear();
                         draining.extend(std::mem::take(&mut running));
                         let left = std::mem::take(&mut lock(&shared.registry).opened);
                         for (root, context) in left {
@@ -1600,34 +1683,18 @@ async fn serve(
                 }
                 None => break,
             },
-            event = events.created.next() => {
-                if let Some(event) = event
-                    && let Some(close) = adopt_target(shared, &event)
-                {
-                    running.push(Box::pin(async move {
-                        let _ = browser.execute(CloseTargetParams::new(close)).await;
-                        Done::Closed
-                    }));
+            event = events.created.next(), if stopping.is_none() => {
+                if let Some(event) = event {
+                    lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Created(event)));
                 }
             }
-            event = events.destroyed.next() => {
+            event = events.destroyed.next(), if stopping.is_none() => {
                 if let Some(event) = event {
-                    let mut registry = lock(&shared.registry);
-                    registry.targets.retain(|(id, _)| *id != event.target_id);
-                    registry.others.remove(&event.target_id);
-                    let context = registry.opened.remove(&event.target_id).flatten();
-                    drop(registry);
-                    shared.destroyed.notify_waiters();
-                    // ~keep A parked page the session pool evicts, or a pooled page dropped before
-                    // ~keep its watch, is closed by its owner, not through a watch; its context
-                    // ~keep goes here, and its popups with it.
-                    if let Some(context) = context {
-                        running.push(Box::pin(async move {
-                            dispose_context(browser, context).await;
-                            Done::Dropped
-                        }));
-                    }
+                    lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Destroyed(event)));
                 }
+            }
+            Some(event) = lifecycles.next(), if !lifecycles.is_empty() && stopping.is_none() => {
+                apply_lifecycle(browser, shared, event, &mut running);
             }
             Some((page, failed)) = failures.next(), if !failures.is_empty() => {
                 record_document_failure(&page, &failed);
@@ -1636,6 +1703,94 @@ async fn serve(
             Some(done) = draining.next(), if !draining.is_empty() => settle(shared, done),
         }
     }
+}
+
+fn reconcile_lifecycle<'a>(
+    browser: &'a Browser,
+    shared: &'a Shared,
+    event: Lifecycle,
+) -> BoxFuture<'a, ReconciledLifecycle> {
+    async move {
+        match event {
+            Lifecycle::Created(event) => {
+                let live = target_is_live(browser, shared, &event.target_info.target_id).await;
+                ReconciledLifecycle::Created(event, live)
+            }
+            Lifecycle::Destroyed(event) => {
+                let live = target_is_live(browser, shared, &event.target_id).await;
+                ReconciledLifecycle::Destroyed(event, live)
+            }
+        }
+    }
+    .boxed()
+}
+
+fn apply_lifecycle<'a>(
+    browser: &'a Browser,
+    shared: &'a Shared,
+    event: ReconciledLifecycle,
+    running: &mut FuturesUnordered<BoxFuture<'a, Done>>,
+) {
+    match event {
+        ReconciledLifecycle::Created(event, Some(live)) => {
+            if let Some(close) = reconcile_created(shared, &event, live) {
+                running.push(Box::pin(async move {
+                    let _ = browser.execute(CloseTargetParams::new(close)).await;
+                    Done::Closed
+                }));
+            }
+        }
+        ReconciledLifecycle::Destroyed(event, Some(live)) => {
+            let mut registry = lock(&shared.registry);
+            if reconcile_destroyed(&mut registry, &event.target_id, live) {
+                let context = registry.opened.remove(&event.target_id).flatten();
+                drop(registry);
+                shared.destroyed.notify_waiters();
+                // ~keep A parked page the session pool evicts, or a pooled page dropped before
+                // ~keep its watch, is closed by its owner, not through a watch; its context
+                // ~keep goes here, and its popups with it.
+                if let Some(context) = context {
+                    running.push(Box::pin(async move {
+                        dispose_context(browser, context).await;
+                        Done::Dropped
+                    }));
+                }
+            }
+        }
+        ReconciledLifecycle::Created(_, None) | ReconciledLifecycle::Destroyed(_, None) => {}
+    }
+}
+
+/// Whether Chrome currently lists `target`; `None` leaves ownership unchanged and fail-closed.
+/// ~keep Chrome can change after this lock-free query: the later queued lifecycle event then
+/// ~keep applies the converging mutation (destroy removes a created ghost; create restores reuse).
+async fn target_is_live(browser: &Browser, shared: &Shared, target: &TargetId) -> Option<bool> {
+    #[cfg(test)]
+    if let Some(gate) = &shared.delays.lifecycle_query_gate {
+        lock(&gate.held).push(target.inner().clone());
+        if let Ok(permit) = gate.permits.acquire().await {
+            permit.forget();
+        }
+    }
+    browser.execute(GetTargetsParams::default()).await.ok().map(|response| {
+        response
+            .result
+            .target_infos
+            .iter()
+            .any(|info| info.target_id == *target)
+    })
+}
+
+fn reconcile_created(shared: &Shared, event: &EventTargetCreated, live: bool) -> Option<TargetId> {
+    live.then(|| adopt_target(shared, event)).flatten()
+}
+
+fn reconcile_destroyed(registry: &mut Registry, target: &TargetId, live: bool) -> bool {
+    if live {
+        return false;
+    }
+    registry.remove_target(target);
+    true
 }
 
 /// Take in what a finished task of the listener reports.
@@ -1649,6 +1804,13 @@ fn settle(shared: &Shared, done: Done) {
             }
         }
     }
+}
+
+fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) {
+    registry.pages.push(Arc::clone(page));
+    // ~keep Replace ownership under the registry lock: a popup event processed before this
+    // ~keep remains fail-closed under the ending watch, and one processed after uses this policy.
+    registry.register_watched(page.root.clone(), Arc::clone(page));
 }
 
 /// Record a new target that belongs to a watched page. A popup it opened, directly, through
@@ -1666,26 +1828,27 @@ fn settle(shared: &Shared, done: Done) {
 fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId> {
     let info = &event.target_info;
     let mut registry = lock(&shared.registry);
-    let (owner, frame) = match (&info.opener_id, &info.parent_frame_id) {
-        (Some(opener), _) => (registry.owner_of_target(opener.inner()), false),
-        (None, Some(parent)) => match registry.owner_of_frame(parent) {
-            Some(Owner::Watched(page)) => (Some(page), true),
-            _ => (None, false),
-        },
-        (None, None) => (None, false),
+    let (owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
+        (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
+        (None, Some(parent)) => {
+            let frame_owner = registry.frame_owner(parent);
+            let owner = frame_owner.as_ref().and_then(|resolved| resolved.owner.clone());
+            (owner, frame_owner)
+        }
+        (None, None) => (None, None),
     };
     let Some(owner) = owner else {
-        registry.others.insert(info.target_id.clone());
+        registry.register_other(info.target_id.clone());
         return None;
     };
-    if frame {
+    if let Some(frame_owner) = frame_owner {
         registry
             .frames
-            .insert(FrameId::new(info.target_id.inner()), Some(owner));
+            .insert(FrameId::new(info.target_id.inner()), frame_owner);
         return None;
     }
     let ending = owner.ending.load(Ordering::Acquire);
-    registry.targets.push((info.target_id.clone(), owner));
+    registry.register_watched(info.target_id.clone(), owner);
     ending.then(|| info.target_id.clone())
 }
 
@@ -1805,19 +1968,14 @@ fn record_document_failure_outcome(
     true
 }
 
-/// Stop watching `page` once its watch has ended. Its parked page is let go; a target it
-/// owns that Chrome has not destroyed yet stays, so its requests are still refused.
-fn release(shared: &Shared, page: &Arc<WatchedPage>, keep_root: bool) {
+/// Stop actively watching `page` once its watch has ended. Target ownership remains until Chrome
+/// destroys it or a new watch atomically takes the root, so every request stays fail-closed. ~keep
+fn release(shared: &Shared, page: &Arc<WatchedPage>, _keep_root: bool) {
     let mut registry = lock(&shared.registry);
     registry.pages.retain(|watched| !Arc::ptr_eq(watched, page));
     registry
         .frames
-        .retain(|_, owner| !owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, page)));
-    if keep_root {
-        registry
-            .targets
-            .retain(|(id, owner)| !(Arc::ptr_eq(owner, page) && *id == page.root));
-    }
+        .retain(|_, cached| !cached.owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, page)));
 }
 
 /// End the watch of `page`. With `close_page` set, dispose the page's browser context when it
@@ -1893,26 +2051,44 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
     if let Some(owner) = lock(&shared.registry).owner_of_frame(frame) {
         return Some(owner);
     }
-    let live: Vec<(TargetId, Option<Arc<WatchedPage>>)> = {
+    let live: Vec<TargetId> = {
         let registry = lock(&shared.registry);
-        let owned = registry
-            .targets
-            .iter()
-            .map(|(id, page)| (id.clone(), Some(Arc::clone(page))));
-        owned
-            .chain(registry.others.iter().map(|id| (id.clone(), None)))
-            .collect()
+        let owned = registry.targets.iter().map(|(id, _)| id.clone());
+        owned.chain(registry.others.iter().cloned()).collect()
     };
-    for (target, owner) in live {
-        let Ok(page) = browser.get_page(target).await else {
+    #[cfg(test)]
+    if let Some(gate) = &shared.delays.attribute_snapshot_gate {
+        lock(&gate.held).push(frame.inner().clone());
+        if let Ok(permit) = gate.permits.acquire().await {
+            permit.forget();
+        }
+    }
+    for target in live {
+        let Ok(page) = browser.get_page(target.clone()).await else {
             continue;
         };
         let Ok(frames) = page.frames().await else {
             continue;
         };
         if frames.contains(frame) {
-            lock(&shared.registry).frames.insert(frame.clone(), owner.clone());
-            return Some(owner.map_or(Owner::Other, Owner::Watched));
+            // ~keep Ownership can change across the CDP awaits above; cache only the current
+            // ~keep owner, or a reused root can retain its preceding watch's policy.
+            let mut registry = lock(&shared.registry);
+            let owner = registry.owner_of_target(target.inner());
+            let current = if owner.is_some() || registry.others.contains(&target) {
+                registry.current_frame_owner(target, owner)
+            } else {
+                None
+            };
+            let Some(current) = current else {
+                continue;
+            };
+            let owner = current
+                .owner
+                .as_ref()
+                .map_or(Owner::Other, |owner| Owner::Watched(Arc::clone(owner)));
+            registry.frames.insert(frame.clone(), current);
+            return Some(owner);
         }
     }
     None
@@ -2415,10 +2591,8 @@ mod tests {
     //! Fetch interception. These cover the security-critical verdict (the CDP
     //! plumbing around it is thin glue) and stay hermetic by using literal-IP
     //! and scheme rejections that require no DNS resolution or network.
-    use std::sync::Mutex;
-
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use tokio::sync::Notify;
@@ -2427,8 +2601,9 @@ mod tests {
         BrowserContextId, BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId,
         FrameId, HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
         WatchedPage, adopt_target, begin_ending, complete_stopped_response_outcome, events_of,
-        failed_document_response, lock, main_frame_verdict, navigation_verdict, record_document_failure_outcome,
-        record_main_frame_commit, registered_context, release, require_main_frame, ssrf_verdict,
+        failed_document_response, install_watch, lock, main_frame_verdict, navigation_verdict, reconcile_created,
+        reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit, registered_context, release,
+        require_main_frame, ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2576,14 +2751,14 @@ mod tests {
     /// The listener's state on an external browser with `page` watched and another client's
     /// target `other` open.
     fn shared_with(page: &Arc<WatchedPage>, other: &str) -> Shared {
+        let mut registry = Registry {
+            pages: vec![Arc::clone(page)],
+            ..Registry::default()
+        };
+        registry.register_watched(page.root.clone(), Arc::clone(page));
+        registry.register_other(TargetId::new(other));
         Shared {
-            registry: Mutex::new(Registry {
-                pages: vec![Arc::clone(page)],
-                targets: vec![(page.root.clone(), Arc::clone(page))],
-                others: std::iter::once(TargetId::new(other)).collect(),
-                frames: Default::default(),
-                opened: Default::default(),
-            }),
+            registry: Mutex::new(registry),
             destroyed: Notify::new(),
             origin: BrowserOrigin::External,
             context: PageContext::Copied,
@@ -2673,6 +2848,192 @@ mod tests {
             "a popup opened once the page is ending is closed at once"
         );
         assert!(!frame_after_release, "the frame goes with the page's watch");
+    }
+
+    #[test]
+    fn a_parked_root_stays_fail_closed_until_the_next_watch_owns_it() {
+        let old = watched("ROOT");
+        let shared = shared_with(&old, "OTHER");
+        begin_ending(&old);
+        release(&shared, &old, true);
+
+        let late_popup = adopt_target(&shared, &target_created("LATE", "page", Some("ROOT"), None, None));
+        let new = watched("ROOT");
+        install_watch(&mut lock(&shared.registry), &new);
+        let registry = lock(&shared.registry);
+        let root_owner = registry.owner_of_target("ROOT").expect("the root stays owned");
+        let popup_owner = registry.owner_of_target("LATE").expect("the popup stays owned");
+
+        assert_eq!(
+            late_popup.as_ref().map(|id| id.inner().as_str()),
+            Some("LATE"),
+            "a popup created during handoff must be closed, not classified as another client's"
+        );
+        assert!(
+            Arc::ptr_eq(&root_owner, &new) && !root_owner.ending.load(Ordering::Acquire),
+            "the new policy must atomically take ownership of the parked root"
+        );
+        assert!(
+            Arc::ptr_eq(&popup_owner, &old) && popup_owner.ending.load(Ordering::Acquire),
+            "the late popup must remain fail-closed under the ending policy"
+        );
+        assert!(
+            !registry.others.contains(&TargetId::new("ROOT")) && !registry.others.contains(&TargetId::new("LATE")),
+            "neither the parked root nor its popup may become an external client's target"
+        );
+    }
+
+    #[test]
+    fn a_frame_cached_before_install_cannot_keep_the_old_watch() {
+        let old = watched("ROOT");
+        let new = watched("ROOT");
+        let mut registry = Registry::default();
+        registry.register_watched(old.root.clone(), Arc::clone(&old));
+        let cached = registry
+            .current_frame_owner(old.root.clone(), Some(Arc::clone(&old)))
+            .expect("the old target has a generation");
+        registry.frames.insert(FrameId::new("CHILD"), cached);
+
+        install_watch(&mut registry, &new);
+
+        assert!(
+            registry.owner_of_frame(&FrameId::new("CHILD")).is_none(),
+            "installing a watch must invalidate every frame cached from the preceding generation"
+        );
+    }
+
+    #[test]
+    fn a_frame_cached_as_other_cannot_bypass_a_promoted_watch() {
+        let root = TargetId::new("ROOT");
+        let mut registry = Registry::default();
+        registry.register_other(root.clone());
+        let cached = registry
+            .current_frame_owner(root, None)
+            .expect("the external target has a generation");
+        registry.frames.insert(FrameId::new("CHILD"), cached);
+        assert!(
+            matches!(registry.owner_of_frame(&FrameId::new("CHILD")), Some(Owner::Other)),
+            "the negative control must begin as another client's frame"
+        );
+
+        let watched = watched("ROOT");
+        install_watch(&mut registry, &watched);
+        registry.register_other(TargetId::new("ROOT"));
+
+        assert!(
+            registry.owner_of_frame(&FrameId::new("CHILD")).is_none(),
+            "promotion to watched must invalidate the unfiltered Other cache entry"
+        );
+        assert!(
+            registry.owner_of_target("ROOT").is_some(),
+            "a delayed creation event must not demote the installed watch"
+        );
+    }
+
+    #[test]
+    fn a_destroyed_target_id_cannot_reuse_its_frame_cache() {
+        let old = watched("ROOT");
+        let mut registry = Registry::default();
+        registry.register_watched(old.root.clone(), Arc::clone(&old));
+        let cached = registry
+            .current_frame_owner(old.root.clone(), Some(old))
+            .expect("the original target has a generation");
+        registry.frames.insert(FrameId::new("CHILD"), cached);
+
+        registry.remove_target(&TargetId::new("ROOT"));
+        let reused = watched("ROOT");
+        registry.register_watched(reused.root.clone(), reused);
+
+        assert!(
+            registry.owner_of_frame(&FrameId::new("CHILD")).is_none(),
+            "a reused target id must not revive a frame cached by the destroyed generation"
+        );
+    }
+
+    #[test]
+    fn a_created_event_processed_after_destruction_cannot_resurrect_a_ghost() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "GHOST");
+        let ghost = TargetId::new("GHOST");
+        {
+            let mut registry = lock(&shared.registry);
+            assert!(reconcile_destroyed(&mut registry, &ghost, false));
+        }
+        let late_created = target_created("GHOST", "page", None, None, None);
+
+        let close = reconcile_created(&shared, &late_created, false);
+        let registry = lock(&shared.registry);
+
+        assert!(close.is_none(), "an absent target has nothing to close");
+        assert!(
+            registry.owner_of_target("GHOST").is_none()
+                && !registry.others.contains(&ghost)
+                && !registry.target_generations.contains_key(&ghost),
+            "a late created event must not resurrect a target Chrome no longer lists"
+        );
+    }
+
+    #[test]
+    fn a_late_destroyed_event_cannot_remove_a_reused_generation() {
+        let old = watched("ROOT");
+        let new = watched("ROOT");
+        let mut registry = Registry::default();
+        registry.register_watched(old.root.clone(), old);
+        install_watch(&mut registry, &new);
+        let generation = Arc::clone(
+            registry
+                .target_generations
+                .get(&new.root)
+                .expect("the reused target has a generation"),
+        );
+
+        let removed = reconcile_destroyed(&mut registry, &new.root, true);
+
+        assert!(!removed, "a target Chrome still lists must not be removed");
+        assert!(
+            registry
+                .owner_of_target(new.root.inner())
+                .is_some_and(|owner| Arc::ptr_eq(&owner, &new)),
+            "the reused target must keep its new owner"
+        );
+        assert!(
+            registry
+                .target_generations
+                .get(&new.root)
+                .is_some_and(|current| Arc::ptr_eq(current, &generation)),
+            "the late destroy must not advance or remove the reused generation"
+        );
+    }
+
+    #[test]
+    fn a_delayed_created_event_cannot_demote_an_installed_watch() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let generation = {
+            let registry = lock(&shared.registry);
+            Arc::clone(
+                registry
+                    .target_generations
+                    .get(&page.root)
+                    .expect("the watched root has a generation"),
+            )
+        };
+
+        let close = adopt_target(&shared, &target_created("ROOT", "page", None, None, None));
+        let registry = lock(&shared.registry);
+
+        assert!(close.is_none(), "the root's creation event is not a popup to close");
+        assert!(
+            !registry.others.contains(&page.root),
+            "the watched root must not become Other"
+        );
+        assert!(
+            registry
+                .target_generations
+                .get(&page.root)
+                .is_some_and(|current| Arc::ptr_eq(current, &generation)),
+            "a delayed creation event must leave the installed generation unchanged"
+        );
     }
 
     /// A frame target and a popup of another client's page stay that client's: neither is adopted.
@@ -3317,8 +3678,8 @@ mod tests {
 mod race_tests {
     //! Races the listener closes by construction, made deterministic with injected delays.
     //! These launch a real Chrome and skip when none is found.
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use chromiumoxide::Browser;
@@ -3332,8 +3693,8 @@ mod race_tests {
     use tokio_stream::StreamExt;
 
     use super::{
-        ACTION_GRACE, ACTION_SETTLE_LIMIT, BrowserFirewall, BrowserOrigin, FetchDisableParams, PageContext, TestDelays,
-        UrlGate, lock,
+        ACTION_GRACE, ACTION_SETTLE_LIMIT, BrowserFirewall, BrowserOrigin, CALL_SITE_DELAYS, EventTargetCreated,
+        EventTargetDestroyed, FetchDisableParams, FrameId, Owner, PageContext, TestDelays, UrlGate, lock,
     };
 
     /// How long a test gives a stop to finish, or interception to turn off, while the check still
@@ -3911,6 +4272,368 @@ mod race_tests {
         assert!(!popup_open, "{test_name}: the park must close the popup");
     }
 
+    /// Lifecycle queries run outside the listener loop: holding the oldest one cannot block a
+    /// watch command, a paused request, or Stop, and Stop discards it without later mutation. ~keep
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_held_lifecycle_query_does_not_block_requests_commands_or_stop() {
+        let test_name = "a_held_lifecycle_query_does_not_block_requests_commands_or_stop";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let gate = closed_match_gate();
+        let delays = TestDelays {
+            lifecycle_query_gate: Some(Arc::clone(&gate)),
+            bypass_egress: true,
+            ..TestDelays::default()
+        };
+        let browser_for_check = Arc::clone(&browser);
+        CALL_SITE_DELAYS
+            .scope(delays, async {
+                let firewall = BrowserFirewall::start(
+                    Arc::clone(&browser_for_check),
+                    BrowserOrigin::External,
+                    PageContext::Copied,
+                )
+                .await
+                .expect("the listener must start");
+                let page = firewall
+                    .handle()
+                    .new_page(None, None)
+                    .await
+                    .expect("the check must open a page");
+                assert!(
+                    wait_held_count(&gate, 1).await,
+                    "{test_name}: a lifecycle reconciliation must be held"
+                );
+                let watch = tokio::time::timeout(Duration::from_secs(10), firewall.handle().watch(&page, &config(), 0))
+                    .await
+                    .expect("the watch command must remain serviceable")
+                    .expect("the watch must start");
+                tokio::time::timeout(Duration::from_secs(10), open_blank_site(&page))
+                    .await
+                    .expect("a paused navigation must be answered while reconciliation is held");
+                let (denied, denied_hits) = denied_listener().await;
+                let answer: String = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    page.evaluate(format!(
+                        "fetch({denied:?}, {{ mode: 'no-cors' }}).then(() => 'reached', () => 'refused')"
+                    )),
+                )
+                .await
+                .expect("the paused request must be answered")
+                .ok()
+                .and_then(|result| result.into_value().ok())
+                .unwrap_or_default();
+                watch.park().await;
+                tokio::time::timeout(Duration::from_secs(10), firewall.stop())
+                    .await
+                    .expect("Stop must discard the held reconciliation and return");
+                let held_at_stop = lock(&gate.held).len();
+                tokio::task::yield_now().await;
+                assert_eq!(answer, "refused", "{test_name}: the watched request must be refused");
+                assert_eq!(
+                    denied_hits.load(Ordering::SeqCst),
+                    0,
+                    "{test_name}: the held reconciliation must not bypass the watched policy"
+                );
+                assert_eq!(
+                    lock(&gate.held).len(),
+                    held_at_stop,
+                    "{test_name}: no reconciliation may resume or start after Stop returns"
+                );
+                drop(page);
+            })
+            .await;
+        close(browser).await;
+    }
+
+    /// Frame-tree lookup crosses CDP awaits, so ownership must be re-read after the lookup before
+    /// its result is cached. The handoff gate makes that ownership change deterministic. ~keep
+    #[tokio::test(flavor = "multi_thread")]
+    async fn frame_attribution_uses_the_policy_installed_after_its_snapshot() {
+        let test_name = "frame_attribution_uses_the_policy_installed_after_its_snapshot";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let gate = closed_match_gate();
+        let delays = TestDelays {
+            attribute_snapshot_gate: Some(Arc::clone(&gate)),
+            bypass_egress: true,
+            ..TestDelays::default()
+        };
+        let browser_for_check = Arc::clone(&browser);
+        CALL_SITE_DELAYS
+            .scope(delays, async {
+                let firewall = BrowserFirewall::start(
+                    Arc::clone(&browser_for_check),
+                    BrowserOrigin::External,
+                    PageContext::Copied,
+                )
+                .await
+                .expect("the listener must start");
+                let page = firewall
+                    .handle()
+                    .new_page(None, None)
+                    .await
+                    .expect("the check must open a page");
+                let first = firewall
+                    .handle()
+                    .watch(&page, &config(), 0)
+                    .await
+                    .expect("the strict watch must start");
+                open_blank_site(&page).await;
+                let frame_ready: String = page
+                    .evaluate(
+                        "new Promise(resolve => { const frame = document.createElement('iframe'); \
+                         frame.onload = () => { window.__handoffFrame = frame; resolve('ready'); }; \
+                         frame.srcdoc = `<script>addEventListener('message', async event => { \
+                         if (event.data.kind !== 'handoff-fetch') return; \
+                         const result = await fetch(event.data.url, { mode: 'no-cors' }) \
+                         .then(() => 'reached', () => 'refused'); \
+                         parent.postMessage({ kind: 'handoff-result', result }, '*'); \
+                         });<\\/script>`; document.body.appendChild(frame); })",
+                    )
+                    .await
+                    .ok()
+                    .and_then(|result| result.into_value().ok())
+                    .unwrap_or_default();
+                assert_eq!(frame_ready, "ready", "{test_name}: the child frame must load");
+                // ~keep Iframe setup can populate the cache; clear it so the request necessarily
+                // ~keep snapshots target ownership and crosses the gated CDP frame-tree lookup.
+                lock(&first.shared.registry).frames.clear();
+
+                let (denied, denied_hits) = denied_listener().await;
+                let requesting_page = page.clone();
+                let requesting = tokio::spawn(async move {
+                    requesting_page
+                        .evaluate(format!(
+                            "new Promise(resolve => {{ const receive = event => {{ \
+                             if (event.source !== window.__handoffFrame.contentWindow || \
+                             event.data.kind !== 'handoff-result') return; \
+                             removeEventListener('message', receive); resolve(event.data.result); }}; \
+                             addEventListener('message', receive); \
+                             window.__handoffFrame.contentWindow.postMessage( \
+                             {{ kind: 'handoff-fetch', url: {denied:?} }}, '*'); }})"
+                        ))
+                        .await
+                        .ok()
+                        .and_then(|result| result.into_value().ok())
+                        .unwrap_or_default()
+                });
+                assert!(
+                    wait_held_count(&gate, 1).await,
+                    "{test_name}: attribution must pause after its ownership snapshot"
+                );
+                let child_frame = lock(&gate.held)
+                    .first()
+                    .cloned()
+                    .expect("the gate records the child frame");
+
+                first.park().await;
+                let permissive = crate::types::CrawlConfig::builder()
+                    .allow_private_networks(true)
+                    .build();
+                let second = firewall
+                    .handle()
+                    .watch(&page, &permissive, 0)
+                    .await
+                    .expect("the permissive watch must take ownership");
+                gate.permits.add_permits(1);
+                let answer: String = tokio::time::timeout(Duration::from_secs(10), requesting)
+                    .await
+                    .expect("the child request must finish")
+                    .expect("the request task must finish");
+                let frame_has_new_owner = matches!(
+                    lock(&second.shared.registry).owner_of_frame(&FrameId::new(child_frame)),
+                    Some(Owner::Watched(owner)) if Arc::ptr_eq(&owner, &second.page)
+                );
+                let reached = served(&denied_hits).await;
+
+                second.close().await;
+                firewall.stop().await;
+                drop(page);
+                assert_eq!(
+                    answer, "reached",
+                    "{test_name}: the frame request must use the newly installed permissive policy"
+                );
+                assert!(
+                    frame_has_new_owner,
+                    "{test_name}: the frame cache must hold the newly installed watch"
+                );
+                assert!(reached, "{test_name}: the allowed frame request must reach its server");
+            })
+            .await;
+        close(browser).await;
+    }
+
+    /// A parked root remains under its ending policy until the next policy takes ownership.
+    /// A popup created in that handoff is therefore closed, never treated as another external
+    /// browser client's unrestricted target. ~keep
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_external_browser_keeps_a_popup_fail_closed_during_policy_handoff() {
+        let test_name = "an_external_browser_keeps_a_popup_fail_closed_during_policy_handoff";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let other = browser.new_page("about:blank").await.expect("the other client's tab");
+        open_blank_site(&other).await;
+        let gate = Arc::new(UrlGate {
+            permits: tokio::sync::Semaphore::new(1),
+            held: Mutex::default(),
+        });
+        let delays = TestDelays {
+            watch_handoff_gate: Some(Arc::clone(&gate)),
+            bypass_egress: true,
+            ..TestDelays::default()
+        };
+        let browser_for_check = Arc::clone(&browser);
+        CALL_SITE_DELAYS
+            .scope(delays, async {
+                let firewall = BrowserFirewall::start(
+                    Arc::clone(&browser_for_check),
+                    BrowserOrigin::External,
+                    PageContext::Copied,
+                )
+                .await
+                .expect("the listener must start");
+                let page = firewall
+                    .handle()
+                    .new_page(None, None)
+                    .await
+                    .expect("the check must open a page");
+                let root = page.target_id().clone();
+                let permissive = crate::types::CrawlConfig::builder()
+                    .allow_private_networks(true)
+                    .build();
+                let first = firewall
+                    .handle()
+                    .watch(&page, &permissive, 0)
+                    .await
+                    .expect("the permissive watch must start");
+                open_blank_site(&page).await;
+                let (denied, denied_hits) = denied_listener().await;
+                let control: String = other
+                    .evaluate(format!(
+                        "fetch({denied:?}, {{ mode: 'no-cors' }}).then(() => 'reached', () => 'refused')"
+                    ))
+                    .await
+                    .ok()
+                    .and_then(|result| result.into_value().ok())
+                    .unwrap_or_default();
+                assert_eq!(
+                    control, "reached",
+                    "{test_name}: another client's target must reach the denied server, or the negative control is inert"
+                );
+                assert!(
+                    served(&denied_hits).await,
+                    "{test_name}: the denied server must record the positive control"
+                );
+                let control_hits = denied_hits.load(Ordering::SeqCst);
+
+                first.park().await;
+                let handle = firewall.handle();
+                let reused = page.clone();
+                let strict = config();
+                let watching = tokio::spawn(async move { handle.watch(&reused, &strict, 0).await });
+                assert!(
+                    wait_held_count(&gate, 2).await,
+                    "{test_name}: the strict watch must stop at the handoff gate"
+                );
+
+                let (parked_denied, parked_hits) = denied_listener().await;
+                let parked: String = page
+                    .evaluate(format!(
+                        "fetch({parked_denied:?}, {{ mode: 'no-cors' }}).then(() => 'reached', () => 'refused')"
+                    ))
+                    .await
+                    .ok()
+                    .and_then(|result| result.into_value().ok())
+                    .unwrap_or_default();
+
+                let mut created = browser_for_check
+                    .event_listener::<EventTargetCreated>()
+                    .await
+                    .expect("listen for the popup");
+                let mut destroyed = browser_for_check
+                    .event_listener::<EventTargetDestroyed>()
+                    .await
+                    .expect("listen for the popup close");
+                page.evaluate("window.open('about:blank'); 1")
+                    .await
+                    .expect("open the popup");
+                let popup = tokio::time::timeout(Duration::from_secs(10), async {
+                    while let Some(event) = created.next().await {
+                        if event.target_info.opener_id.as_ref() == Some(&root) {
+                            return Some(event.target_info.target_id.clone());
+                        }
+                    }
+                    None
+                })
+                .await
+                .expect("Chrome must report the popup")
+                .expect("the popup event stream must remain open");
+                let popup_answer: String = tokio::time::timeout(Duration::from_secs(5), async {
+                    let popup_page = browser_for_check.get_page(popup.clone()).await.ok()?;
+                    popup_page
+                        .evaluate(format!(
+                            "fetch({denied:?}, {{ mode: 'no-cors' }}).then(() => 'reached', () => 'refused')"
+                        ))
+                        .await
+                        .ok()?
+                        .into_value()
+                        .ok()
+                })
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+                let popup_closed = tokio::time::timeout(Duration::from_secs(10), async {
+                    while let Some(event) = destroyed.next().await {
+                        if event.target_id == popup {
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .await
+                .unwrap_or(false);
+                assert!(
+                    popup_closed,
+                    "{test_name}: the popup created during handoff must be closed"
+                );
+                assert_ne!(
+                    popup_answer, "reached",
+                    "{test_name}: the handoff popup was treated as another client's target"
+                );
+                assert_eq!(
+                    denied_hits.load(Ordering::SeqCst),
+                    control_hits,
+                    "{test_name}: the handoff popup reached the denied server"
+                );
+                assert_eq!(
+                    parked, "refused",
+                    "{test_name}: the parked root must remain refused between watches"
+                );
+                assert_eq!(
+                    parked_hits.load(Ordering::SeqCst),
+                    0,
+                    "{test_name}: the parked root reached the denied server"
+                );
+
+                gate.permits.add_permits(1);
+                let second = watching
+                    .await
+                    .expect("the watch task must finish")
+                    .expect("the strict watch must start");
+                second.close().await;
+                firewall.stop().await;
+                drop(page);
+            })
+            .await;
+        drop(other);
+        close(browser).await;
+    }
+
     /// The id of the frame target whose URL starts with `prefix`, if `browser` has one.
     async fn frame_target_of(browser: &Browser, prefix: &str) -> Option<TargetId> {
         browser
@@ -4091,6 +4814,20 @@ mod race_tests {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         true
+    }
+
+    /// Wait until `gate` has held `count` watches; the bound only stops a broken test hanging.
+    async fn wait_held_count(gate: &UrlGate, count: usize) -> bool {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if super::lock(&gate.held).len() >= count {
+                    return true;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or(false)
     }
 
     /// Run `read` across a held match: poll it once so its cutoff is fixed, let the action's
