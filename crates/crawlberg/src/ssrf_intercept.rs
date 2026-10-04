@@ -595,23 +595,46 @@ pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
     (CALL_SITE_DELAYS.scope(delays, body).await, stop_hold)
 }
 
-/// A page on `localhost` that sends a request to a denied address every few milliseconds, and
-/// the config that loads it with a browser crawlberg launches.
+/// A page fixture on `localhost` that repeatedly reaches a denied address, and the config that
+/// loads it with a browser crawlberg launches.
 ///
 /// ~keep The page is allowlisted by name; the denied server is the literal `127.0.0.1`, which
 /// ~keep `deny_private` refuses.
 #[cfg(test)]
 pub(crate) struct SendingSite {
     pub(crate) seed: String,
+    pub(crate) popup: Option<String>,
+    pub(crate) action_script: Option<String>,
     pub(crate) config: CrawlConfig,
     denied: wiremock::MockServer,
     _site: wiremock::MockServer,
 }
 
 #[cfg(test)]
+#[derive(Clone, Copy)]
+enum SendingSiteKind {
+    Page,
+    Popup,
+    PopupOpeningPage,
+}
+
+#[cfg(test)]
 impl SendingSite {
     pub(crate) async fn start() -> Self {
+        Self::start_with_kind(SendingSiteKind::Page).await
+    }
+
+    pub(crate) async fn start_popup() -> Self {
+        Self::start_with_kind(SendingSiteKind::Popup).await
+    }
+
+    pub(crate) async fn start_opening_denied_popups() -> Self {
+        Self::start_with_kind(SendingSiteKind::PopupOpeningPage).await
+    }
+
+    async fn start_with_kind(kind: SendingSiteKind) -> Self {
         use wiremock::matchers::any;
+        use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let denied = MockServer::start().await;
         Mock::given(any())
@@ -620,17 +643,38 @@ impl SendingSite {
             .await;
         let target = format!("http://127.0.0.1:{}/secret", denied.address().port());
         let site = MockServer::start().await;
-        Mock::given(any())
-            .respond_with(ResponseTemplate::new(200).set_body_raw(
-                format!(
-                    "<html><body><p>sending</p><script>setInterval(() => fetch({target:?} + '?' + \
-                     Math.random(), {{ mode: 'no-cors' }}).catch(() => 0), 5);</script></body></html>"
-                ),
-                "text/html",
-            ))
+        let sending = format!(
+            "<html><body><p>sending</p><script>setInterval(() => fetch({target:?} + '?' + \
+             Math.random(), {{ mode: 'no-cors' }}).catch(() => 0), 5);</script></body></html>"
+        );
+        let seed_body = match kind {
+            SendingSiteKind::Page => sending.clone(),
+            SendingSiteKind::Popup | SendingSiteKind::PopupOpeningPage => {
+                "<html><body><p>opening</p></body></html>".to_owned()
+            }
+        };
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(seed_body, "text/html"))
             .mount(&site)
             .await;
+        if matches!(kind, SendingSiteKind::Popup) {
+            Mock::given(method("GET"))
+                .and(path("/popup"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(sending, "text/html"))
+                .mount(&site)
+                .await;
+        }
         let seed = format!("http://localhost:{}/", site.address().port());
+        let popup =
+            matches!(kind, SendingSiteKind::Popup).then(|| format!("http://localhost:{}/popup", site.address().port()));
+        let action_script = match kind {
+            SendingSiteKind::Page => None,
+            SendingSiteKind::Popup => Some("window.open('/popup'); return true".to_owned()),
+            SendingSiteKind::PopupOpeningPage => Some(format!(
+                "setInterval(() => window.open({target:?} + '?' + Math.random()), 50); return true"
+            )),
+        };
         let config = CrawlConfig {
             browser: crate::types::BrowserConfig {
                 backend: crate::types::BrowserBackend::Chromiumoxide,
@@ -645,6 +689,8 @@ impl SendingSite {
         };
         Self {
             seed,
+            popup,
+            action_script,
             config,
             denied,
             _site: site,

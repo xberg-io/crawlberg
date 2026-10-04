@@ -227,66 +227,6 @@ async fn interact_still_follows_a_click_to_an_allowed_address() {
     assert!(requested.iter().any(|p| p == "/allowed"), "{requested:?}");
 }
 
-/// A script that sends 20 requests to `url` every millisecond, from the start of the page it
-/// runs in.
-fn fetch_loop(url: &str) -> String {
-    format!(
-        "setInterval(() => {{ for (let k = 0; k < 20; k++) fetch({url:?} + '?' + Math.random(), {{ mode: 'no-cors' }}).catch(() => {{}}); }}, 1)"
-    )
-}
-
-/// Run sessions whose pages keep requesting the denied address, then wait past their end, and
-/// assert the denied address was never reached, not even while a session closed.
-///
-/// ~keep A request leaves only if it is sent in the moment between the check stopping and the
-/// ~keep page closing. At 20 requests per millisecond, every session sends thousands of them
-/// ~keep across that moment, so two sessions give the leak many chances, and a short wait
-/// ~keep keeps the test fast.
-async fn assert_nothing_leaks_at_the_end(
-    test_name: &str,
-    seed_body: &str,
-    mut actions: Vec<PageAction>,
-    denied: &MockServer,
-) {
-    actions.push(PageAction::Wait {
-        milliseconds: Some(300),
-        selector: None,
-    });
-    let (_site, seed) = seed_site(seed_body).await;
-    let engine = create_engine(Some(config())).expect("engine must build");
-    for _ in 0..2 {
-        let result = match interact(&engine, &seed, actions.clone()).await {
-            Ok(result) => result,
-            Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
-                announce_chrome_skip(test_name, &message);
-                return;
-            }
-            Err(error) => panic!("{test_name}: interact must succeed: {error:?}"),
-        };
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_refused(test_name, denied, &result).await;
-    }
-}
-
-#[tokio::test]
-async fn interact_refuses_requests_the_page_sends_while_the_session_ends() {
-    let test_name = "interact_refuses_requests_the_page_sends_while_the_session_ends";
-    let denied = denied_server().await;
-    let body = format!("<script>{}</script>", fetch_loop(&denied_url(&denied)));
-    assert_nothing_leaks_at_the_end(test_name, &body, Vec::new(), &denied).await;
-}
-
-#[tokio::test]
-async fn interact_refuses_requests_a_popup_sends_while_the_session_ends() {
-    let test_name = "interact_refuses_requests_a_popup_sends_while_the_session_ends";
-    let denied = denied_server().await;
-    let script = format!(
-        "const popup = window.open('about:blank'); popup.eval({:?}); return true",
-        fetch_loop(&denied_url(&denied))
-    );
-    assert_nothing_leaks_at_the_end(test_name, "<p>start</p>", vec![execute_js(&script)], &denied).await;
-}
-
 /// Assert the action at `index` failed with the SSRF policy error that names the denied URL.
 fn assert_action_refused(test_name: &str, result: &InteractionResult, index: usize) {
     let action = &result.action_results[index];
@@ -378,17 +318,6 @@ async fn interact_lists_a_request_refused_before_the_actions_and_fails_no_action
         "{test_name}: the result must list the refused address"
     );
     assert_refused(test_name, &denied, &result).await;
-}
-
-#[tokio::test]
-async fn interact_refuses_popups_the_page_keeps_opening_while_the_session_ends() {
-    let test_name = "interact_refuses_popups_the_page_keeps_opening_while_the_session_ends";
-    let denied = denied_server().await;
-    let script = format!(
-        "setInterval(() => window.open({:?} + '?' + Math.random()), 5); return true",
-        denied_url(&denied)
-    );
-    assert_nothing_leaks_at_the_end(test_name, "<p>start</p>", vec![execute_js(&script)], &denied).await;
 }
 
 /// A request a script schedules for later is not blamed on whichever action runs when it is
