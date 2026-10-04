@@ -40,7 +40,7 @@ use chromiumoxide::cdp::browser_protocol::target::{
 };
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use futures::stream::{BoxStream, FuturesUnordered, SelectAll, StreamExt as _};
+use futures::stream::{BoxStream, FuturesUnordered, SelectAll, Stream, StreamExt as _};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
@@ -377,6 +377,8 @@ struct WatchedPage {
     in_flight: AtomicUsize,
     /// Wakes navigation when Chrome fails a recorded main-frame document response.
     document_failed: Notify,
+    /// Ends the page-scoped event streams when this watch closes or parks.
+    events_ended: Notify,
 }
 
 /// The targets and frames each watched page owns.
@@ -1005,6 +1007,7 @@ impl FirewallHandle {
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
             document_failed: Notify::new(),
+            events_ended: Notify::new(),
         });
         let (ack, enabled) = oneshot::channel();
         self.commands
@@ -1286,7 +1289,7 @@ impl Watch {
 
     async fn end(mut self, close_page: bool) {
         self.ended = true;
-        self.page.ending.store(true, Ordering::Release);
+        begin_ending(&self.page);
         let (done, ended) = oneshot::channel();
         let command = Command::End {
             page: Arc::clone(&self.page),
@@ -1304,7 +1307,7 @@ impl Drop for Watch {
     // ~keep requests and closes its pages: the listener runs the close.
     fn drop(&mut self) {
         if !self.ended {
-            self.page.ending.store(true, Ordering::Release);
+            begin_ending(&self.page);
             let _ = self.commands.send(Command::End {
                 page: Arc::clone(&self.page),
                 close_page: true,
@@ -1576,28 +1579,43 @@ fn commits_of(
     page: &Arc<WatchedPage>,
     navigated: chromiumoxide::listeners::EventStream<EventFrameNavigated>,
 ) -> BoxStream<'static, Committed> {
-    let page = Arc::clone(page);
-    navigated
-        .take_while({
-            let page = Arc::clone(&page);
-            move |_| std::future::ready(!page.ending.load(Ordering::Acquire))
-        })
-        .map(move |event| (Arc::clone(&page), event))
-        .boxed()
+    events_of(page, navigated)
 }
 
 fn failures_of(
     page: &Arc<WatchedPage>,
     failed: chromiumoxide::listeners::EventStream<EventLoadingFailed>,
 ) -> BoxStream<'static, Failed> {
+    events_of(page, failed)
+}
+
+fn events_of<T, S>(page: &Arc<WatchedPage>, events: S) -> BoxStream<'static, (Arc<WatchedPage>, Arc<T>)>
+where
+    T: Send + Sync + 'static,
+    S: Stream<Item = Arc<T>> + Send + 'static,
+{
     let page = Arc::clone(page);
-    failed
-        .take_while({
-            let page = Arc::clone(&page);
-            move |_| std::future::ready(!page.ending.load(Ordering::Acquire))
-        })
+    events
+        .take_until(events_ended(Arc::clone(&page)))
         .map(move |event| (Arc::clone(&page), event))
         .boxed()
+}
+
+async fn events_ended(page: Arc<WatchedPage>) {
+    loop {
+        let notified = page.events_ended.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if page.ending.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
+    }
+}
+
+fn begin_ending(page: &WatchedPage) {
+    page.ending.store(true, Ordering::Release);
+    page.events_ended.notify_waiters();
 }
 
 /// Record the loader of a document `page`'s main frame committed.
@@ -1695,7 +1713,7 @@ async fn end_watch(
     close_page: bool,
     done: Option<oneshot::Sender<()>>,
 ) -> Done {
-    page.ending.store(true, Ordering::Release);
+    begin_ending(&page);
     let keep_root = !close_page;
     // ~keep Taken out of the registry first, so the destroy events do not dispose it again.
     let context = close_page
@@ -2282,14 +2300,16 @@ mod tests {
 
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use tokio::sync::Notify;
 
     use super::{
-        BrowserOrigin, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome,
-        Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict, WatchedPage, adopt_target,
-        complete_stopped_response_outcome, failed_document_response, lock, main_frame_verdict, navigation_verdict,
-        record_document_failure_outcome, record_main_frame_commit, release, require_main_frame, ssrf_verdict,
+        BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId,
+        HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
+        WatchedPage, adopt_target, begin_ending, complete_stopped_response_outcome, events_of,
+        failed_document_response, lock, main_frame_verdict, navigation_verdict, record_document_failure_outcome,
+        record_main_frame_commit, release, require_main_frame, ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2351,7 +2371,28 @@ mod tests {
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
             document_failed: Notify::new(),
+            events_ended: Notify::new(),
         })
+    }
+
+    #[tokio::test]
+    async fn a_parked_watch_ends_its_failure_stream_without_another_event() {
+        use futures::StreamExt as _;
+
+        let page = watched("ROOT");
+        let weak = Arc::downgrade(&page);
+        let pending = futures::stream::pending::<Arc<EventLoadingFailed>>();
+        let mut failures = events_of(&page, pending);
+
+        begin_ending(&page);
+        let ended = tokio::time::timeout(Duration::from_millis(100), failures.next()).await;
+        assert!(
+            matches!(ended, Ok(None)),
+            "the page-scoped failure stream stayed pending"
+        );
+        drop(failures);
+        drop(page);
+        assert!(weak.upgrade().is_none(), "the ended stream retained the watched page");
     }
 
     /// The listener's state on an external browser with `page` watched and another client's

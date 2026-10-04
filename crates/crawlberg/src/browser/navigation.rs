@@ -133,6 +133,9 @@ async fn render(
         return Err(error);
     }
     if let Some(stop) = intercepted.stopped_response {
+        if stop.terminal_intercepted {
+            watch.mark_unsettled();
+        }
         return Ok(stopped_browser_page(watch, stop));
     }
 

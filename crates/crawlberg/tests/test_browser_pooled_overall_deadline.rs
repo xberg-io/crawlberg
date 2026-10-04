@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
-    CrawlError, create_engine, scrape,
+    CrawlError, HostMatcher, create_engine, scrape,
 };
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
@@ -88,6 +88,59 @@ fn spawn_stalled_redirect_server() -> String {
         }
     });
     format!("http://{addr}")
+}
+
+fn spawn_refused_subresource_redirect_server() -> String {
+    let denied = TcpListener::bind("127.0.0.1:0").expect("denied server should bind");
+    let denied_url = format!("http://{}/blocked", denied.local_addr().expect("denied address"));
+    std::thread::spawn(move || for _ in denied.incoming() {});
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+    let addr = listener.local_addr().expect("test server should have local addr");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { break };
+            let denied_url = denied_url.clone();
+            std::thread::spawn(move || {
+                let Ok(mut writer) = stream.try_clone() else { return };
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) if header == "\r\n" || header == "\n" => break,
+                        Ok(_) => {}
+                    }
+                }
+                let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+                let response = match path {
+                    "/start" => html_response(&format!(
+                        "<script>fetch({denied_url:?}).catch(() => 0); \
+                         setTimeout(() => location.assign('/redirect'), 200)</script>"
+                    )),
+                    "/redirect" => "HTTP/1.1 302 Found\r\nLocation: mailto:someone@example.com\r\n\
+                                    Content-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned(),
+                    "/ok" => html_response("<p>fresh-page-ok</p>"),
+                    _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+                };
+                let _ = writer.write_all(response.as_bytes());
+                let _ = writer.flush();
+            });
+        }
+    });
+    format!("http://localhost:{}", addr.port())
+}
+
+fn html_response(body: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 fn stalled_pooled_config(pool: std::sync::Arc<BrowserPool>) -> CrawlConfig {
@@ -201,6 +254,59 @@ async fn a_terminal_redirect_with_a_stalled_body_is_not_reused_for_the_follow_up
         .unwrap_or_else(|error| panic!("the follow-up must use a fresh page: {error:?}"));
     pool.shutdown().await;
     assert!(follow_up.html.contains("follow-up-ok"), "{}", follow_up.html);
+}
+
+#[tokio::test]
+#[serial_test::serial(pooled_browser_deadline)]
+async fn a_terminal_redirect_after_a_refused_subresource_is_not_reused() {
+    let test_name = "a_terminal_redirect_after_a_refused_subresource_is_not_reused";
+    let base = spawn_refused_subresource_redirect_server();
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let session_pool = Arc::new(BrowserSessionPool::new());
+    let mut config = CrawlConfig::builder()
+        .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+        .build();
+    config.browser = BrowserConfig {
+        backend: BrowserBackend::Chromiumoxide,
+        mode: BrowserMode::Always,
+        session_affinity: true,
+        extra_wait: Some(Duration::from_secs(1)),
+        ..BrowserConfig::default()
+    };
+    config.browser_pool = Some(Arc::clone(&pool));
+    config.browser_session_pool = Some(session_pool);
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let sink: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let capture = tracing::subscriber::set_default(MessageCapture {
+        sink: Arc::clone(&sink),
+    });
+    let first = scrape(&engine, &format!("{base}/start")).await;
+    drop(capture);
+    let first = match first {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            pool.shutdown().await;
+            return;
+        }
+        Ok(page) => page,
+        Err(error) => panic!("{test_name}: terminal redirect must be returned: {error:?}"),
+    };
+    assert_eq!((first.status_code, first.html.as_str()), (302, ""), "{test_name}");
+    assert_eq!(first.ssrf_refused_urls.len(), 1, "{test_name}: refused URLs");
+    let messages = sink.lock().expect("sink mutex must not be poisoned").clone();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("releasing a pooled browser page")),
+        "{test_name}: terminal interception must release, not park, the page: {messages:?}"
+    );
+
+    let follow_up = scrape(&engine, &format!("{base}/ok"))
+        .await
+        .unwrap_or_else(|error| panic!("{test_name}: fresh follow-up page must succeed: {error:?}"));
+    pool.shutdown().await;
+    assert!(follow_up.html.contains("fresh-page-ok"), "{test_name}");
 }
 
 /// Same shape as [`stalled_pooled_config`], with a longer overall deadline.
