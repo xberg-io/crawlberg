@@ -137,7 +137,10 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     let site = MockServer::start().await;
     let body = match via {
         Via::Interact => String::new(),
-        _ => format!("<script>{script}</script>"),
+        // ~keep Interact executes after navigation. Match that point here: Chrome can reject a
+        // ~keep WebSocket or ICE setup during initial parsing before an isolated context's
+        // ~keep network stack is ready, which exercises no egress policy and proves nothing.
+        _ => format!("<script>window.addEventListener('load', () => {{ {script} }});</script>"),
     };
     Mock::given(method("GET"))
         .and(path("/"))
