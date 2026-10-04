@@ -100,7 +100,7 @@ async fn a_chrome_args_flag_reaches_the_chrome_that_renders_the_page() {
 fn a_launcher_script_that_executes_snap_is_classified_as_snap() {
     let dir = tempfile::tempdir().expect("a temp directory");
     let launcher = dir.path().join("chromium");
-    std::fs::write(&launcher, "#!/bin/sh\nexec /usr/bin/snap run chromium \"$@\"\n")
+    std::fs::write(&launcher, "#!/bin/sh\nexec   /usr/bin/snap run chromium \"$@\"\n")
         .expect("the launcher must be writable");
 
     assert!(is_snap_executable(&launcher));

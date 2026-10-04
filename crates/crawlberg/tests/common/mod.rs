@@ -41,19 +41,28 @@ pub fn is_snap_executable(executable: &std::path::Path) -> bool {
 
 #[cfg(unix)]
 fn launcher_script_delegates_to_snap(path: &std::path::Path) -> bool {
-    let Ok(source) = std::fs::read_to_string(path) else {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut bytes = [0u8; 16 * 1024];
+    let Ok(len) = std::io::Read::read(&mut file, &mut bytes) else {
+        return false;
+    };
+    let Ok(source) = std::str::from_utf8(&bytes[..len]) else {
         return false;
     };
     if !source.starts_with("#!") {
         return false;
     }
     source.lines().any(|line| {
-        let command = line.trim_start().strip_prefix("exec ").unwrap_or(line.trim_start());
-        let executable = command
-            .split_ascii_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim_matches(['\'', '"']);
+        let mut words = line.split_ascii_whitespace();
+        let first = words.next().unwrap_or_default();
+        let executable = if first == "exec" {
+            words.next().unwrap_or_default()
+        } else {
+            first
+        }
+        .trim_matches(['\'', '"']);
         executable == "snap" || executable == "/usr/bin/snap" || executable.starts_with("/snap/bin/")
     })
 }
