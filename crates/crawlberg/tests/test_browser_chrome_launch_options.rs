@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 mod common;
-use common::{announce_chrome_skip, is_missing_chrome_message};
+use common::{announce_chrome_skip, is_missing_chrome_message, is_snap_executable};
 
 /// A browser-mode config that reaches the loopback test server, with the given launch options.
 fn browser_config(chrome_path: Option<std::path::PathBuf>, chrome_args: Vec<String>) -> CrawlConfig {
@@ -94,21 +94,24 @@ async fn a_chrome_args_flag_reaches_the_chrome_that_renders_the_page() {
 }
 
 #[cfg(unix)]
-fn is_snap_executable(executable: &std::path::Path) -> bool {
-    let mut path = executable.to_path_buf();
-    for _ in 0..16 {
-        if path.starts_with("/snap") {
-            return true;
-        }
-        let Ok(target) = std::fs::read_link(&path) else {
-            return false;
-        };
-        path = match path.parent() {
-            Some(parent) => parent.join(target),
-            None => target,
-        };
-    }
-    false
+#[test]
+fn a_launcher_script_that_executes_snap_is_classified_as_snap() {
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let launcher = dir.path().join("chromium");
+    std::fs::write(&launcher, "#!/bin/sh\nexec /usr/bin/snap run chromium \"$@\"\n")
+        .expect("the launcher must be writable");
+
+    assert!(is_snap_executable(&launcher));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_ordinary_launcher_script_is_not_classified_as_snap() {
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let launcher = dir.path().join("chromium");
+    std::fs::write(&launcher, "#!/bin/sh\nexec /opt/chromium/chrome \"$@\"\n").expect("the launcher must be writable");
+
+    assert!(!is_snap_executable(&launcher));
 }
 
 /// `chrome_path` names the binary crawlberg launches, and a `chrome_args` flag that names a

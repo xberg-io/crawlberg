@@ -29,6 +29,35 @@ pub fn is_saved_profile_refusal(message: &str) -> bool {
     message.contains("which cannot open the saved browser profile")
 }
 
+/// ~keep Classify both Snap binaries and distro launcher scripts that delegate to Snap.
+#[cfg(unix)]
+pub fn is_snap_executable(executable: &std::path::Path) -> bool {
+    let resolved = std::fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
+    if resolved.starts_with("/snap") {
+        return true;
+    }
+    launcher_script_delegates_to_snap(&resolved)
+}
+
+#[cfg(unix)]
+fn launcher_script_delegates_to_snap(path: &std::path::Path) -> bool {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if !source.starts_with("#!") {
+        return false;
+    }
+    source.lines().any(|line| {
+        let command = line.trim_start().strip_prefix("exec ").unwrap_or(line.trim_start());
+        let executable = command
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_matches(['\'', '"']);
+        executable == "snap" || executable == "/usr/bin/snap" || executable.starts_with("/snap/bin/")
+    })
+}
+
 /// Prints a loud, unambiguous skip notice to stderr naming the test and the
 /// reason. A silently-passing test that never actually launched Chrome would
 /// exercise nothing while still reporting green — this makes the skip visible
