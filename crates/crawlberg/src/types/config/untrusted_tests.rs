@@ -40,11 +40,25 @@ fn should_reject_every_non_null_operator_owned_field() {
 
     for pointer in EXPECTED_FORBIDDEN_FIELDS {
         let secret = format!("secret-for-{pointer}");
-        let error = reject_untrusted_fields(&value_with_pointer(pointer, json!(secret)))
-            .expect_err("a non-null operator-owned field must be rejected");
-        let rendered = error.to_string();
-        assert_eq!(rendered, format!("invalid_config: untrusted caller may not set {pointer}"));
-        assert!(!rendered.contains(&secret), "the rejection must not expose the field value");
+        for non_null in [
+            json!(false),
+            json!(0),
+            json!(""),
+            json!([]),
+            json!({}),
+            json!(secret.clone()),
+        ] {
+            let error = reject_untrusted_fields(&value_with_pointer(pointer, non_null))
+                .expect_err("every non-null operator-owned field must be rejected");
+            let displayed = error.to_string();
+            let debugged = format!("{error:?}");
+            assert_eq!(
+                displayed,
+                format!("invalid_config: untrusted caller may not set {pointer}")
+            );
+            assert!(!displayed.contains(&secret), "Display must not expose the field value");
+            assert!(!debugged.contains(&secret), "Debug must not expose the field value");
+        }
     }
 }
 

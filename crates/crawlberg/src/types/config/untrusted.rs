@@ -10,6 +10,7 @@ use crate::error::CrawlError;
 /// Inspect the raw JSON with [`reject_untrusted_fields`] before deserializing it, then call
 /// [`CrawlConfig::adopt_operator_egress`] after deserialization so the server-owned policy is
 /// authoritative even when a caller config came from a non-JSON binding.
+#[cfg_attr(alef, alef(skip))]
 pub const UNTRUSTED_CALLER_FORBIDDEN_FIELDS: &[&str] = &[
     "/ssrf",
     "/ssrf_deny_private_explicit",

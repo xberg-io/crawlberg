@@ -107,6 +107,36 @@ async fn unadopted_untrusted_policy_should_reach_the_loopback_negative_control()
     mock.verify().await;
 }
 
+#[tokio::test]
+async fn adopted_operator_allowlist_should_preserve_trusted_loopback_access() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("operator allowlist reached")
+                .append_header("content-type", "text/html"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let mut caller = CrawlConfig::default();
+    caller.ssrf.deny_private = false;
+    let operator = CrawlConfig::builder()
+        .allow_private_networks(false)
+        .ssrf_allowlist_host(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"))
+        .build();
+
+    caller.adopt_operator_egress(&operator);
+    let result = scrape(&engine(caller), &mock.uri())
+        .await
+        .expect("the operator's loopback allowlist must survive adoption");
+
+    assert_eq!(result.status_code, 200);
+    mock.verify().await;
+}
+
 /// validate_url must refuse loopback (127.x.x.x) URLs under the default policy.
 ///
 /// wiremock starts on 127.0.0.1 so the URL is realistic, but no connection
