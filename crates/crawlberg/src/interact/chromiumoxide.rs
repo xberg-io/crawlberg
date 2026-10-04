@@ -11,6 +11,7 @@ use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, kill_browser, release_browser, spawn_handler};
 use crate::chrome_frame::{
     CommittedDocument, committed_document, error_page_error, page_content, read_one_document, read_one_document_within,
+    wait_for_selector,
 };
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
@@ -495,7 +496,7 @@ async fn wait_for_ready(
         BrowserWait::NetworkIdle => tokio::time::sleep(Duration::from_millis(500)).await,
         BrowserWait::Selector => {
             if let Some(ref selector) = config.browser.wait_selector {
-                page.find_element(selector).await?;
+                wait_for_selector(page, selector).await?;
             } else {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
@@ -566,7 +567,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
         }
         PageAction::Wait { milliseconds, selector } => {
             if let Some(selector) = selector {
-                page.find_element(selector)
+                wait_for_selector(page, selector)
                     .await
                     .map_err(|e| CrawlError::browser_error(format!("failed waiting for selector {selector:?}: {e}")))?;
             } else if let Some(ms) = milliseconds {

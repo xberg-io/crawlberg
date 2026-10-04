@@ -12,7 +12,9 @@ use chromiumoxide::page::ScreenshotParams;
 use super::BrowserPage;
 use super::cookies::{apply_prior_cookies, page_cookies};
 use super::launch::resolve_default_user_agent;
-use crate::chrome_frame::{committed_document, error_page_error, page_content, read_one_document_within};
+use crate::chrome_frame::{
+    committed_document, error_page_error, page_content, read_one_document_within, wait_for_selector,
+};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
@@ -403,7 +405,7 @@ async fn wait_for_ready(
         }
         BrowserWait::Selector => {
             if let Some(ref selector) = config.browser.wait_selector {
-                page.find_element(selector).await?;
+                wait_for_selector(page, selector).await?;
             } else {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }

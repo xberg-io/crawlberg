@@ -30,6 +30,7 @@ const EGRESS_COMPLETION_SETUP: &str = r#"
         document.documentElement.dataset.egressDone = String(window.__egressCompleted);
     };
 "#;
+const EGRESS_COMPLETION_SELECTOR: &str = "[data-egress-done='2']";
 
 /// How the page is opened.
 #[derive(Clone, Copy, Debug)]
@@ -140,10 +141,9 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
         .mount(&site)
         .await;
     let seed = format!("http://localhost:{}/", site.address().port());
-    let waits_for_completion = script.contains("__egressDone");
-    if waits_for_completion {
+    if !matches!(via, Via::Interact) {
         config.browser.wait = BrowserWait::Selector;
-        config.browser.wait_selector = Some("[data-egress-done='2']".to_owned());
+        config.browser.wait_selector = Some(EGRESS_COMPLETION_SELECTOR.to_owned());
     }
     let pool = matches!(via, Via::Pooled).then(|| {
         BrowserPool::new(BrowserPoolConfig {
@@ -185,22 +185,14 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     let engine = create_engine(Some(config)).expect("the engine must build");
     let outcome = match via {
         Via::Interact => {
-            let wait = if waits_for_completion {
-                PageAction::Wait {
-                    milliseconds: None,
-                    selector: Some("[data-egress-done='2']".to_owned()),
-                }
-            } else {
-                PageAction::Wait {
-                    milliseconds: Some(1500),
-                    selector: None,
-                }
-            };
             let actions = vec![
                 PageAction::ExecuteJs {
                     script: format!("{script} return 1;"),
                 },
-                wait,
+                PageAction::Wait {
+                    milliseconds: None,
+                    selector: Some(EGRESS_COMPLETION_SELECTOR.to_owned()),
+                },
             ];
             tokio::time::timeout(Duration::from_secs(60), interact(&engine, &seed, actions))
                 .await
@@ -210,9 +202,6 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
             .await
             .map(|result| result.map(|result| result.ssrf_refused_urls)),
     };
-    if !waits_for_completion {
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-    }
     if let Some(pool) = pool {
         pool.shutdown().await;
     }
@@ -386,7 +375,18 @@ async fn webtransport_row(test_name: &str, deny_private: bool) {
     let (port, datagrams) = counting_udp().await;
     let (refused, fetch) = control().await;
     let script = format!(
-        "try {{ const t = new WebTransport('https://127.0.0.1:{port}/wt'); t.ready.catch(() => {{}}); t.closed.catch(() => {{}}); }} catch (e) {{}}{fetch}"
+        r#"
+        {EGRESS_COMPLETION_SETUP}
+        try {{
+            const transport = new WebTransport('https://127.0.0.1:{port}/wt');
+            transport.ready.catch(() => {{}});
+            transport.closed.catch(() => {{}});
+            setTimeout(window.__egressDone, 1500);
+        }} catch (error) {{
+            window.__egressDone();
+        }}
+        {fetch}
+        "#
     );
     let mut config = config(Vec::new());
     config.ssrf.deny_private = deny_private;
@@ -533,7 +533,14 @@ async fn rebinding_row(test_name: &str, remap: bool) {
     let port = allowed.port();
     let (_denied, reached_denied) = counting_tcp(SocketAddr::from(([127, 0, 0, 1], port))).await;
     let (refused, fetch) = control().await;
-    let script = format!("fetch('http://{name}:{port}/rebind', {{ mode: 'no-cors' }}).catch(() => {{}});{fetch}");
+    let script = format!(
+        r#"
+        {EGRESS_COMPLETION_SETUP}
+        fetch('http://{name}:{port}/rebind', {{ mode: 'no-cors' }})
+            .then(window.__egressDone, window.__egressDone);
+        {fetch}
+        "#
+    );
     let allowlist = answers
         .iter()
         .map(|answer| {

@@ -9,12 +9,34 @@
 use std::future::Future;
 use std::time::Duration;
 
+use chromiumoxide::cdp::browser_protocol::dom::{NodeId, QuerySelectorParams};
 use chromiumoxide::cdp::browser_protocol::page::GetFrameTreeParams;
 
 use crate::error::CrawlError;
 
 /// How many times a page is read when a new document commits during each read.
 const READ_ATTEMPTS: usize = 3;
+
+const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Wait until `selector` matches the current document.
+pub(crate) async fn wait_for_selector(
+    page: &chromiumoxide::Page,
+    selector: &str,
+) -> Result<(), chromiumoxide::error::CdpError> {
+    loop {
+        let root = page.get_document().await?.node_id;
+        let matched = page
+            .execute(QuerySelectorParams::new(root, selector))
+            .await?
+            .result
+            .node_id;
+        if matched != NodeId::default() {
+            return Ok(());
+        }
+        tokio::time::sleep(SELECTOR_POLL_INTERVAL).await;
+    }
+}
 
 /// The document the main frame of a page has committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
