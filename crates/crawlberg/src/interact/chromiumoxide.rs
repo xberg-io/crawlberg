@@ -1222,6 +1222,7 @@ mod tests {
         let site = crate::ssrf_intercept::SendingSite::start().await;
         let (result, stop_hold) = crate::ssrf_intercept::with_session_page_left_open(
             Duration::from_secs(1),
+            crate::ssrf_intercept::SessionRequestDefense::Both,
             run(&site.seed, &[], &site.config),
         )
         .await;

@@ -4,35 +4,32 @@
 use std::time::Duration;
 
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{SendingSite, with_session_page_left_open};
+use crate::ssrf_intercept::{SendingSite, SessionRequestDefense, with_session_page_left_open};
 
 /// How long the stopped check keeps the browser up before the teardown.
 const HOLD: Duration = Duration::from_secs(1);
 
-/// A one-shot fetch in a Chrome it launched with a throwaway profile keeps refusing its page
-/// while the page is still sending after the check stops.
-///
-/// ~keep The page's context is left in place at the watch's end, as when Chrome fails the
-/// ~keep dispose, and the browser stays up for `HOLD` after the stop. A stop that turns
-/// ~keep interception off, as it does for a browser that is closed rather than killed, lets the
-/// ~keep page's requests out in that time (xberg-io/crawlberg#468).
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_one_shot_fetch_keeps_refusing_a_page_still_sending_after_its_check_stops() {
-    let test_name = "a_one_shot_fetch_keeps_refusing_a_page_still_sending_after_its_check_stops";
+async fn session_defense_hits(defense: SessionRequestDefense, test_name: &str) -> Option<usize> {
     let site = SendingSite::start().await;
-    let (result, stop_hold) =
-        with_session_page_left_open(HOLD, super::one_shot_fetch(&site.seed, &site.config, None, false)).await;
+    let (result, stop_hold) = with_session_page_left_open(
+        HOLD,
+        defense,
+        super::one_shot_fetch(&site.seed, &site.config, None, false),
+    )
+    .await;
+    // ~keep A deadline is an ended fetch, not a failure of this teardown property; the forced
+    // ~keep post-stop window and denied-server count below remain the pass/fail signal (#570).
     match result {
-        Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. }) => {}
+        Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. } | CrawlError::BrowserTimeout { .. }) => {}
         Err(CrawlError::BrowserError { message, .. })
             if message.contains("failed to launch") || message.contains("chrome executable") =>
         {
             eprintln!("skipping {test_name}: no usable Chrome: {message}");
-            return;
+            return None;
         }
         Err(error) => panic!("{test_name}: the fetch must end: {error:?}"),
     }
@@ -49,10 +46,61 @@ async fn a_one_shot_fetch_keeps_refusing_a_page_still_sending_after_its_check_st
         "{test_name}: the page must still be open after the stop, or the test proves nothing, open: {:?}",
         stop_hold.open_pages()
     );
-    let hits = site.denied_hits().await;
+    Some(site.denied_hits().await)
+}
+
+async fn assert_session_defense(defense: SessionRequestDefense, test_name: &str) {
+    let Some(hits) = session_defense_hits(defense, test_name).await else {
+        return;
+    };
     assert_eq!(
         hits, 0,
         "{test_name}: a page still sending after the check stopped must not reach the denied address, \
          got {hits} requests"
+    );
+}
+
+/// Fetch interception alone refuses a page that keeps sending after its check stops.
+///
+/// ~keep The hook removes the socket-level SSRF proxy, leaves the page context in place, and
+/// ~keep holds Chrome open after the stop. Disabling interception therefore makes this fail
+/// ~keep without relying on host load (xberg-io/crawlberg#570).
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_interception_refuses_a_page_still_sending_after_its_check_stops() {
+    assert_session_defense(
+        SessionRequestDefense::Interception,
+        "fetch_interception_refuses_a_page_still_sending_after_its_check_stops",
+    )
+    .await;
+}
+
+/// The socket-level SSRF proxy alone refuses a page that keeps sending after its check stops.
+///
+/// ~keep The hook turns Fetch interception off at the stop, leaves the page context in place,
+/// ~keep and holds Chrome open. Bypassing the proxy therefore makes this fail without relying
+/// ~keep on host load (xberg-io/crawlberg#570).
+#[tokio::test(flavor = "multi_thread")]
+async fn egress_proxy_refuses_a_page_still_sending_after_its_check_stops() {
+    assert_session_defense(
+        SessionRequestDefense::Egress,
+        "egress_proxy_refuses_a_page_still_sending_after_its_check_stops",
+    )
+    .await;
+}
+
+/// The forced window reaches the denied server when neither SSRF defense is active.
+///
+/// ~keep This is the negative control for both isolated defense tests: it uses the same page,
+/// ~keep open-context hook and post-stop hold, changing only the two defenses. A zero count here
+/// ~keep means their assertions can pass without exercising the leak window (xberg-io/crawlberg#570).
+#[tokio::test(flavor = "multi_thread")]
+async fn page_reaches_the_denied_server_without_either_session_defense() {
+    let test_name = "page_reaches_the_denied_server_without_either_session_defense";
+    let Some(hits) = session_defense_hits(SessionRequestDefense::Neither, test_name).await else {
+        return;
+    };
+    assert!(
+        hits > 0,
+        "{test_name}: the negative control must reach the denied address or the defense checks prove nothing"
     );
 }

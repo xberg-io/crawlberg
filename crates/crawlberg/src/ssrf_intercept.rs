@@ -521,6 +521,10 @@ struct TestDelays {
     /// Keep the browser up after the stop has turned interception off or left it on, as a slow
     /// teardown does, and record the pages still open then.
     stop_hold: Option<Arc<StopHold>>,
+    /// ~keep Skip the socket-level SSRF proxy so a negative control isolates Fetch interception.
+    bypass_egress: bool,
+    /// ~keep Turn interception off at a killed browser's stop so a negative control isolates the SSRF proxy.
+    disable_interception_on_stop: bool,
 }
 
 /// How long a stopped check keeps its browser up before the stop returns, and the URLs of the
@@ -530,6 +534,15 @@ struct TestDelays {
 pub(crate) struct StopHold {
     hold: Duration,
     open_pages: Mutex<Vec<String>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SessionRequestDefense {
+    Both,
+    Interception,
+    Egress,
+    Neither,
 }
 
 #[cfg(test)]
@@ -551,6 +564,7 @@ tokio::task_local! {
 #[cfg(test)]
 pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
     hold: Duration,
+    defense: SessionRequestDefense,
     body: F,
 ) -> (F::Output, Arc<StopHold>) {
     let stop_hold = Arc::new(StopHold {
@@ -560,6 +574,11 @@ pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
     let delays = TestDelays {
         keep_context: true,
         stop_hold: Some(Arc::clone(&stop_hold)),
+        bypass_egress: matches!(
+            defense,
+            SessionRequestDefense::Interception | SessionRequestDefense::Neither
+        ),
+        disable_interception_on_stop: matches!(defense, SessionRequestDefense::Egress | SessionRequestDefense::Neither),
         ..TestDelays::default()
     };
     (CALL_SITE_DELAYS.scope(delays, body).await, stop_hold)
@@ -926,6 +945,8 @@ impl FirewallHandle {
         let stopped = || CrawlError::browser_error("request interception stopped");
         let browser = self.browser.upgrade().ok_or_else(stopped)?;
         let failed = |e: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {e}"));
+        #[cfg(test)]
+        let sockets = sockets.filter(|_| !self.shared.delays.bypass_egress);
         let egress = match (&self.context, sockets) {
             (PageContext::Isolated | PageContext::Copied, Some(policy)) => self.egress_proxy(proxy, policy).await?,
             _ => None,
@@ -1375,7 +1396,17 @@ async fn serve(
             // ~keep closes the browser, which was launched for this one session, and the pauses
             // ~keep die with it (measured 0 reached in 3 of 3 runs). A `Killed` browser keeps it
             // ~keep on until the kill, so a tab outside the check stays paused (xberg-io/crawlberg#468).
-            if shared.context != PageContext::Shared && shared.origin != BrowserOrigin::Killed {
+            let keep_interception = shared.origin == BrowserOrigin::Killed && {
+                #[cfg(test)]
+                {
+                    !shared.delays.disable_interception_on_stop
+                }
+                #[cfg(not(test))]
+                {
+                    true
+                }
+            };
+            if shared.context != PageContext::Shared && !keep_interception {
                 disable_fetch(browser).await;
             }
             #[cfg(test)]
@@ -2331,6 +2362,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_each_private_address_range() {
+        for url in [
+            "http://10.0.0.1/",
+            "http://172.16.0.1/",
+            "http://192.168.0.1/",
+            "http://[::1]/",
+        ] {
+            let verdict = ssrf_verdict(url, &deny_policy()).await;
+            assert!(
+                verdict.is_err(),
+                "private address must be rejected for {url}: {verdict:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn rejects_cloud_metadata_address() {
         let verdict = ssrf_verdict("http://169.254.169.254/latest/meta-data/", &deny_policy()).await;
         assert!(verdict.is_err(), "cloud metadata IP must be rejected: {verdict:?}");
@@ -2354,6 +2401,19 @@ mod tests {
         assert!(
             verdict.is_ok(),
             "loopback must pass when deny_private=false: {verdict:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn allows_a_private_address_named_by_the_allowlist() {
+        let policy = SsrfPolicy {
+            allowlist: vec![crate::net::ssrf::HostMatcher::exact("127.0.0.1")],
+            ..deny_policy()
+        };
+        let verdict = ssrf_verdict("http://127.0.0.1/", &policy).await;
+        assert!(
+            verdict.is_ok(),
+            "the explicit allowlist must override the private-address denial"
         );
     }
 
@@ -3357,16 +3417,13 @@ mod race_tests {
         browser: &Browser,
         target: &chromiumoxide::cdp::browser_protocol::target::TargetId,
     ) -> chromiumoxide::error::Result<bool> {
-        browser
-            .execute(GetTargetsParams::default())
-            .await
-            .map(|response| {
-                response
-                    .result
-                    .target_infos
-                    .iter()
-                    .any(|info| info.target_id == *target)
-            })
+        browser.execute(GetTargetsParams::default()).await.map(|response| {
+            response
+                .result
+                .target_infos
+                .iter()
+                .any(|info| info.target_id == *target)
+        })
     }
 
     /// Stopping the check must turn interception off. The listener is the only thing answering
