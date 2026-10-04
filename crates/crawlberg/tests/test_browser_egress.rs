@@ -299,7 +299,7 @@ async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
     let (refused, fetch) = control().await;
     let open = format!(
         r#"
-        {{
+        try {{
             const socket = new WebSocket('ws://{target}/ws');
             let finished = false;
             const done = () => {{
@@ -310,31 +310,49 @@ async fn websocket_row(test_name: &str, via: Via, worker: bool, allowed: bool) {
             }};
             socket.addEventListener('open', done);
             socket.addEventListener('error', done);
+        }} catch (error) {{
+            window.__egressDone();
         }}
         "#
     );
     let script = if worker {
         let worker_script = format!(
             r#"
-            const socket = new WebSocket('ws://{target}/ws');
-            let finished = false;
-            const done = () => {{
-                if (!finished) {{
-                    finished = true;
-                    postMessage('done');
-                }}
-            }};
-            socket.addEventListener('open', done);
-            socket.addEventListener('error', done);
+            try {{
+                const socket = new WebSocket('ws://{target}/ws');
+                let finished = false;
+                const done = () => {{
+                    if (!finished) {{
+                        finished = true;
+                        postMessage('done');
+                    }}
+                }};
+                socket.addEventListener('open', done);
+                socket.addEventListener('error', done);
+            }} catch (error) {{
+                postMessage('done');
+            }}
             "#
         );
         format!(
             r#"
             {EGRESS_COMPLETION_SETUP}
-            const worker = new Worker(URL.createObjectURL(
-                new Blob([{worker_script:?}], {{ type: 'text/javascript' }})
-            ));
-            worker.addEventListener('message', window.__egressDone);
+            try {{
+                const worker = new Worker(URL.createObjectURL(
+                    new Blob([{worker_script:?}], {{ type: 'text/javascript' }})
+                ));
+                let workerFinished = false;
+                const workerDone = () => {{
+                    if (!workerFinished) {{
+                        workerFinished = true;
+                        window.__egressDone();
+                    }}
+                }};
+                worker.addEventListener('message', workerDone);
+                worker.addEventListener('error', workerDone);
+            }} catch (error) {{
+                window.__egressDone();
+            }}
             {fetch}
             "#
         )
@@ -500,26 +518,30 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
     let script = format!(
         r#"
         {EGRESS_COMPLETION_SETUP}
-        const pc = new RTCPeerConnection({{
-            iceServers: [{{ urls: 'stun:{ip}:{port}' }}]
-        }});
-        let finished = false;
-        const done = () => {{
-            if (!finished) {{
-                finished = true;
-                window.__egressDone();
-            }}
-        }};
-        pc.addEventListener('icegatheringstatechange', () => {{
-            if (pc.iceGatheringState === 'complete') done();
-        }});
-        pc.createDataChannel('x');
-        pc.createOffer()
-            .then(o => pc.setLocalDescription(o))
-            .then(() => {{
+        try {{
+            const pc = new RTCPeerConnection({{
+                iceServers: [{{ urls: 'stun:{ip}:{port}' }}]
+            }});
+            let finished = false;
+            const done = () => {{
+                if (!finished) {{
+                    finished = true;
+                    window.__egressDone();
+                }}
+            }};
+            pc.addEventListener('icegatheringstatechange', () => {{
                 if (pc.iceGatheringState === 'complete') done();
-            }})
-            .catch(done);
+            }});
+            pc.createDataChannel('x');
+            pc.createOffer()
+                .then(o => pc.setLocalDescription(o))
+                .then(() => {{
+                    if (pc.iceGatheringState === 'complete') done();
+                }})
+                .catch(done);
+        }} catch (error) {{
+            window.__egressDone();
+        }}
         {fetch}
         "#
     );
