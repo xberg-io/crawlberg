@@ -428,6 +428,8 @@ async fn webtransport_sends_with_deny_private_off() {
 async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
     let (port, datagrams) = counting_udp().await;
     let (refused, fetch) = control().await;
+    // ~keep The browser-side timer starts only after setLocalDescription has initiated ICE. A
+    // ~keep root-side sleep can start before a contended Chrome has even executed the script.
     let script = format!(
         r#"
         {EGRESS_COMPLETION_SETUP}
@@ -441,18 +443,11 @@ async fn webrtc_row(test_name: &str, via: Via, deny_private: bool) {
                 window.__egressDone();
             }}
         }};
-        let candidateSeen = false;
-        pc.addEventListener('icecandidate', event => {{
-            if (event.candidate && !candidateSeen) {{
-                candidateSeen = true;
-                setTimeout(done, 500);
-            }}
-        }});
-        pc.addEventListener('icegatheringstatechange', () => {{
-            if (pc.iceGatheringState === 'complete' && !candidateSeen) done();
-        }});
         pc.createDataChannel('x');
-        pc.createOffer().then(o => pc.setLocalDescription(o)).catch(done);
+        pc.createOffer()
+            .then(o => pc.setLocalDescription(o))
+            .then(() => setTimeout(done, 1500))
+            .catch(done);
         {fetch}
         "#
     );

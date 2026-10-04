@@ -175,25 +175,36 @@ async fn download_error_site() -> MockServer {
 
 #[cfg(feature = "browser-chromiumoxide")]
 fn navigate_to_download() -> PageAction {
+    // ~keep Chromiumoxide awaits returned promises. This promise ends only when the navigation
+    // ~keep destroys its execution context, so the next action starts after the error-page commit.
     PageAction::ExecuteJs {
-        script: "location.assign('/dl')".to_string(),
-    }
-}
-
-#[cfg(feature = "browser-chromiumoxide")]
-fn wait_for_download_error() -> PageAction {
-    PageAction::Wait {
-        milliseconds: Some(2000),
-        selector: None,
+        script: "location.assign('/dl'); return new Promise(() => {});".to_string(),
     }
 }
 
 #[cfg(feature = "browser-chromiumoxide")]
 fn wait_for_start_page() -> PageAction {
-    PageAction::Wait {
-        milliseconds: None,
-        selector: Some("#start".to_string()),
+    // ~keep If this starts before history.back commits, context destruction synchronizes with
+    // ~keep the commit. If it starts afterwards, observing the selector resolves the promise.
+    PageAction::ExecuteJs {
+        script: r#"
+            return new Promise(resolve => {
+                const poll = () => document.querySelector('#start') ? resolve() : setTimeout(poll, 10);
+                poll();
+            });
+        "#
+        .to_string(),
     }
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+fn assert_download_navigation_synchronized(test_name: &str, result: &crawlberg::InteractionResult) {
+    let navigation = &result.action_results[0];
+    assert_eq!(navigation.action_type, "executeJs", "{test_name}");
+    assert!(
+        !navigation.success && navigation.error.is_some(),
+        "{test_name}: the pending script must end when the download commits: {navigation:?}"
+    );
 }
 
 #[cfg(feature = "browser-chromiumoxide")]
@@ -327,12 +338,7 @@ async fn chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_pa
     let mock = download_error_site().await;
     let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
 
-    let result = interact(
-        &engine,
-        &mock.uri(),
-        vec![navigate_to_download(), wait_for_download_error(), PageAction::Scrape],
-    )
-    .await;
+    let result = interact(&engine, &mock.uri(), vec![navigate_to_download(), PageAction::Scrape]).await;
 
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
@@ -363,7 +369,6 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
         &mock.uri(),
         vec![
             navigate_to_download(),
-            wait_for_download_error(),
             PageAction::Scrape,
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
@@ -383,7 +388,8 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let scrape = &result.action_results[2];
+    assert_download_navigation_synchronized(test_name, &result);
+    let scrape = &result.action_results[1];
     assert_eq!(scrape.action_type, "scrape", "{test_name}");
     assert!(
         !scrape.success && scrape.data.is_none(),
@@ -416,7 +422,6 @@ async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
         &mock.uri(),
         vec![
             navigate_to_download(),
-            wait_for_download_error(),
             PageAction::ExecuteJs {
                 script: "document.title".to_string(),
             },
@@ -438,7 +443,8 @@ async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let execute_js = &result.action_results[2];
+    assert_download_navigation_synchronized(test_name, &result);
+    let execute_js = &result.action_results[1];
     assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
     assert!(
         !execute_js.success && execute_js.data.is_none(),
@@ -471,7 +477,6 @@ async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
         &mock.uri(),
         vec![
             navigate_to_download(),
-            wait_for_download_error(),
             PageAction::Screenshot { full_page: Some(false) },
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
@@ -491,7 +496,8 @@ async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
     };
 
     assert_download_requested(test_name, &mock).await;
-    let screenshot_action = &result.action_results[2];
+    assert_download_navigation_synchronized(test_name, &result);
+    let screenshot_action = &result.action_results[1];
     assert_eq!(screenshot_action.action_type, "screenshot", "{test_name}");
     assert!(
         !screenshot_action.success && screenshot_action.data.is_none(),
@@ -525,7 +531,6 @@ async fn chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once
         &mock.uri(),
         vec![
             navigate_to_download(),
-            wait_for_download_error(),
             PageAction::ExecuteJs {
                 script: "history.back()".to_string(),
             },
@@ -544,7 +549,8 @@ async fn chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once
     };
 
     assert_download_requested(test_name, &mock).await;
-    let execute_js = &result.action_results[2];
+    assert_download_navigation_synchronized(test_name, &result);
+    let execute_js = &result.action_results[1];
     assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
     assert!(
         !execute_js.success && execute_js.data.is_none(),
