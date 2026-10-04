@@ -77,6 +77,11 @@ async fn adopted_operator_policy_should_refuse_each_untrusted_loopback_attack() 
         ("loopback proxy", loopback_proxy),
     ] {
         caller.adopt_operator_egress(&operator);
+        assert_eq!(
+            caller.proxy.as_ref().map(|proxy| proxy.url.as_str()),
+            operator.proxy.as_ref().map(|proxy| proxy.url.as_str()),
+            "{attack} must use the operator proxy before engine construction"
+        );
         let result = scrape(&engine(caller), &mock.uri()).await;
         assert!(
             matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
