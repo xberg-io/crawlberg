@@ -991,8 +991,7 @@ mod tests {
             let requests = requests.lock().expect("lock");
             let finish = requests
                 .iter()
-                .filter(|request| request.starts_with("GET /finish "))
-                .next_back()
+                .rfind(|request| request.starts_with("GET /finish "))
                 .expect("the final refresh target must be requested")
                 .to_lowercase();
             let cookie_pairs = finish
