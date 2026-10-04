@@ -660,6 +660,52 @@ mod tests {
         assert_eq!(meta.cache_control, None);
     }
 
+    #[tokio::test]
+    async fn a_native_fetch_carries_rendered_headers_onto_the_http_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw("<html><body>page</body></html>", "text/html")
+                    .append_header("etag", "\"native-v1\"")
+                    .append_header("x-robots-tag", "noindex"),
+            )
+            .mount(&site)
+            .await;
+        let executor =
+            NativeBrowserExecutor::new(crawlberg_browser::adapter::NativeBrowserExecutorConfig::with_workers(1))
+                .expect("a single-worker executor must start");
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: crate::types::BrowserBackend::Native,
+                mode: crate::types::BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+
+        let (response, _, _) = native_browser_fetch(&site.uri(), &config, None, &executor)
+            .await
+            .expect("the native render must succeed");
+
+        assert!(
+            !response.headers.is_empty(),
+            "the native conversion must retain headers"
+        );
+        let etag = response.headers.get("etag").expect("the rendered ETag must survive");
+        assert_eq!(etag.as_slice(), ["\"native-v1\""]);
+        let robots = response
+            .headers
+            .get("x-robots-tag")
+            .expect("the rendered X-Robots-Tag must survive");
+        assert_eq!(robots.as_slice(), ["noindex"]);
+    }
+
     /// Render `http://<host>:<port>/` with one prior cookie for `domain`; return the Cookie
     /// headers the page request carried.
     async fn cookies_sent_with_a_prior_cookie(host: &str, domain: &str) -> Vec<String> {

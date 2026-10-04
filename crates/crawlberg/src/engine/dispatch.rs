@@ -431,15 +431,16 @@ mod tests {
 
     #[test]
     fn a_browser_response_carries_its_headers_onto_the_crawl_path() {
+        let expected_headers = std::collections::HashMap::from([
+            ("etag".to_owned(), vec!["\"v1\"".to_owned()]),
+            ("x-robots-tag".to_owned(), vec!["noindex".to_owned()]),
+        ]);
         let response = crate::http::HttpResponse {
             status: 304,
             content_type: String::new(),
             body: String::new(),
             body_bytes: Vec::new(),
-            headers: std::collections::HashMap::from([
-                ("etag".to_owned(), vec!["\"v1\"".to_owned()]),
-                ("x-robots-tag".to_owned(), vec!["noindex".to_owned()]),
-            ]),
+            headers: expected_headers.clone(),
             browser_extras: None,
             final_url: "https://example.com/".to_owned(),
             screenshot: None,
@@ -454,13 +455,10 @@ mod tests {
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
-        let etag = crawl.headers.get("etag").expect("a browser fetch must report its ETag");
-        assert_eq!(etag.as_slice(), ["\"v1\""]);
-        let robots = crawl
-            .headers
-            .get("x-robots-tag")
-            .expect("a browser fetch must report its X-Robots-Tag");
-        assert_eq!(robots.as_slice(), ["noindex"]);
+        assert_eq!(
+            crawl.headers, expected_headers,
+            "the dispatch conversion must retain the complete browser response header map"
+        );
         assert_eq!(crawl.status, 304, "the status must survive the conversion too");
         assert_eq!(
             crawl.landed.map(|landed| landed.refused),
