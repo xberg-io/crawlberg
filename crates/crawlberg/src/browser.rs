@@ -468,8 +468,8 @@ impl OneShotSession {
         let firewall = self.firewall.insert(firewall);
         // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
         // ~keep that flag, so there the page's own browser context is made with the proxy. Under
-        // ~keep `deny_private` the context goes through the SSRF proxy, which leaves through it.
-        let proxy = if config.browser.endpoint.is_some() || config.ssrf.deny_private {
+        // ~keep Under IP-level SSRF denial the context goes through the SSRF proxy, which leaves through it.
+        let proxy = if config.browser.endpoint.is_some() || config.ssrf.enforces_ip_denials() {
             crate::proxy::chrome_proxy_for(config)?
         } else {
             None

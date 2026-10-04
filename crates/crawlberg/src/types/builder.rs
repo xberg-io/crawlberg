@@ -348,6 +348,16 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Add an IP range to the SSRF policy denylist.
+    ///
+    /// ~keep Configured denials take precedence over the allowlist and
+    /// [`allow_private_networks`](Self::allow_private_networks). Build the argument with
+    /// [`HostMatcher::cidr`]; configuration validation rejects hostname variants.
+    pub fn ssrf_denylist_cidr(mut self, matcher: HostMatcher) -> Self {
+        self.inner.ssrf.denylist.push(matcher);
+        self
+    }
+
     /// Set the pluggable dispatch profile.
     pub fn dispatch(mut self, value: DispatchProfile) -> Self {
         self.inner.dispatch = Some(value);
@@ -460,6 +470,18 @@ mod tests {
             (allowed.ssrf.deny_private, allowed.ssrf_deny_private_explicit),
             (false, Some(false)),
             "allow_private_networks(true) must pin private-network access"
+        );
+    }
+
+    #[test]
+    fn ssrf_denylist_cidr_reaches_the_built_config() {
+        let denied = HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid");
+        let config = CrawlConfig::builder().ssrf_denylist_cidr(denied.clone()).build();
+
+        assert_eq!(
+            config.ssrf.denylist,
+            vec![denied],
+            "ssrf_denylist_cidr must append the configured network"
         );
     }
 

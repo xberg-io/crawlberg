@@ -33,8 +33,7 @@ gaps remain, and an egress restriction outside the process is the only defence a
 - **A NAT64 network-specific prefix.** RFC 6052 allows a translator to sit on any prefix the
   operator chooses, not only `64:ff9b::/96` or `64:ff9b:1::/48`. Crawlberg does not discover
   the local prefix (RFC 7050 would), so an address under a custom prefix is checked as IPv6
-  only. [Issue #110](https://github.com/xberg-io/crawlberg/issues/110) proposes the caller-supplied
-  deny ranges that would cover it.
+  only. Add the deployment's translator prefix to `SsrfPolicy::denylist` to refuse that range.
 - **A dotted quad in the low 32 bits under an arbitrary prefix.** `2001:db8::a00:5` carries
   `10.0.0.5` in its last 32 bits but is not any of the forms above, so it is not unwrapped.
   Unwrapping every address that way would refuse public addresses whose last 32 bits happen to
@@ -51,11 +50,12 @@ gaps remain, and an egress restriction outside the process is the only defence a
 :::caution[WebAssembly: hostnames are not checked]
 On `wasm32` targets — `crawlberg-wasm`, including its `pkg/nodejs` build — there is no DNS
 resolution available to the crawler. `validate_url` only checks a **literal IP** host against
-the policy; a domain name is always permitted, regardless of `deny_private`. In a browser this
-gap is covered by same-origin/CORS. **Under Node.js, `fetch` enforces no CORS**, so a Node
-service embedding the wasm binding can be driven to internal hosts by domain name even with
-`deny_private = true`. Do not rely on `deny_private` to stop this in Node — enforce egress
-restrictions (network policy, firewall, proxy allowlist) outside the process.
+the policy; a domain name is always permitted, regardless of `deny_private` or `denylist`. In a
+browser this gap is covered by same-origin/CORS. **Under Node.js, `fetch` enforces no CORS**, so a
+Node service embedding the wasm binding can be driven to internal hosts by domain name even with
+`deny_private = true` or a matching custom range. Do not rely on the in-process policy to stop
+this in Node — enforce egress restrictions (network policy, firewall, proxy allowlist) outside
+the process.
 :::
 
 A request to a [non-http/https scheme](#what-is-refused) is refused. A
@@ -157,6 +157,32 @@ Allowlist entries permit access regardless of the default denylist. A
 mismatch between hostname allowlist and resolved IPs (e.g. `Exact("svc.internal")`
 resolves to a public IP) still permits the request — the allowlist trusts the host string.
 
+## Additional denied networks
+
+Deployments can add public or private IP ranges that must never be reached. These ranges extend
+the built-in deny-list; they still apply when `deny_private` is false and take precedence over
+hostname and CIDR allowlist entries. Hostnames are resolved when this list is non-empty so a name
+allowlist cannot bypass a configured network denial. IPv4 addresses embedded in IPv6 are checked
+against these ranges in the same way as the built-in list.
+
+```rust
+use crawlberg::{CrawlConfigBuilder, HostMatcher};
+
+let config = CrawlConfigBuilder::default()
+    .ssrf_denylist_cidr(HostMatcher::cidr("203.0.113.0/24")?)
+    .build();
+# Ok::<(), crawlberg::SsrfError>(())
+```
+
+Only CIDR matchers are accepted in `denylist`; exact and suffix hostname matchers are rejected by
+configuration validation. The JSON form uses the same tagged CIDR representation as `allowlist`:
+
+```json
+{"ssrf": {"denylist": [
+  {"type": "cidr", "value": "203.0.113.0/24"}
+]}}
+```
+
 ## What happens when a request is refused
 
 Errors are typed:
@@ -175,7 +201,8 @@ parse to a URL with a host, such as `user:token@host`, is replaced whole with
 refused before it starts: `url` is `(unparseable URL)`, and `reason` begins with
 `"invalid URL: "`.
 `reason` is one of `"loopback"`, `"private_network"`, `"link_local"`,
-`"unique_local"`, `"multicast"`, `"unspecified"`, or `"disallowed scheme: <scheme>"`.
+`"unique_local"`, `"multicast"`, `"unspecified"`, `"configured_network"`, or
+`"disallowed scheme: <scheme>"`.
 `<scheme>` names the scheme only when it is on a fixed list of known ones, such as
 `ftp` or `file`. An unlisted scheme, including one an address without a scheme
 parses into (`user:token@host` parses with scheme `user`), gives

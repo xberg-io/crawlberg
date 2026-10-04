@@ -1,4 +1,4 @@
-//! The proxy on loopback that carries every socket of a Chrome page under `deny_private`.
+//! The proxy on loopback that carries every socket of a Chrome page under IP-level SSRF policy.
 //!
 //! Chrome's request interception never sees a WebSocket handshake or a QUIC datagram, and
 //! Chrome resolves a host again after the check has passed. Through this proxy each connection
@@ -83,9 +83,9 @@ impl Drop for Egress {
 }
 
 impl Egress {
-    /// Start a proxy for `policy` that leaves through `upstream`, or none when `deny_private` is off.
+    /// Start a proxy for `policy` that leaves through `upstream`, or none with no IP denials.
     pub(crate) async fn start(policy: &SsrfPolicy, upstream: Option<&ChromeProxy>) -> Result<Option<Self>, CrawlError> {
-        if !policy.deny_private {
+        if !policy.enforces_ip_denials() {
             return Ok(None);
         }
         let upstream = Upstream::of(upstream);
@@ -107,10 +107,11 @@ impl Egress {
     }
 
     /// Whether this proxy serves `policy` leaving through `upstream`. The proxy checks an address
-    /// against `deny_private` and the allowlist only, so those are the fields compared.
+    /// against the private-network flag and configured IP lists, so those are compared.
     pub(crate) fn serves(&self, policy: &SsrfPolicy, upstream: Option<&ChromeProxy>) -> bool {
         self.policy.deny_private == policy.deny_private
             && self.policy.allowlist == policy.allowlist
+            && self.policy.denylist == policy.denylist
             && Upstream::of(upstream) == self.upstream
     }
 
@@ -129,7 +130,7 @@ impl Egress {
 }
 
 /// The policy the SSRF proxy applies to a Chrome at `endpoint`, or none when that Chrome is on
-/// another machine: it cannot reach a proxy on this machine's loopback. Under `deny_private`
+/// another machine: it cannot reach a proxy on this machine's loopback. Under IP-level denial
 /// that case is logged once per `warned`, which the caller keeps for the browser's life.
 pub(crate) fn socket_policy<'a>(
     policy: &'a SsrfPolicy,
@@ -138,15 +139,15 @@ pub(crate) fn socket_policy<'a>(
 ) -> Option<&'a SsrfPolicy> {
     match endpoint {
         Some(endpoint) if !is_loopback_endpoint(endpoint) => {
-            if policy.deny_private {
+            if policy.enforces_ip_denials() {
                 warned.call_once(|| {
                     let host = url::Url::parse(endpoint)
                         .ok()
                         .and_then(|url| url.host_str().map(str::to_owned));
                     tracing::warn!(
                         host = host.as_deref().unwrap_or_default(),
-                        "ssrf.deny_private cannot check the WebSocket, WebRTC and WebTransport connections of a \
-                         browser.endpoint on another machine; its HTTP requests are still checked"
+                        "the SSRF network deny policy cannot check the WebSocket, WebRTC and WebTransport \
+                         connections of a browser.endpoint on another machine; its HTTP requests are still checked"
                     );
                 });
             }
@@ -587,6 +588,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_denylist_starts_a_proxy_when_private_denial_is_off() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
+            ..Default::default()
+        };
+
+        let egress = Egress::start(&policy, None).await.expect("start must not fail");
+
+        assert!(
+            egress.is_some(),
+            "configured network denials still require the browser egress proxy"
+        );
+    }
+
+    #[tokio::test]
     async fn a_proxy_serves_only_its_own_allowlist_and_upstream() {
         let egress = start(&policy(Vec::new()), None).await;
         let other_redirects = SsrfPolicy {
@@ -600,6 +617,14 @@ mod tests {
         assert!(
             !egress.serves(&policy(vec![loopback_cidr()]), None),
             "a policy with another allowlist must get its own proxy"
+        );
+        let mut custom_denial = policy(Vec::new());
+        custom_denial
+            .denylist
+            .push(HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR"));
+        assert!(
+            !egress.serves(&custom_denial, None),
+            "a policy with another denylist must get its own proxy"
         );
         let upstream = ChromeProxy {
             server: "socks5://127.0.0.1:1080".to_owned(),
@@ -997,14 +1022,20 @@ mod tests {
     }
 
     #[test]
-    fn only_a_remote_browser_under_deny_private_logs_the_warning() {
+    fn only_a_remote_browser_under_ip_level_denial_logs_the_warning() {
         let off = SsrfPolicy {
             deny_private: false,
+            ..Default::default()
+        };
+        let custom_denial = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
             ..Default::default()
         };
         for (policy, endpoint, warns) in [
             (policy(Vec::new()), "ws://10.0.0.5:9222", true),
             (policy(Vec::new()), "ws://127.0.0.1:9222", false),
+            (custom_denial, "ws://10.0.0.5:9222", true),
             (off, "ws://10.0.0.5:9222", false),
         ] {
             let warned = std::sync::Once::new();
@@ -1012,8 +1043,8 @@ mod tests {
             assert_eq!(
                 warned.is_completed(),
                 warns,
-                "{endpoint}, deny_private {}",
-                policy.deny_private
+                "{endpoint}, IP-level denial {}",
+                policy.enforces_ip_denials()
             );
         }
     }

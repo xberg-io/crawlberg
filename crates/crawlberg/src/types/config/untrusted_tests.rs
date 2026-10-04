@@ -96,6 +96,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
         ssrf: SsrfPolicy {
             deny_private: false,
             allowlist: vec![HostMatcher::suffix(".caller.internal")],
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
             max_redirects: 99,
             scheme_allowlist: vec!["http".to_owned()],
         },
@@ -128,6 +129,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
         ssrf: SsrfPolicy {
             deny_private: true,
             allowlist: vec![HostMatcher::suffix(".operator.internal")],
+            denylist: vec![HostMatcher::cidr("198.51.100.0/24").expect("literal CIDR is valid")],
             max_redirects: 3,
             scheme_allowlist: vec!["https".to_owned()],
         },
@@ -157,6 +159,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
 
     assert!(caller.ssrf.deny_private);
     assert_eq!(caller.ssrf.allowlist, operator.ssrf.allowlist);
+    assert_eq!(caller.ssrf.denylist, operator.ssrf.denylist);
     assert_eq!(caller.ssrf.max_redirects, 3);
     assert_eq!(caller.ssrf.scheme_allowlist, vec!["https".to_owned()]);
     assert_eq!(caller.ssrf_deny_private_explicit, None);

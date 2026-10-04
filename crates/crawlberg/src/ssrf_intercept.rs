@@ -1048,7 +1048,7 @@ fn cookie_param(cookie: Cookie) -> CookieParam {
 
 impl FirewallHandle {
     /// The SSRF proxy for `policy` leaving through `upstream`, started on first use, or none
-    /// when `deny_private` is off.
+    /// when the policy has no IP-level denials.
     async fn egress_proxy(
         &self,
         upstream: Option<&crate::proxy::ChromeProxy>,

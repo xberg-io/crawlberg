@@ -160,8 +160,8 @@ async fn run_with_browser(
 ) -> Result<InteractionResult, CrawlError> {
     // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
     // ~keep that flag, so there the page's own browser context is made with the proxy. Under
-    // ~keep `deny_private` the context goes through the SSRF proxy, which leaves through it.
-    let proxy = if config.browser.endpoint.is_some() || config.ssrf.deny_private {
+    // ~keep Under IP-level SSRF denial the context goes through the SSRF proxy, which leaves through it.
+    let proxy = if config.browser.endpoint.is_some() || config.ssrf.enforces_ip_denials() {
         crate::proxy::chrome_proxy_for(config)?
     } else {
         None
@@ -726,7 +726,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
         let user_data_dir = ScratchProfileDir::create("crawlberg-interact-", config.browser.chrome_path.as_deref())?;
 
         let proxy = crate::proxy::chrome_proxy_for(config)?;
-        if config.ssrf.deny_private {
+        if config.ssrf.enforces_ip_denials() {
             crate::browser_pool::disable_non_proxied_udp(user_data_dir.path())?;
         }
         let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy.as_ref(), &config.browser)?
@@ -737,7 +737,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .launch(browser_config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
-        if config.ssrf.deny_private {
+        if config.ssrf.enforces_ip_denials() {
             crate::browser_pool::confirm_profile_in_use(&mut browser, user_data_dir.path()).await?;
         }
         Ok((browser, handler, Some(user_data_dir)))

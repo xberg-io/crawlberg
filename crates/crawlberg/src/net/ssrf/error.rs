@@ -7,7 +7,8 @@ pub enum SsrfError {
     #[error("denied by SSRF policy: {reason}")]
     DeniedByPolicy {
         /// Stable category of the denial: `"loopback"`, `"private_network"`,
-        /// `"link_local"`, `"unique_local"`, `"multicast"`, or `"unspecified"`.
+        /// `"link_local"`, `"unique_local"`, `"multicast"`, `"unspecified"`, or
+        /// `"configured_network"`.
         reason: &'static str,
     },
 
@@ -15,8 +16,8 @@ pub enum SsrfError {
     #[error("host not on allowlist")]
     NotOnAllowlist,
 
-    /// Allowlist entry is not a parseable CIDR block.
-    #[error("invalid CIDR in SSRF allowlist: {0}")]
+    /// SSRF policy entry is not a parseable CIDR block.
+    #[error("invalid CIDR in SSRF policy: {0}")]
     InvalidCidr(String),
 
     /// DNS resolution failed for hostname.

@@ -107,6 +107,7 @@ fn maximally_invalid_config() -> CrawlConfig {
         ..Default::default()
     };
     config.ssrf.scheme_allowlist = vec!["ftp".to_owned()];
+    config.ssrf.denylist = vec![HostMatcher::exact("not-a-network")];
     config
 }
 
@@ -125,6 +126,9 @@ const ORDERED_VIOLATIONS: &[(&str, ConfigRepair)] = &[
     ("max_redirects must be <= 100", |c| c.max_redirects = 100),
     ("ssrf.scheme_allowlist contains unsupported scheme 'ftp'", |c| {
         c.ssrf.scheme_allowlist = vec!["https".to_owned()]
+    }),
+    ("ssrf.denylist entries must be CIDR matchers", |c| {
+        c.ssrf.denylist.clear()
     }),
     ("max_body_size must be > 0", |c| c.max_body_size = Some(1)),
     ("invalid proxy URL scheme 'ftp'", |c| {
@@ -292,6 +296,42 @@ fn validate_rejects_unsupported_ssrf_scheme_allowlist_entries() {
     assert!(
         error.to_string().contains("duplicate scheme 'HTTP'"),
         "validation error must identify the duplicate scheme, got: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_non_cidr_ssrf_denylist_entries() {
+    for matcher in [HostMatcher::exact("vpc.internal"), HostMatcher::suffix(".internal")] {
+        let mut config = CrawlConfig::default();
+        config.ssrf.denylist.push(matcher);
+
+        let error = config
+            .validate()
+            .expect_err("custom SSRF denials accept IP networks, not hostname matchers");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid configuration: ssrf.denylist entries must be CIDR matchers"
+        );
+    }
+}
+
+#[test]
+fn validate_rejects_a_malformed_ssrf_denylist_cidr_constructed_as_a_variant() {
+    let mut config = CrawlConfig::default();
+    config.ssrf.denylist.push(HostMatcher::Cidr {
+        value: "203.0.113.0/99".to_owned(),
+    });
+
+    let error = config
+        .validate()
+        .expect_err("a public enum variant must not bypass CIDR validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("ssrf.denylist contains invalid CIDR '203.0.113.0/99'"),
+        "validation must identify the malformed block, got: {error}"
     );
 }
 

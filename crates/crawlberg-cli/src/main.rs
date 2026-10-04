@@ -487,7 +487,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{CliBrowserMode, build_browser_config, merge_json_config, proxy_config};
-    use crawlberg::{BrowserMode, CrawlConfig};
+    use crawlberg::{BrowserMode, CrawlConfig, HostMatcher};
 
     const DEFAULT_TIMEOUT: Duration = Duration::from_millis(30_000);
 
@@ -551,6 +551,22 @@ mod tests {
         merge_json_config(&mut config, r#"{"max_depth": 1}"#).expect("valid config");
         assert_eq!(config.max_concurrent, Some(4));
         assert_eq!(config.max_depth, Some(1));
+    }
+
+    #[test]
+    fn merge_json_config_accepts_ssrf_denylist_cidrs() {
+        let mut config = CrawlConfig::default();
+
+        merge_json_config(
+            &mut config,
+            r#"{"ssrf":{"denylist":[{"type":"cidr","value":"203.0.113.0/24"}]}}"#,
+        )
+        .expect("the CLI config overlay must accept custom SSRF denials");
+
+        assert_eq!(
+            config.ssrf.denylist,
+            vec![HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")]
+        );
     }
 
     #[test]

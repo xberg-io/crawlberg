@@ -245,6 +245,40 @@ async fn crawl_succeeds_when_allow_private_set() {
     );
 }
 
+/// A configured denial must reach the real HTTP stack and override both ways callers can
+/// otherwise permit loopback. ~keep
+#[tokio::test]
+async fn crawl_refuses_a_custom_deny_network_despite_permissive_settings() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("custom denylist was bypassed"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let loopback = HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid");
+    let config = CrawlConfig::builder()
+        .allow_private_networks(true)
+        .ssrf_allowlist_host(loopback.clone())
+        .ssrf_denylist_cidr(loopback)
+        .build();
+
+    let error = scrape(&engine(config), &mock.uri())
+        .await
+        .expect_err("the configured deny network must prevent the request");
+
+    assert!(
+        matches!(
+            error,
+            CrawlError::SsrfPolicyViolation { ref reason, .. }
+                if reason.contains("configured_network")
+        ),
+        "the public scrape API must report the configured network denial, got {error:?}"
+    );
+}
+
 /// A CIDR allowlist entry must carry a real scrape() through the Tower stack, not
 /// merely satisfy validate_url. This is the configuration the allowlist exists for:
 /// reach exactly one private host while deny_private stays on for everything else.

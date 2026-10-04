@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 
-use crate::net::ssrf::{SsrfError, SsrfPolicy, classify_private_ip, is_ip_permitted};
+use crate::net::ssrf::{SsrfError, SsrfPolicy, custom_denial_reason, denial_reason};
 
 /// Port used for the resolution lookup.
 ///
@@ -80,18 +80,20 @@ pub(crate) async fn resolve_permitted(host: &str, policy: &SsrfPolicy) -> Result
         )));
     }
 
-    if !host_allowlisted {
-        for address in &addresses {
-            let ip = address.ip();
-            if !is_ip_permitted(ip, policy) {
-                let reason = classify_private_ip(ip, &policy.allowlist);
-                tracing::warn!(
-                    host = %host,
-                    reason,
-                    "refusing to connect: a resolved address violates the SSRF policy"
-                );
-                return Err(SsrfError::DeniedByPolicy { reason });
-            }
+    for address in &addresses {
+        let ip = address.ip();
+        let reason = if host_allowlisted {
+            custom_denial_reason(ip, policy)
+        } else {
+            denial_reason(ip, policy)
+        };
+        if let Some(reason) = reason {
+            tracing::warn!(
+                host = %host,
+                reason,
+                "refusing to connect: a resolved address violates the SSRF policy"
+            );
+            return Err(SsrfError::DeniedByPolicy { reason });
         }
     }
 
@@ -202,6 +204,25 @@ mod tests {
             addresses.iter().all(std::net::IpAddr::is_loopback),
             "expected only loopback addresses, got {addresses:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn configured_denylist_refuses_an_allowlisted_host_when_private_denial_is_off() {
+        let resolver = PolicyResolver::new(SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![HostMatcher::exact("localhost")],
+            denylist: ["127.0.0.0/8", "::1/128"]
+                .into_iter()
+                .map(|cidr| HostMatcher::cidr(cidr).expect("literal CIDR is valid"))
+                .collect(),
+            ..Default::default()
+        });
+
+        let error = resolve_host(&resolver, "localhost")
+            .await
+            .expect_err("a configured denial must be enforced by connect-time resolution");
+
+        assert_eq!(error, "denied by SSRF policy: configured_network");
     }
 
     #[tokio::test]

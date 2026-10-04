@@ -201,7 +201,7 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
         }
         // ~keep Inside the caller's launch deadline, so a wait for the profile ends with it.
         let (user_data, hold) = claim_user_data_dir(config).await?;
-        if config.ssrf.deny_private {
+        if config.ssrf.enforces_ip_denials() {
             crate::browser_pool::disable_non_proxied_udp(user_data.path())?;
         }
 
@@ -221,7 +221,7 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
         };
         let (mut browser, handler, user_data) =
             launched.map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
-        if config.ssrf.deny_private {
+        if config.ssrf.enforces_ip_denials() {
             crate::browser_pool::confirm_profile_in_use(&mut browser, user_data.path()).await?;
         }
         Ok((browser, handler, Some(user_data), egress, hold))

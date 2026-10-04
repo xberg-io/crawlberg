@@ -79,8 +79,8 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|
 ///
 /// 1. Validates the scheme against `policy.scheme_allowlist`.
 /// 2. If the host is a literal IP, decides on that IP alone and returns.
-/// 3. Otherwise, if the hostname matches an `Exact`/`Suffix` allowlist entry, permits it
-///    without resolving — see [`SsrfPolicy::allowlist`] for why that shortcut exists.
+/// 3. Otherwise, if the hostname matches an `Exact`/`Suffix` allowlist entry and no custom
+///    deny networks exist, permits it without resolving.
 /// 4. Otherwise resolves the hostname and requires *every* resolved IP to be permitted.
 ///
 /// An allowlist is permissive only: a host that matches nothing is not rejected for that
@@ -91,9 +91,11 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|
 ///
 /// **wasm32 targets only check literal IP hosts.** There is no DNS resolution on `wasm32`
 /// (no `tokio::net`), so step 4 never runs: a hostname that survives the scheme and allowlist
-/// checks above is permitted unconditionally, regardless of `policy.deny_private`. See the
-/// `wasm32`-specific note on [`SsrfPolicy::from_env`] for why this matters under Node.js.
+/// checks above is permitted unconditionally, regardless of `policy.deny_private` or its
+/// configured deny networks. See the `wasm32`-specific note on [`SsrfPolicy::from_env`] for
+/// why this matters under Node.js.
 pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
+    policy.validate_denylist().map_err(SsrfError::InvalidCidr)?;
     let scheme = url.scheme();
     if !is_supported_scheme(scheme)
         || !policy
@@ -119,10 +121,9 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
         url::Host::Ipv6(ip) => return check_ip(ip.into(), policy),
     };
 
-    for matcher in &policy.allowlist {
-        if matcher.matches_host(host_str) {
-            return Ok(());
-        }
+    let host_allowlisted = policy.allowlist.iter().any(|matcher| matcher.matches_host(host_str));
+    if host_allowlisted && policy.denylist.is_empty() {
+        return Ok(());
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -150,7 +151,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 
         // ~keep DNS rebinding mitigation: every resolved IP must satisfy policy.
         for ip in &addresses {
-            check_ip(*ip, policy)?;
+            check_resolved_ip(*ip, policy, host_allowlisted)?;
         }
 
         Ok(())
@@ -159,11 +160,22 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 
 /// Decide one address, naming the reason when the policy refuses it.
 fn check_ip(ip: IpAddr, policy: &SsrfPolicy) -> Result<(), SsrfError> {
-    if is_ip_permitted(ip, policy) {
-        Ok(())
+    match denial_reason(ip, policy) {
+        Some(reason) => Err(SsrfError::DeniedByPolicy { reason }),
+        None => Ok(()),
+    }
+}
+
+/// ~keep Check a DNS answer while preserving hostname-allowlist precedence over only the defaults.
+fn check_resolved_ip(ip: IpAddr, policy: &SsrfPolicy, host_allowlisted: bool) -> Result<(), SsrfError> {
+    let reason = if host_allowlisted {
+        custom_denial_reason(ip, policy)
     } else {
-        let reason = classify_private_ip(ip, &policy.allowlist);
-        Err(SsrfError::DeniedByPolicy { reason })
+        denial_reason(ip, policy)
+    };
+    match reason {
+        Some(reason) => Err(SsrfError::DeniedByPolicy { reason }),
+        None => Ok(()),
     }
 }
 
@@ -229,29 +241,53 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
 
 /// The first address a connection to `ip` can reach that the default deny-list covers and
 /// `allowlist` does not permit: `ip` itself, then each IPv4 address it embeds.
-fn denied_address(ip: IpAddr, allowlist: &[HostMatcher]) -> Option<(IpAddr, &'static str)> {
+fn candidate_addresses(ip: IpAddr) -> impl Iterator<Item = IpAddr> {
     let embedded = match ip {
         IpAddr::V6(v6) => Some(embedded_ipv4s(v6).map(IpAddr::V4)),
         IpAddr::V4(_) => None,
     };
-    std::iter::once(ip)
-        .chain(embedded.into_iter().flatten())
-        .find_map(|candidate| {
-            if allowlist.iter().any(|matcher| matcher.matches_ip(&candidate)) {
-                return None;
-            }
-            DEFAULT_DENY_NETS
-                .iter()
-                .find(|(net, _)| net.contains(&candidate))
-                .map(|(_, reason)| (candidate, *reason))
-        })
+    std::iter::once(ip).chain(embedded.into_iter().flatten())
+}
+
+/// ~keep The first candidate address matched by a caller-configured deny network.
+fn custom_denied_address(ip: IpAddr, denylist: &[HostMatcher]) -> Option<IpAddr> {
+    candidate_addresses(ip).find(|candidate| denylist.iter().any(|matcher| matcher.matches_ip(candidate)))
+}
+
+/// ~keep The first candidate address refused by the built-in list after allowlist overrides.
+fn default_denied_address(ip: IpAddr, allowlist: &[HostMatcher]) -> Option<(IpAddr, &'static str)> {
+    candidate_addresses(ip).find_map(|candidate| {
+        if allowlist.iter().any(|matcher| matcher.matches_ip(&candidate)) {
+            return None;
+        }
+        DEFAULT_DENY_NETS
+            .iter()
+            .find(|(net, _)| net.contains(&candidate))
+            .map(|(_, reason)| (candidate, *reason))
+    })
+}
+
+/// ~keep The custom denial reason for `ip`, including any IPv4 address it embeds.
+pub(crate) fn custom_denial_reason(ip: IpAddr, policy: &SsrfPolicy) -> Option<&'static str> {
+    custom_denied_address(ip, &policy.denylist).map(|_| "configured_network")
+}
+
+/// ~keep The reason `policy` refuses `ip`, with configured networks taking precedence.
+pub(crate) fn denial_reason(ip: IpAddr, policy: &SsrfPolicy) -> Option<&'static str> {
+    if let Some(reason) = custom_denial_reason(ip, policy) {
+        return Some(reason);
+    }
+    if !policy.deny_private {
+        return None;
+    }
+    default_denied_address(ip, &policy.allowlist).map(|(_, reason)| reason)
 }
 
 /// Test if an IP address is permitted by the SSRF policy.
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
 pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
-    !policy.deny_private || denied_address(ip, &policy.allowlist).is_none()
+    denial_reason(ip, policy).is_none()
 }
 
 /// Classify a denied IP into a category for error messaging.
@@ -261,8 +297,8 @@ pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
 /// with `fe80::/10` allowlisted, `fe80::5efe:10.0.0.5` is denied for the `10.0.0.5` it
 /// carries, not for being link-local.
 pub(crate) fn classify_private_ip(ip: IpAddr, allowlist: &[HostMatcher]) -> &'static str {
-    denied_address(ip, allowlist)
-        .or_else(|| denied_address(ip, &[]))
+    default_denied_address(ip, allowlist)
+        .or_else(|| default_denied_address(ip, &[]))
         .map_or("private_network", |(_, reason)| reason)
 }
 
@@ -301,7 +337,7 @@ mod tests {
     fn every_default_deny_rule_reports_the_reason_stored_with_it() {
         for &(cidr, expected_reason) in DEFAULT_DENY_NET_RULES {
             let net = cidr.parse::<IpNet>().expect("literal CIDR");
-            let actual = denied_address(net.network(), &[]).map(|(_, reason)| reason);
+            let actual = default_denied_address(net.network(), &[]).map(|(_, reason)| reason);
             assert_eq!(
                 actual,
                 Some(expected_reason),

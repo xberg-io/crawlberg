@@ -51,12 +51,15 @@ impl ClientCacheKey {
 ///
 /// ~keep The resolver captures the policy at build time, so two configs with different
 /// policies must not share a cached client — otherwise the first caller's policy would
-/// silently govern the second's connections. Only `deny_private` and `allowlist` reach the
+/// silently govern the second's connections. Only `deny_private`, `allowlist`, and `denylist` reach the
 /// resolver: `scheme_allowlist` and `max_redirects` are enforced in `validate_url` against
 /// the URL, never during resolution, so folding them in would fragment the cache for
 /// nothing.
 fn ssrf_identity(config: &CrawlConfig) -> String {
-    format!("{}:{:?}", config.ssrf.deny_private, config.ssrf.allowlist)
+    format!(
+        "{}:{:?}:{:?}",
+        config.ssrf.deny_private, config.ssrf.allowlist, config.ssrf.denylist
+    )
 }
 
 /// Encode `config`'s proxy configuration as an opaque identity string.
@@ -638,6 +641,31 @@ mod tests {
         assert!(
             cache.contains(&permissive) && cache.contains(&restrictive),
             "both policies must hold their own cache entry"
+        );
+    }
+
+    #[test]
+    fn build_client_uses_distinct_cache_entries_for_distinct_ssrf_denylists() {
+        let base = CrawlConfig {
+            request_timeout: Duration::from_millis(918_279),
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let mut denied = base.clone();
+        denied
+            .ssrf
+            .denylist
+            .push(crate::HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid"));
+        let cache = ClientCache::default();
+
+        let _base_client = cache.get_or_build(&base).expect("base client must build");
+
+        assert!(
+            !cache.contains(&denied),
+            "a resolver without the custom denial must not serve a policy that carries it"
         );
     }
 

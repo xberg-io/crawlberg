@@ -11,23 +11,34 @@ pub struct SsrfPolicy {
     #[serde(default = "default_deny_private")]
     pub deny_private: bool,
 
-    /// Hostnames and IP ranges permitted regardless of `deny_private`.
+    /// Hostnames and IP ranges permitted regardless of `deny_private`, unless a matching
+    /// address is in `denylist`.
     ///
     /// The allowlist is an *override* of `deny_private`, not an intersection with it.
     /// Precedence, in order:
     ///
-    /// 1. `deny_private == false` permits everything; the allowlist is not consulted.
-    /// 2. A hostname matching an `Exact` or `Suffix` entry is permitted immediately,
-    ///    *before* DNS resolution — so the deny-list is never applied to it. This trusts
-    ///    the host string: a name that resolves into private space is still permitted.
-    /// 3. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
+    /// 1. A configured `denylist` CIDR always refuses a matching address.
+    /// 2. `deny_private == false` permits addresses outside `denylist`; the allowlist is not consulted.
+    /// 3. A hostname matching an `Exact` or `Suffix` entry is permitted before applying
+    ///    the built-in deny-list. When `denylist` is non-empty, it is still resolved so
+    ///    custom network denials can be enforced.
+    /// 4. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
     ///    in the default deny-list.
-    /// 4. Otherwise the default deny-list decides.
+    /// 5. Otherwise the default deny-list decides.
     ///
     /// An empty allowlist therefore denies nothing by itself — it simply leaves
     /// `deny_private` and the deny-list in sole control.
     #[serde(default)]
     pub allowlist: Vec<HostMatcher>,
+
+    /// IP ranges refused regardless of `deny_private` and `allowlist`.
+    ///
+    /// ~keep Only [`HostMatcher::Cidr`] entries are valid. Configured denials are checked
+    /// before permissive settings, including against IPv4 addresses embedded in IPv6 and,
+    /// on native targets, every address returned by DNS. They extend the built-in deny-list
+    /// and cannot weaken it.
+    #[serde(default)]
+    pub denylist: Vec<HostMatcher>,
 
     /// Maximum number of HTTP redirects to follow during validation.
     #[serde(default = "default_max_redirects")]
@@ -69,6 +80,7 @@ impl Default for SsrfPolicy {
         Self {
             deny_private: true,
             allowlist: Vec::new(),
+            denylist: Vec::new(),
             max_redirects: 5,
             scheme_allowlist: default_scheme_allowlist(),
         }
@@ -87,13 +99,13 @@ impl SsrfPolicy {
     /// - Rust-side SSRF checking is unenforceable and redundant in a wasm32 context.
     /// - For testing and localhost access, the host's network sandbox is the enforcing boundary.
     ///
-    /// **Node.js caveat:** `deny_private` (whatever its value) has no effect on hostname-based
-    /// requests under `wasm32`. There is no DNS resolution on this target, so [`validate_url`]
-    /// only ever checks a literal IP host; a domain name falls straight through to `Ok(())`. In a
-    /// browser this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node
-    /// service embedding this wasm module can be driven to internal hosts by domain name even
-    /// though `deny_private = true`. Do not rely on this policy to stop that in Node — enforce
-    /// egress restrictions (network policy, firewall, proxy allowlist) outside the process.
+    /// **Node.js caveat:** `deny_private` and `denylist` have no effect on hostname-based requests
+    /// under `wasm32`. There is no DNS resolution on this target, so [`validate_url`] only ever
+    /// checks a literal IP host; a domain name falls straight through to `Ok(())`. In a browser
+    /// this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node service
+    /// embedding this wasm module can be driven to internal hosts by domain name despite the
+    /// policy. Enforce egress restrictions (network policy, firewall, proxy allowlist) outside
+    /// the process.
     pub fn from_env() -> Self {
         #[cfg(target_arch = "wasm32")]
         let allow_private = true;
@@ -116,6 +128,7 @@ impl SsrfPolicy {
         Self {
             deny_private: !allow_private,
             allowlist: Vec::new(),
+            denylist: Vec::new(),
             max_redirects: 5,
             scheme_allowlist: default_scheme_allowlist(),
         }
@@ -136,5 +149,25 @@ impl SsrfPolicy {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn validate_denylist(&self) -> Result<(), String> {
+        for matcher in &self.denylist {
+            match matcher {
+                HostMatcher::Cidr { value } => {
+                    HostMatcher::cidr(value.clone())
+                        .map_err(|_| format!("ssrf.denylist contains invalid CIDR '{value}'"))?;
+                }
+                HostMatcher::Exact { .. } | HostMatcher::Suffix { .. } => {
+                    return Err("ssrf.denylist entries must be CIDR matchers".to_owned());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// ~keep Whether IP-level enforcement must remain active for this policy.
+    pub(crate) fn enforces_ip_denials(&self) -> bool {
+        self.deny_private || !self.denylist.is_empty()
     }
 }

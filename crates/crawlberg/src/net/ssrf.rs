@@ -25,7 +25,7 @@ pub use validate::validate_url;
 #[cfg(all(test, feature = "browser-native"))]
 pub(crate) use validate::{DEFAULT_DENY_NET_RULES, NAMED_SCHEMES};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use validate::{classify_private_ip, is_ip_permitted};
+pub(crate) use validate::{classify_private_ip, custom_denial_reason, denial_reason, is_ip_permitted};
 
 #[cfg(test)]
 pub(crate) use cases::EMBEDDED_IPV4_CASES;
@@ -41,6 +41,7 @@ mod tests {
         let policy = SsrfPolicy::default();
         assert!(policy.deny_private);
         assert!(policy.allowlist.is_empty());
+        assert!(policy.denylist.is_empty());
         assert_eq!(policy.max_redirects, 5);
         assert_eq!(policy.scheme_allowlist, vec!["http", "https"]);
     }
@@ -213,6 +214,22 @@ mod tests {
         assert_eq!(
             decoded.allowlist, policy.allowlist,
             "allowlist must survive a JSON round trip"
+        );
+    }
+
+    #[test]
+    fn ssrf_policy_round_trips_a_populated_denylist() {
+        let mut policy = SsrfPolicy::default();
+        policy
+            .denylist
+            .push(HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid"));
+
+        let encoded = serde_json::to_string(&policy).expect("policy must serialize");
+        let decoded: SsrfPolicy = serde_json::from_str(&encoded).expect("policy must deserialize");
+
+        assert_eq!(
+            decoded.denylist, policy.denylist,
+            "denylist must survive a JSON round trip"
         );
     }
 
@@ -611,6 +628,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_denylist_wins_over_allowlist_and_private_network_opt_out() {
+        let denied = HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid");
+        let policy = SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![denied.clone()],
+            denylist: vec![denied],
+            ..SsrfPolicy::default()
+        };
+        let url = "http://203.0.113.7/".parse::<url::Url>().expect("valid URL");
+
+        let error = validate_url(&url, &policy)
+            .await
+            .expect_err("a configured denial must not be weakened by either permissive setting");
+
+        assert!(
+            matches!(
+                error,
+                SsrfError::DeniedByPolicy {
+                    reason: "configured_network"
+                }
+            ),
+            "configured denial must report configured_network, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_denylist_extends_instead_of_replacing_default_denials() {
+        let policy = SsrfPolicy {
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+        let url = "http://10.0.0.7/".parse::<url::Url>().expect("valid URL");
+
+        let error = validate_url(&url, &policy)
+            .await
+            .expect_err("adding a custom network must leave built-in denials active");
+
+        assert!(
+            matches!(
+                error,
+                SsrfError::DeniedByPolicy {
+                    reason: "private_network"
+                }
+            ),
+            "the built-in denial must retain its reason, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_denylist_checks_an_ipv4_address_embedded_in_ipv6() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+        let url = "http://[::ffff:203.0.113.7]/".parse::<url::Url>().expect("valid URL");
+
+        let error = validate_url(&url, &policy)
+            .await
+            .expect_err("the embedded IPv4 address falls inside the configured denial");
+
+        assert!(
+            matches!(
+                error,
+                SsrfError::DeniedByPolicy {
+                    reason: "configured_network"
+                }
+            ),
+            "embedded configured denial must report configured_network, got {error:?}"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn configured_denylist_checks_addresses_behind_an_allowlisted_hostname() {
+        let policy = SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![HostMatcher::exact("localhost")],
+            denylist: ["127.0.0.0/8", "::1/128"]
+                .into_iter()
+                .map(|cidr| HostMatcher::cidr(cidr).expect("literal CIDR is valid"))
+                .collect(),
+            ..SsrfPolicy::default()
+        };
+        let url = "http://localhost/".parse::<url::Url>().expect("valid URL");
+
+        let error = validate_url(&url, &policy)
+            .await
+            .expect_err("a hostname allowlist must not bypass configured network denials");
+
+        assert!(
+            matches!(
+                error,
+                SsrfError::DeniedByPolicy {
+                    reason: "configured_network"
+                }
+            ),
+            "resolved configured denial must report configured_network, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn validate_url_exact_allowlist_does_not_match_literal_ip() {
         // ~keep Exact matchers are hostname-only; CIDR is required for literal IP allowlisting.
         let mut policy = SsrfPolicy::default();
@@ -657,6 +776,7 @@ mod tests {
         unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
         let policy = SsrfPolicy::from_env();
         unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
+        assert!(policy.denylist.is_empty(), "the environment must not add deny networks");
         let url = "http://10.0.0.1/".parse::<url::Url>().unwrap();
         validate_url(&url, &policy)
             .await
@@ -719,6 +839,7 @@ mod tests {
         assert!(policy.deny_private, "deny_private must default to true");
         assert_eq!(policy.max_redirects, 5, "max_redirects must default to 5");
         assert!(policy.allowlist.is_empty(), "allowlist must default to empty");
+        assert!(policy.denylist.is_empty(), "denylist must default to empty");
         assert!(
             policy.scheme_allowlist == vec!["http", "https"],
             "scheme_allowlist must default to http/https"
@@ -914,14 +1035,15 @@ mod tests {
             .filter_map(|span| span.strip_prefix('"')?.strip_suffix('"'))
             .filter(|reason| !reason.starts_with("disallowed scheme"))
             .collect();
-        let produced: std::collections::BTreeSet<&str> = validate::DEFAULT_DENY_NET_RULES
+        let mut produced: std::collections::BTreeSet<&str> = validate::DEFAULT_DENY_NET_RULES
             .iter()
             .map(|(_, reason)| *reason)
             .collect();
+        produced.insert("configured_network");
         assert_eq!(
             documented.len(),
-            6,
-            "expected six documented reasons, parsed {documented:?}"
+            7,
+            "expected seven documented reasons, parsed {documented:?}"
         );
         assert_eq!(
             produced, documented,
