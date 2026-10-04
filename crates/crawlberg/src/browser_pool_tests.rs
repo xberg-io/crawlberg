@@ -1329,6 +1329,8 @@ async fn a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_running() {
+    use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
+
     let executable = match default_executable(DetectionOptions::default()) {
         Ok(executable) => executable,
         Err(error) => {
@@ -1408,9 +1410,43 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
             .await
             .map_err(|_| "page acquisition after relaunch timed out".to_owned())?
             .map_err(|error| format!("the relaunched connection must open a page: {error}"))?;
+        let target = page.page().target_id().clone();
+        let target_is_open = owner
+            .execute(GetTargetsParams::default())
+            .await
+            .map_err(|error| format!("the caller's Chrome must list its targets after relaunch: {error}"))?
+            .result
+            .target_infos
+            .iter()
+            .any(|info| info.target_id == target);
+        if !target_is_open {
+            return Err("the relaunched connection's page target must exist in the caller's Chrome".to_owned());
+        }
         tokio::time::timeout(operation_timeout, page.close())
             .await
             .map_err(|_| "closing the relaunched page timed out".to_owned())?;
+        tokio::time::timeout(operation_timeout, async {
+            loop {
+                let target_is_open = owner
+                    .execute(GetTargetsParams::default())
+                    .await
+                    .map_err(|error| format!("the caller's Chrome must keep listing its targets: {error}"))?
+                    .result
+                    .target_infos
+                    .iter()
+                    .any(|info| info.target_id == target);
+                if !target_is_open {
+                    return Ok::<(), String>(());
+                }
+                owner
+                    .version()
+                    .await
+                    .map_err(|error| format!("the caller's Chrome must answer while its target closes: {error}"))?;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| "the relaunched connection's page target must close".to_owned())??;
         tokio::time::timeout(operation_timeout, pool.shutdown())
             .await
             .map_err(|_| "pool shutdown after relaunch timed out".to_owned())?;
