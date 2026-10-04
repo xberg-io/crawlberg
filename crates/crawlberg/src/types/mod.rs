@@ -25,6 +25,7 @@ pub use config::{
 };
 #[cfg(feature = "browser-chromiumoxide")]
 pub(crate) use config::{check_chrome_args, check_chrome_executable, chrome_switch_name};
+pub(crate) use discovery::BrowserCookie;
 #[cfg(not(target_arch = "wasm32"))]
 pub use discovery::CrawlEvent;
 pub use discovery::{

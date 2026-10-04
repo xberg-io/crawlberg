@@ -444,6 +444,7 @@ pub(crate) async fn follow_redirects(
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
     let mut browser_used = false;
+    let mut browser_cookies = Vec::new();
     // ~keep Each native hop is its own render, so the chain carries cookies and the previous
     // ~keep document's site from one to the next, as a single browser session would.
     #[cfg(feature = "browser-native")]
@@ -487,6 +488,7 @@ pub(crate) async fn follow_redirects(
                         &chain.current_url,
                         forced_user_agent.as_deref(),
                         Some(&mut native_state),
+                        (!browser_cookies.is_empty()).then_some(browser_cookies.as_slice()),
                     )
                     .await
             }
@@ -536,6 +538,8 @@ pub(crate) async fn follow_redirects(
             ))));
         };
 
+        replace_browser_cookies(&mut browser_cookies, &resp, hop_browser_used);
+
         #[cfg(feature = "browser-native")]
         if next.commits_document {
             native_state.set_site_for_cookies(&chain.current_url);
@@ -548,6 +552,25 @@ pub(crate) async fn follow_redirects(
             .advance_to(next.target, next.target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
     }
+}
+
+fn replace_browser_cookies(
+    current: &mut Vec<crate::types::BrowserCookie>,
+    response: &crate::tower::CrawlResponse,
+    hop_browser_used: bool,
+) {
+    *current = if hop_browser_used {
+        response
+            .landed
+            .as_ref()
+            .map(|landing| landing.cookies.clone())
+            .unwrap_or_default()
+    } else {
+        // ~keep An HTTP hop has its own cookie processing and can delete or replace browser
+        // ~keep cookies. Until both tiers share one jar, discarding the snapshot is safer
+        // ~keep than resurrecting stale credentials if a later Auto-mode hop uses Chrome.
+        Vec::new()
+    };
 }
 
 /// Put the refusals of the hops before `resp` ahead of its own.
@@ -852,6 +875,21 @@ mod tests {
     use super::*;
     use crate::tracing_capture::{assert_logged_without_secret, capture_events};
 
+    #[cfg(feature = "browser")]
+    #[test]
+    fn an_http_hop_clears_the_previous_browser_cookie_snapshot() {
+        let mut cookies = vec![crate::types::BrowserCookie {
+            params: chromiumoxide::cdp::browser_protocol::network::CookieParam::new("session", "secret"),
+        }];
+
+        replace_browser_cookies(&mut cookies, &response(200, &[], ""), false);
+
+        assert!(
+            cookies.is_empty(),
+            "an intervening HTTP hop must prevent Auto mode from reviving the prior browser jar"
+        );
+    }
+
     const MAX_REDIRECTS: usize = 5;
 
     #[cfg(feature = "browser-native")]
@@ -1121,6 +1159,7 @@ mod tests {
                 redirects: 0,
                 refused: Vec::new(),
                 extras: None,
+                cookies: Vec::new(),
             }));
             landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };
@@ -1468,6 +1507,7 @@ mod tests {
                 redirects: 1,
                 refused: Vec::new(),
                 extras: None,
+                cookies: Vec::new(),
             }));
             let sources = [
                 ("Location", response(302, &[("location", target_url)], "")),

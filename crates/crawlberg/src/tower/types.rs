@@ -198,4 +198,6 @@ pub struct Landing {
     /// The eval result, network events and cookies of the page. Only a scrape on the native
     /// backend carries them.
     pub extras: Option<crate::http::BrowserExtras>,
+    /// Cookies retained only long enough to seed the next Chromiumoxide redirect hop. ~keep
+    pub(crate) cookies: Vec<crate::types::BrowserCookie>,
 }

@@ -197,6 +197,7 @@ impl CrawlEngine {
                 redirects,
                 refused,
                 extras: response.browser_extras,
+                cookies: Vec::new(),
             })),
             // ~keep The native browser backend never reads `config.user_agents`.
             sent_user_agent: None,

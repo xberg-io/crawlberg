@@ -149,6 +149,43 @@ pub struct CookieInfo {
     pub path: Option<String>,
 }
 
+/// A cookie carried between Chromiumoxide pages in one redirect chain.
+///
+/// This stays separate from [`CookieInfo`]: CDP's expiry, SameSite, partition and host-scope
+/// metadata are browser-jar state, while `CookieInfo` is the public response shape shared by
+/// every fetch backend. ~keep
+#[derive(Clone)]
+pub(crate) struct BrowserCookie {
+    #[cfg(feature = "browser")]
+    pub(crate) params: chromiumoxide::cdp::browser_protocol::network::CookieParam,
+}
+
+impl std::fmt::Debug for BrowserCookie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "browser")]
+        {
+            let mut debug = f.debug_struct("BrowserCookie");
+            debug
+                .field("name", &self.params.name)
+                .field(
+                    "value",
+                    &(!self.params.value.is_empty()).then_some(crate::net::redact::REDACTED_PLACEHOLDER),
+                )
+                .field("domain", &self.params.domain)
+                .field("path", &self.params.path)
+                .field("secure", &self.params.secure)
+                .field("http_only", &self.params.http_only)
+                .field("same_site", &self.params.same_site)
+                .field("partition_key", &self.params.partition_key);
+            debug.finish()
+        }
+        #[cfg(not(feature = "browser"))]
+        {
+            f.debug_struct("BrowserCookie").finish()
+        }
+    }
+}
+
 impl std::fmt::Debug for CookieInfo {
     /// Redacted: a cookie value is often a session credential, and the engine sends
     /// these cookies back on later browser fetches. Shows whether a value is set, never

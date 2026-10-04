@@ -283,6 +283,7 @@ impl CrawlEngine {
         url: &str,
         forced_user_agent: Option<&str>,
         native_state: Option<&mut NativeRenderState>,
+        browser_cookies: Option<&[BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if self.request_will_use_browser() {
@@ -297,14 +298,14 @@ impl CrawlEngine {
             let page = crate::browser::browser_fetch(
                 url,
                 &self.config,
-                None,
+                browser_cookies,
                 pool,
                 false,
                 self.native_browser_executor.as_deref(),
             )
             .await?;
             #[cfg(not(feature = "browser-native"))]
-            let page = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
+            let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
             let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
             return Ok((crawl_resp, true));
         }
@@ -330,7 +331,7 @@ impl CrawlEngine {
             ));
         }
 
-        self.run_dispatch_loop(url, &plan, forced_user_agent, native_state)
+        self.run_dispatch_loop(url, &plan, forced_user_agent, native_state, browser_cookies)
             .await
     }
 
@@ -341,6 +342,7 @@ impl CrawlEngine {
         plan: &DispatchPlan,
         forced_user_agent: Option<&str>,
         mut native_state: Option<&mut NativeRenderState>,
+        browser_cookies: Option<&[BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let mut state = AttemptState::new();
 
@@ -359,7 +361,13 @@ impl CrawlEngine {
             }
 
             let step = match self
-                .run_tier(state.current_tier, url, forced_user_agent, native_state.as_deref_mut())
+                .run_tier(
+                    state.current_tier,
+                    url,
+                    forced_user_agent,
+                    native_state.as_deref_mut(),
+                    browser_cookies,
+                )
                 .await
             {
                 Ok(fetched) => self.handle_tier_success(url, fetched, plan, &mut state).await,

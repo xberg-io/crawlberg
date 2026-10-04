@@ -79,9 +79,12 @@ impl CrawlEngine {
         url: &str,
         forced_user_agent: Option<&str>,
         native_state: Option<&mut super::fetch::NativeRenderState>,
+        browser_cookies: Option<&[crate::types::BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(not(all(feature = "browser", feature = "browser-native")))]
         let _ = native_state;
+        #[cfg(not(feature = "browser"))]
+        let _ = browser_cookies;
         match tier {
             crate::types::Tier::Http => {
                 let client = crate::http::build_client(&self.config)?;
@@ -157,14 +160,14 @@ impl CrawlEngine {
                     let page = crate::browser::browser_fetch(
                         url,
                         &self.config,
-                        None,
+                        browser_cookies,
                         pool,
                         false,
                         self.native_browser_executor.as_deref(),
                     )
                     .await?;
                     #[cfg(not(feature = "browser-native"))]
-                    let page = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
+                    let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
                     let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
                     Ok((crawl_resp, true))
                 }
@@ -180,6 +183,7 @@ impl CrawlEngine {
     pub(super) fn browser_http_to_crawl(
         page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
+        let cookies = page.cookies;
         let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
@@ -212,6 +216,7 @@ impl CrawlEngine {
                     redirects: page.redirects,
                     refused: page.refused,
                     extras: None,
+                    cookies,
                 })),
                 // ~keep The browser tier never reads `config.user_agents`; it always sends the
                 // single configured agent, so callers fall back to the configured default.
@@ -445,6 +450,7 @@ mod tests {
             redirects: 0,
             redirected: false,
             refused: vec!["http://127.0.0.1/secret".to_owned()],
+            cookies: Vec::new(),
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 

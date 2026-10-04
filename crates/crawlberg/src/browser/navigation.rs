@@ -6,17 +6,17 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
+use super::cookies::{apply_prior_cookies, page_cookies};
 use super::launch::resolve_default_user_agent;
 use crate::chrome_frame::{committed_document, error_page_error, page_content, read_one_document_within};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
-use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
+use crate::types::{BrowserCookie, BrowserWait, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
 /// so the reported metrics are unremarkable.
@@ -49,7 +49,7 @@ pub(super) async fn page_fetch(
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
     watch: &Watch,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
@@ -64,7 +64,7 @@ pub(super) async fn page_fetch(
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
     }
 
-    apply_prior_cookies(page, prior_cookies).await;
+    apply_prior_cookies(watch, prior_cookies).await?;
 
     let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
@@ -79,6 +79,7 @@ pub(super) async fn page_fetch(
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     let mut rendered = rendered?;
+    rendered.cookies = page_cookies(watch).await?;
     rendered.refused = refused;
     Ok(rendered)
 }
@@ -199,6 +200,7 @@ async fn render(
         redirects,
         redirected,
         refused: Vec::new(),
+        cookies: Vec::new(),
     })
 }
 
@@ -209,6 +211,7 @@ fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
         redirects,
         redirected: redirects > 0,
         refused: Vec::new(),
+        cookies: Vec::new(),
     }
 }
 
@@ -285,6 +288,7 @@ fn error_page_outcome(
         redirects,
         redirected: recorded.redirects > 0,
         refused: Vec::new(),
+        cookies: Vec::new(),
     })
 }
 
@@ -325,29 +329,6 @@ async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stea
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     Ok(())
-}
-
-/// Seed the page with cookies carried over from a previous fetch.
-///
-/// ~keep A cookie that cannot be built or set is skipped rather than failing the
-/// fetch: a partial session is still worth attempting, and CDP rejects cookies
-/// whose domain does not match the target.
-async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&[CookieInfo]>) {
-    let Some(cookies) = prior_cookies else {
-        return;
-    };
-    for cookie in cookies {
-        let mut builder = SetCookieParams::builder().name(&cookie.name).value(&cookie.value);
-        if let Some(ref domain) = cookie.domain {
-            builder = builder.domain(domain);
-        }
-        if let Some(ref path) = cookie.path {
-            builder = builder.path(path);
-        }
-        if let Ok(params) = builder.build() {
-            let _ = page.execute(params).await;
-        }
-    }
 }
 
 /// Turn the navigation result and the interceptor's verdict into one error.

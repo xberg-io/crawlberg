@@ -346,6 +346,7 @@ pub(crate) struct FirewallHandle {
 pub(crate) struct Watch {
     commands: mpsc::UnboundedSender<Command>,
     shared: Arc<Shared>,
+    browser: Weak<Browser>,
     page: Arc<WatchedPage>,
     ended: bool,
 }
@@ -468,6 +469,16 @@ impl Registry {
             .iter()
             .any(|(id, owner)| Arc::ptr_eq(owner, page) && !(keep_root && *id == page.root))
     }
+}
+
+/// The exact context registered for `root`. An entry containing `None` is the browser's shared
+/// context; no entry is an ownership failure and must never fall back to that shared jar. ~keep
+fn registered_context(registry: &Registry, root: &TargetId) -> Result<Option<BrowserContextId>, CrawlError> {
+    registry
+        .opened
+        .get(root)
+        .cloned()
+        .ok_or_else(|| CrawlError::browser_error("watched page has no registered browser context"))
 }
 
 struct Shared {
@@ -1037,6 +1048,7 @@ impl FirewallHandle {
         let watch = Watch {
             commands: self.commands.clone(),
             shared: Arc::clone(&self.shared),
+            browser: self.browser.clone(),
             page: watched,
             ended: false,
         };
@@ -1049,6 +1061,17 @@ impl FirewallHandle {
 }
 
 impl Watch {
+    /// The browser context this watched page owns, or `None` when it uses the browser's shared
+    /// context. Storage-domain cookie commands need this because they run at browser scope. ~keep
+    pub(crate) fn cookie_store(&self) -> Result<(Arc<Browser>, Option<BrowserContextId>), CrawlError> {
+        let context = registered_context(&lock(&self.shared.registry), &self.page.root)?;
+        let browser = self
+            .browser
+            .upgrade()
+            .ok_or_else(|| CrawlError::browser_error("browser closed before its cookie jar could be accessed"))?;
+        Ok((browser, context))
+    }
+
     /// Return how the navigation went so far, and keep watching: the first blocked request and
     /// the response the navigation stopped on.
     pub(crate) fn take_outcome(&self) -> InterceptOutcome {
@@ -2336,11 +2359,11 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId, FrameId,
-        HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
+        BrowserContextId, BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId,
+        FrameId, HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
         WatchedPage, adopt_target, begin_ending, complete_stopped_response_outcome, events_of,
         failed_document_response, lock, main_frame_verdict, navigation_verdict, record_document_failure_outcome,
-        record_main_frame_commit, release, require_main_frame, ssrf_verdict,
+        record_main_frame_commit, registered_context, release, require_main_frame, ssrf_verdict,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2353,6 +2376,34 @@ mod tests {
             deny_private: false,
             ..SsrfPolicy::default()
         }
+    }
+
+    #[test]
+    fn pooled_cookie_lookup_uses_only_the_page_s_registered_context() {
+        let first = TargetId::new("FIRST");
+        let second = TargetId::new("SECOND");
+        let shared = TargetId::new("SHARED");
+        let missing = TargetId::new("MISSING");
+        let first_context = BrowserContextId::new("CONTEXT-1");
+        let second_context = BrowserContextId::new("CONTEXT-2");
+        let mut registry = Registry::default();
+        registry.opened.insert(first.clone(), Some(first_context.clone()));
+        registry.opened.insert(second, Some(second_context));
+        registry.opened.insert(shared.clone(), None);
+
+        assert_eq!(
+            registered_context(&registry, &first).expect("first context"),
+            Some(first_context)
+        );
+        assert_eq!(
+            registered_context(&registry, &shared).expect("shared context entry"),
+            None,
+            "a present shared-context entry is distinct from a missing page"
+        );
+        assert!(
+            registered_context(&registry, &missing).is_err(),
+            "an unregistered page must not fall back to the default browser jar"
+        );
     }
 
     #[tokio::test]

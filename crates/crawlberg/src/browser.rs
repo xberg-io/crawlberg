@@ -24,8 +24,11 @@ use crate::net::ssrf::validate_url;
 use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext, Watch};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
-use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
+#[cfg(feature = "browser-native")]
+use crate::types::CookieInfo;
+use crate::types::{BrowserBackend, BrowserCookie, CrawlConfig};
 
+mod cookies;
 mod launch;
 mod navigation;
 #[cfg(test)]
@@ -45,6 +48,8 @@ pub(crate) struct BrowserPage {
     pub(crate) redirected: bool,
     /// The URLs the SSRF policy refused for requests the page sent, credential-redacted.
     pub(crate) refused: Vec<String>,
+    /// Cookies in Chromium's jar after this page finished rendering. ~keep
+    pub(crate) cookies: Vec<BrowserCookie>,
 }
 
 /// Fetch a URL using a headless Chrome browser via CDP.
@@ -59,7 +64,7 @@ pub(crate) struct BrowserPage {
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
@@ -86,6 +91,7 @@ pub(crate) async fn browser_fetch(
                 response,
                 refused,
                 redirects,
+                cookies: Vec::new(),
             }
         }
     };
@@ -94,13 +100,14 @@ pub(crate) async fn browser_fetch(
         redirects: page.redirects,
         redirected: page.redirected,
         refused: page.refused,
+        cookies: page.cookies,
     })
 }
 
 async fn chromiumoxide_fetch(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
@@ -131,7 +138,7 @@ async fn chromiumoxide_fetch(
 async fn chromiumoxide_fetch_inner(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
@@ -164,7 +171,7 @@ fn overall_deadline_error(overall_timeout: Duration) -> CrawlError {
 async fn pooled_fetch(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     pool: &BrowserPool,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
@@ -333,7 +340,7 @@ async fn release_pooled_page(
 async fn one_shot_fetch(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
@@ -354,7 +361,7 @@ async fn fetch_launched(
     deadline: tokio::time::Instant,
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
@@ -553,20 +560,31 @@ impl Drop for OneShotSession {
 async fn native_fetch(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Option<&[BrowserCookie]>,
     native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let native_executor = native_executor.ok_or_else(|| {
         CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
-    crate::native_browser::native_browser_fetch(url, config, prior_cookies, native_executor).await
+    let prior_cookies: Option<Vec<CookieInfo>> = prior_cookies.map(|cookies| {
+        cookies
+            .iter()
+            .map(|cookie| CookieInfo {
+                name: cookie.params.name.clone(),
+                value: cookie.params.value.clone(),
+                domain: cookie.params.domain.clone(),
+                path: cookie.params.path.clone(),
+            })
+            .collect()
+    });
+    crate::native_browser::native_browser_fetch(url, config, prior_cookies.as_deref(), native_executor).await
 }
 
 #[cfg(not(feature = "browser-native"))]
 async fn native_fetch(
     _url: &str,
     _config: &CrawlConfig,
-    _prior_cookies: Option<&[CookieInfo]>,
+    _prior_cookies: Option<&[BrowserCookie]>,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
