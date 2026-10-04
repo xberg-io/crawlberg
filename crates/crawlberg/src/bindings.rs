@@ -185,13 +185,57 @@ impl From<Vec<BatchCrawlResult>> for BatchCrawlResults {
 /// If `config` is `None`, uses [`CrawlConfig::default()`].
 /// Returns an error if the configuration is invalid.
 pub fn create_engine(config: Option<CrawlConfig>) -> Result<CrawlEngineHandle, CrawlError> {
-    let mut builder = CrawlEngine::builder();
-    if let Some(config) = config {
-        config.validate()?;
-        builder = builder.config(config);
-    }
+    let config = config.unwrap_or_default();
+    config.validate()?;
+
+    #[cfg(feature = "browser")]
+    let (config, browser_pool) = {
+        let mut config = config;
+        let browser_pool = binding_browser_pool(&mut config);
+        (config, browser_pool)
+    };
+
+    let builder = CrawlEngine::builder().config(config);
+    #[cfg(feature = "browser")]
+    let builder = match browser_pool {
+        Some(pool) => builder.with_browser_pool(pool),
+        None => builder,
+    };
     let engine = builder.build()?;
     Ok(CrawlEngineHandle { inner: engine })
+}
+
+#[cfg(feature = "browser")]
+fn binding_browser_pool(config: &mut CrawlConfig) -> Option<std::sync::Arc<crate::browser_pool::BrowserPool>> {
+    // ~keep A named browser profile determines Chrome's user-data directory at launch, while
+    // ~keep a shared pool launches before any crawl can claim that profile.
+    if config.browser.backend != crate::types::BrowserBackend::Chromiumoxide || config.browser_profile.is_some() {
+        return None;
+    }
+
+    if let Some(pool) = config.browser_pool.clone() {
+        return Some(pool);
+    }
+
+    // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
+    // ~keep a pool permit. Binding-created pools therefore reuse Chrome, but close each page as
+    // ~keep the pre-pool binding path did, until parked pages have safe lifecycle ownership.
+    config.browser.session_affinity = false;
+    Some(crate::browser_pool::BrowserPool::new(binding_browser_pool_config(
+        config,
+    )))
+}
+
+#[cfg(feature = "browser")]
+fn binding_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::BrowserPoolConfig {
+    let defaults = crate::browser_pool::BrowserPoolConfig::default();
+    crate::browser_pool::BrowserPoolConfig {
+        max_pages: config.max_concurrent.unwrap_or(defaults.max_pages),
+        browser_endpoint: config.browser.endpoint.clone(),
+        chrome_path: config.browser.chrome_path.clone(),
+        chrome_args: config.browser.chrome_args.clone(),
+        ..defaults
+    }
 }
 
 /// Scrape a single URL, returning extracted page data.
@@ -303,4 +347,114 @@ pub async fn batch_crawl(engine: &CrawlEngineHandle, urls: Vec<String>) -> Resul
         })
         .collect();
     Ok(BatchCrawlResults::from(per_url))
+}
+
+#[cfg(all(test, feature = "browser"))]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::{BrowserBackend, BrowserConfig};
+
+    #[test]
+    fn create_engine_installs_one_browser_pool_for_all_handle_clones() {
+        let handle = create_engine(Some(CrawlConfig {
+            max_concurrent: Some(1),
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        }))
+        .expect("binding engine must build");
+        let cloned = handle.clone();
+
+        let pool = handle
+            .inner
+            .config
+            .browser_pool
+            .as_ref()
+            .expect("binding engine must own a browser pool");
+        let cloned_pool = cloned
+            .inner
+            .config
+            .browser_pool
+            .as_ref()
+            .expect("cloned handle must retain the browser pool");
+        assert!(
+            Arc::ptr_eq(pool, cloned_pool),
+            "handle clones must share one browser pool"
+        );
+
+        assert!(!handle.inner.config.browser.session_affinity);
+        assert!(handle.inner.config.browser_session_pool.is_none());
+    }
+
+    #[test]
+    fn binding_browser_pool_config_carries_engine_launch_options() {
+        let config = CrawlConfig {
+            max_concurrent: Some(3),
+            browser: BrowserConfig {
+                endpoint: Some("ws://browser.example:9222/devtools/browser/test".to_owned()),
+                chrome_path: Some("/opt/chrome".into()),
+                chrome_args: vec!["--lang=de".to_owned()],
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+
+        let pool_config = binding_browser_pool_config(&config);
+
+        assert_eq!(pool_config.max_pages, 3);
+        assert_eq!(pool_config.browser_endpoint, config.browser.endpoint);
+        assert_eq!(pool_config.chrome_path, config.browser.chrome_path);
+        assert_eq!(pool_config.chrome_args, config.browser.chrome_args);
+    }
+
+    #[test]
+    fn create_engine_preserves_a_rust_callers_browser_pools() {
+        let browser_pool = crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig::default());
+        let session_pool = Arc::new(crate::browser_session_pool::BrowserSessionPool::new());
+        let handle = create_engine(Some(CrawlConfig {
+            browser_pool: Some(Arc::clone(&browser_pool)),
+            browser_session_pool: Some(Arc::clone(&session_pool)),
+            ..CrawlConfig::default()
+        }))
+        .expect("binding engine must build");
+
+        assert!(Arc::ptr_eq(
+            handle
+                .inner
+                .config
+                .browser_pool
+                .as_ref()
+                .expect("configured browser pool must remain installed"),
+            &browser_pool
+        ));
+        assert!(Arc::ptr_eq(
+            handle
+                .inner
+                .config
+                .browser_session_pool
+                .as_ref()
+                .expect("configured session pool must remain installed"),
+            &session_pool
+        ));
+        assert!(handle.inner.config.browser.session_affinity);
+    }
+
+    #[test]
+    fn create_engine_keeps_profile_backed_browser_fetches_one_shot() {
+        let handle = create_engine(Some(CrawlConfig {
+            browser_profile: Some("signed-in".to_owned()),
+            ..CrawlConfig::default()
+        }))
+        .expect("binding engine must build");
+
+        assert!(
+            handle.inner.config.browser_pool.is_none(),
+            "a shared pool cannot launch the requested per-crawl browser profile"
+        );
+        assert!(handle.inner.config.browser_session_pool.is_none());
+    }
 }

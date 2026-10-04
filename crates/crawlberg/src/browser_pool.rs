@@ -723,7 +723,7 @@ fn build_pool_launch_builder(
 ///
 /// Rust-only: this type is excluded from alef-generated polyglot bindings.
 /// Pool reuse is intended for long-lived Rust processes (e.g. the cloud
-/// worker); language bindings construct pools internally per-call.
+/// worker); language bindings construct compatible pools internally per engine.
 #[derive(Clone)]
 pub struct BrowserPoolConfig {
     /// Maximum number of concurrent pages (tabs) the pool will open.
@@ -1439,9 +1439,9 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 /// limiting concurrency via a semaphore. If Chrome crashes the pool will
 /// attempt to relaunch on the next [`acquire_page`](Self::acquire_page) call.
 ///
-/// Rust-only: excluded from alef-generated polyglot bindings. Downstream
-/// language clients should rely on per-call browser construction inside
-/// crawlberg rather than managing a pool themselves.
+/// Rust-only: excluded from alef-generated polyglot bindings. Crawlberg constructs one
+/// internally for each compatible binding engine, so downstream language clients do not
+/// manage a pool themselves.
 pub struct BrowserPool {
     config: BrowserPoolConfig,
     state: Mutex<Option<BrowserState>>,
@@ -1469,6 +1469,15 @@ impl BrowserPool {
             #[cfg(test)]
             hold_handler_end: tokio::sync::watch::Sender::new(false),
         })
+    }
+
+    pub(crate) fn uses_launch_options(&self, browser: &crate::types::BrowserConfig) -> bool {
+        // ~keep An external endpoint owns its process flags even if both configs happen to
+        // ~keep retain identical values, so those values still need the ignored-option warning.
+        self.config.browser_endpoint.is_none()
+            && browser.endpoint.is_none()
+            && self.config.chrome_path == browser.chrome_path
+            && self.config.chrome_args == browser.chrome_args
     }
 
     /// Eagerly launch the Chrome process so that the first
