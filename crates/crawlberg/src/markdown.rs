@@ -527,4 +527,24 @@ mod tests {
         .await;
         assert_eq!(md, "see [here](x.html)\n\nx\n");
     }
+
+    #[tokio::test]
+    async fn parenthesised_srcset_descriptors_keep_embedded_commas() {
+        let md = markdown_at(
+            r#"<p><img srcset="a.png 1x (x, y.png 9x ), b.png 2x" alt="a"></p>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![a](https://example.com/docs/b.png)\n");
+    }
+
+    #[tokio::test]
+    async fn preserves_a_srcset_url_ending_in_a_comma_before_a_vertical_tab() {
+        let md = markdown_at(
+            "<p><img srcset=\"a,\x0b 1x\" alt=\"a\"></p>",
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![a](https://example.com/docs/a%2C)\n");
+    }
 }

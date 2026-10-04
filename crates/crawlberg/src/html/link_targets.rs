@@ -174,38 +174,23 @@ fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
     }
 }
 
-/// Split a `srcset`-style list into its candidates, each a URL and its descriptor.
-///
-/// ~keep Follows the HTML "parse a srcset attribute" split: a candidate URL is a run of
-/// ~keep non-ASCII-whitespace (so a `data:` URL's own comma stays inside it), trailing commas
-/// ~keep end the candidate, and otherwise the descriptor runs to the next comma.
-pub(super) fn srcset_candidates(list: &str) -> impl Iterator<Item = (&str, &str)> {
-    let mut rest = list;
-    std::iter::from_fn(move || {
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-        if rest.is_empty() {
-            return None;
-        }
-        let url_end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
-        let (candidate_url, after_url) = rest.split_at(url_end);
-        if candidate_url.ends_with(',') {
-            rest = after_url;
-            return Some((candidate_url.trim_end_matches(','), ""));
-        }
-        let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
-        rest = &after_url[descriptor_end..];
-        Some((candidate_url, after_url[..descriptor_end].trim()))
-    })
-}
-
 /// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
 fn resolve_candidates(list: &str, base: &Url) -> Option<String> {
     let mut candidates = Vec::new();
     let mut changed = false;
-    for (candidate_url, descriptor) in srcset_candidates(list) {
+    for (candidate_url, descriptor) in super::srcset::srcset_candidates(list) {
         let resolved = resolve_reference(candidate_url, base);
         changed |= resolved.is_some();
-        let candidate_url = resolved.unwrap_or_else(|| candidate_url.to_owned());
+        let candidate_url = resolved.map_or_else(
+            || candidate_url.to_owned(),
+            |mut resolved| {
+                if resolved.ends_with(',') {
+                    resolved.pop();
+                    resolved.push_str("%2C");
+                }
+                resolved
+            },
+        );
         candidates.push(if descriptor.is_empty() {
             candidate_url
         } else {
@@ -432,6 +417,27 @@ mod tests {
         assert_eq!(
             resolve_candidates("a.png, b.png 2x", &base).as_deref(),
             Some("https://example.com/p/a.png, https://example.com/p/b.png 2x")
+        );
+    }
+
+    #[test]
+    fn a_parenthesized_comma_does_not_start_another_candidate() {
+        let base = Url::parse("https://example.com/p/").expect("valid URL");
+        assert_eq!(
+            resolve_candidates("a.png 1x (x, y.png 9x ), b.png 2x", &base).as_deref(),
+            Some("https://example.com/p/a.png 1x (x, y.png 9x ), https://example.com/p/b.png 2x")
+        );
+    }
+
+    #[test]
+    fn a_resolved_url_ending_in_a_comma_keeps_its_descriptor() {
+        let base = Url::parse("https://example.com/p/").expect("valid URL");
+        let rewritten = resolve_candidates("a,\x0b 1x", &base).expect("relative candidate is rewritten");
+
+        assert_eq!(rewritten, "https://example.com/p/a%2C 1x");
+        assert_eq!(
+            super::super::srcset::srcset_candidates(&rewritten).collect::<Vec<_>>(),
+            [("https://example.com/p/a%2C", "1x")]
         );
     }
 

@@ -13,6 +13,7 @@ mod metadata;
 mod raw_text;
 mod real_tags;
 pub(crate) mod selectors;
+mod srcset;
 
 use std::borrow::Cow;
 use std::cell::RefCell;

@@ -7,8 +7,8 @@ use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
-use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
+use super::srcset::srcset_candidates;
 use super::{attr_eq, clean_url, fetchable_address, get_attr, get_url_attr};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
