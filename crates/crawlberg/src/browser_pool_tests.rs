@@ -74,8 +74,7 @@ async fn a_chrome_args_flag_reaches_the_chrome_the_pool_starts() {
     let marker_flag = format!("--user-agent={MARKER}");
     let reached_chrome = processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(&path))
         .iter()
-        .flat_map(|process| process.cmd())
-        .any(|argument| argument.to_string_lossy() == marker_flag.as_str());
+        .any(|process| command_line_names(process.cmd(), &marker_flag));
     pool.shutdown().await;
 
     assert!(
