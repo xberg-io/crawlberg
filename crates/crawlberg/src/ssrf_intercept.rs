@@ -3233,7 +3233,8 @@ mod race_tests {
             "the launched Chrome must be killed: {killed:?}"
         );
 
-        let checked = target_is_open(&browser, &TargetId::new("missing"));
+        let missing = TargetId::new("missing");
+        let checked = target_is_open(&browser, &missing);
         let reply = tokio::time::timeout(Duration::from_secs(20), checked).await;
         assert!(
             matches!(reply, Ok(Err(_))),
