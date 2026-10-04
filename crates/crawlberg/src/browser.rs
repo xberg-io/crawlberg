@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use chromiumoxide::browser::Browser;
 use chromiumoxide::cdp::browser_protocol::target::TargetId;
-use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::Instrument as _;
 
@@ -33,6 +33,81 @@ mod launch;
 mod navigation;
 #[cfg(test)]
 mod one_shot_ssrf_tests;
+
+/// ~keep A cancelled caller leaves its supervised launch running to completion. This global cap
+/// ~keep deliberately applies backpressure across profile-lock waits, launches and endpoint
+/// ~keep connects so repeated cancellations cannot accumulate unbounded detached work.
+const MAX_SUPERVISED_LAUNCHES: usize = 4;
+static ONE_SHOT_LAUNCH_GATE: std::sync::LazyLock<Arc<Semaphore>> =
+    std::sync::LazyLock::new(|| Arc::new(Semaphore::new(MAX_SUPERVISED_LAUNCHES)));
+
+#[cfg(test)]
+struct CompletedLaunchHook {
+    marker: String,
+    completed: tokio::sync::oneshot::Sender<Result<std::path::PathBuf, String>>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+static COMPLETED_LAUNCH_HOOK: std::sync::LazyLock<std::sync::Mutex<Option<CompletedLaunchHook>>> =
+    std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+struct PendingClaimHook {
+    marker: String,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+static PENDING_CLAIM_HOOK: std::sync::LazyLock<std::sync::Mutex<Option<PendingClaimHook>>> =
+    std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+type CompletedLaunchNotification = (
+    tokio::sync::oneshot::Sender<Result<std::path::PathBuf, String>>,
+    Result<std::path::PathBuf, String>,
+);
+
+#[cfg(test)]
+fn prepare_completed_launch_notification(
+    config: &CrawlConfig,
+    launched: &Result<Launched, CrawlError>,
+) -> Option<CompletedLaunchNotification> {
+    let hook = {
+        let mut slot = COMPLETED_LAUNCH_HOOK.lock().unwrap_or_else(|error| error.into_inner());
+        match slot.as_ref() {
+            Some(hook) if config.browser.chrome_args.iter().any(|arg| arg == &hook.marker) => slot.take(),
+            _ => None,
+        }
+    };
+    let hook = hook?;
+    let completed = match launched {
+        Ok((_, _, Some(UserDataDir::Scratch(profile)), _, _)) => Ok(profile.path().to_path_buf()),
+        Ok(_) => Err("the supervised test launch did not create a scratch profile".to_owned()),
+        Err(error) => Err(error.to_string()),
+    };
+    let CompletedLaunchHook {
+        marker,
+        completed: completed_tx,
+        release,
+    } = hook;
+    *PENDING_CLAIM_HOOK.lock().unwrap_or_else(|error| error.into_inner()) = Some(PendingClaimHook { marker, release });
+    Some((completed_tx, completed))
+}
+
+#[cfg(test)]
+async fn hold_before_claim(config: &CrawlConfig) {
+    let hook = {
+        let mut slot = PENDING_CLAIM_HOOK.lock().unwrap_or_else(|error| error.into_inner());
+        match slot.as_ref() {
+            Some(hook) if config.browser.chrome_args.iter().any(|arg| arg == &hook.marker) => slot.take(),
+            _ => None,
+        }
+    };
+    if let Some(hook) = hook {
+        let _ = hook.release.await;
+    }
+}
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -328,6 +403,94 @@ async fn release_pooled_page(
     drop(permit);
 }
 
+struct UnclaimedLaunch {
+    launched: Option<Launched>,
+    shutdown_timeout: Duration,
+}
+
+impl UnclaimedLaunch {
+    fn new(launched: Launched, shutdown_timeout: Duration) -> Self {
+        Self {
+            launched: Some(launched),
+            shutdown_timeout,
+        }
+    }
+
+    fn claim(mut self) -> Launched {
+        self.launched.take().expect("an unclaimed launch is taken only once")
+    }
+}
+
+impl Drop for UnclaimedLaunch {
+    fn drop(&mut self) {
+        let Some(launched) = self.launched.take() else {
+            return;
+        };
+        let shutdown_timeout = self.shutdown_timeout;
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => drop(handle.spawn(teardown_unclaimed_launch(launched, shutdown_timeout))),
+            Err(_) => tracing::warn!(
+                "an unclaimed one-shot browser launch dropped outside its Tokio runtime; runtime shutdown cleanup is unchanged"
+            ),
+        }
+    }
+}
+
+/// ~keep Supervise ordinary future cancellation while the Tokio runtime remains active. Runtime
+/// ~keep shutdown still cancels runtime-owned tasks and is outside this ownership boundary.
+async fn launch_one_shot(config: &CrawlConfig) -> Result<Launched, CrawlError> {
+    let launch_permit = Arc::clone(&ONE_SHOT_LAUNCH_GATE)
+        .acquire_owned()
+        .await
+        .map_err(|error| CrawlError::browser_error(format!("browser launch capacity closed: {error}")))?;
+    let config = config.clone();
+    #[cfg(test)]
+    let claim_config = config.clone();
+    let shutdown_timeout = config.browser.shutdown_timeout;
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let launched = launch_or_connect(&config).await;
+        #[cfg(test)]
+        let completed_notification = prepare_completed_launch_notification(&config, &launched);
+        let guarded = launched.map(|launched| UnclaimedLaunch::new(launched, shutdown_timeout));
+        let send_succeeded = result_tx.send(guarded).is_ok();
+        #[cfg(test)]
+        if send_succeeded && let Some((completed_tx, completed)) = completed_notification {
+            let _ = completed_tx.send(completed);
+        }
+        #[cfg(not(test))]
+        let _ = send_succeeded;
+        drop(launch_permit);
+    });
+    let received = result_rx
+        .await
+        .map_err(|error| CrawlError::browser_error(format!("browser launch task ended without a result: {error}")))?;
+    #[cfg(test)]
+    hold_before_claim(&claim_config).await;
+    let guarded = received?;
+    Ok(guarded.claim())
+}
+
+async fn teardown_unclaimed_launch(
+    (browser, handler, data_dir, egress, profile_hold): Launched,
+    shutdown_timeout: Duration,
+) {
+    let handler_handle = spawn_watched_handler(handler).0;
+    match data_dir {
+        Some(UserDataDir::Scratch(profile)) => {
+            let path = profile.path().to_path_buf();
+            kill_browser(browser, handler_handle, path, shutdown_timeout).await;
+            drop(profile);
+        }
+        profile => {
+            release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+            drop(profile);
+        }
+    }
+    drop(egress);
+    drop(profile_hold);
+}
+
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
 ///
 /// `BrowserConfig::overall_timeout` bounds launch, page creation, navigation,
@@ -350,7 +513,7 @@ async fn one_shot_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let launched = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
+    let launched = match tokio::time::timeout_at(deadline, launch_one_shot(config)).await {
         Ok(Ok(launched)) => launched,
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(overall_deadline_error(overall_timeout)),
@@ -658,5 +821,67 @@ mod tests {
         );
         let direct = native_fetch_route(&site, "/missing", &executor).await;
         assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
+    }
+}
+
+#[cfg(test)]
+mod launch_supervision_tests {
+    use chromiumoxide::detection::{DetectionOptions, default_executable};
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn cancelling_one_shot_after_launch_reaps_its_unclaimed_chrome() {
+        let test_name = "cancelling_one_shot_after_launch_reaps_its_unclaimed_chrome";
+        let Ok(chrome) = default_executable(DetectionOptions::default()) else {
+            eprintln!("skipping {test_name} because no usable Chrome was found");
+            return;
+        };
+        let marker = format!("--crawlberg-test-launch-supervision={}", std::process::id());
+        let (completed_tx, completed_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        *COMPLETED_LAUNCH_HOOK.lock().unwrap_or_else(|error| error.into_inner()) = Some(CompletedLaunchHook {
+            marker: marker.clone(),
+            completed: completed_tx,
+            release: release_rx,
+        });
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(chrome),
+                chrome_args: vec![marker],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let fetch = tokio::spawn(async move { one_shot_fetch("about:blank", &config, None, false).await });
+        let completed = tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, completed_rx)
+            .await
+            .expect("the supervised Chrome launch must finish within the process-test bound")
+            .expect("the launch hook must report its result");
+        let profile = match completed {
+            Ok(profile) => profile,
+            Err(error) => {
+                let _ = release_tx.send(());
+                let _ = fetch.await;
+                eprintln!("skipping {test_name} because Chrome failed to launch: {error}");
+                return;
+            }
+        };
+
+        fetch.abort();
+        match fetch.await {
+            Err(error) if error.is_cancelled() => {}
+            Err(_) => panic!("the public one-shot future must end by cancellation"),
+            Ok(_) => panic!("the public one-shot future must not complete after abort"),
+        }
+        let _ = release_tx.send(());
+
+        crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&profile);
+        assert_eq!(
+            crate::browser_pool::tests::chrome_process_count_for_profile(&profile),
+            0,
+            "no Chrome process may keep using the cancelled fetch's profile"
+        );
     }
 }
