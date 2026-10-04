@@ -378,43 +378,6 @@ async fn interact_on_an_external_browser_starts_with_its_cookies() {
     );
 }
 
-/// Ten actions that send nothing cost little more than none: the check waits only while a
-/// request is being judged.
-#[tokio::test]
-async fn interact_actions_that_send_nothing_add_little_time() {
-    let test_name = "interact_actions_that_send_nothing_add_little_time";
-    let (_site, seed) = seed_site("<p>start</p>").await;
-    let engine = create_engine(Some(config())).expect("engine must build");
-    let mut none = Vec::new();
-    let mut ten = Vec::new();
-    for _ in 0..3 {
-        let started = std::time::Instant::now();
-        match interact(&engine, &seed, Vec::new()).await {
-            Ok(_) => {}
-            Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
-                announce_chrome_skip(test_name, &message);
-                return;
-            }
-            Err(error) => panic!("{test_name}: interact must succeed: {error:?}"),
-        }
-        none.push(started.elapsed());
-        let started = std::time::Instant::now();
-        let actions = (0..10).map(|i| execute_js(&format!("return {i}"))).collect();
-        let result = interact(&engine, &seed, actions).await.expect("interact must succeed");
-        assert!(result.action_results.iter().all(|action| action.success));
-        ten.push(started.elapsed());
-    }
-    none.sort_unstable();
-    ten.sort_unstable();
-    let per_action = ten[1].saturating_sub(none[1]) / 10;
-    assert!(
-        per_action < Duration::from_millis(60),
-        "{test_name}: each action added {per_action:?} (none {:?}, ten {:?})",
-        none[1],
-        ten[1]
-    );
-}
-
 /// A main-frame navigation refused during the extra wait, before any action, leaves Chrome's
 /// error page in place of the page, so the session fails with the SSRF policy error.
 #[tokio::test]

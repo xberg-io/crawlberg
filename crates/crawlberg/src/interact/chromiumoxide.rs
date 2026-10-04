@@ -772,6 +772,59 @@ fn build_interact_launch_builder(
 mod tests {
     use super::*;
 
+    /// Ten actions that send nothing never enter the request-settling poll loop.
+    ///
+    /// ~keep Exact per-action counts replace the shared-host wall-clock comparison that flakes
+    /// ~keep under concurrent Chrome load (xberg-io/crawlberg#590).
+    #[tokio::test]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn actions_that_send_nothing_do_not_poll_for_requests_to_settle() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TEST_NAME: &str = "actions_that_send_nothing_do_not_poll_for_requests_to_settle";
+        let chrome = match chromiumoxide::detection::default_executable(Default::default()) {
+            Ok(chrome) => chrome,
+            Err(message) => {
+                eprintln!("skipping {TEST_NAME}: no usable Chrome: {message}");
+                return;
+            }
+        };
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<p>start</p>", "text/html"))
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(chrome),
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let actions: Vec<_> = (0..10)
+            .map(|index| PageAction::ExecuteJs {
+                script: format!("return {index}"),
+            })
+            .collect();
+
+        let (result, action_waits) =
+            crate::ssrf_intercept::with_recorded_action_waits(run(&site.uri(), &actions, &config)).await;
+        let result = result.unwrap_or_else(|error| panic!("{TEST_NAME}: interact must succeed: {error:?}"));
+
+        assert!(
+            result.action_results.iter().all(|action| action.success),
+            "{TEST_NAME}: every action must succeed: {:?}",
+            result.action_results
+        );
+        assert_eq!(
+            action_waits,
+            vec![(Duration::from_millis(25), 0); actions.len()],
+            "{TEST_NAME}: every action must use only the short grace and never poll for absent requests"
+        );
+    }
+
     #[tokio::test]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn a_chrome_args_flag_reaches_the_chrome_interact_starts() {

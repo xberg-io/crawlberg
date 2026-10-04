@@ -536,6 +536,8 @@ struct TestDelays {
     bypass_egress: bool,
     /// ~keep Turn interception off at a killed browser's stop so a negative control isolates the SSRF proxy.
     disable_interception_on_stop: bool,
+    /// ~keep Per action, its attribution grace and subsequent request-settling poll count.
+    action_waits: Arc<Mutex<Vec<(Duration, usize)>>>,
 }
 
 /// How long a stopped check keeps its browser up before the stop returns, and the URLs of the
@@ -593,6 +595,18 @@ pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
         ..TestDelays::default()
     };
     (CALL_SITE_DELAYS.scope(delays, body).await, stop_hold)
+}
+
+#[cfg(test)]
+pub(crate) async fn with_recorded_action_waits<F: std::future::Future>(body: F) -> (F::Output, Vec<(Duration, usize)>) {
+    let action_waits = Arc::new(Mutex::new(Vec::new()));
+    let delays = TestDelays {
+        action_waits: Arc::clone(&action_waits),
+        ..TestDelays::default()
+    };
+    let output = CALL_SITE_DELAYS.scope(delays, body).await;
+    let recorded = lock(&action_waits).clone();
+    (output, recorded)
 }
 
 /// A page fixture on `localhost` that repeatedly reaches a denied address, and the config that
@@ -1318,11 +1332,14 @@ impl Watch {
     /// ~keep A request is matched to its page before the page counts it, and matching a frame
     /// ~keep the registry does not know yet looks through the frame trees of every live target.
     /// ~keep A wait on the page's count alone ended during that match and missed the request (#192).
-    async fn settle_paused(&self, from: Option<Instant>, to: Instant) {
+    async fn settle_paused(&self, from: Option<Instant>, to: Instant) -> usize {
         let deadline = Instant::now() + ACTION_SETTLE_LIMIT;
+        let mut sleeps = 0;
         while self.unsettled(from, to) && Instant::now() < deadline {
+            sleeps += 1;
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        sleeps
     }
 
     /// Whether a request of the page is being judged, or a request paused from `from` until
@@ -1352,7 +1369,9 @@ impl Watch {
     pub(crate) async fn refusal_during(&self, started: Instant, grace: Duration) -> Option<(String, String)> {
         let cutoff = Instant::now() + grace;
         tokio::time::sleep_until(cutoff.into()).await;
-        self.settle_paused(Some(started), cutoff).await;
+        let _settle_sleeps = self.settle_paused(Some(started), cutoff).await;
+        #[cfg(test)]
+        lock(&self.shared.delays.action_waits).push((grace, _settle_sleeps));
         let mut refusals = lock(&self.page.refusals);
         let first = refusals
             .iter()
