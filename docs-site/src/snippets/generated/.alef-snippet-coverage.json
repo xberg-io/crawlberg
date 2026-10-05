@@ -195,6 +195,10 @@
     "c/redirect/redirect-meta-refresh.md",
     "c/redirect/redirect-refresh-header.md",
     "c/redirect/redirect-to-404.md",
+    "c/robots/crawl-robots-header-nofollow-on.md",
+    "c/robots/crawl-robots-meta-nofollow-off.md",
+    "c/robots/crawl-robots-meta-nofollow-on.md",
+    "c/robots/crawl-robots-noindex-on.md",
     "c/robots/robots-allow-all.md",
     "c/robots/robots-allow-override.md",
     "c/robots/robots-comments-handling.md",
@@ -456,6 +460,10 @@
     "csharp/redirect/redirect-meta-refresh.md",
     "csharp/redirect/redirect-refresh-header.md",
     "csharp/redirect/redirect-to-404.md",
+    "csharp/robots/crawl-robots-header-nofollow-on.md",
+    "csharp/robots/crawl-robots-meta-nofollow-off.md",
+    "csharp/robots/crawl-robots-meta-nofollow-on.md",
+    "csharp/robots/crawl-robots-noindex-on.md",
     "csharp/robots/robots-allow-all.md",
     "csharp/robots/robots-allow-override.md",
     "csharp/robots/robots-comments-handling.md",
@@ -725,6 +733,10 @@
     "dart/redirect/redirect-meta-refresh.md",
     "dart/redirect/redirect-refresh-header.md",
     "dart/redirect/redirect-to-404.md",
+    "dart/robots/crawl-robots-header-nofollow-on.md",
+    "dart/robots/crawl-robots-meta-nofollow-off.md",
+    "dart/robots/crawl-robots-meta-nofollow-on.md",
+    "dart/robots/crawl-robots-noindex-on.md",
     "dart/robots/robots-allow-all.md",
     "dart/robots/robots-allow-override.md",
     "dart/robots/robots-comments-handling.md",
@@ -985,6 +997,10 @@
     "elixir/redirect/redirect-meta-refresh.md",
     "elixir/redirect/redirect-refresh-header.md",
     "elixir/redirect/redirect-to-404.md",
+    "elixir/robots/crawl-robots-header-nofollow-on.md",
+    "elixir/robots/crawl-robots-meta-nofollow-off.md",
+    "elixir/robots/crawl-robots-meta-nofollow-on.md",
+    "elixir/robots/crawl-robots-noindex-on.md",
     "elixir/robots/robots-allow-all.md",
     "elixir/robots/robots-allow-override.md",
     "elixir/robots/robots-comments-handling.md",
@@ -1252,6 +1268,10 @@
     "go/redirect/redirect-meta-refresh.md",
     "go/redirect/redirect-refresh-header.md",
     "go/redirect/redirect-to-404.md",
+    "go/robots/crawl-robots-header-nofollow-on.md",
+    "go/robots/crawl-robots-meta-nofollow-off.md",
+    "go/robots/crawl-robots-meta-nofollow-on.md",
+    "go/robots/crawl-robots-noindex-on.md",
     "go/robots/robots-allow-all.md",
     "go/robots/robots-allow-override.md",
     "go/robots/robots-comments-handling.md",
@@ -1521,6 +1541,10 @@
     "java/redirect/redirect-meta-refresh.md",
     "java/redirect/redirect-refresh-header.md",
     "java/redirect/redirect-to-404.md",
+    "java/robots/crawl-robots-header-nofollow-on.md",
+    "java/robots/crawl-robots-meta-nofollow-off.md",
+    "java/robots/crawl-robots-meta-nofollow-on.md",
+    "java/robots/crawl-robots-noindex-on.md",
     "java/robots/robots-allow-all.md",
     "java/robots/robots-allow-override.md",
     "java/robots/robots-comments-handling.md",
@@ -1790,6 +1814,10 @@
     "kotlin-android/redirect/redirect-meta-refresh.md",
     "kotlin-android/redirect/redirect-refresh-header.md",
     "kotlin-android/redirect/redirect-to-404.md",
+    "kotlin-android/robots/crawl-robots-header-nofollow-on.md",
+    "kotlin-android/robots/crawl-robots-meta-nofollow-off.md",
+    "kotlin-android/robots/crawl-robots-meta-nofollow-on.md",
+    "kotlin-android/robots/crawl-robots-noindex-on.md",
     "kotlin-android/robots/robots-allow-all.md",
     "kotlin-android/robots/robots-allow-override.md",
     "kotlin-android/robots/robots-comments-handling.md",
@@ -2059,6 +2087,10 @@
     "php/redirect/redirect-meta-refresh.md",
     "php/redirect/redirect-refresh-header.md",
     "php/redirect/redirect-to-404.md",
+    "php/robots/crawl-robots-header-nofollow-on.md",
+    "php/robots/crawl-robots-meta-nofollow-off.md",
+    "php/robots/crawl-robots-meta-nofollow-on.md",
+    "php/robots/crawl-robots-noindex-on.md",
     "php/robots/robots-allow-all.md",
     "php/robots/robots-allow-override.md",
     "php/robots/robots-comments-handling.md",
@@ -2328,6 +2360,10 @@
     "python/redirect/redirect-meta-refresh.md",
     "python/redirect/redirect-refresh-header.md",
     "python/redirect/redirect-to-404.md",
+    "python/robots/crawl-robots-header-nofollow-on.md",
+    "python/robots/crawl-robots-meta-nofollow-off.md",
+    "python/robots/crawl-robots-meta-nofollow-on.md",
+    "python/robots/crawl-robots-noindex-on.md",
     "python/robots/robots-allow-all.md",
     "python/robots/robots-allow-override.md",
     "python/robots/robots-comments-handling.md",
@@ -2597,6 +2633,10 @@
     "ruby/redirect/redirect-meta-refresh.md",
     "ruby/redirect/redirect-refresh-header.md",
     "ruby/redirect/redirect-to-404.md",
+    "ruby/robots/crawl-robots-header-nofollow-on.md",
+    "ruby/robots/crawl-robots-meta-nofollow-off.md",
+    "ruby/robots/crawl-robots-meta-nofollow-on.md",
+    "ruby/robots/crawl-robots-noindex-on.md",
     "ruby/robots/robots-allow-all.md",
     "ruby/robots/robots-allow-override.md",
     "ruby/robots/robots-comments-handling.md",
@@ -2866,6 +2906,10 @@
     "rust/redirect/redirect-meta-refresh.md",
     "rust/redirect/redirect-refresh-header.md",
     "rust/redirect/redirect-to-404.md",
+    "rust/robots/crawl-robots-header-nofollow-on.md",
+    "rust/robots/crawl-robots-meta-nofollow-off.md",
+    "rust/robots/crawl-robots-meta-nofollow-on.md",
+    "rust/robots/crawl-robots-noindex-on.md",
     "rust/robots/robots-allow-all.md",
     "rust/robots/robots-allow-override.md",
     "rust/robots/robots-comments-handling.md",
@@ -3126,6 +3170,10 @@
     "swift/redirect/redirect-meta-refresh.md",
     "swift/redirect/redirect-refresh-header.md",
     "swift/redirect/redirect-to-404.md",
+    "swift/robots/crawl-robots-header-nofollow-on.md",
+    "swift/robots/crawl-robots-meta-nofollow-off.md",
+    "swift/robots/crawl-robots-meta-nofollow-on.md",
+    "swift/robots/crawl-robots-noindex-on.md",
     "swift/robots/robots-allow-all.md",
     "swift/robots/robots-allow-override.md",
     "swift/robots/robots-comments-handling.md",
@@ -3393,6 +3441,10 @@
     "typescript/redirect/redirect-meta-refresh.md",
     "typescript/redirect/redirect-refresh-header.md",
     "typescript/redirect/redirect-to-404.md",
+    "typescript/robots/crawl-robots-header-nofollow-on.md",
+    "typescript/robots/crawl-robots-meta-nofollow-off.md",
+    "typescript/robots/crawl-robots-meta-nofollow-on.md",
+    "typescript/robots/crawl-robots-noindex-on.md",
     "typescript/robots/robots-allow-all.md",
     "typescript/robots/robots-allow-override.md",
     "typescript/robots/robots-comments-handling.md",
@@ -3661,6 +3713,10 @@
     "wasm/redirect/redirect-meta-refresh.md",
     "wasm/redirect/redirect-refresh-header.md",
     "wasm/redirect/redirect-to-404.md",
+    "wasm/robots/crawl-robots-header-nofollow-on.md",
+    "wasm/robots/crawl-robots-meta-nofollow-off.md",
+    "wasm/robots/crawl-robots-meta-nofollow-on.md",
+    "wasm/robots/crawl-robots-noindex-on.md",
     "wasm/robots/robots-allow-all.md",
     "wasm/robots/robots-allow-override.md",
     "wasm/robots/robots-comments-handling.md",
@@ -3913,6 +3969,10 @@
     "zig/redirect/redirect-meta-refresh.md",
     "zig/redirect/redirect-refresh-header.md",
     "zig/redirect/redirect-to-404.md",
+    "zig/robots/crawl-robots-header-nofollow-on.md",
+    "zig/robots/crawl-robots-meta-nofollow-off.md",
+    "zig/robots/crawl-robots-meta-nofollow-on.md",
+    "zig/robots/crawl-robots-noindex-on.md",
     "zig/robots/robots-allow-all.md",
     "zig/robots/robots-allow-override.md",
     "zig/robots/robots-comments-handling.md",
@@ -6309,6 +6369,54 @@
         "language": "c"
       },
       "path": "c/redirect/redirect-to-404.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "c"
+      },
+      "path": "c/robots/crawl-robots-header-nofollow-on.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "c"
+      },
+      "path": "c/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "c"
+      },
+      "path": "c/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "c"
+      },
+      "path": "c/robots/crawl-robots-noindex-on.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -9441,6 +9549,54 @@
         "language": "csharp"
       },
       "path": "csharp/redirect/redirect-to-404.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/crawl-robots-header-nofollow-on.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/crawl-robots-noindex-on.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -12677,6 +12833,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "dart"
+      },
+      "path": "dart/robots/crawl-robots-header-nofollow-on.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "dart"
+      },
+      "path": "dart/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "dart"
+      },
+      "path": "dart/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "dart"
+      },
+      "path": "dart/robots/crawl-robots-noindex-on.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "dart"
       },
@@ -15789,6 +15993,54 @@
         "language": "elixir"
       },
       "path": "elixir/redirect/redirect-to-404.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/crawl-robots-header-nofollow-on.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/crawl-robots-noindex-on.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18993,6 +19245,54 @@
         "language": "go"
       },
       "path": "go/redirect/redirect-to-404.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "go"
+      },
+      "path": "go/robots/crawl-robots-header-nofollow-on.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "go"
+      },
+      "path": "go/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "go"
+      },
+      "path": "go/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "go"
+      },
+      "path": "go/robots/crawl-robots-noindex-on.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -22229,6 +22529,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "java"
+      },
+      "path": "java/robots/crawl-robots-header-nofollow-on.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "java"
+      },
+      "path": "java/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "java"
+      },
+      "path": "java/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "java"
+      },
+      "path": "java/robots/crawl-robots-noindex-on.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "java"
       },
@@ -25449,6 +25797,54 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/redirect/redirect-to-404.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/crawl-robots-header-nofollow-on.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/crawl-robots-noindex-on.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28685,6 +29081,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "php"
+      },
+      "path": "php/robots/crawl-robots-header-nofollow-on.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "php"
+      },
+      "path": "php/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "php"
+      },
+      "path": "php/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "php"
+      },
+      "path": "php/robots/crawl-robots-noindex-on.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "php"
       },
@@ -31913,6 +32357,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "python"
+      },
+      "path": "python/robots/crawl-robots-header-nofollow-on.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "python"
+      },
+      "path": "python/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "python"
+      },
+      "path": "python/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "python"
+      },
+      "path": "python/robots/crawl-robots-noindex-on.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "python"
       },
@@ -35133,6 +35625,54 @@
         "language": "ruby"
       },
       "path": "ruby/redirect/redirect-to-404.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/crawl-robots-header-nofollow-on.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/crawl-robots-noindex-on.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38896,6 +39436,66 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "rust"
+      },
+      "path": "rust/robots/crawl-robots-header-nofollow-on.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "rust"
+      },
+      "path": "rust/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "rust"
+      },
+      "path": "rust/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "rust"
+      },
+      "path": "rust/robots/crawl-robots-noindex-on.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "rust"
       },
@@ -42233,6 +42833,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "swift"
+      },
+      "path": "swift/robots/crawl-robots-header-nofollow-on.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "swift"
+      },
+      "path": "swift/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "swift"
+      },
+      "path": "swift/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "swift"
+      },
+      "path": "swift/robots/crawl-robots-noindex-on.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "swift"
       },
@@ -45429,6 +46077,54 @@
         "language": "node"
       },
       "path": "typescript/redirect/redirect-to-404.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "node"
+      },
+      "path": "typescript/robots/crawl-robots-header-nofollow-on.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "node"
+      },
+      "path": "typescript/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "node"
+      },
+      "path": "typescript/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "node"
+      },
+      "path": "typescript/robots/crawl-robots-noindex-on.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48653,6 +49349,54 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/crawl-robots-header-nofollow-on.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/crawl-robots-noindex-on.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_allow_all",
         "language": "wasm"
       },
@@ -51669,6 +52413,54 @@
         "language": "zig"
       },
       "path": "zig/redirect/redirect-to-404.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_header_nofollow_on",
+        "language": "zig"
+      },
+      "path": "zig/robots/crawl-robots-header-nofollow-on.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_off",
+        "language": "zig"
+      },
+      "path": "zig/robots/crawl-robots-meta-nofollow-off.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_meta_nofollow_on",
+        "language": "zig"
+      },
+      "path": "zig/robots/crawl-robots-meta-nofollow-on.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_robots_noindex_on",
+        "language": "zig"
+      },
+      "path": "zig/robots/crawl-robots-noindex-on.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -56999,6 +57791,246 @@
     },
     {
       "fixture_id": "crawl_redirect_in_traversal",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
       "language": "zig"
     },
     {
@@ -72937,6 +73969,246 @@
     },
     {
       "fixture_id": "crawl_redirect_in_traversal",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_header_nofollow_on",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_off",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_meta_nofollow_on",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_robots_noindex_on",
       "language": "zig"
     },
     {

@@ -4137,6 +4137,15 @@ int32_t cberg_ssrf_policy_deny_private(CBERGAlefHandle handle);
 char *cberg_ssrf_policy_allowlist(CBERGAlefHandle handle);
 
 /**
+ * Get the `denylist` field from a `SsrfPolicy`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_ssrf_policy_denylist(CBERGAlefHandle handle);
+
+/**
  * Get the `max_redirects` field from a `SsrfPolicy`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -4170,13 +4179,13 @@ CBERGAlefHandle cberg_ssrf_policy_default(void);
  * - Rust-side SSRF checking is unenforceable and redundant in a wasm32 context.
  * - For testing and localhost access, the host's network sandbox is the enforcing boundary.
  *
- * **Node.js caveat:** `deny_private` (whatever its value) has no effect on hostname-based
- * requests under `wasm32`. There is no DNS resolution on this target, so `validate_url`
- * only ever checks a literal IP host; a domain name falls straight through to `Ok(())`. In a
- * browser this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node
- * service embedding this wasm module can be driven to internal hosts by domain name even
- * though `deny_private = true`. Do not rely on this policy to stop that in Node â enforce
- * egress restrictions (network policy, firewall, proxy allowlist) outside the process.
+ * **Node.js caveat:** `deny_private` and `denylist` have no effect on hostname-based requests
+ * under `wasm32`. There is no DNS resolution on this target, so `validate_url` only ever
+ * checks a literal IP host; a domain name falls straight through to `Ok(())`. In a browser
+ * this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node service
+ * embedding this wasm module can be driven to internal hosts by domain name despite the
+ * policy. Enforce egress restrictions (network policy, firewall, proxy allowlist) outside
+ * the process.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */

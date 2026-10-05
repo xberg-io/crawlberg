@@ -3867,13 +3867,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SsrfPolicy dco_decode_ssrf_policy(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return SsrfPolicy(
       denyPrivate: dco_decode_bool(arr[0]),
       allowlist: dco_decode_list_host_matcher(arr[1]),
-      maxRedirects: dco_decode_i_64(arr[2]),
-      schemeAllowlist: dco_decode_list_String(arr[3]),
+      denylist: dco_decode_list_host_matcher(arr[2]),
+      maxRedirects: dco_decode_i_64(arr[3]),
+      schemeAllowlist: dco_decode_list_String(arr[4]),
     );
   }
 
@@ -5836,11 +5837,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_denyPrivate = sse_decode_bool(deserializer);
     var var_allowlist = sse_decode_list_host_matcher(deserializer);
+    var var_denylist = sse_decode_list_host_matcher(deserializer);
     var var_maxRedirects = sse_decode_i_64(deserializer);
     var var_schemeAllowlist = sse_decode_list_String(deserializer);
     return SsrfPolicy(
       denyPrivate: var_denyPrivate,
       allowlist: var_allowlist,
+      denylist: var_denylist,
       maxRedirects: var_maxRedirects,
       schemeAllowlist: var_schemeAllowlist,
     );
@@ -7480,6 +7483,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_bool(self.denyPrivate, serializer);
     sse_encode_list_host_matcher(self.allowlist, serializer);
+    sse_encode_list_host_matcher(self.denylist, serializer);
     sse_encode_i_64(self.maxRedirects, serializer);
     sse_encode_list_String(self.schemeAllowlist, serializer);
   }

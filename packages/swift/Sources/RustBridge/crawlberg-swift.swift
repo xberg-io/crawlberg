@@ -4381,8 +4381,8 @@ public class SsrfPolicy: SsrfPolicyRefMut {
     }
 }
 extension SsrfPolicy {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ deny_private: Bool, _ allowlist: RustVec<HostMatcher>, _ max_redirects: UInt8, _ scheme_allowlist: RustVec<GenericIntoRustString>) {
-        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, { let val = allowlist; val.isOwned = false; return val.ptr }(), max_redirects, { let val = scheme_allowlist; val.isOwned = false; return val.ptr }()))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ deny_private: Bool, _ allowlist: RustVec<HostMatcher>, _ denylist: RustVec<HostMatcher>, _ max_redirects: UInt8, _ scheme_allowlist: RustVec<GenericIntoRustString>) {
+        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, { let val = allowlist; val.isOwned = false; return val.ptr }(), { let val = denylist; val.isOwned = false; return val.ptr }(), max_redirects, { let val = scheme_allowlist; val.isOwned = false; return val.ptr }()))
     }
 }
 public class SsrfPolicyRefMut: SsrfPolicyRef {
@@ -4404,6 +4404,10 @@ extension SsrfPolicyRef {
 
     public func allowlist() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$SsrfPolicy$allowlist(ptr))
+    }
+
+    public func denylist() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$SsrfPolicy$denylist(ptr))
     }
 
     public func maxRedirects() -> UInt8 {

@@ -67,20 +67,20 @@ Future<BatchCrawlResults> batchCrawl({
   required List<String> urls,
 }) => RustLib.instance.api.crateBatchCrawl(engine: engine, urls: urls);
 
-Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
+Future<ProxyConfig> createProxyConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
 
 Future<ExtractionMeta> createExtractionMetaFromJson({required String json}) =>
     RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
-
-Future<ProxyConfig> createProxyConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
 
 Future<ContentConfig> createContentConfigFromJson({required String json}) =>
     RustLib.instance.api.crateCreateContentConfigFromJson(json: json);
 
 Future<BrowserConfig> createBrowserConfigFromJson({required String json}) =>
     RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
+
+Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
 
 Future<BrowserExtras> createBrowserExtrasFromJson({required String json}) =>
     RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);
@@ -185,6 +185,9 @@ Future<BatchCrawlResults> createBatchCrawlResultsFromJson({
 Future<SsrfPolicy> createSsrfPolicyFromJson({required String json}) =>
     RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
 
+Future<AuthConfig> createAuthConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateAuthConfigFromJson(json: json);
+
 Future<BrowserMode> createBrowserModeFromJson({required String json}) =>
     RustLib.instance.api.crateCreateBrowserModeFromJson(json: json);
 
@@ -206,9 +209,6 @@ Future<CrawlStrategyKind> createCrawlStrategyKindFromJson({
 Future<ContentFilterKind> createContentFilterKindFromJson({
   required String json,
 }) => RustLib.instance.api.crateCreateContentFilterKindFromJson(json: json);
-
-Future<AuthConfig> createAuthConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateAuthConfigFromJson(json: json);
 
 Future<LinkType> createLinkTypeFromJson({required String json}) =>
     RustLib.instance.api.crateCreateLinkTypeFromJson(json: json);
@@ -570,6 +570,7 @@ class BrowserConfig {
   final BrowserBackend backend;
 
   /// CDP WebSocket endpoint for connecting to an external browser instance.
+  /// Crawlberg disconnects during teardown but never closes the external browser process. <!-- -->
   final String? endpoint;
 
   /// Timeout for browser page load and rendering (in milliseconds when serialized).
@@ -2798,7 +2799,7 @@ class PageMetadata {
 
 /// Proxy configuration for HTTP requests.
 class ProxyConfig {
-  /// Proxy URL (e.g. "http://proxy:8080", "socks5://proxy:1080").
+  /// Proxy URL (e.g. "http://proxy:8080"). <!-- -->
   final String url;
 
   /// Optional username for proxy authentication.
@@ -3136,7 +3137,7 @@ sealed class SsrfError with _$SsrfError {
   /// Host not on allowlist when an allowlist is configured.
   const factory SsrfError.notOnAllowlist() = SsrfError_NotOnAllowlist;
 
-  /// Allowlist entry is not a parseable CIDR block.
+  /// SSRF policy entry is not a parseable CIDR block.
   const factory SsrfError.invalidCidr({required String field0}) =
       SsrfError_InvalidCidr;
 
@@ -3161,22 +3162,33 @@ class SsrfPolicy {
   /// If true, reject URLs that resolve to private/metadata IP ranges.
   final bool denyPrivate;
 
-  /// Hostnames and IP ranges permitted regardless of `deny_private`.
+  /// Hostnames and IP ranges permitted regardless of `deny_private`, unless a matching
+  /// address is in `denylist`.
   ///
   /// The allowlist is an *override* of `deny_private`, not an intersection with it.
   /// Precedence, in order:
   ///
-  /// 1. `deny_private == false` permits everything; the allowlist is not consulted.
-  /// 2. A hostname matching an `Exact` or `Suffix` entry is permitted immediately,
-  ///    *before* DNS resolution — so the deny-list is never applied to it. This trusts
-  ///    the host string: a name that resolves into private space is still permitted.
-  /// 3. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
+  /// 1. A configured `denylist` CIDR always refuses a matching address.
+  /// 2. `deny_private == false` permits addresses outside `denylist`; the allowlist is not consulted.
+  /// 3. A hostname matching an `Exact` or `Suffix` entry is permitted before applying
+  ///    the built-in deny-list. When `denylist` is non-empty, it is still resolved so
+  ///    custom network denials can be enforced.
+  /// 4. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
   ///    in the default deny-list.
-  /// 4. Otherwise the default deny-list decides.
+  /// 5. Otherwise the default deny-list decides.
   ///
   /// An empty allowlist therefore denies nothing by itself — it simply leaves
   /// `deny_private` and the deny-list in sole control.
   final List<HostMatcher> allowlist;
+
+  /// IP ranges refused regardless of `deny_private` and `allowlist`.
+  ///
+  /// Only [`HostMatcher::Cidr`] entries are valid. Configured denials are checked
+  /// before permissive settings, including against IPv4 addresses embedded in IPv6 and,
+  /// on native targets, every address returned by DNS. They extend the built-in deny-list
+  /// and cannot weaken it. A hostname is refused when an upstream proxy or remote browser
+  /// performs the connection lookup, because that lookup cannot be bound to these checks.
+  final List<HostMatcher> denylist;
 
   /// Maximum number of HTTP redirects to follow during validation.
   final PlatformInt64 maxRedirects;
@@ -3189,6 +3201,7 @@ class SsrfPolicy {
   const SsrfPolicy({
     required this.denyPrivate,
     required this.allowlist,
+    required this.denylist,
     required this.maxRedirects,
     required this.schemeAllowlist,
   });
@@ -3197,6 +3210,7 @@ class SsrfPolicy {
   int get hashCode =>
       denyPrivate.hashCode ^
       allowlist.hashCode ^
+      denylist.hashCode ^
       maxRedirects.hashCode ^
       schemeAllowlist.hashCode;
 
@@ -3207,6 +3221,7 @@ class SsrfPolicy {
           runtimeType == other.runtimeType &&
           denyPrivate == other.denyPrivate &&
           allowlist == other.allowlist &&
+          denylist == other.denylist &&
           maxRedirects == other.maxRedirects &&
           schemeAllowlist == other.schemeAllowlist;
 }

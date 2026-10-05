@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10"
 
 [[package]]
@@ -21,36 +21,16 @@ wheels = [
 ]
 
 [[package]]
-name = "exceptiongroup"
-version = "1.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl", hash = "sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598", size = 16740, upload-time = "2025-11-21T23:01:53.443Z" },
-]
-
-[[package]]
-name = "iniconfig"
-version = "2.3.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
-]
-
-[[package]]
 name = "crawlberg"
-version = "0.3.0rc85"
+version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6e/c3/3ac2a677cb2129d0e526c164a69d065bae524f6658f78436af87fd1995dc/crawlberg-0.3.0rc85.tar.gz", hash = "sha256:30989336ed7083fb2da0f4993dde10cd30cc94b56b5b896cab9e1ba71deff6cc", size = 91419, upload-time = "2026-06-21T23:25:51.828Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/5d/29449d533103f4bf6ac34c64725a9645cd674e5de431784511995013a5e3/crawlberg-1.9.0.tar.gz", hash = "sha256:98de42091853a35af29301b2e32a791267145a0fdb92df36be59c89379236bf4", size = 118703, upload-time = "2026-10-03T21:18:43.508Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/cb/93f0e1301e8c1c6cbcd10d491c8d84e6a1bb725325cf5c3726afb94ef6b1/crawlberg-0.3.0rc85-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:2ede30d013637e87eda9ad1cbe7e52e1f91154cbfaada91ee070cd7f871653e1", size = 8918122, upload-time = "2026-06-21T23:25:42.235Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/65/12c94dab708b9fe831e7301c4bf2d85f492db95cce5b58b00470d357ce34/crawlberg-0.3.0rc85-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:3a8f34af75f66d690799236df446ca2f176081266a17601de92cff6eca24fc08", size = 9755597, upload-time = "2026-06-21T23:25:45.134Z" },
-    { url = "https://files.pythonhosted.org/packages/93/98/2d4f8415021d386d620343f2437194bf008131701865ce666578c4765667/crawlberg-0.3.0rc85-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:9807971c5da55c38b3903e3e51908c87a4b135585276a9b879c99381bdda816f", size = 9718920, upload-time = "2026-06-21T23:25:47.484Z" },
-    { url = "https://files.pythonhosted.org/packages/50/da/d1700d2dfd98eac9da4545ee33a08820f8307da44202abf6758831541593/crawlberg-0.3.0rc85-cp310-abi3-win_amd64.whl", hash = "sha256:2e70133183eef998ada0ce3b8d98360c8c541042aa1047dfa11c79fd61a3e0d0", size = 15597136, upload-time = "2026-06-21T23:25:50.152Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/0c/13279317659310de2b886177c6a237a19ad61ff92951b46fd02ab9bca7b8/crawlberg-1.9.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:d516a317e7f76e595ae11cad5bd12b2702d6c24f492d97a27680819f09b29ccf", size = 11265187, upload-time = "2026-10-03T21:18:33.099Z" },
+    { url = "https://files.pythonhosted.org/packages/50/56/a95fa09d138f9597916c2db6cb32066c5ec205f7bdd9314492938f263a26/crawlberg-1.9.0-cp310-abi3-macosx_11_0_x86_64.whl", hash = "sha256:fcb76c7a96000c5cb190ddba636d654b93ab29f70f451cf9163ea00947b3b1f1", size = 11717811, upload-time = "2026-10-03T21:18:35.119Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/8e/fe5c6520bd37a84311196a6834288805ee9c63696cab1cc8545a3bd3d1b3/crawlberg-1.9.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:30eb73895949eb913383940c4682aed5bae98dc7f0c438ca208f3edc372ba97e", size = 12366780, upload-time = "2026-10-03T21:18:37.137Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/0f/576d295fbb84d20f89711f7cd2a1467341ec32f6ee4d61328d9582fb8413/crawlberg-1.9.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d76bee35404e27ffe3709e1d6a8a00743f40ddd072f910c58724f3790aabc2cc", size = 12311735, upload-time = "2026-10-03T21:18:39.332Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/80/86eabee4b67393e93ab288becb0df682dd8f82670be45776b69058cd729a/crawlberg-1.9.0-cp310-abi3-win_amd64.whl", hash = "sha256:e658efa7fc1001080247e32fdced3f66ae9e7683c38882ac895e7cace59b81f3", size = 18514349, upload-time = "2026-10-03T21:18:41.57Z" },
 ]
 
 [[package]]
@@ -66,10 +46,31 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crawlberg", specifier = ">=0.3.0rc84" },
+    { name = "crawlberg", specifier = ">=1.9.0" },
     { name = "pytest", specifier = ">=7.4" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-timeout", specifier = ">=2.1" },
+]
+
+[[package]]
+name = "exceptiongroup"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl", hash = "sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598", size = 16740, upload-time = "2025-11-21T23:01:53.443Z" },
+]
+
+[[package]]
+name = "iniconfig"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
 ]
 
 [[package]]
