@@ -1,6 +1,7 @@
 {
 	"id": "interact_invalid_selector",
 	"description": "Click on a non-existent selector and verify error in action_results",
+	"test_timeout_ms": 60000,
 	"docs": {
 		"topic": "interaction",
 		"stem": "interact-invalid-selector",
