@@ -60,20 +60,24 @@ pub(super) struct TagAttribute {
     pub(super) value: String,
 }
 
-/// A start tag: its span in the source, whether it is self-closing, and its attributes in
-/// [`RealTags::attrs`]. A kept tag's name is known to the caller, which chose what to keep.
 struct RealTag {
+    name: LocalName,
     span: Range<usize>,
     self_closing: bool,
+    truncated: bool,
     attrs: Range<usize>,
 }
 
 /// A start tag as an HTML parser reads it.
 pub(super) struct StartTag<'t> {
+    /// ~keep The lower-cased name lets one scan retain several URL-bearing element types.
+    pub(super) name: &'t str,
     /// The tag's bytes in the source, from its `<` to just past its `>`.
     pub(super) span: Range<usize>,
     /// Whether the tag ends in `/>`.
     pub(super) self_closing: bool,
+    /// ~keep Whether attributes past [`ATTRIBUTE_LIMIT`] were masked before parsing.
+    pub(super) truncated: bool,
     /// The attributes in source order, values decoded, with no repeated name (an HTML parser
     /// drops every copy of an attribute name after its first on the same tag).
     pub(super) attrs: &'t [TagAttribute],
@@ -83,11 +87,46 @@ impl RealTags {
     /// Every start tag, in document order. The spans do not overlap.
     pub(super) fn iter(&self) -> impl Iterator<Item = StartTag<'_>> {
         self.tags.iter().map(|tag| StartTag {
+            name: &tag.name,
             span: tag.span.clone(),
             self_closing: tag.self_closing,
+            truncated: tag.truncated,
             attrs: &self.attrs[tag.attrs.clone()],
         })
     }
+}
+
+/// Write `tag` into `out` in an unambiguous form, substituting the named attribute values.
+///
+/// ~keep Attribute names outside this conservative set are omitted because tl stops at `=` or a
+/// ~keep quote inside a name; emitting them would reintroduce the parser-boundary ambiguity this
+/// ~keep canonical form exists to remove.
+pub(super) fn write_start_tag(out: &mut String, tag: &StartTag<'_>, replacements: &[(&str, String)]) {
+    out.push('<');
+    out.push_str(tag.name);
+    for attr in tag.attrs {
+        let name = &*attr.name;
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+        {
+            continue;
+        }
+        let value = replacements
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == name).then_some(value.as_str()))
+            .unwrap_or(&attr.value);
+        out.push(' ');
+        out.push_str(name);
+        out.push_str("=\"");
+        out.push_str(&html_escape::encode_quoted_attribute(value));
+        out.push('"');
+    }
+    if tag.self_closing {
+        out.push('/');
+    }
+    out.push('>');
 }
 
 /// Read `source` as an HTML parser does, with scripting off: a crawler that runs no script
@@ -160,13 +199,44 @@ pub(super) fn scan(source: &str, keep: fn(&str) -> bool) -> Scan<'_> {
     feed(from..source.len());
     tokenizer.end();
     let sink = tokenizer.sink;
+    let mut tags = sink.found.into_inner();
+    mark_truncated_tags(&mut tags.tags, bound.truncated_starts.into_iter());
     Scan {
         text: sink.text.into_inner(),
-        tags: sink.found.into_inner(),
+        tags,
         raw_text: sink.raw_text.into_inner(),
         comments: sink.comments.into_inner(),
         cdata: sink.cdata.into_inner(),
         base_href: sink.tree.sink.base_href(),
+    }
+}
+
+/// ~keep Both inputs are in source order, so consuming each truncation offset once avoids an
+/// ~keep adversarial quadratic walk when a page contains many over-wide tags.
+fn mark_truncated_tags(tags: &mut [RealTag], truncated_starts: impl Iterator<Item = usize>) {
+    mark_truncated_tags_with_probe(tags, truncated_starts, || {});
+}
+
+fn mark_truncated_tags_with_probe(
+    tags: &mut [RealTag],
+    truncated_starts: impl Iterator<Item = usize>,
+    mut probe: impl FnMut(),
+) {
+    let mut starts = truncated_starts.peekable();
+    for tag in tags {
+        while starts.peek().is_some_and(|start| {
+            probe();
+            *start < tag.span.start
+        }) {
+            starts.next();
+        }
+        tag.truncated = starts.peek().is_some_and(|start| {
+            probe();
+            tag.span.contains(start)
+        });
+        if tag.truncated {
+            starts.next();
+        }
     }
 }
 
@@ -176,7 +246,7 @@ pub(super) fn scan(source: &str, keep: fn(&str) -> bool) -> Scan<'_> {
 /// ~keep (`finish_attribute`, 0.40.1), so a tag with n names costs n²/2 comparisons, and a page
 /// ~keep author picks n. Real tags carry tens of attributes. At 1024, each attribute is compared
 /// ~keep with at most 1023 others, so the check grows linearly with the page.
-const ATTRIBUTE_LIMIT: usize = 1024;
+pub(crate) const ATTRIBUTE_LIMIT: usize = 1024;
 
 /// A state of a tag being read, from its `<` to its `>`, as html5ever's tokenizer names them.
 #[derive(Clone, Copy)]
@@ -235,6 +305,7 @@ fn tag_step(state: TagState, byte: u8) -> Option<(TagState, bool)> {
 /// tokens html5ever had emitted when it consumed the tag's `<`.
 #[derive(Clone, Copy)]
 struct TagRun {
+    start: usize,
     state: TagState,
     attributes: usize,
     tokens: usize,
@@ -267,6 +338,7 @@ struct AttributeBound {
     tokens_at_lt: Option<usize>,
     /// Where the CDATA section html5ever is in ends, just past its `]]>`.
     cdata_end: Option<usize>,
+    truncated_starts: Vec<usize>,
 }
 
 impl AttributeBound {
@@ -300,6 +372,7 @@ impl AttributeBound {
         if std::mem::take(&mut self.after_lt) {
             if self.run.is_none() && self.cdata_end.is_none() && self.tokens_at_lt != Some(tokens) {
                 self.run = Some(TagRun {
+                    start: range.start.saturating_sub(1),
                     state: TagState::Open,
                     attributes: 0,
                     tokens,
@@ -324,6 +397,7 @@ impl AttributeBound {
                         if at > range.start {
                             return at;
                         }
+                        self.truncated_starts.push(run.start);
                         self.overwriting = true;
                     }
                     run.state = state;
@@ -473,8 +547,10 @@ impl Recorder<'_> {
             value: attr.value.to_string(),
         }));
         found.tags.push(RealTag {
+            name: tag.name.clone(),
             span,
             self_closing: tag.self_closing,
+            truncated: false,
             attrs: first..found.attrs.len(),
         });
     }
@@ -1335,6 +1411,27 @@ mod tests {
         let tag = read.tags.iter().next().expect("one tag");
         assert_eq!(tag.attrs.len(), 1);
         assert_eq!(&*tag.attrs[0].value, "a.html");
+    }
+
+    #[test]
+    fn marks_many_truncated_tags_in_one_pass() {
+        const TAGS: usize = 10_000;
+        let mut tags = (0..TAGS)
+            .map(|index| RealTag {
+                name: local_name!("a"),
+                span: index * 4..index * 4 + 3,
+                self_closing: false,
+                truncated: false,
+                attrs: 0..0,
+            })
+            .collect::<Vec<_>>();
+        let comparisons = std::cell::Cell::new(0);
+        let starts = (0..TAGS).map(|index| index * 4 + 1);
+
+        mark_truncated_tags_with_probe(&mut tags, starts, || comparisons.set(comparisons.get() + 1));
+
+        assert_eq!(tags.iter().filter(|tag| tag.truncated).count(), TAGS);
+        assert_eq!(comparisons.get(), TAGS * 2);
     }
 
     /// The raw-text content the scan reads in `html`, as text.

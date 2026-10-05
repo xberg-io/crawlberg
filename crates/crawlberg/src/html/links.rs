@@ -7,7 +7,7 @@ use url::Url;
 use crate::types::{LinkInfo, LinkType};
 
 use super::raw_text::MaskedHtml;
-use super::real_tags::{RealTags, StartTag};
+use super::real_tags::{RealTags, write_start_tag};
 use super::selectors::SEL_A_HREF;
 use super::{fetchable_address, get_attr, get_url_attr, has_link_qualifier};
 
@@ -61,7 +61,7 @@ pub(crate) fn effective_base_url(base_href: Option<&str>, document_url: &Url) ->
 /// ~keep the link's text, `rel` and qualifiers. A well-formed `<a>` tag rewrites to itself, so
 /// ~keep this changes nothing for one.
 pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkInfo> {
-    let canonical = canonicalize_anchor_tags(&page.text, &page.anchors);
+    let canonical = canonicalize_anchor_tags(&page.text, &page.url_tags);
     let Ok(dom) = super::parse_html(&canonical) else {
         return Vec::new();
     };
@@ -118,8 +118,11 @@ fn canonicalize_anchor_tags<'h>(html: &'h str, tags: &RealTags) -> Cow<'h, str> 
     let mut cursor = 0;
     let mut written = String::new();
     for tag in tags.iter() {
+        if tag.name != "a" {
+            continue;
+        }
         written.clear();
-        write_anchor_tag(&mut written, &tag);
+        write_start_tag(&mut written, &tag, &[]);
         if html[tag.span.clone()] != written {
             out.push_str(&html[cursor..tag.span.start]);
             out.push_str(&written);
@@ -131,39 +134,6 @@ fn canonicalize_anchor_tags<'h>(html: &'h str, tags: &RealTags) -> Cow<'h, str> 
     }
     out.push_str(&html[cursor..]);
     Cow::Owned(out)
-}
-
-/// Write the start tag `tag` into `out` as an HTML parser reads it: `<a`, each attribute once in
-/// source order, double-quoted and encoded, its self-closing slash if it has one, then `>`.
-///
-/// ~keep An attribute name that is not ASCII letters, digits, `-`, `_` or `:` is left out: tl's
-/// ~keep own attribute reader stops at the first `=` or quote in a name, so keeping such a name
-/// ~keep here would reopen the exact ambiguity this rewrite removes.
-fn write_anchor_tag(out: &mut String, tag: &StartTag<'_>) {
-    out.push_str("<a");
-    for attr in tag.attrs {
-        let name = &*attr.name;
-        if !is_plain_attr_name(name) {
-            continue;
-        }
-        out.push(' ');
-        out.push_str(name);
-        out.push_str("=\"");
-        out.push_str(&html_escape::encode_quoted_attribute(&attr.value));
-        out.push('"');
-    }
-    if tag.self_closing {
-        out.push('/');
-    }
-    out.push('>');
-}
-
-/// Whether an attribute `name` is only ASCII letters, digits, `-`, `_` and `:`.
-fn is_plain_attr_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
 }
 
 #[cfg(test)]
@@ -251,7 +221,7 @@ mod tests {
         // ~keep exists to remove: tl would read the embedded `"` as starting a new attribute value.
         let html = r#"<a x"y="1" href="/ok">z</a>"#;
         let page = crate::html::mask_raw_text_markup(html);
-        let tag = page.anchors.iter().next().expect("one tag");
+        let tag = page.url_tags.iter().find(|tag| tag.name == "a").expect("one tag");
         assert_eq!(
             tag.attrs.len(),
             2,
@@ -267,7 +237,7 @@ mod tests {
         );
 
         let mut out = String::new();
-        write_anchor_tag(&mut out, &tag);
+        write_start_tag(&mut out, &tag, &[]);
         assert_eq!(
             out, r#"<a href="/ok">"#,
             "the malformed attribute name must not reach the rewritten tag"
@@ -284,8 +254,7 @@ mod tests {
 
     #[test]
     fn an_entity_encoded_address_still_resolves() {
-        // ~keep Matches link_targets.rs's own numeric-reference test: a browser maps 128-159
-        // ~keep through Windows-1252, so &#150; is an en dash, not U+0096.
+        // ~keep A browser maps 128-159 through Windows-1252, so &#150; is an en dash, not U+0096.
         let html = r#"<a href="p&#150;q&amp;r=1">x</a>"#;
         let links = extract(html, "https://example.com/d/");
         assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");

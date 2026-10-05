@@ -63,8 +63,8 @@ pub(crate) struct MaskedHtml<'h> {
     pub(crate) text: Cow<'h, str>,
     /// The decoded `href` of the first `<base>` in the document, in tree order, that has one.
     pub(crate) base_href: Option<String>,
-    /// The `<a>` start tags the HTML parser read as tags, with spans into [`Self::text`].
-    pub(super) anchors: RealTags,
+    /// ~keep URL-bearing start tags, retained for credential sanitization without a second scan.
+    pub(super) url_tags: RealTags,
 }
 
 /// Read `source` once as an HTML parser does, with scripting off, and mask it for tl: overwrite
@@ -74,7 +74,7 @@ pub(crate) struct MaskedHtml<'h> {
 /// The returned text is borrowed from `source` when there is nothing to edit, and always has
 /// the source's byte length.
 pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
-    let read = scan(source, |name| name == "a");
+    let read = scan(source, is_url_bearing_tag);
     let text = match read.text {
         Cow::Borrowed(text) => mask(text, &read),
         Cow::Owned(ref text) => Cow::Owned(mask(text, &read).into_owned()),
@@ -82,8 +82,15 @@ pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
     MaskedHtml {
         text,
         base_href: read.base_href,
-        anchors: read.tags,
+        url_tags: read.tags,
     }
+}
+
+fn is_url_bearing_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "a" | "audio" | "base" | "blockquote" | "graphic" | "iframe" | "img" | "source" | "video"
+    )
 }
 
 /// A [`MaskedHtml`] apart from the page it borrows: what reading the page found, carried from the
@@ -94,7 +101,7 @@ pub(crate) struct PageScan {
     /// The byte length of the page that was read.
     len: usize,
     base_href: Option<String>,
-    anchors: RealTags,
+    url_tags: RealTags,
 }
 
 impl MaskedHtml<'_> {
@@ -109,7 +116,7 @@ impl MaskedHtml<'_> {
             },
             len,
             base_href: self.base_href,
-            anchors: self.anchors,
+            url_tags: self.url_tags,
         }
     }
 }
@@ -124,7 +131,7 @@ impl PageScan {
         MaskedHtml {
             text: self.edited.map_or(Cow::Borrowed(source), Cow::Owned),
             base_href: self.base_href,
-            anchors: self.anchors,
+            url_tags: self.url_tags,
         }
     }
 }
@@ -591,10 +598,10 @@ mod tests {
             super::super::reads::MARKER
         );
         let fresh = mask_raw_text_markup(&html);
-        let (text, base_href, anchors) = (
+        let (text, base_href, url_tags) = (
             fresh.text.clone().into_owned(),
             fresh.base_href.clone(),
-            fresh.anchors.iter().count(),
+            fresh.url_tags.iter().count(),
         );
         let before = super::super::reads::count("<a href=/y>");
 
@@ -607,7 +614,7 @@ mod tests {
         );
         assert_eq!(attached.text, text);
         assert_eq!(attached.base_href, base_href);
-        assert_eq!(attached.anchors.iter().count(), anchors);
+        assert_eq!(attached.url_tags.iter().count(), url_tags);
     }
 
     #[test]
@@ -616,7 +623,7 @@ mod tests {
         let cut = &html[..16];
         let attached = mask_raw_text_markup(html).detach().attach(cut);
         assert_eq!(attached.text, cut, "the cut page is masked on its own");
-        assert_eq!(attached.anchors.iter().count(), 1);
+        assert_eq!(attached.url_tags.iter().count(), 1);
     }
 
     /// Run the same pipeline every call site does: mask, parse, then extract links.

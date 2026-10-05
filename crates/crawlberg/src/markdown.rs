@@ -5,18 +5,36 @@ use url::Url;
 use crate::html::PageScan;
 use crate::types::{ContentConfig, MarkdownResult};
 
+fn sanitize_document_structure(document: &mut html_to_markdown_rs::types::DocumentStructure, base_url: &Url) {
+    use html_to_markdown_rs::types::{AnnotationKind, NodeContent};
+
+    for node in &mut document.nodes {
+        for annotation in &mut node.annotations {
+            if let AnnotationKind::Link { url, .. } = &mut annotation.kind
+                && !url.is_empty()
+                && let Some(resolved) = crate::net::userinfo::resolve(base_url, url)
+            {
+                *url = resolved.into();
+            }
+        }
+        if let NodeContent::Image { src: Some(src), .. } = &mut node.content
+            && !src.is_empty()
+            && let Some(resolved) = crate::net::userinfo::resolve(base_url, src)
+        {
+            *src = resolved.into();
+        }
+    }
+}
+
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
-///
-/// ~keep Relative addresses are made absolute in the HTML first; see `resolve_link_targets`. The
-/// ~keep converter's own `base_url` option stays unset: it resolves a fragment-only link against
-/// ~keep the page, which the pre-pass leaves as written (#190).
 fn convert_html_to_markdown(
     html: &str,
     page_scan: Option<PageScan>,
     document_url: &Url,
     config: &ContentConfig,
 ) -> Option<MarkdownResult> {
-    let html = crate::html::resolve_link_targets(html, page_scan, document_url);
+    let (html, effective_base) = crate::html::sanitize_url_attributes(html, page_scan, document_url);
+    let structure_base = effective_base.as_ref().unwrap_or(document_url);
     let preset = html_to_markdown_rs::options::PreprocessingPreset::parse(&config.preprocessing_preset);
 
     let output_format = match config.output_format.as_str() {
@@ -43,14 +61,18 @@ fn convert_html_to_markdown(
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
+        base_url: Some(document_url.as_str().to_owned()),
         // ~keep Every option crawlberg has no opinion on stays at the library's default on purpose.
         ..Default::default()
     };
 
     match html_to_markdown_rs::convert(&html, Some(options)) {
-        Ok(result) => {
+        Ok(mut result) => {
             let content = result.content.unwrap_or_default();
-            let document_structure = result.document.and_then(|d| serde_json::to_value(d).ok());
+            let document_structure = result.document.as_mut().and_then(|document| {
+                sanitize_document_structure(document, structure_base);
+                serde_json::to_value(document).ok()
+            });
             let tables = result
                 .tables
                 .iter()
@@ -216,12 +238,76 @@ mod tests {
         );
     }
 
-    async fn markdown_at(html: &str, document_url: &str) -> String {
+    async fn result_at(html: &str, document_url: &str, page_scan: Option<PageScan>) -> MarkdownResult {
         let url = Url::parse(document_url).expect("valid document URL");
-        convert_to_markdown(html, None, &url, &ContentConfig::default())
+        convert_to_markdown(html, page_scan, &url, &ContentConfig::default())
             .await
             .expect("should produce markdown")
-            .content
+    }
+
+    async fn markdown_at(html: &str, document_url: &str) -> String {
+        let page_scan = crate::html::mask_raw_text_markup(html).detach();
+        result_at(html, document_url, Some(page_scan)).await.content
+    }
+
+    fn structure_with_empty_link_and_image_urls() -> html_to_markdown_rs::types::DocumentStructure {
+        use html_to_markdown_rs::types::{
+            AnnotationKind, DocumentNode, DocumentStructure, NodeContent, TextAnnotation,
+        };
+
+        DocumentStructure {
+            nodes: vec![
+                DocumentNode {
+                    id: "link".to_owned(),
+                    content: NodeContent::Paragraph {
+                        text: "link".to_owned(),
+                    },
+                    parent: None,
+                    children: Vec::new(),
+                    annotations: vec![TextAnnotation {
+                        start: 0,
+                        end: 4,
+                        kind: AnnotationKind::Link {
+                            url: String::new(),
+                            title: None,
+                        },
+                    }],
+                    attributes: None,
+                },
+                DocumentNode {
+                    id: "image".to_owned(),
+                    content: NodeContent::Image {
+                        description: Some("image".to_owned()),
+                        src: Some(String::new()),
+                        image_index: None,
+                    },
+                    parent: None,
+                    children: Vec::new(),
+                    annotations: Vec::new(),
+                    attributes: None,
+                },
+            ],
+            source_format: Some("html".to_owned()),
+        }
+    }
+
+    #[test]
+    fn structured_empty_link_and_image_urls_stay_empty() {
+        use html_to_markdown_rs::types::{AnnotationKind, NodeContent};
+
+        let mut document = structure_with_empty_link_and_image_urls();
+        let base = Url::parse("https://example.com/page").expect("valid base URL");
+
+        sanitize_document_structure(&mut document, &base);
+
+        let AnnotationKind::Link { url, .. } = &document.nodes[0].annotations[0].kind else {
+            panic!("expected link annotation");
+        };
+        assert_eq!(url, "");
+        let NodeContent::Image { src, .. } = &document.nodes[1].content else {
+            panic!("expected image node");
+        };
+        assert_eq!(src.as_deref(), Some(""));
     }
 
     #[tokio::test]
@@ -298,7 +384,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn leaves_absolute_fragment_and_non_data_targets_as_written() {
+    async fn leaves_absolute_and_non_data_targets_as_written_and_resolves_fragments() {
         let md = markdown_at(
             r##"<p><a href="https://other.example/x">abs</a> <a href="#section">frag</a> <a href="mailto:me@example.com">mail</a> <a href="tel:+15551234">tel</a> <a href="javascript:void(0)">js</a> <img src="data:image/gif;base64,R0lGOD" alt="px"></p>"##,
             "https://example.com/docs/index.html",
@@ -306,7 +392,10 @@ mod tests {
         .await;
         assert_eq!(
             md,
-            "[abs](https://other.example/x) [frag](#section) [mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) px\n"
+            concat!(
+                "[abs](https://other.example/x) [frag](https://example.com/docs/index.html#section) ",
+                "[mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) px\n"
+            )
         );
     }
 
@@ -377,6 +466,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn protocol_relative_base_credentials_are_removed() {
+        let md = markdown_at(
+            r#"<html><head><base href="//user:secret@example.com/root/"></head><body><p>x</p></body></html>"#,
+            "https://origin.example/docs/page.html",
+        )
+        .await;
+        assert!(
+            md.starts_with("---\nbase: https://example.com/root/\n---\n"),
+            "got: {md}"
+        );
+        assert!(!md.contains("user:secret"));
+    }
+
+    #[tokio::test]
     async fn decodes_character_references_before_resolving() {
         let md = markdown_at(
             r#"<p><a href="&#x2F;app&#x2F;list?a=1">esapi</a> <a href="https&#58;//other.example/y">abs</a> <a href="&#47;root.html">root</a></p>"#,
@@ -408,6 +511,21 @@ mod tests {
             let md = markdown_at(&html, "https://example.com/docs/index.html").await;
             assert_eq!(md, "![a](https://example.com/docs/large.jpg)\n", "attribute {attr}");
         }
+    }
+
+    #[tokio::test]
+    async fn strips_userinfo_from_the_selected_srcset_candidate() {
+        let md = markdown_at(
+            concat!(
+                r#"<p><img src="data:image/gif;base64,R0lGOD" "#,
+                r#"srcset="//small:secret@cdn.example/s.png 1x, "#,
+                r#"//large:secret@cdn.example/l.png 2x" alt="a"></p>"#
+            ),
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![a](https://cdn.example/l.png)\n");
+        assert!(!md.contains("secret"));
     }
 
     #[tokio::test]
@@ -450,7 +568,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_pre_pass_leaves_an_empty_image_or_media_source_empty() {
+    async fn leaves_an_empty_image_or_media_source_empty() {
         let mut wrong = Vec::new();
         for (html, expected) in [
             (r#"<p><img src="" alt="a"></p>"#, "![a](<>)\n"),
@@ -466,23 +584,121 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_fragment_only_link_stays_as_written() {
+    async fn resolves_a_fragment_only_link_against_the_full_page_url() {
         let md = markdown_at(
             r##"<p><a href="#section">frag</a> <a href="#">top</a></p>"##,
             "https://example.com/docs/index.html",
         )
         .await;
-        assert_eq!(md, "[frag](#section) [top](#)\n");
+        assert_eq!(
+            md,
+            "[frag](https://example.com/docs/index.html#section) [top](https://example.com/docs/index.html#)\n"
+        );
     }
 
     #[tokio::test]
-    async fn the_pre_pass_strips_userinfo_from_a_link() {
+    async fn resolves_a_fragment_only_link_against_the_effective_base_url() {
         let md = markdown_at(
-            r#"<p><a href="http://page:pw@example.com/b">b</a> <a href="//user:s3cret@example.com/a">a</a></p>"#,
+            r##"<base href="/assets/"><p><a href="#section">frag</a></p>"##,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert!(
+            md.ends_with("[frag](https://example.com/assets/#section)\n"),
+            "got: {md}"
+        );
+    }
+
+    #[tokio::test]
+    async fn drops_a_credential_bearing_url_past_the_attribute_limit() {
+        let attributes = (0..crate::html::ATTRIBUTE_LIMIT)
+            .map(|index| format!("data-{index}=x"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let html = format!(r#"<a {attributes} href="https://user:secret@example.com/private">safe</a>"#);
+
+        let md = markdown_at(&html, "https://example.com/docs/index.html").await;
+
+        assert_eq!(md, "safe\n");
+        assert!(!md.contains("user:secret"));
+    }
+
+    #[tokio::test]
+    async fn sanitizes_and_resolves_structured_link_and_image_urls() {
+        let html = concat!(
+            r#"<html><head><base href="/root/"></head><body>"#,
+            r#"<p><a href="child?q=1#part">link</a></p>"#,
+            r#"<img src="//image:secret@cdn.example/p.png?x=2#end" alt="image">"#,
+            "</body></html>"
+        );
+        let result = result_at(html, "https://origin.example/docs/page.html", None).await;
+        let structure = result.document_structure.expect("document structure");
+        let nodes = structure["nodes"].as_array().expect("nodes array");
+        let link_urls = nodes
+            .iter()
+            .flat_map(|node| node["annotations"].as_array().into_iter().flatten())
+            .filter(|annotation| annotation["kind"]["annotation_type"] == "link")
+            .map(|annotation| annotation["kind"]["url"].as_str().expect("link URL"))
+            .collect::<Vec<_>>();
+        let image_sources = nodes
+            .iter()
+            .filter(|node| node["content"]["node_type"] == "image")
+            .map(|node| node["content"]["src"].as_str().expect("image source"))
+            .collect::<Vec<_>>();
+        assert_eq!(link_urls, ["https://origin.example/root/child?q=1#part"]);
+        assert_eq!(image_sources, ["https://cdn.example/p.png?x=2#end"]);
+    }
+
+    #[tokio::test]
+    async fn strips_userinfo_from_a_link_without_changing_its_target() {
+        let md = markdown_at(
+            concat!(
+                r#"<p><a href="http://page:pw@example.com/b?q=1#part">b</a> "#,
+                r#"<a href="//user:s3cret@example.com/a?x=2#end">a</a> "#,
+                r#"<a href="ftp://ftp:pw@example.com/f">f</a></p>"#
+            ),
             "https://example.com/",
         )
         .await;
-        assert_eq!(md, "[b](http://example.com/b) [a](https://example.com/a)\n");
+        assert_eq!(
+            md,
+            "[b](http://example.com/b?q=1#part) [a](https://example.com/a?x=2#end) [f](ftp://example.com/f)\n"
+        );
+        assert!(!md.contains("page:pw"));
+        assert!(!md.contains("user:s3cret"));
+        assert!(!md.contains("ftp:pw"));
+    }
+
+    #[tokio::test]
+    async fn userinfo_sanitization_does_not_rewrite_prose_code_or_titles() {
+        let md = markdown_at(
+            concat!(
+                r#"<p>http://text:secret@example.com/prose "#,
+                r#"<code>http://code:secret@example.com/x</code> "#,
+                r#"<a href="https://link:secret@example.com/y" "#,
+                r#"title="http://title:secret@example.com/z">x</a></p>"#
+            ),
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(
+            md,
+            concat!(
+                "http://text:secret@example.com/prose `http://code:secret@example.com/x` ",
+                "[x](https://example.com/y \"http://title:secret@example.com/z\")\n"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_page_scan_falls_back_to_attribute_sanitization() {
+        let result = result_at(
+            r#"<a href="//user:secret@example.com/a">a</a>"#,
+            "https://origin.example/page",
+            None,
+        )
+        .await;
+        assert_eq!(result.content, "[a](https://example.com/a)\n");
     }
 
     #[tokio::test]
@@ -516,8 +732,7 @@ mod tests {
         );
     }
 
-    /// Link markup inside a `<textarea>` is text, so the pre-pass leaves its address as written
-    /// (#102).
+    /// Link markup inside a `<textarea>` is text, so its address stays as written (#102). ~keep
     #[tokio::test]
     async fn link_markup_inside_a_textarea_stays_as_written() {
         let md = markdown_at(
@@ -539,12 +754,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preserves_a_srcset_url_ending_in_a_comma_before_a_vertical_tab() {
+    async fn resolves_a_srcset_url_ending_in_a_comma_before_a_vertical_tab() {
         let md = markdown_at(
             "<p><img srcset=\"a,\x0b 1x\" alt=\"a\"></p>",
             "https://example.com/docs/index.html",
         )
         .await;
-        assert_eq!(md, "![a](https://example.com/docs/a%2C)\n");
+        assert_eq!(md, "![a](https://example.com/docs/a,)\n");
     }
 }

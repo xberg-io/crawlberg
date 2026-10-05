@@ -7,13 +7,13 @@ mod extract;
 mod feeds;
 mod images;
 mod json_ld;
-mod link_targets;
 mod links;
 mod metadata;
 mod raw_text;
 mod real_tags;
 pub(crate) mod selectors;
 mod srcset;
+mod url_targets;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -28,9 +28,6 @@ use url::Url;
 /// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
 /// ~keep so `a[href]` would miss `<A HREF>`. tl already lowercases attribute names. Parse
 /// ~keep every document crawlberg queries through here, so no selector needs its own fix.
-/// ~keep A renamed tag name is an owned copy, no longer a slice of `html`. `link_targets` finds a
-/// ~keep value's offset in the source by pointer, so it reads only attribute values that way, and
-/// ~keep it compares tag names exactly because this rename has already run.
 pub(crate) fn parse_html(html: &str) -> Result<VDom<'_>, tl::ParseError> {
     let mut dom = tl::parse(html, tl::ParserOptions::default())?;
     for tag in dom.nodes_mut().iter_mut().filter_map(|node| node.as_tag_mut()) {
@@ -238,14 +235,16 @@ pub(crate) use detection::is_pdf_url;
 pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_content, is_pdf_content};
 pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
-pub(crate) use link_targets::resolve_link_targets;
 pub(crate) use links::{effective_base_url, extract_links};
 pub(crate) use metadata::robots_meta_contents;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::{detect_meta_refresh, refresh_target};
 pub(crate) use raw_text::{MaskedHtml, PageScan, mask_raw_text_markup};
 #[cfg(test)]
+pub(crate) use real_tags::ATTRIBUTE_LIMIT;
+#[cfg(test)]
 pub(crate) use real_tags::reads;
+pub(crate) use url_targets::sanitize_url_attributes;
 
 #[cfg(test)]
 mod tests {
