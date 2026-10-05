@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
     /// Proxy URL (e.g. "http://proxy:8080"). <!-- ~keep -->
+    #[cfg_attr(alef, alef(sensitive))]
     pub url: String,
     /// Optional username for proxy authentication.
     pub username: Option<String>,
     /// Optional password for proxy authentication.
+    #[cfg_attr(alef, alef(sensitive))]
     pub password: Option<String>,
 }
 
@@ -25,10 +27,15 @@ impl std::fmt::Debug for ProxyConfig {
     // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
     #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url: _,
+            username,
+            password,
+        } = self;
         f.debug_struct("ProxyConfig")
             .field("url", &crate::proxy::redacted_proxy_address(self))
-            .field("username", &self.username)
-            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("username", username)
+            .field("password", &password.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -43,12 +50,14 @@ pub enum AuthConfig {
         /// Username sent in the `Authorization: Basic` header.
         username: String,
         /// Password sent in the `Authorization: Basic` header.
+        #[cfg_attr(alef, alef(sensitive))]
         password: String,
     },
     /// Bearer token authentication.
     #[serde(rename = "bearer")]
     Bearer {
         /// Token sent in the `Authorization: Bearer` header.
+        #[cfg_attr(alef, alef(sensitive))]
         token: String,
     },
     /// Custom authentication header.
@@ -57,6 +66,7 @@ pub enum AuthConfig {
         /// HTTP header name to set on each request.
         name: String,
         /// HTTP header value to send.
+        #[cfg_attr(alef, alef(sensitive))]
         value: String,
     },
 }

@@ -52,6 +52,7 @@ pub struct DownloadedDocument {
     pub content_hash: Box<str>,
     /// Selected response headers.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[cfg_attr(alef, alef(sensitive))]
     pub headers: HashMap<Box<str>, Box<str>>,
     /// True when `content` (or the file at `content_path`) was truncated to
     /// `document_max_size`; `size` still reports the original, untruncated length.

@@ -24,6 +24,13 @@ All notable changes to crawlberg are documented here.
   or remote browser would perform the connection's DNS lookup, because that lookup cannot be
   bound to the addresses Crawlberg checked. (#110)
 
+### Fixed
+
+- Generated Python representations and Rust-side Ruby/Elixir binding diagnostics redact proxy
+  credentials, authentication values, custom headers, cookie values, document headers, browser
+  endpoints, interaction text and scripts, and Chrome arguments while preserving their serialized
+  values. (#386)
+
 ## [1.9.0] - 2026-10-03
 
 ### Upgrading

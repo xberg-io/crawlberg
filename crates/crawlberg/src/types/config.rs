@@ -174,6 +174,7 @@ pub struct CrawlConfig {
     /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
     /// does not carry them.
     #[serde(default)]
+    #[cfg_attr(alef, alef(sensitive))]
     pub custom_headers: HashMap<String, String>,
     /// Timeout for individual HTTP requests (in milliseconds when serialized).
     #[serde(with = "duration_ms")]

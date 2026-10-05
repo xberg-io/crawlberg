@@ -35,7 +35,7 @@ pub const MAX_SCROLL_AMOUNT: i64 = 100_000;
 ///
 /// Actions are serialized with a `type` tag using camelCase naming,
 /// except `ExecuteJs` which is explicitly renamed to `"executeJs"`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 #[derive(Default)]
 pub enum PageAction {
@@ -50,6 +50,7 @@ pub enum PageAction {
         /// CSS selector for the input element.
         selector: String,
         /// Text to type into the element.
+        #[cfg_attr(alef, alef(sensitive))]
         text: String,
     },
     /// Press a keyboard key (e.g. "Enter", "Tab", "Escape").
@@ -101,11 +102,51 @@ pub enum PageAction {
     #[serde(rename = "executeJs")]
     ExecuteJs {
         /// JavaScript source code to execute. Max 1 MB.
+        #[cfg_attr(alef, alef(sensitive))]
         script: String,
     },
     /// Scrape the current page HTML.
     #[default]
     Scrape,
+}
+
+impl std::fmt::Debug for PageAction {
+    // ~keep Alef extracts public trait-impl methods, but `Formatter` has no binding
+    // ~keep representation. The exhaustive match is also the new-field classification guard:
+    // ~keep adding a variant or payload fails to compile until its Debug exposure is reviewed.
+    #[cfg_attr(alef, alef(skip))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Click { selector } => f.debug_struct("Click").field("selector", selector).finish(),
+            Self::TypeText { selector, text } => f
+                .debug_struct("TypeText")
+                .field("selector", selector)
+                .field("text", &crate::net::redact::redacted_text(text))
+                .finish(),
+            Self::Press { key } => f.debug_struct("Press").field("key", key).finish(),
+            Self::Scroll {
+                direction,
+                selector,
+                amount,
+            } => f
+                .debug_struct("Scroll")
+                .field("direction", direction)
+                .field("selector", selector)
+                .field("amount", amount)
+                .finish(),
+            Self::Wait { milliseconds, selector } => f
+                .debug_struct("Wait")
+                .field("milliseconds", milliseconds)
+                .field("selector", selector)
+                .finish(),
+            Self::Screenshot { full_page } => f.debug_struct("Screenshot").field("full_page", full_page).finish(),
+            Self::ExecuteJs { script } => f
+                .debug_struct("ExecuteJs")
+                .field("script", &crate::net::redact::redacted_text(script))
+                .finish(),
+            Self::Scrape => f.write_str("Scrape"),
+        }
+    }
 }
 
 impl PageAction {
@@ -167,6 +208,41 @@ impl From<&str> for ScrollDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_text_debug_preserves_selector_and_redacts_typed_text() {
+        const SECRET: &str = "FORM-PASSWORD-386";
+        let action = PageAction::TypeText {
+            selector: "#password".to_owned(),
+            text: SECRET.to_owned(),
+        };
+
+        for rendered in [format!("{action:?}"), format!("{action:#?}")] {
+            assert!(!rendered.contains(SECRET), "typed text leaked: {rendered}");
+            assert!(rendered.contains("#password"), "selector was hidden: {rendered}");
+            assert!(
+                rendered.contains(crate::net::redact::REDACTED_PLACEHOLDER),
+                "redaction was not visible: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn execute_js_debug_redacts_script() {
+        const SECRET: &str = "SCRIPT-TOKEN-386";
+        let action = PageAction::ExecuteJs {
+            script: format!("fetch('/private?token={SECRET}')"),
+        };
+
+        for rendered in [format!("{action:?}"), format!("{action:#?}")] {
+            assert!(!rendered.contains(SECRET), "script leaked: {rendered}");
+            assert!(rendered.contains("ExecuteJs"), "variant was hidden: {rendered}");
+            assert!(
+                rendered.contains(crate::net::redact::REDACTED_PLACEHOLDER),
+                "redaction was not visible: {rendered}"
+            );
+        }
+    }
 
     #[test]
     fn deserialize_wait_with_only_required_fields() {

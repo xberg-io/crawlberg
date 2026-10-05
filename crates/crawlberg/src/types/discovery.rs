@@ -142,6 +142,7 @@ pub struct CookieInfo {
     /// The cookie name.
     pub name: String,
     /// The cookie value.
+    #[cfg_attr(alef, alef(sensitive))]
     pub value: String,
     /// The cookie domain, if specified.
     pub domain: Option<String>,

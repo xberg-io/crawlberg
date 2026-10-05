@@ -99,6 +99,7 @@ pub struct BrowserConfig {
     pub backend: BrowserBackend,
     /// CDP WebSocket endpoint for connecting to an external browser instance.
     /// Crawlberg disconnects during teardown but never closes the external browser process. <!-- ~keep -->
+    #[cfg_attr(alef, alef(sensitive))]
     pub endpoint: Option<String>,
     /// Timeout for browser page load and rendering (in milliseconds when serialized).
     #[serde(with = "duration_ms")]
@@ -142,6 +143,7 @@ pub struct BrowserConfig {
     /// Interactions run this script before page actions on both browser backends but do
     /// not include the script result in `InteractionResult`.
     #[serde(default)]
+    #[cfg_attr(alef, alef(sensitive))]
     pub eval_script: Option<String>,
     /// User-agent used when fetching robots.txt. Defaults to `BrowserConfig.user_agent`
     /// (or crawlberg's default) if unset. Native only.
@@ -172,6 +174,7 @@ pub struct BrowserConfig {
     /// traffic around the `ssrf` policy. Chromiumoxide backend only: ignored, with a warning,
     /// when `endpoint` is set, with the native backend, and by scrapes and crawls that use a
     /// shared browser pool.
+    #[cfg_attr(alef, alef(sensitive))]
     pub chrome_args: Vec<String>,
 }
 
