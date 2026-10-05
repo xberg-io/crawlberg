@@ -8,8 +8,14 @@ void main() {
     // field, or generated equality that stops being field-based, fails `dart test`
     // immediately instead of shipping green with a suite that asserts nothing about
     // the generated API. Create-only scaffold seed. ~keep
-    final a = crawlberg.HreflangEntry(lang: 'alef-scaffold', url: 'alef-scaffold');
-    final b = crawlberg.HreflangEntry(lang: 'alef-scaffold', url: 'alef-scaffold');
+    final a = crawlberg.HreflangEntry(
+      lang: 'alef-scaffold',
+      url: 'alef-scaffold',
+    );
+    final b = crawlberg.HreflangEntry(
+      lang: 'alef-scaffold',
+      url: 'alef-scaffold',
+    );
     expect(a, equals(b));
   });
 }
