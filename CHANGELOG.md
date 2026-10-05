@@ -4,6 +4,15 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-05
+
+### Fixed
+
+- Restore crates.io package verification and WASM builds by compiling SSRF helpers only on the
+  targets and feature sets that use them.
+- Restore Swift artifact builds for iOS by holding `libc` at 0.2.189 until the released `sysinfo`
+  dependency supports the Mach API visibility change in `libc` 0.2.190.
+
 ## [1.10.0] - 2026-10-05
 
 ### Upgrading

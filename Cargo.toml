@@ -17,7 +17,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.10.0"
+version = "1.10.1"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -56,9 +56,9 @@ chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.10.0" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.10.0" }
-crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.10.0" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.10.1" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.10.1" }
+crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.10.1" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
 # ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched
@@ -86,7 +86,8 @@ icu_normalizer = { version = "2.3", default-features = false, features = ["compi
 idna = "1"
 ipnet = "2"
 itertools = "0.15"
-libc = "0.2"
+# ~keep sysinfo 0.39.6 still calls Mach APIs on iOS that libc 0.2.190 made macOS-only.
+libc = "=0.2.189"
 liter-llm = { version = "2.1", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"

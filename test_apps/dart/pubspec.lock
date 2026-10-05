@@ -85,10 +85,10 @@ packages:
     dependency: "direct main"
     description:
       name: crawlberg
-      sha256: "981f29875f90a4bb19ca85ab53995855651645b3796ae07d7afa47da452e3340"
+      sha256: afede9a222e3661748e0778bdf9b6cb255ea4349b10cbf16aeaf2f145f76a097
       url: "https://pub.dev"
     source: hosted
-    version: "1.9.0"
+    version: "1.10.0"
   crypto:
     dependency: transitive
     description:

@@ -416,7 +416,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-harness"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -496,7 +496,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.3",
  "shlex 2.0.1",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -1223,7 +1223,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1303,14 +1303,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bindings-common"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
 ]
 
 [[package]]
 name = "crawlberg-browser"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bypass"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "async-trait",
  "crawlberg",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-cli"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "clap",
  "crawlberg",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-dart"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
  "flutter_rust_bridge",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-ffi"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "ahash",
  "cbindgen",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-jni"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-node"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
  "futures-util",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-php"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
  "ext-php-rs",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-py"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1454,11 +1454,11 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.10.0"
+version = "1.10.1"
 
 [[package]]
 name = "crawlberg-swift"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-wasm"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1605,7 +1605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3331,9 +3331,9 @@ checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libloading"

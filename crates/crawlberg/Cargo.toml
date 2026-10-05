@@ -29,6 +29,7 @@ browser-chromiumoxide = [
     "dep:fast-socks5",
     "dep:http-body-util",
     "dep:hyper",
+    "dep:libc",
     "dep:rustix",
     "dep:rustls-platform-verifier",
     "dep:sysinfo",
@@ -147,6 +148,11 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep std::time::Instant::now() traps at runtime on wasm32-unknown-unknown (no clock
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
+
+# ~keep sysinfo 0.39.6 uses iOS Mach bindings removed by libc 0.2.190.
+# ~keep Remove this compatibility pin after sysinfo releases GuillaumeGomez/sysinfo#1758.
+[target.'cfg(target_os = "ios")'.dependencies]
+libc = { workspace = true, optional = true }
 
 # ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed,
 # ~keep and polls it to wait until the killed process has ended.

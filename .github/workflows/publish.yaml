@@ -1460,6 +1460,10 @@ jobs:
       - uses: xberg-io/actions/setup-rust@v1
       - uses: xberg-io/actions/build-swift-artifactbundle@v1
         id: bundle
+        # ~keep Rust otherwise links the iOS archive for 10.0 while current aws-lc objects use
+        # ~keep ___chkstk_darwin, which the iOS 10 runtime does not provide.
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
         with:
           crate-name: crawlberg-swift
           artifact-name: Crawlberg-rs
