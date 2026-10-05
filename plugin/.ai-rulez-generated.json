@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:3b7f077cf4fc76ce68919ae881b16fff84a9ae10274a29544f92c3178febc2f8",
+  "source_hash": "blake3:8466cd8f8165d2fed522c9c23963b722b64f60cb12972a5c2725babdca729f3b",
   "outputs": {
     ".claude-plugin/plugin.json": {
       "content_hash": "blake3:9a00724d5a3edcdecc48ce437ee307ba2ad67a8af3b450e5a7e45da9ab5b2c12"
@@ -101,6 +101,12 @@
     ".mcp.json": {
       "content_hash": "blake3:f718cb4c11eefd1c5949d925d3412bed5250a3352c86029dd9584cc332ac0b06"
     },
+    ".opencode/ai-rulez-bundle.json": {
+      "content_hash": "blake3:8ebd09f4c0406e1ded3e84b31cd378369863a726b02d576865a7c0024a52dcc4"
+    },
+    ".opencode/ai-rulez-content.js": {
+      "content_hash": "blake3:822c510deb007e4f72877ad42f29918d0499f210ae363e82d465a0f0331ab294"
+    },
     ".opencode/plugins/crawlberg.js": {
       "content_hash": "blake3:8f0ccc210ae75840b66cff6eed124cdd130868a3dc11785d443362c6817f447a"
     },
@@ -138,7 +144,7 @@
       "content_hash": "blake3:c5409a27f82d44a714dad37fc1b5826ddcd09b3326c10f60ec2df07d682f998b"
     },
     "package.json": {
-      "content_hash": "blake3:a16203b67bdbbdcafd4837b8424daa7e443964c9a0c9896d17745070c8cd94aa"
+      "content_hash": "blake3:c92653211e18a219488feb8a49a7d09734320fa84264af009db5c4bd3840be1c"
     },
     "skills/automating-the-browser/SKILL.md": {
       "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"

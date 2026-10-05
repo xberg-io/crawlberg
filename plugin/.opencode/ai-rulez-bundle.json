@@ -1,0 +1,41 @@
+{
+  "mcp": {
+    "crawlberg": {
+      "type": "local",
+      "command": [
+        "${PLUGIN_ROOT}/scripts/mcp-launch.sh",
+        "mcp"
+      ]
+    }
+  },
+  "skills": {
+    "automating-the-browser": {
+      "name": "automating-the-browser",
+      "description": "Use when extracting a page needs scripted interaction first — click, type, press a key, scroll, wait, screenshot, or run JS before capturing the DOM. Covers `crawlberg interact URL --actions` with the real action schema, result shape, limits, and external-CDP options."
+    },
+    "crawlberg": {
+      "name": "crawlberg",
+      "description": "Crawl, scrape, and convert websites to Markdown using the local crawlberg CLI and its MCP server. Use when the user wants to fetch a page, follow links across a domain, enumerate URLs, or drive a real browser. Covers installation, the subcommands (scrape, crawl, map, interact, batch-scrape, batch-crawl, download, citations, version, mcp, serve), output formats (JSON + Markdown), browser fallback, and when to prefer the MCP server over shelling out."
+    },
+    "crawling-a-site": {
+      "name": "crawling-a-site",
+      "description": "Use when the user wants to follow links across a domain and capture every reachable page as Markdown. Covers `crawlberg crawl` with depth, page caps, concurrency, rate limiting, domain scoping, robots, and output selection."
+    },
+    "headless-fallback": {
+      "name": "headless-fallback",
+      "description": "Use when a static fetch returns nothing useful and the page needs a real browser. Covers `--browser-mode auto|always|never`, external CDP via `--browser-endpoint`, symptoms of JS-only pages and WAF blocks, and the performance cost."
+    },
+    "mapping-urls": {
+      "name": "mapping-urls",
+      "description": "Use when the user wants the list of URLs on a site rather than the page content — sitemap analysis, link planning, or seeding another tool. Covers `crawlberg map URL` with `--limit`, `--search`, robots, output, and how it differs from a full crawl."
+    },
+    "scraping-html-to-markdown": {
+      "name": "scraping-html-to-markdown",
+      "description": "Use when the user wants a single page rendered as clean Markdown plus structured metadata. Covers `crawlberg scrape URL`, JSON vs Markdown output, what metadata is returned, and how to handle JS-heavy pages."
+    },
+    "serving-the-api": {
+      "name": "serving-the-api",
+      "description": "Use when the user wants a long-running HTTP service for scrape/crawl/map instead of one-shot CLI calls or the MCP server — for example wiring crawlberg into other apps over REST. Covers `crawlberg serve`, the Firecrawl-v1-compatible endpoints, `--host`/`--port`, and when to prefer it."
+    }
+  }
+}
