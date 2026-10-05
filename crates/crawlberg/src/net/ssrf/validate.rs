@@ -164,6 +164,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 /// Literal addresses need no remote lookup and remain governed by [`validate_url`]. Custom
 /// denials always fail closed; the built-in denial does too unless an Exact/Suffix entry
 /// explicitly trusts the hostname that the remote resolver receives.
+#[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn validate_remote_resolution(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
     policy.validate_denylist().map_err(SsrfError::InvalidCidr)?;
     let Some(url::Host::Domain(host)) = url.host() else {
@@ -191,6 +192,7 @@ fn check_ip(ip: IpAddr, policy: &SsrfPolicy) -> Result<(), SsrfError> {
 }
 
 /// ~keep Check a DNS answer while preserving hostname-allowlist precedence over only the defaults.
+#[cfg(not(target_arch = "wasm32"))]
 fn check_resolved_ip(ip: IpAddr, policy: &SsrfPolicy, host_allowlisted: bool) -> Result<(), SsrfError> {
     let reason = if host_allowlisted {
         custom_denial_reason(ip, policy)

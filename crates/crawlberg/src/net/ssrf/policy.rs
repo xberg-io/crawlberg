@@ -168,6 +168,7 @@ impl SsrfPolicy {
     }
 
     /// ~keep Whether IP-level enforcement must remain active for this policy.
+    #[cfg(feature = "browser-chromiumoxide")]
     pub(crate) fn enforces_ip_denials(&self) -> bool {
         self.deny_private || !self.denylist.is_empty()
     }
