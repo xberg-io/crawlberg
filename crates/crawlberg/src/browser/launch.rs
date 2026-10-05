@@ -818,8 +818,8 @@ mod tests {
     /// A one-shot launch cut off by the overall deadline hands its profile teardown off the
     /// executor thread.
     ///
-    /// ~keep No Chrome is needed: without one the launch fails before the deadline, and the
-    /// ~keep profile directory drops on the same path.
+    /// ~keep A supervised launch intentionally outlives the caller's deadline, so the assertion
+    /// ~keep waits for that launch to finish and hand off the profile teardown.
     #[tokio::test]
     async fn a_cancelled_one_shot_launch_tears_its_profile_down_off_the_executor_thread() {
         let mut config = CrawlConfig::default();
@@ -829,6 +829,13 @@ mod tests {
         let fetched = super::super::one_shot_fetch("about:blank", &config, None, false).await;
 
         assert!(fetched.is_err(), "a Chrome launch cannot finish within a millisecond");
+        tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, async {
+            while crate::browser_pool::tests::profile_drops_here().0 == before.0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the supervised launch must hand off its profile teardown within the process-test bound");
         crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
     }
 
