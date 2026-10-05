@@ -4,6 +4,35 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-05
+
+### Upgrading
+
+- **Hostname requests through an upstream proxy or external `browser.endpoint` now fail closed
+  under IP-based SSRF denial.** With the default `deny_private = true`, add an `Exact` or `Suffix`
+  allowlist entry for each hostname whose remote DNS you trust, or set `deny_private = false`.
+  A CIDR allowlist cannot verify a DNS answer produced outside Crawlberg. A custom `denylist`
+  always wins: remote hostname resolution remains refused even for an allowlisted hostname or
+  when private networks are enabled. Literal IP URLs and direct connections retain their existing
+  address checks. Custom `crawlberg-browser` validators now inherit the same fail-closed remote-DNS
+  default and must override `validate_remote_resolution` to opt out deliberately. (#110)
+
+### Added
+
+- `SsrfPolicy.denylist` adds deployment-specific CIDR ranges to the built-in SSRF denials.
+  Configured ranges override allowlists and `deny_private = false`, apply to DNS answers and
+  embedded IPv4 addresses, and are available through JSON config and
+  `CrawlConfigBuilder::ssrf_denylist_cidr`. Hostname requests are refused when an upstream proxy
+  or remote browser would perform the connection's DNS lookup, because that lookup cannot be
+  bound to the addresses Crawlberg checked. (#110)
+
+### Fixed
+
+- Generated Python representations and Rust-side Ruby/Elixir binding diagnostics redact proxy
+  credentials, authentication values, custom headers, cookie values, document headers, browser
+  endpoints, interaction text and scripts, and Chrome arguments while preserving their serialized
+  values. (#386)
+
 ## [1.9.0] - 2026-10-03
 
 ### Upgrading

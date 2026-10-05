@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-05
+
 ### Upgrading
 
 - **Hostname requests through an upstream proxy or external `browser.endpoint` now fail closed
