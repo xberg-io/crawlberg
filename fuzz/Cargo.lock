@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.10.1"
+version = "1.10.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.10.1"
+version = "1.10.2"
 
 [[package]]
 name = "crc32fast"
@@ -862,9 +862,9 @@ checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.17.1"
+version = "3.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1018d58b647013e9968c46a6625321611c9026df6a44e12cea4c83b207c5e2bb"
+checksum = "ee5ad2da135929dd837dbbe626ce6ba3360b9e5bd11ab197048f9896a5c6846f"
 dependencies = [
  "ahash",
  "astral-tl",

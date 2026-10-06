@@ -4,6 +4,12 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-10-06
+
+### Changed
+
+- Update `html-to-markdown-rs` to 3.17.2.
+
 ## [1.10.1] - 2026-10-05
 
 ### Fixed
