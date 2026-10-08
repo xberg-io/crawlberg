@@ -91,6 +91,13 @@ All notable changes to crawlberg are documented here.
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
+  profile directory is removed, when the last clone of the engine handle is dropped, and when the
+  process exits through the C runtime with an engine still alive. No new call is needed. A process
+  that is killed by a signal or aborts still leaves its Chrome. (#594)
+- A browser fetch no longer takes five seconds longer on a Chrome that has no tab of its own, such
+  as the Chromium headless shell that Playwright installs. The request check waited for an event
+  that `chromiumoxide` holds back for the last page of a browser. (#595)
 
 ## [1.10.3] - 2026-10-09
 

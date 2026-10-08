@@ -486,6 +486,306 @@ mod tests {
         );
     }
 
+    /// A site that answers every request with one small page.
+    async fn one_page_site() -> wiremock::MockServer {
+        let site = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("<html><head><title>T</title></head><body><p>Some text.</p></body></html>")
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        site
+    }
+
+    /// An engine as a binding makes it, whose every fetch goes through its pooled Chrome.
+    fn browser_engine() -> CrawlEngineHandle {
+        create_engine(Some(CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                mode: crate::BrowserMode::Always,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        }))
+        .expect("binding engine must build")
+    }
+
+    fn owned_pool(handle: &CrawlEngineHandle) -> Arc<crate::browser_pool::BrowserPool> {
+        Arc::clone(
+            handle
+                .owned_browser_pool
+                .as_ref()
+                .expect("binding engine must own a browser pool"),
+        )
+    }
+
+    /// Whether a Chrome can be launched here. Announces the skip when none can.
+    async fn chrome_launches(test_name: &str) -> bool {
+        let pool = crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig::default());
+        let launched = crate::browser_pool::tests::expect_chrome_or_skip(test_name, pool.warm().await).is_some();
+        pool.shutdown().await;
+        launched
+    }
+
+    /// The pool does not keep itself alive through a page under its SSRF check: with a watch
+    /// still open, dropping every other owner drops the pool.
+    ///
+    /// ~keep The watched page stored the crawl's config, the config holds the pool, and the pool
+    /// ~keep owns the check's listener, which holds the page until Chrome reports its target
+    /// ~keep destroyed. When that report did not come, the pool and its Chrome lived for as long
+    /// ~keep as the process (xberg-io/crawlberg#594).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watched_page_does_not_keep_the_browser_pool_alive() {
+        const TEST_NAME: &str = "a_watched_page_does_not_keep_the_browser_pool_alive";
+        let pool = crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig::default());
+        if crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
+            return;
+        }
+        let profile = crate::browser_pool::tests::pool_profile_dir(&pool).await;
+        let config = CrawlConfig {
+            browser_pool: Some(Arc::clone(&pool)),
+            ..CrawlConfig::default()
+        };
+        let (page, _permit) = pool
+            .acquire_page()
+            .await
+            .expect("the pool must open a page")
+            .into_parts();
+        let firewall = pool.firewall().await.expect("a warm pool has a check");
+        let watch = firewall.watch(&page, &config, 0).await.expect("the watch must start");
+        let weak = Arc::downgrade(&pool);
+        assert!(weak.upgrade().is_some(), "the pool is alive while the test owns it");
+
+        drop(config);
+        drop(pool);
+
+        let alive = weak.upgrade().is_some();
+        drop(watch);
+        drop(page);
+        assert!(!alive, "a page under the check must not own the pool it belongs to");
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&profile);
+        })
+        .await
+        .expect("the dropped pool must stop its Chrome and remove its profile directory");
+    }
+
+    /// Dropping the last clone of an engine handle stops the Chrome its fetches used and removes
+    /// that Chrome's profile directory, and an earlier clone's drop does neither.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_the_last_engine_clone_stops_its_chrome() {
+        const TEST_NAME: &str = "dropping_the_last_engine_clone_stops_its_chrome";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = one_page_site().await;
+        let handle = browser_engine();
+        scrape(&handle, &site.uri())
+            .await
+            .expect("the browser scrape must succeed");
+        let profile = crate::browser_pool::tests::pool_profile_dir(&owned_pool(&handle)).await;
+        let clone = handle.clone();
+
+        drop(handle);
+
+        // ~keep A second scrape proves the Chrome still serves the remaining clone.
+        scrape(&clone, &site.uri())
+            .await
+            .expect("the remaining clone must still scrape through the shared Chrome");
+        assert!(
+            crate::browser_pool::tests::chrome_process_count_for_profile(&profile) > 0,
+            "the Chrome must run while a clone of the handle is alive"
+        );
+
+        drop(clone);
+
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&profile);
+        })
+        .await
+        .expect("dropping the last clone must stop the Chrome and remove its profile directory");
+    }
+
+    /// A page that a pooled fetch closes leaves no target in the SSRF check, and no fetch waits
+    /// out the close timeout.
+    ///
+    /// ~keep On the Chromium headless shell each fetch took five seconds longer and left the
+    /// ~keep page's target in the check (xberg-io/crawlberg#595). A Chrome with a target of its own
+    /// ~keep does not show it, so this test proves the defect only when `CHROME` names the shell.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pooled_fetch_leaves_no_target_in_the_check_and_does_not_wait_for_one() {
+        const TEST_NAME: &str = "a_pooled_fetch_leaves_no_target_in_the_check_and_does_not_wait_for_one";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = one_page_site().await;
+        let handle = browser_engine();
+        let pool = owned_pool(&handle);
+        for fetch in 0..3 {
+            let started = std::time::Instant::now();
+            scrape(&handle, &format!("{}/p{fetch}", site.uri()))
+                .await
+                .expect("the browser scrape must succeed");
+            let elapsed = started.elapsed();
+            let left = pool
+                .firewall()
+                .await
+                .expect("a pool that fetched has a check")
+                .watched_target_count();
+            assert_eq!(left, 0, "fetch {fetch} left its closed page's target in the check");
+            assert!(
+                elapsed < handle.inner.config.browser.shutdown_timeout,
+                "fetch {fetch} took {elapsed:?}, as long as the wait for a page that does not close"
+            );
+        }
+        drop(pool);
+        shutdown_engine(handle).await;
+    }
+
+    /// Set on the child copy of this test binary that [`assert_exit_leaves_no_chrome`] starts, to
+    /// what the child does with its engine before it exits: `keep` or `drop`.
+    const EXIT_CHILD: &str = "CRAWLBERG_TEST_EXIT_CHILD";
+
+    /// The marker before the profile directory that the child prints for its parent.
+    const EXIT_CHILD_PROFILE_LINE: &str = "crawlberg-exit-child-profile: ";
+
+    /// How long the parent waits for its child to scrape one page and exit.
+    const EXIT_CHILD_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// Start this test binary again as a child that scrapes one page through a pooled Chrome,
+    /// then keeps or drops its engine as `engine_at_exit` says and exits at once. Return the
+    /// profile directory of that Chrome once the child has exited with 0, or `None` when no
+    /// Chrome can be launched here. A child that does not exit is killed and fails the test.
+    ///
+    /// ~keep A process that exits runs no destructor of a value still alive and waits for no
+    /// ~keep thread, so a kept engine left its Chrome running with parent 1, and a dropped one left
+    /// ~keep the profile directory its teardown thread had not removed yet (xberg-io/crawlberg#594).
+    /// ~keep The child prints the directory only after it has seen Chrome run on it.
+    #[allow(
+        clippy::print_stdout,
+        reason = "the child reports its profile directory to its parent on stdout"
+    )]
+    async fn profile_of_exited_child(test_name: &str, engine_at_exit: &str) -> Option<std::path::PathBuf> {
+        if let Some(mode) = std::env::var_os(EXIT_CHILD) {
+            let site = one_page_site().await;
+            let handle = browser_engine();
+            scrape(&handle, &site.uri())
+                .await
+                .expect("the browser scrape must succeed");
+            let profile = crate::browser_pool::tests::pool_profile_dir(&owned_pool(&handle)).await;
+            println!("{EXIT_CHILD_PROFILE_LINE}{}", profile.display());
+            if mode == "drop" {
+                drop(handle);
+            } else {
+                if mode == "keep-with-the-list-locked" {
+                    crate::browser_pool::tests::hold_the_live_profile_list_for_good();
+                }
+                std::mem::forget(handle);
+            }
+            std::process::exit(0);
+        }
+        if !chrome_launches(test_name).await {
+            return None;
+        }
+        let test = std::thread::current()
+            .name()
+            .expect("libtest names each test's thread after the test")
+            .to_owned();
+        let child = std::env::current_exe().expect("the test binary must be readable");
+        let mode = engine_at_exit.to_owned();
+        let output = tokio::task::spawn_blocking(move || {
+            let mut child = std::process::Command::new(child)
+                .args([test.as_str(), "--exact", "--nocapture", "--test-threads=1"])
+                .env(EXIT_CHILD, mode)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("the test binary must start");
+            let deadline = std::time::Instant::now() + EXIT_CHILD_WAIT;
+            while child.try_wait().expect("the child must be waitable").is_none() {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            child.wait_with_output().expect("the child's output must be readable")
+        })
+        .await
+        .expect("the child run must not panic");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let profile = stdout
+            .lines()
+            .find_map(|line| Some(line.split_once(EXIT_CHILD_PROFILE_LINE)?.1))
+            .map(std::path::PathBuf::from);
+        let Some(profile) = profile.filter(|_| output.status.success()) else {
+            panic!(
+                "the child run of {test_name} must scrape, print its profile directory and exit with 0: {}\nstdout:\n{stdout}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        Some(profile)
+    }
+
+    /// Assert that the child of [`profile_of_exited_child`] left no process on its Chrome's
+    /// profile directory, and that the directory is gone.
+    async fn assert_exit_leaves_no_chrome(test_name: &str, engine_at_exit: &str) {
+        let Some(profile) = profile_of_exited_child(test_name, engine_at_exit).await else {
+            return;
+        };
+        let users = crate::browser_pool::tests::chrome_process_count_for_profile(&profile);
+        let exists = profile.exists();
+        let left = crate::browser_pool::tests::what_is_left(&profile);
+        crate::browser_pool::tests::kill_processes_naming_profile(&profile);
+        let _ = std::fs::remove_dir_all(&profile);
+        assert_eq!(
+            users, 0,
+            "the exited child left Chrome processes on its profile: {left}"
+        );
+        assert!(
+            !exists,
+            "the exited child left its profile directory {}: {left}",
+            profile.display()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_process_that_exits_with_a_live_engine_leaves_no_chrome_and_no_profile_directory() {
+        assert_exit_leaves_no_chrome(
+            "a_process_that_exits_with_a_live_engine_leaves_no_chrome_and_no_profile_directory",
+            "keep",
+        )
+        .await;
+    }
+
+    /// A process still exits when the list its exit hook reads is locked for good, as it is when
+    /// a thread ended while it held the lock. The hook then leaves the Chrome.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_process_whose_profile_list_is_locked_still_exits() {
+        let profile = profile_of_exited_child(
+            "a_process_whose_profile_list_is_locked_still_exits",
+            "keep-with-the-list-locked",
+        )
+        .await;
+        if let Some(profile) = profile {
+            crate::browser_pool::tests::kill_processes_naming_profile(&profile);
+            let _ = std::fs::remove_dir_all(&profile);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_process_that_exits_right_after_dropping_its_engine_leaves_no_profile_directory() {
+        assert_exit_leaves_no_chrome(
+            "a_process_that_exits_right_after_dropping_its_engine_leaves_no_profile_directory",
+            "drop",
+        )
+        .await;
+    }
+
     #[test]
     fn binding_browser_pool_config_carries_engine_launch_options() {
         let config = CrawlConfig {

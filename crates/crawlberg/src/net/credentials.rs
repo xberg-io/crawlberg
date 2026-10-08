@@ -112,6 +112,32 @@ pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String,
     headers
 }
 
+/// The seed-host headers of one crawl, for a holder that must not keep the crawl's config.
+///
+/// ~keep The check of a pooled browser keeps one per watched page in its listener, which the
+/// ~keep browser pool owns. A config there carries the pool itself, so the pool then owned a
+/// ~keep reference to itself and never dropped (xberg-io/crawlberg#594).
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) struct SeedHostHeaders {
+    scope: CredentialScope,
+    headers: Vec<(String, String)>,
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+impl SeedHostHeaders {
+    /// The headers `config` gives a request to its seed's host, or `None` when it gives none.
+    pub(crate) fn of(config: &CrawlConfig) -> Option<Self> {
+        let scope = config.credential_scope.clone()?;
+        let headers = seed_host_headers(config, &scope.seed);
+        (!headers.is_empty()).then_some(Self { scope, headers })
+    }
+
+    /// The headers a request for `url` carries: empty unless `url` is on the seed's host.
+    pub(crate) fn for_url(&self, url: &Url) -> &[(String, String)] {
+        if self.scope.covers(url) { &self.headers } else { &[] }
+    }
+}
+
 /// The seed-host headers for the native browser, scoped to the seed's host.
 ///
 /// ~keep The native clients add them per request after checking the host, the same rule as

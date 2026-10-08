@@ -1106,6 +1106,100 @@ pub(crate) fn chrome_process_count_for_profile(path: &std::path::Path) -> usize 
     processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)).len()
 }
 
+/// A profile directory is listed for the exit hook from its creation until its teardown has
+/// finished, and the hook of another process, such as a forked child, leaves it alone.
+#[test]
+fn a_profile_directory_is_listed_for_its_own_process_until_it_is_torn_down() {
+    let listed_for = |owner: u32, path: &std::path::Path| {
+        let teardowns = live_profile_teardowns_of(&live_profiles(), owner);
+        let listed = teardowns.iter().any(|teardown| teardown.dir == path);
+        // ~keep Forgotten, not dropped: a drop would tear down every live profile of this process.
+        teardowns.into_iter().for_each(std::mem::forget);
+        listed
+    };
+    let dir =
+        ScratchProfileDir::create("crawlberg-listed-profile-test-", None).expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    let this_process = std::process::id();
+
+    assert!(
+        listed_for(this_process, &path),
+        "a live profile directory must be listed for the process that created it"
+    );
+    assert!(
+        !listed_for(this_process.wrapping_add(1), &path),
+        "a profile directory must not be listed for another process"
+    );
+
+    drop(dir);
+    assert!(wait_for_removal(&path), "the dropped directory must be removed");
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    while listed_for(this_process, &path) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !listed_for(this_process, &path),
+        "a profile directory that was torn down must no longer be listed"
+    );
+}
+
+/// Lock the list of live profile directories on a thread that never releases it, as a thread
+/// that ended while it held the lock does.
+#[cfg_attr(
+    not(feature = "browser"),
+    expect(dead_code, reason = "the binding exit tests require the browser feature")
+)]
+pub(crate) fn hold_the_live_profile_list_for_good() {
+    let (locked, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _held = live_profiles();
+        let _ = locked.send(());
+        loop {
+            std::thread::park();
+        }
+    });
+    wait.recv_timeout(PROCESS_TEST_WAIT)
+        .expect("the list of live profile directories must be lockable");
+}
+
+/// Kill every process that names `path` as its profile, so a failed assertion leaves none behind.
+#[cfg_attr(
+    not(feature = "browser"),
+    expect(dead_code, reason = "the binding exit tests require the browser feature")
+)]
+pub(crate) fn kill_processes_naming_profile(path: &std::path::Path) {
+    for process in processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)) {
+        process.kill();
+    }
+}
+
+/// A pool dropped where no runtime runs its tasks still stops its Chrome and removes its profile
+/// directory.
+///
+/// ~keep The runtime is a current-thread one that nothing drives during or after the drop, as when
+/// ~keep a host language's finalizer thread drops the engine. The listener task that holds the
+/// ~keep other `Browser` reference never runs, so chromiumoxide's own kill never happens: the
+/// ~keep profile directory's teardown, on a thread of its own, is what stops that Chrome.
+#[test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+fn a_pool_dropped_where_no_runtime_runs_stops_its_chrome_and_removes_its_profile_directory() {
+    const TEST_NAME: &str = "a_pool_dropped_where_no_runtime_runs_stops_its_chrome_and_removes_its_profile_directory";
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime must build");
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if expect_chrome_or_skip(TEST_NAME, runtime.block_on(pool.warm())).is_none() {
+        return;
+    }
+    let path = runtime.block_on(pool_profile_dir(&pool));
+
+    drop(pool);
+
+    assert_profile_directory_is_gone_for_good(&path);
+    drop(runtime);
+}
+
 /// Kill the main process of the Chrome `pool` runs, and return its profile directory.
 async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
     let path = pool_profile_dir(pool).await;

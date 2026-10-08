@@ -359,8 +359,96 @@ const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// ~keep The drop hands that work to another thread and returns at once: the scan, the kills, the
 /// ~keep wait of up to five seconds and the delete ran for up to a second on a tokio worker, and in
 /// ~keep the pool while it held its state lock.
+/// ~keep A process that exits does not wait for that thread, and it drops no value that is still
+/// ~keep alive, so each directory is also listed in [`LIVE_PROFILES`] until its teardown has
+/// ~keep finished, and a hook that runs when the process exits finishes the rest
+/// ~keep (xberg-io/crawlberg#594).
 #[derive(Debug)]
 pub(crate) struct ScratchProfileDir(Option<ProfileTeardown>);
+
+/// A [`ScratchProfileDir`] whose teardown has not finished.
+struct LiveProfile {
+    /// The process that created the directory. A forked child inherits the list, and the
+    /// directories in it are its parent's.
+    owner: u32,
+    /// The Chrome launched on the directory, as [`ProfileTeardown::chrome`].
+    chrome: Option<std::path::PathBuf>,
+}
+
+/// Every [`ScratchProfileDir`] whose teardown has not finished, by its directory.
+static LIVE_PROFILES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, LiveProfile>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn live_profiles() -> std::sync::MutexGuard<'static, std::collections::HashMap<std::path::PathBuf, LiveProfile>> {
+    match LIVE_PROFILES.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// List `dir` in [`LIVE_PROFILES`], and on the first call register the hook that tears down
+/// what is left in the list when the process exits.
+///
+/// ~keep The hook runs on a return from `main` and on `exit`, in any language that ends its
+/// ~keep process through the C library. It does not run when the process is killed by a signal,
+/// ~keep aborts, or leaves through `_exit`.
+#[allow(unsafe_code)]
+fn list_live_profile(dir: &std::path::Path) {
+    // ~keep Declared here: the `libc` crate is a dependency on iOS alone. Every C runtime that
+    // ~keep `std` links against has `int atexit(void (*)(void))`.
+    unsafe extern "C" {
+        fn atexit(hook: extern "C" fn()) -> std::ffi::c_int;
+    }
+    static EXIT_HOOK: std::sync::Once = std::sync::Once::new();
+    EXIT_HOOK.call_once(|| {
+        // ~keep SAFETY: the declaration matches C's `atexit`, and `tear_down_live_profiles` lives
+        // ~keep as long as this code is loaded, takes no argument and does not unwind.
+        if unsafe { atexit(tear_down_live_profiles) } != 0 {
+            tracing::warn!("no exit hook for Chrome profile teardown; a Chrome still running at exit is left");
+        }
+    });
+    live_profiles().insert(
+        dir.to_path_buf(),
+        LiveProfile {
+            owner: std::process::id(),
+            chrome: None,
+        },
+    );
+}
+
+/// The teardown of every profile directory in `profiles` that the process `owner` created.
+fn live_profile_teardowns_of(
+    profiles: &std::collections::HashMap<std::path::PathBuf, LiveProfile>,
+    owner: u32,
+) -> Vec<ProfileTeardown> {
+    profiles
+        .iter()
+        .filter(|(_, profile)| profile.owner == owner)
+        .map(|(dir, profile)| ProfileTeardown {
+            dir: dir.clone(),
+            chrome: profile.chrome.clone(),
+        })
+        .collect()
+}
+
+/// The exit hook: tear down every profile directory this process still lists.
+extern "C" fn tear_down_live_profiles() {
+    // ~keep The list is not waited for: a thread that ended while it held the lock, as every
+    // ~keep other thread has when a Windows process exits, would hold up the exit for good. A
+    // ~keep panic must not unwind into the C library's exit.
+    let _ = std::panic::catch_unwind(|| {
+        let left = match LIVE_PROFILES.try_lock() {
+            Ok(profiles) => live_profile_teardowns_of(&profiles, std::process::id()),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                live_profile_teardowns_of(&poisoned.into_inner(), std::process::id())
+            }
+            Err(std::sync::TryLockError::WouldBlock) => Vec::new(),
+        };
+        // ~keep Each teardown runs as it drops, after the lock is released.
+        drop(left);
+    });
+}
 
 impl ScratchProfileDir {
     /// Create a fresh directory for the Chrome at `chrome_path` (`None` for the one found on the
@@ -375,10 +463,9 @@ impl ScratchProfileDir {
             .prefix(prefix)
             .tempdir_in(&parent)
             .map(|dir| {
-                Self(Some(ProfileTeardown {
-                    dir: dir.keep(),
-                    chrome: None,
-                }))
+                let dir = dir.keep();
+                list_live_profile(&dir);
+                Self(Some(ProfileTeardown { dir, chrome: None }))
             })
             .map_err(failed)
     }
@@ -410,6 +497,9 @@ impl ScratchProfileDir {
                 pid,
                 "the launched Chrome's executable is unreadable; its profile teardown stops no process"
             );
+        }
+        if let Some(profile) = live_profiles().get_mut(&self.teardown().dir) {
+            profile.chrome.clone_from(&chrome);
         }
         self.0.as_mut().expect("the teardown is taken only once").chrome = chrome;
     }
@@ -496,6 +586,7 @@ impl Drop for ProfileTeardown {
         {
             tracing::warn!(dir = %self.dir.display(), %error, "failed to remove the Chrome profile directory");
         }
+        live_profiles().remove(&self.dir);
     }
 }
 
