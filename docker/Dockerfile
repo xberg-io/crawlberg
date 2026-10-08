@@ -15,6 +15,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/crawlberg-chromiumoxide/ vendor/crawlberg-chromiumoxide/
 
 COPY crates/crawlberg/ crates/crawlberg/
 COPY crates/crawlberg-robots/ crates/crawlberg-robots/

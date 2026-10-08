@@ -18,6 +18,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/crawlberg-chromiumoxide/ vendor/crawlberg-chromiumoxide/
 COPY crates/crawlberg/ crates/crawlberg/
 COPY crates/crawlberg-robots/ crates/crawlberg-robots/
 COPY crates/crawlberg-ffi/ crates/crawlberg-ffi/
