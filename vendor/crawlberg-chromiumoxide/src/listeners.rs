@@ -21,11 +21,7 @@ pub struct EventListeners {
 impl EventListeners {
     /// Register a subscription for a method
     pub fn add_listener(&mut self, req: EventListenerRequest) {
-        let EventListenerRequest {
-            listener,
-            method,
-            kind,
-        } = req;
+        let EventListenerRequest { listener, method, kind } = req;
         let subs = self.listeners.entry(method).or_default();
         subs.push(EventListener {
             listener,
@@ -46,11 +42,7 @@ impl EventListeners {
 
     /// Try to queue in a new custom event if a listener is registered and the
     /// converting the json value to the registered event type succeeds
-    pub fn try_send_custom(
-        &mut self,
-        method: &str,
-        val: serde_json::Value,
-    ) -> serde_json::Result<()> {
+    pub fn try_send_custom(&mut self, method: &str, val: serde_json::Value) -> serde_json::Result<()> {
         if let Some(subscriptions) = self.listeners.get_mut(method) {
             let mut event = None;
             if let Some(json_to_arc_event) = subscriptions
@@ -222,9 +214,7 @@ mod tests {
         let (mut tx, rx) = futures::channel::mpsc::unbounded();
         let mut stream = EventStream::<EventAnimationCanceled>::new(rx);
 
-        let event = EventAnimationCanceled {
-            id: "id".to_string(),
-        };
+        let event = EventAnimationCanceled { id: "id".to_string() };
         let msg: Arc<dyn Event> = Arc::new(event.clone());
         tx.send(msg).await.unwrap();
         let next = stream.next().await.unwrap();
@@ -264,9 +254,7 @@ mod tests {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         let mut listeners = EventListeners::default();
 
-        let event = EventAnimationCanceled {
-            id: "id".to_string(),
-        };
+        let event = EventAnimationCanceled { id: "id".to_string() };
 
         listeners.add_listener(EventListenerRequest {
             method: EventAnimationCanceled::method_id(),

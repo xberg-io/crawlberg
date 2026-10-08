@@ -102,10 +102,7 @@ fn get_by_path(options: &DetectionOptions) -> Option<PathBuf> {
     )];
     #[cfg(target_os = "macos")]
     let default_paths = [
-        (
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            true,
-        ),
+        ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", true),
         (
             "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
             options.unstable,
@@ -154,8 +151,7 @@ fn get_by_registry() -> Option<PathBuf> {
     windows_registry::LOCAL_MACHINE
         .open("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe")
         .or_else(|_| {
-            windows_registry::CURRENT_USER
-                .open("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe")
+            windows_registry::CURRENT_USER.open("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe")
         })
         .and_then(|key| key.get_string(""))
         .map(PathBuf::from)

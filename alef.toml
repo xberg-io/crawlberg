@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.103.17"
+alef_version = "0.107.5"
 languages = [
   "python",
   "node",
@@ -28,6 +28,7 @@ languages = [
 # ~keep These reviewed harnesses contain native setup and test configuration beyond Alef seeds.
 # ~keep scripts/sync_consumer_versions.py maintains and checks their release pins.
 user_owned = [
+  ".gitignore",
   "e2e/csharp/Crawlberg.E2eTests.csproj",
   "e2e/dart/pubspec.yaml",
   "e2e/go/go.mod",
@@ -37,6 +38,7 @@ user_owned = [
   "e2e/ruby/Gemfile",
   "e2e/wasm/package.json",
   "e2e/zig/build.zig",
+  "e2e/zig/build.zig.zon",
   "test_apps/dart/pubspec.yaml",
   "test_apps/elixir/mix.exs",
   "test_apps/go/go.mod",
@@ -2271,64 +2273,64 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.10.2"
+version = ">=1.10.3"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.10.2"
+version = "^1.10.3"
 
 [crates.e2e.registry.packages.dart]
 name = "crawlberg"
-version = "^1.10.2"
+version = "^1.10.3"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.10.2"
+version = "v1.10.3"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.e2e.registry.packages.csharp]
 name = "XbergIo.Crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.10.2"
+version = ">=1.10.3"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.10.2"
+version = ">= 1.10.3"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.10.2"
+version = "~> 1.10.3"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.10.2"
+version = "^1.10.3"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.10.2"
-hash = "crawlberg-1.10.2-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.10.3"
+hash = "crawlberg-1.10.3-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.10.2"
+version = "1.10.3"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

@@ -1,16 +1,14 @@
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{
-    self, AuthChallengeResponse, AuthChallengeResponseResponse, ContinueRequestParams,
-    ContinueWithAuthParams, DisableParams, EventAuthRequired, EventRequestPaused, RequestPattern,
+    self, AuthChallengeResponse, AuthChallengeResponseResponse, ContinueRequestParams, ContinueWithAuthParams,
+    DisableParams, EventAuthRequired, EventRequestPaused, RequestPattern,
 };
 #[allow(deprecated)]
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
-    EmulateNetworkConditionsParams, EventLoadingFailed, EventLoadingFinished,
-    EventRequestServedFromCache, EventRequestWillBeSent, EventResponseReceived, Headers,
-    InterceptionId, RequestId, Response, SetCacheDisabledParams, SetExtraHttpHeadersParams,
+    EmulateNetworkConditionsParams, EventLoadingFailed, EventLoadingFinished, EventRequestServedFromCache,
+    EventRequestWillBeSent, EventResponseReceived, Headers, InterceptionId, RequestId, Response,
+    SetCacheDisabledParams, SetExtraHttpHeadersParams,
 };
-use chromiumoxide_cdp::cdp::browser_protocol::{
-    network::EnableParams, security::SetIgnoreCertificateErrorsParams,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::{network::EnableParams, security::SetIgnoreCertificateErrorsParams};
 use chromiumoxide_types::{Command, Method, MethodId};
 
 use crate::auth::Credentials;
@@ -137,9 +135,7 @@ impl NetworkManager {
             self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
         }
         if let Some(network_id) = event.network_id.as_ref() {
-            if let Some(request_will_be_sent) =
-                self.requests_will_be_sent.remove(network_id.as_ref())
-            {
+            if let Some(request_will_be_sent) = self.requests_will_be_sent.remove(network_id.as_ref()) {
                 self.on_request(&request_will_be_sent, Some(event.request_id.clone().into()));
             } else {
                 self.request_id_to_interception_id
@@ -149,14 +145,10 @@ impl NetworkManager {
     }
 
     pub fn on_fetch_auth_required(&mut self, event: &EventAuthRequired) {
-        let response = if self
-            .attempted_authentications
-            .contains(event.request_id.as_ref())
-        {
+        let response = if self.attempted_authentications.contains(event.request_id.as_ref()) {
             AuthChallengeResponseResponse::CancelAuth
         } else if self.credentials.is_some() {
-            self.attempted_authentications
-                .insert(event.request_id.clone().into());
+            self.attempted_authentications.insert(event.request_id.clone().into());
             AuthChallengeResponseResponse::ProvideCredentials
         } else {
             AuthChallengeResponseResponse::Default
@@ -192,10 +184,7 @@ impl NetworkManager {
     /// Request interception doesn't happen for data URLs with Network Service.
     pub fn on_request_will_be_sent(&mut self, event: &EventRequestWillBeSent) {
         if self.protocol_request_interception_enabled && !event.request.url.starts_with("data:") {
-            if let Some(interception_id) = self
-                .request_id_to_interception_id
-                .remove(event.request_id.as_ref())
-            {
+            if let Some(interception_id) = self.request_id_to_interception_id.remove(event.request_id.as_ref()) {
                 self.on_request(event, Some(interception_id));
             } else {
                 // TODO remove the clone for event
@@ -216,19 +205,16 @@ impl NetworkManager {
     pub fn on_response_received(&mut self, event: &EventResponseReceived) {
         if let Some(mut request) = self.requests.remove(event.request_id.as_ref()) {
             request.set_response(event.response.clone());
-            self.queued_events
-                .push_back(NetworkEvent::RequestFinished(request))
+            self.queued_events.push_back(NetworkEvent::RequestFinished(request))
         }
     }
 
     pub fn on_network_loading_finished(&mut self, event: &EventLoadingFinished) {
         if let Some(request) = self.requests.remove(event.request_id.as_ref()) {
             if let Some(interception_id) = request.interception_id.as_ref() {
-                self.attempted_authentications
-                    .remove(interception_id.as_ref());
+                self.attempted_authentications.remove(interception_id.as_ref());
             }
-            self.queued_events
-                .push_back(NetworkEvent::RequestFinished(request));
+            self.queued_events.push_back(NetworkEvent::RequestFinished(request));
         }
     }
 
@@ -236,19 +222,13 @@ impl NetworkManager {
         if let Some(mut request) = self.requests.remove(event.request_id.as_ref()) {
             request.failure_text = Some(event.error_text.clone());
             if let Some(interception_id) = request.interception_id.as_ref() {
-                self.attempted_authentications
-                    .remove(interception_id.as_ref());
+                self.attempted_authentications.remove(interception_id.as_ref());
             }
-            self.queued_events
-                .push_back(NetworkEvent::RequestFailed(request));
+            self.queued_events.push_back(NetworkEvent::RequestFailed(request));
         }
     }
 
-    fn on_request(
-        &mut self,
-        event: &EventRequestWillBeSent,
-        interception_id: Option<InterceptionId>,
-    ) {
+    fn on_request(&mut self, event: &EventRequestWillBeSent, interception_id: Option<InterceptionId>) {
         let mut redirect_chain = Vec::new();
         if let Some(redirect_resp) = event.redirect_response.as_ref() {
             if let Some(mut request) = self.requests.remove(event.request_id.as_ref()) {
@@ -273,8 +253,7 @@ impl NetworkManager {
     fn handle_request_redirect(&mut self, request: &mut HttpRequest, response: Response) {
         request.set_response(response);
         if let Some(interception_id) = request.interception_id.as_ref() {
-            self.attempted_authentications
-                .remove(interception_id.as_ref());
+            self.attempted_authentications.remove(interception_id.as_ref());
         }
     }
 }

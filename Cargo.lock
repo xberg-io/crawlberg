@@ -416,7 +416,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-harness"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "ahash",
  "async-trait",
@@ -712,9 +712,6 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bzip2"
@@ -851,24 +848,6 @@ dependencies = [
  "chromiumoxide_types",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "chromiumoxide_fetcher"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd2cc8c9431726edce9f5ceb3ca1b711dde0f818cd6fb34808a00556ce73135"
-dependencies = [
- "anyhow",
- "directories",
- "reqwest",
- "serde",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "windows-version",
- "zip 0.6.6",
- "zip 8.6.0",
 ]
 
 [[package]]
@@ -1218,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1299,14 +1278,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bindings-common"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
 ]
 
 [[package]]
 name = "crawlberg-browser"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1337,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bypass"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "async-trait",
  "crawlberg",
@@ -1355,29 +1334,23 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-chromiumoxide"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "async-tungstenite",
  "base64 0.22.1",
- "bytes",
  "chromiumoxide_cdp",
- "chromiumoxide_fetcher",
  "chromiumoxide_types",
- "chrono",
  "dunce",
  "fnv",
  "futures",
  "futures-timer",
  "pin-project-lite",
- "proc-macro2",
- "quote",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "url",
  "which 8.0.6",
  "windows-registry",
@@ -1385,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-cli"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "clap",
  "crawlberg",
@@ -1403,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-dart"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
  "flutter_rust_bridge",
@@ -1414,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-ffi"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "ahash",
  "cbindgen",
@@ -1428,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-jni"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1442,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-node"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
  "futures-util",
@@ -1455,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-php"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
  "ext-php-rs",
@@ -1467,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-py"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1480,11 +1453,11 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.10.2"
+version = "1.10.3"
 
 [[package]]
 name = "crawlberg-swift"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1501,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-wasm"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1980,15 +1953,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "directories"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
-dependencies = [
- "dirs-sys",
-]
-
-[[package]]
 name = "dirs"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2161,7 +2125,7 @@ dependencies = [
  "skeptic",
  "thiserror 2.0.21",
  "ureq",
- "zip 8.6.0",
+ "zip",
 ]
 
 [[package]]
@@ -5640,8 +5604,10 @@ version = "0.1.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384ed39ea10f1cefabb197b7d8e67f0034b15a94ccbb1038b8e020da59bfb0be"
 dependencies = [
+ "once_cell",
  "swift-bridge-build",
  "swift-bridge-macro",
+ "tokio",
 ]
 
 [[package]]
@@ -7125,15 +7091,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-version"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4060a1da109b9d0326b7262c8e12c84df67cc0dbc9e33cf49e01ccc2eb63631"
-dependencies = [
- "windows-link",
-]
-
-[[package]]
 name = "windows_aarch64_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7471,18 +7428,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "zip"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
-dependencies = [
- "byteorder",
- "crc32fast",
- "crossbeam-utils",
- "flate2",
 ]
 
 [[package]]

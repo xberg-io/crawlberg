@@ -10,14 +10,89 @@ public func crawlResultUniqueNormalizedUrlsFromJson<GenericIntoRustString: IntoR
 public func crawl_engine_handle_noop(_ client: CrawlEngineHandleRef) {
     __swift_bridge__$crawl_engine_handle_noop(client.ptr)
 }
-public func batchCrawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ urls: RustVec<GenericIntoRustString>) throws -> BatchCrawlResults {
-    try { let val = __swift_bridge__$batch_crawl({engine.isOwned = false; return engine.ptr;}(), { let val = urls; val.isOwned = false; return val.ptr }()); if val.is_ok { return BatchCrawlResults(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+public func batchCrawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ urls: RustVec<GenericIntoRustString>) async throws -> BatchCrawlResults {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$batch_crawl>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(BatchCrawlResults(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<BatchCrawlResults, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$batch_crawl(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$batch_crawl(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let val = urls; val.isOwned = false; return val.ptr }())
+    })
 }
-public func batchScrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ urls: RustVec<GenericIntoRustString>) throws -> BatchScrapeResults {
-    try { let val = __swift_bridge__$batch_scrape({engine.isOwned = false; return engine.ptr;}(), { let val = urls; val.isOwned = false; return val.ptr }()); if val.is_ok { return BatchScrapeResults(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+class CbWrapper$batch_crawl {
+    var cb: (Result<BatchCrawlResults, Error>) -> ()
+
+    public init(cb: @escaping (Result<BatchCrawlResults, Error>) -> ()) {
+        self.cb = cb
+    }
 }
-public func crawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) throws -> CrawlResult {
-    try { let val = __swift_bridge__$crawl({engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+public func batchScrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ urls: RustVec<GenericIntoRustString>) async throws -> BatchScrapeResults {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$batch_scrape>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(BatchScrapeResults(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<BatchScrapeResults, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$batch_scrape(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$batch_scrape(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let val = urls; val.isOwned = false; return val.ptr }())
+    })
+}
+class CbWrapper$batch_scrape {
+    var cb: (Result<BatchScrapeResults, Error>) -> ()
+
+    public init(cb: @escaping (Result<BatchScrapeResults, Error>) -> ()) {
+        self.cb = cb
+    }
+}
+public func crawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) async throws -> CrawlResult {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$crawl>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(CrawlResult(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<CrawlResult, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$crawl(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$crawl(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$crawl {
+    var cb: (Result<CrawlResult, Error>) -> ()
+
+    public init(cb: @escaping (Result<CrawlResult, Error>) -> ()) {
+        self.cb = cb
+    }
 }
 public func createEngine(_ config: Optional<CrawlConfig>) throws -> CrawlEngineHandle {
     try { let val = __swift_bridge__$create_engine({ if let val = config { val.isOwned = false; return val.ptr } else { return nil } }()); if val.is_ok { return CrawlEngineHandle(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
@@ -25,20 +100,145 @@ public func createEngine(_ config: Optional<CrawlConfig>) throws -> CrawlEngineH
 public func generateCitations<GenericIntoRustString: IntoRustString>(_ markdown: GenericIntoRustString) -> CitationResult {
     CitationResult(ptr: __swift_bridge__$generate_citations({ let rustString = markdown.intoRustString(); rustString.isOwned = false; return rustString.ptr }()))
 }
-public func interact<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString, _ actions: RustVec<GenericIntoRustString>) throws -> InteractionResult {
-    try { let val = __swift_bridge__$interact({engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let val = actions; val.isOwned = false; return val.ptr }()); if val.is_ok { return InteractionResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+public func interact<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString, _ actions: RustVec<GenericIntoRustString>) async throws -> InteractionResult {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$interact>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(InteractionResult(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<InteractionResult, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$interact(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$interact(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let val = actions; val.isOwned = false; return val.ptr }())
+    })
 }
-public func mapUrls<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) throws -> MapResult {
-    try { let val = __swift_bridge__$map_urls({engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return MapResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+class CbWrapper$interact {
+    var cb: (Result<InteractionResult, Error>) -> ()
+
+    public init(cb: @escaping (Result<InteractionResult, Error>) -> ()) {
+        self.cb = cb
+    }
 }
-public func scrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) throws -> ScrapeResult {
-    try { let val = __swift_bridge__$scrape({engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrapeResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+public func mapUrls<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) async throws -> MapResult {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$map_urls>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(MapResult(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<MapResult, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$map_urls(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$map_urls(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
 }
-public func crawlEngineHandleCrawlStreamStart(_ client: CrawlEngineHandleRef, _ req: CrawlStreamRequestRef) throws -> CrawlEngineHandleCrawlStreamStreamHandle {
-    try { let val = __swift_bridge__$crawl_engine_handle_crawl_stream_start(client.ptr, req.ptr); if val.is_ok { return CrawlEngineHandleCrawlStreamStreamHandle(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+class CbWrapper$map_urls {
+    var cb: (Result<MapResult, Error>) -> ()
+
+    public init(cb: @escaping (Result<MapResult, Error>) -> ()) {
+        self.cb = cb
+    }
 }
-public func crawlEngineHandleBatchCrawlStreamStart(_ client: CrawlEngineHandleRef, _ req: BatchCrawlStreamRequestRef) throws -> CrawlEngineHandleBatchCrawlStreamStreamHandle {
-    try { let val = __swift_bridge__$crawl_engine_handle_batch_crawl_stream_start(client.ptr, req.ptr); if val.is_ok { return CrawlEngineHandleBatchCrawlStreamStreamHandle(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+public func scrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHandle, _ url: GenericIntoRustString) async throws -> ScrapeResult {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$scrape>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(ScrapeResult(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<ScrapeResult, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$scrape(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$scrape(wrapperPtr, onComplete, {engine.isOwned = false; return engine.ptr;}(), { let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$scrape {
+    var cb: (Result<ScrapeResult, Error>) -> ()
+
+    public init(cb: @escaping (Result<ScrapeResult, Error>) -> ()) {
+        self.cb = cb
+    }
+}
+public func crawlEngineHandleCrawlStreamStart(_ client: CrawlEngineHandleRef, _ req: CrawlStreamRequestRef) async throws -> CrawlEngineHandleCrawlStreamStreamHandle {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$crawl_engine_handle_crawl_stream_start>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(CrawlEngineHandleCrawlStreamStreamHandle(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<CrawlEngineHandleCrawlStreamStreamHandle, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$crawl_engine_handle_crawl_stream_start(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$crawl_engine_handle_crawl_stream_start(wrapperPtr, onComplete, client.ptr, req.ptr)
+    })
+}
+class CbWrapper$crawl_engine_handle_crawl_stream_start {
+    var cb: (Result<CrawlEngineHandleCrawlStreamStreamHandle, Error>) -> ()
+
+    public init(cb: @escaping (Result<CrawlEngineHandleCrawlStreamStreamHandle, Error>) -> ()) {
+        self.cb = cb
+    }
+}
+public func crawlEngineHandleBatchCrawlStreamStart(_ client: CrawlEngineHandleRef, _ req: BatchCrawlStreamRequestRef) async throws -> CrawlEngineHandleBatchCrawlStreamStreamHandle {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+        let wrapper = Unmanaged<CbWrapper$crawl_engine_handle_batch_crawl_stream_start>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        if rustFnRetVal.is_ok {
+            wrapper.cb(.success(CrawlEngineHandleBatchCrawlStreamStreamHandle(ptr: rustFnRetVal.ok_or_err!)))
+        } else {
+            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+        }
+    }
+
+    return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<CrawlEngineHandleBatchCrawlStreamStreamHandle, Error>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$crawl_engine_handle_batch_crawl_stream_start(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$crawl_engine_handle_batch_crawl_stream_start(wrapperPtr, onComplete, client.ptr, req.ptr)
+    })
+}
+class CbWrapper$crawl_engine_handle_batch_crawl_stream_start {
+    var cb: (Result<CrawlEngineHandleBatchCrawlStreamStreamHandle, Error>) -> ()
+
+    public init(cb: @escaping (Result<CrawlEngineHandleBatchCrawlStreamStreamHandle, Error>) -> ()) {
+        self.cb = cb
+    }
 }
 public func actionResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ActionResult {
     try { let val = __swift_bridge__$action_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ActionResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
@@ -5761,16 +5961,41 @@ public class CrawlEngineHandleBatchCrawlStreamStreamHandleRefMut: CrawlEngineHan
         super.init(ptr: ptr)
     }
 }
-extension CrawlEngineHandleBatchCrawlStreamStreamHandleRefMut {
-    public func next() throws -> RustString {
-        try { let val = __swift_bridge__$CrawlEngineHandleBatchCrawlStreamStreamHandle$next(ptr); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
-    }
-}
 public class CrawlEngineHandleBatchCrawlStreamStreamHandleRef {
     public var ptr: UnsafeMutableRawPointer
 
     public init(ptr: UnsafeMutableRawPointer) {
         self.ptr = ptr
+    }
+}
+extension CrawlEngineHandleBatchCrawlStreamStreamHandleRef {
+    public func next() async throws -> RustString {
+        func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+            let wrapper = Unmanaged<CbWrapper$CrawlEngineHandleBatchCrawlStreamStreamHandle$next>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+            if rustFnRetVal.is_ok {
+                wrapper.cb(.success(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            } else {
+                wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            }
+        }
+
+        return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<RustString, Error>) in
+            let callback = { rustFnRetVal in
+                continuation.resume(with: rustFnRetVal)
+            }
+
+            let wrapper = CbWrapper$CrawlEngineHandleBatchCrawlStreamStreamHandle$next(cb: callback)
+            let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+            __swift_bridge__$CrawlEngineHandleBatchCrawlStreamStreamHandle$next(wrapperPtr, onComplete, ptr)
+        })
+    }
+    class CbWrapper$CrawlEngineHandleBatchCrawlStreamStreamHandle$next {
+        var cb: (Result<RustString, Error>) -> ()
+
+        public init(cb: @escaping (Result<RustString, Error>) -> ()) {
+            self.cb = cb
+        }
     }
 }
 extension CrawlEngineHandleBatchCrawlStreamStreamHandle: Vectorizable {
@@ -5841,16 +6066,41 @@ public class CrawlEngineHandleCrawlStreamStreamHandleRefMut: CrawlEngineHandleCr
         super.init(ptr: ptr)
     }
 }
-extension CrawlEngineHandleCrawlStreamStreamHandleRefMut {
-    public func next() throws -> RustString {
-        try { let val = __swift_bridge__$CrawlEngineHandleCrawlStreamStreamHandle$next(ptr); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
-    }
-}
 public class CrawlEngineHandleCrawlStreamStreamHandleRef {
     public var ptr: UnsafeMutableRawPointer
 
     public init(ptr: UnsafeMutableRawPointer) {
         self.ptr = ptr
+    }
+}
+extension CrawlEngineHandleCrawlStreamStreamHandleRef {
+    public func next() async throws -> RustString {
+        func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __private__ResultPtrAndPtr) {
+            let wrapper = Unmanaged<CbWrapper$CrawlEngineHandleCrawlStreamStreamHandle$next>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+            if rustFnRetVal.is_ok {
+                wrapper.cb(.success(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            } else {
+                wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            }
+        }
+
+        return try await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<RustString, Error>) in
+            let callback = { rustFnRetVal in
+                continuation.resume(with: rustFnRetVal)
+            }
+
+            let wrapper = CbWrapper$CrawlEngineHandleCrawlStreamStreamHandle$next(cb: callback)
+            let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+            __swift_bridge__$CrawlEngineHandleCrawlStreamStreamHandle$next(wrapperPtr, onComplete, ptr)
+        })
+    }
+    class CbWrapper$CrawlEngineHandleCrawlStreamStreamHandle$next {
+        var cb: (Result<RustString, Error>) -> ()
+
+        public init(cb: @escaping (Result<RustString, Error>) -> ()) {
+            self.cb = cb
+        }
     }
 }
 extension CrawlEngineHandleCrawlStreamStreamHandle: Vectorizable {

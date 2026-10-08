@@ -8,15 +8,11 @@ use chromiumoxide_types::ClickOptions;
 use futures::{Future, FutureExt, Stream, future};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node, NodeId,
-    ResolveNodeParams,
+    BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node, NodeId, ResolveNodeParams,
 };
-use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    CaptureScreenshotFormat, CaptureScreenshotParams, Viewport,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::page::{CaptureScreenshotFormat, CaptureScreenshotParams, Viewport};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
-    CallFunctionOnReturns, GetPropertiesParams, PropertyDescriptor, RemoteObjectId,
-    RemoteObjectType,
+    CallFunctionOnReturns, GetPropertiesParams, PropertyDescriptor, RemoteObjectId, RemoteObjectType,
 };
 
 use crate::error::{CdpError, Result};
@@ -39,22 +35,13 @@ pub struct Element {
 impl Element {
     pub(crate) async fn new(tab: Arc<PageInner>, node_id: NodeId) -> Result<Self> {
         let backend_node_id = tab
-            .execute(
-                DescribeNodeParams::builder()
-                    .node_id(node_id)
-                    .depth(100)
-                    .build(),
-            )
+            .execute(DescribeNodeParams::builder().node_id(node_id).depth(100).build())
             .await?
             .node
             .backend_node_id;
 
         let resp = tab
-            .execute(
-                ResolveNodeParams::builder()
-                    .backend_node_id(backend_node_id)
-                    .build(),
-            )
+            .execute(ResolveNodeParams::builder().backend_node_id(backend_node_id).build())
             .await?;
 
         let remote_object_id = resp
@@ -72,15 +59,10 @@ impl Element {
 
     /// Convert a slice of `NodeId`s into a `Vec` of `Element`s
     pub(crate) async fn from_nodes(tab: &Arc<PageInner>, node_ids: &[NodeId]) -> Result<Vec<Self>> {
-        future::join_all(
-            node_ids
-                .iter()
-                .copied()
-                .map(|id| Element::new(Arc::clone(tab), id)),
-        )
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
+        future::join_all(node_ids.iter().copied().map(|id| Element::new(Arc::clone(tab), id)))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Returns the first element in the document which matches the given CSS
@@ -92,11 +74,7 @@ impl Element {
 
     /// Return all `Element`s in the document that match the given selector
     pub async fn find_elements(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-        Element::from_nodes(
-            &self.tab,
-            &self.tab.find_elements(selector, self.node_id).await?,
-        )
-        .await
+        Element::from_nodes(&self.tab, &self.tab.find_elements(selector, self.node_id).await?).await
     }
 
     async fn box_model(&self) -> Result<BoxModel> {
@@ -130,12 +108,7 @@ impl Element {
         let width = quad.most_right() - x;
         let height = quad.most_bottom() - y;
 
-        Ok(BoundingBox {
-            x,
-            y,
-            width,
-            height,
-        })
+        Ok(BoundingBox { x, y, width, height })
     }
 
     /// Returns the best `Point` of this node to execute a click on.
@@ -191,26 +164,19 @@ impl Element {
         await_promise: bool,
     ) -> Result<CallFunctionOnReturns> {
         self.tab
-            .call_js_fn(
-                function_declaration,
-                await_promise,
-                self.remote_object_id.clone(),
-            )
+            .call_js_fn(function_declaration, await_promise, self.remote_object_id.clone())
             .await
     }
 
     /// Returns a JSON representation of this element.
     pub async fn json_value(&self) -> Result<serde_json::Value> {
-        let element_json = self
-            .call_js_fn("function() { return this; }", false)
-            .await?;
+        let element_json = self.call_js_fn("function() { return this; }", false).await?;
         element_json.result.value.ok_or(CdpError::NotFound)
     }
 
     /// Calls [focus](https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus) on the element.
     pub async fn focus(&self) -> Result<&Self> {
-        self.call_js_fn("function() { this.focus(); }", true)
-            .await?;
+        self.call_js_fn("function() { this.focus(); }", true).await?;
         Ok(self)
     }
 
@@ -346,10 +312,7 @@ impl Element {
 
     /// Returns the value of the element's attribute
     pub async fn attribute(&self, attribute: impl AsRef<str>) -> Result<Option<String>> {
-        let js_fn = format!(
-            "function() {{ return this.getAttribute('{}'); }}",
-            attribute.as_ref()
-        );
+        let js_fn = format!("function() {{ return this.getAttribute('{}'); }}", attribute.as_ref());
         let resp = self.call_js_fn(js_fn, false).await?;
         if let Some(value) = resp.result.value {
             Ok(serde_json::from_value(value)?)
@@ -359,9 +322,7 @@ impl Element {
     }
 
     /// A `Stream` over all attributes and their values
-    pub async fn iter_attributes(
-        &self,
-    ) -> Result<impl Stream<Item = (String, Result<Option<String>>)> + '_> {
+    pub async fn iter_attributes(&self) -> Result<impl Stream<Item = (String, Result<Option<String>>)> + '_> {
         let attributes = self.attributes().await?;
         Ok(AttributeStream {
             attributes,
@@ -392,11 +353,7 @@ impl Element {
         let property = property.as_ref();
         let value = self.property(property).await?.ok_or(CdpError::NotFound)?;
         let txt: String = serde_json::from_value(value)?;
-        if !txt.is_empty() {
-            Ok(Some(txt))
-        } else {
-            Ok(None)
-        }
+        if !txt.is_empty() { Ok(Some(txt)) } else { Ok(None) }
     }
 
     /// Returns the javascript `property` of this element where `property` is
@@ -442,31 +399,19 @@ impl Element {
         };
 
         self.tab
-            .screenshot(
-                CaptureScreenshotParams::builder()
-                    .format(format)
-                    .clip(clip)
-                    .build(),
-            )
+            .screenshot(CaptureScreenshotParams::builder().format(format).clip(clip).build())
             .await
     }
 
     /// Save a screenshot of the element and write it to `output`
-    pub async fn save_screenshot(
-        &self,
-        format: CaptureScreenshotFormat,
-        output: impl AsRef<Path>,
-    ) -> Result<Vec<u8>> {
+    pub async fn save_screenshot(&self, format: CaptureScreenshotFormat, output: impl AsRef<Path>) -> Result<Vec<u8>> {
         let img = self.screenshot(format).await?;
         utils::write(output.as_ref(), &img).await?;
         Ok(img)
     }
 }
 
-pub type AttributeValueFuture<'a> = Option<(
-    String,
-    Pin<Box<dyn Future<Output = Result<Option<String>>> + 'a>>,
-)>;
+pub type AttributeValueFuture<'a> = Option<(String, Pin<Box<dyn Future<Output = Result<Option<String>>> + 'a>>)>;
 
 /// Stream over all element's attributes
 #[must_use = "streams do nothing unless polled"]

@@ -33,15 +33,11 @@ pub enum CdpError {
     UnexpectedWsMessage(Message),
     #[error("{0}")]
     ChannelSendError(#[from] ChannelError),
-    #[error(
-        "Browser process exited with status {0:?} before websocket URL could be resolved, stderr: {1:?}"
-    )]
+    #[error("Browser process exited with status {0:?} before websocket URL could be resolved, stderr: {1:?}")]
     LaunchExit(ExitStatus, BrowserStderr),
     #[error("Timeout while resolving websocket URL from browser process, stderr: {0:?}")]
     LaunchTimeout(BrowserStderr),
-    #[error(
-        "Input/Output error while resolving websocket URL from browser process, stderr: {1:?}: {0}"
-    )]
+    #[error("Input/Output error while resolving websocket URL from browser process, stderr: {1:?}: {0}")]
     LaunchIo(#[source] io::Error, BrowserStderr),
     #[error("Request timed out.")]
     Timeout,
@@ -149,8 +145,6 @@ impl fmt::Debug for BrowserStderr {
             Err(_) => &self.0,
         };
 
-        fmt.debug_tuple("BrowserStderr")
-            .field(stderr_debug)
-            .finish()
+        fmt.debug_tuple("BrowserStderr").field(stderr_debug).finish()
     }
 }

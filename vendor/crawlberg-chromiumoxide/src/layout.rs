@@ -1,9 +1,7 @@
 //! Code based on [rust-headless-chrome](https://github.com/atroche/rust-headless-chrome/blob/master/src/browser/tab/element/box_model.rs)
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::Quad;
-use chromiumoxide_cdp::cdp::browser_protocol::input::{
-    DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::input::{DispatchMouseEventParams, DispatchMouseEventType, MouseButton};
 use chromiumoxide_cdp::cdp::browser_protocol::page::Viewport;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -59,8 +57,7 @@ impl std::ops::Div<f64> for Point {
 /// Converts a point into Left-Down-Single-Mouseclick
 impl From<Point> for DispatchMouseEventParams {
     fn from(el: Point) -> DispatchMouseEventParams {
-        let mut params =
-            DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, el.x, el.y);
+        let mut params = DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, el.x, el.y);
         params.button = Some(MouseButton::Left);
         params.click_count = Some(1);
         params

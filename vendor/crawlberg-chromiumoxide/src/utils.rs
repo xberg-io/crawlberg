@@ -1,10 +1,7 @@
 use std::path::{Path, PathBuf};
 
 /// Write to file with configured runtime
-pub(crate) async fn write<P: AsRef<Path> + Unpin, C: AsRef<[u8]>>(
-    path: P,
-    contents: C,
-) -> std::io::Result<()> {
+pub(crate) async fn write<P: AsRef<Path> + Unpin, C: AsRef<[u8]>>(path: P, contents: C) -> std::io::Result<()> {
     tokio::fs::write(path.as_ref(), contents.as_ref()).await
 }
 

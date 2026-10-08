@@ -7,16 +7,14 @@ use futures::{SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{GetVersionParams, GetVersionReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    DiscardSearchResultsParams, GetSearchResultsParams, NodeId, PerformSearchParams,
-    QuerySelectorAllParams, QuerySelectorParams, Rgba,
+    DiscardSearchResultsParams, GetSearchResultsParams, NodeId, PerformSearchParams, QuerySelectorAllParams,
+    QuerySelectorParams, Rgba,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
-    ClearDeviceMetricsOverrideParams, SetDefaultBackgroundColorOverrideParams,
-    SetDeviceMetricsOverrideParams,
+    ClearDeviceMetricsOverrideParams, SetDefaultBackgroundColorOverrideParams, SetDeviceMetricsOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::input::{
-    DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
-    MouseButton,
+    DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
     FrameId, GetLayoutMetricsParams, GetLayoutMetricsReturns, Viewport,
@@ -92,10 +90,7 @@ impl PageInner {
     /// This creates HTTP future with navigation and responds with the final
     /// http response when the page is loaded
     pub(crate) fn http_future<T: Command>(&self, cmd: T) -> Result<HttpFuture<T>> {
-        Ok(HttpFuture::new(
-            self.sender.clone(),
-            self.command_future(cmd)?,
-        ))
+        Ok(HttpFuture::new(self.sender.clone(), self.command_future(cmd)?))
     }
 
     /// The identifier of this page's target
@@ -120,10 +115,7 @@ impl PageInner {
     /// Returns the first element in the node which matches the given CSS
     /// selector.
     pub async fn find_element(&self, selector: impl Into<String>, node: NodeId) -> Result<NodeId> {
-        Ok(self
-            .execute(QuerySelectorParams::new(node, selector))
-            .await?
-            .node_id)
+        Ok(self.execute(QuerySelectorParams::new(node, selector)).await?.node_id)
     }
 
     /// Activates (focuses) the target.
@@ -139,11 +131,7 @@ impl PageInner {
     }
 
     /// Return all `Element`s inside the node that match the given selector
-    pub(crate) async fn find_elements(
-        &self,
-        selector: impl Into<String>,
-        node: NodeId,
-    ) -> Result<Vec<NodeId>> {
+    pub(crate) async fn find_elements(&self, selector: impl Into<String>, node: NodeId) -> Result<Vec<NodeId>> {
         Ok(self
             .execute(QuerySelectorAllParams::new(node, selector))
             .await?
@@ -170,10 +158,8 @@ impl PageInner {
             .await?
             .result;
 
-        self.execute(DiscardSearchResultsParams::new(
-            perform_search_returns.search_id,
-        ))
-        .await?;
+        self.execute(DiscardSearchResultsParams::new(perform_search_returns.search_id))
+            .await?;
 
         Ok(search_results.node_ids)
     }
@@ -196,11 +182,7 @@ impl PageInner {
     }
 
     /// Performs a mouse click event at the point's location with custom options
-    pub async fn click_with(
-        &self,
-        point: Point,
-        options: chromiumoxide_types::ClickOptions,
-    ) -> Result<&Self> {
+    pub async fn click_with(&self, point: Point, options: chromiumoxide_types::ClickOptions) -> Result<&Self> {
         let cmd = DispatchMouseEventParams::builder()
             .x(point.x)
             .y(point.y)
@@ -217,12 +199,8 @@ impl PageInner {
             )
             .await?;
 
-        self.execute(
-            cmd.r#type(DispatchMouseEventType::MouseReleased)
-                .build()
-                .unwrap(),
-        )
-        .await?;
+        self.execute(cmd.r#type(DispatchMouseEventType::MouseReleased).build().unwrap())
+            .await?;
         Ok(self)
     }
 
@@ -245,8 +223,8 @@ impl PageInner {
     /// keys.
     pub async fn press_key(&self, key: impl AsRef<str>) -> Result<&Self> {
         let key = key.as_ref();
-        let key_definition = keys::get_key_definition(key)
-            .ok_or_else(|| CdpError::msg(format!("Key not found: {key}")))?;
+        let key_definition =
+            keys::get_key_definition(key).ok_or_else(|| CdpError::msg(format!("Key not found: {key}")))?;
         let mut cmd = DispatchKeyEventParams::builder();
 
         // See https://github.com/GoogleChrome/puppeteer/blob/62da2366c65b335751896afbb0206f23c61436f1/lib/Input.js#L114-L115
@@ -297,10 +275,7 @@ impl PageInner {
         Ok(resp.result)
     }
 
-    pub async fn evaluate_expression(
-        &self,
-        evaluate: impl Into<EvaluateParams>,
-    ) -> Result<EvaluationResult> {
+    pub async fn evaluate_expression(&self, evaluate: impl Into<EvaluateParams>) -> Result<EvaluationResult> {
         let mut evaluate = evaluate.into();
         if evaluate.context_id.is_none() {
             evaluate.context_id = self.execution_context().await?;
@@ -320,10 +295,7 @@ impl PageInner {
         Ok(EvaluationResult::new(resp.result))
     }
 
-    pub async fn evaluate_function(
-        &self,
-        evaluate: impl Into<CallFunctionOnParams>,
-    ) -> Result<EvaluationResult> {
+    pub async fn evaluate_function(&self, evaluate: impl Into<CallFunctionOnParams>) -> Result<EvaluationResult> {
         let mut evaluate = evaluate.into();
         if evaluate.execution_context_id.is_none() {
             evaluate.execution_context_id = self.execution_context().await?;
@@ -343,27 +315,19 @@ impl PageInner {
     }
 
     pub async fn execution_context(&self) -> Result<Option<ExecutionContextId>> {
-        self.execution_context_for_world(None, DOMWorldKind::Main)
-            .await
+        self.execution_context_for_world(None, DOMWorldKind::Main).await
     }
 
     pub async fn secondary_execution_context(&self) -> Result<Option<ExecutionContextId>> {
-        self.execution_context_for_world(None, DOMWorldKind::Secondary)
-            .await
+        self.execution_context_for_world(None, DOMWorldKind::Secondary).await
     }
 
-    pub async fn frame_execution_context(
-        &self,
-        frame_id: FrameId,
-    ) -> Result<Option<ExecutionContextId>> {
+    pub async fn frame_execution_context(&self, frame_id: FrameId) -> Result<Option<ExecutionContextId>> {
         self.execution_context_for_world(Some(frame_id), DOMWorldKind::Main)
             .await
     }
 
-    pub async fn frame_secondary_execution_context(
-        &self,
-        frame_id: FrameId,
-    ) -> Result<Option<ExecutionContextId>> {
+    pub async fn frame_secondary_execution_context(&self, frame_id: FrameId) -> Result<Option<ExecutionContextId>> {
         self.execution_context_for_world(Some(frame_id), DOMWorldKind::Secondary)
             .await
     }
@@ -387,10 +351,7 @@ impl PageInner {
 
     /// Returns metrics relating to the layout of the page
     pub async fn layout_metrics(&self) -> Result<GetLayoutMetricsReturns> {
-        Ok(self
-            .execute(GetLayoutMetricsParams::default())
-            .await?
-            .result)
+        Ok(self.execute(GetLayoutMetricsParams::default()).await?.result)
     }
 
     pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {

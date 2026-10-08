@@ -4,7 +4,6 @@ members = [
     "packages/dart/rust",
     "packages/swift/rust",
     "tools/benchmark-harness",
-    "vendor/crawlberg-chromiumoxide",
 ]
 exclude = [
     ".claude",
@@ -14,11 +13,12 @@ exclude = [
     "packages/ruby/ext/src_rb",
     "packages/ruby/tmp",
     "packages/ruby/vendor",
+    "vendor/crawlberg-chromiumoxide",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "1.10.2"
+version = "1.10.3"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -54,13 +54,13 @@ axum = "0.8"
 base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
-chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.1", default-features = false }
+chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.2", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.10.2" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.10.2" }
-crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.10.2" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.10.3" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.10.3" }
+crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.10.3" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
 # ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched

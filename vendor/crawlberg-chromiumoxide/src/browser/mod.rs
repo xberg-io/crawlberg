@@ -10,12 +10,9 @@ use chromiumoxide_cdp::cdp::browser_protocol::browser::{
     BrowserContextId, CloseReturns, GetVersionParams, GetVersionReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::network::{Cookie, CookieParam};
-use chromiumoxide_cdp::cdp::browser_protocol::storage::{
-    ClearCookiesParams, GetCookiesParams, SetCookiesParams,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::storage::{ClearCookiesParams, GetCookiesParams, SetCookiesParams};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{
-    CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams, TargetId,
-    TargetInfo,
+    CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams, TargetId, TargetInfo,
 };
 use chromiumoxide_cdp::cdp::{CdpEventMessage, IntoEventKind};
 use chromiumoxide_types::*;
@@ -84,18 +81,13 @@ impl Browser {
     // Connect to an already running chromium instance with a given `HandlerConfig`.
     ///
     /// If the URL is a http URL, it will first attempt to retrieve the Websocket URL from the `json/version` endpoint.
-    pub async fn connect_with_config(
-        url: impl Into<String>,
-        config: HandlerConfig,
-    ) -> Result<(Self, Handler)> {
+    pub async fn connect_with_config(url: impl Into<String>, config: HandlerConfig) -> Result<(Self, Handler)> {
         let mut debug_ws_url = url.into();
 
         if debug_ws_url.starts_with("http") {
             match reqwest::Client::new()
                 .get(
-                    if debug_ws_url.ends_with("/json/version")
-                        || debug_ws_url.ends_with("/json/version/")
-                    {
+                    if debug_ws_url.ends_with("/json/version") || debug_ws_url.ends_with("/json/version/") {
                         debug_ws_url.clone()
                     } else {
                         format!(
@@ -112,8 +104,7 @@ impl Browser {
                 Ok(req) => {
                     let socketaddr = req.remote_addr().unwrap();
                     let connection: BrowserConnection =
-                        serde_json::from_slice(&req.bytes().await.unwrap_or_default())
-                            .unwrap_or_default();
+                        serde_json::from_slice(&req.bytes().await.unwrap_or_default()).unwrap_or_default();
 
                     if !connection.web_socket_debugger_url.is_empty() {
                         // prevent proxy interfaces from returning local ips to connect to the exact machine
@@ -183,8 +174,14 @@ impl Browser {
                     // already exited, do nothing, may happen if the browser crashed
                 } else {
                     // the process is still alive, kill it and wait for exit (avoid zombie processes)
-                    child.kill().await.expect("`Browser::launch` failed but could not clean-up the child process (`kill`)");
-                    child.wait().await.expect("`Browser::launch` failed but could not clean-up the child process (`wait`)");
+                    child
+                        .kill()
+                        .await
+                        .expect("`Browser::launch` failed but could not clean-up the child process (`kill`)");
+                    child
+                        .wait()
+                        .await
+                        .expect("`Browser::launch` failed but could not clean-up the child process (`wait`)");
                 }
                 return Err(e);
             }
@@ -232,10 +229,7 @@ impl Browser {
     pub async fn fetch_targets(&mut self) -> Result<Vec<TargetInfo>> {
         let (tx, rx) = oneshot_channel();
 
-        self.sender
-            .clone()
-            .send(HandlerMessage::FetchTargets(tx))
-            .await?;
+        self.sender.clone().send(HandlerMessage::FetchTargets(tx)).await?;
 
         rx.await?
     }
@@ -249,10 +243,7 @@ impl Browser {
     pub async fn close(&mut self) -> Result<CloseReturns> {
         let (tx, rx) = oneshot_channel();
 
-        self.sender
-            .clone()
-            .send(HandlerMessage::CloseBrowser(tx))
-            .await?;
+        self.sender.clone().send(HandlerMessage::CloseBrowser(tx)).await?;
 
         rx.await?
     }
@@ -358,10 +349,7 @@ impl Browser {
 
     /// Whether incognito mode was configured from the start
     fn is_incognito_configured(&self) -> bool {
-        self.config
-            .as_ref()
-            .map(|c| c.incognito)
-            .unwrap_or_default()
+        self.config.as_ref().map(|c| c.incognito).unwrap_or_default()
     }
 
     /// Returns the address of the websocket this browser is attached to
@@ -389,10 +377,7 @@ impl Browser {
             }
         }
 
-        self.sender
-            .clone()
-            .send(HandlerMessage::CreatePage(params, tx))
-            .await?;
+        self.sender.clone().send(HandlerMessage::CreatePage(params, tx)).await?;
 
         rx.await?
     }
@@ -413,10 +398,7 @@ impl Browser {
         let method = cmd.identifier();
         let msg = CommandMessage::new(cmd, tx)?;
 
-        self.sender
-            .clone()
-            .send(HandlerMessage::Command(msg))
-            .await?;
+        self.sender.clone().send(HandlerMessage::Command(msg)).await?;
         let resp = rx.await??;
         to_command_response::<T>(resp, method)
     }
@@ -424,20 +406,14 @@ impl Browser {
     /// Return all of the pages of the browser
     pub async fn pages(&self) -> Result<Vec<Page>> {
         let (tx, rx) = oneshot_channel();
-        self.sender
-            .clone()
-            .send(HandlerMessage::GetPages(tx))
-            .await?;
+        self.sender.clone().send(HandlerMessage::GetPages(tx)).await?;
         Ok(rx.await?)
     }
 
     /// Return page of given target_id
     pub async fn get_page(&self, target_id: TargetId) -> Result<Page> {
         let (tx, rx) = oneshot_channel();
-        self.sender
-            .clone()
-            .send(HandlerMessage::GetPage(target_id, tx))
-            .await?;
+        self.sender.clone().send(HandlerMessage::GetPage(target_id, tx)).await?;
         rx.await?.ok_or(CdpError::NotFound)
     }
 
@@ -446,28 +422,20 @@ impl Browser {
         let (tx, rx) = unbounded();
         self.sender
             .clone()
-            .send(HandlerMessage::AddEventListener(
-                EventListenerRequest::new::<T>(tx),
-            ))
+            .send(HandlerMessage::AddEventListener(EventListenerRequest::new::<T>(tx)))
             .await?;
 
         Ok(EventStream::new(rx))
     }
 
     /// Creates a new empty browser context.
-    pub async fn create_browser_context(
-        &self,
-        params: CreateBrowserContextParams,
-    ) -> Result<BrowserContextId> {
+    pub async fn create_browser_context(&self, params: CreateBrowserContextParams) -> Result<BrowserContextId> {
         let response = self.execute(params).await?;
         Ok(response.result.browser_context_id)
     }
 
     /// Deletes a browser context.
-    pub async fn dispose_browser_context(
-        &self,
-        browser_context_id: impl Into<BrowserContextId>,
-    ) -> Result<()> {
+    pub async fn dispose_browser_context(&self, browser_context_id: impl Into<BrowserContextId>) -> Result<()> {
         self.execute(DisposeBrowserContextParams::new(browser_context_id))
             .await?;
 
@@ -482,11 +450,7 @@ impl Browser {
 
     /// Returns all browser cookies.
     pub async fn get_cookies(&self) -> Result<Vec<Cookie>> {
-        Ok(self
-            .execute(GetCookiesParams::default())
-            .await?
-            .result
-            .cookies)
+        Ok(self.execute(GetCookiesParams::default()).await?.result.cookies)
     }
 
     /// Sets given cookies.
@@ -515,9 +479,7 @@ impl Drop for Browser {
                 // so it won't leave any resources locked. It is, however, a better practice for the user to
                 // do it himself since the runtime doesn't provide garantees as to when the reap occurs, so we
                 // warn him here.
-                tracing::warn!(
-                    "Browser was not closed manually, it will be killed automatically in the background"
-                );
+                tracing::warn!("Browser was not closed manually, it will be killed automatically in the background");
             }
         }
     }

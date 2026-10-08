@@ -35,21 +35,13 @@ pin_project! {
 }
 
 impl<T: Command> CommandFuture<T> {
-    pub fn new(
-        cmd: T,
-        target_sender: mpsc::Sender<TargetMessage>,
-        session: Option<SessionId>,
-    ) -> Result<Self> {
+    pub fn new(cmd: T, target_sender: mpsc::Sender<TargetMessage>, session: Option<SessionId>) -> Result<Self> {
         let (tx, rx_command) = oneshot_channel::<Result<Response>>();
         let method = cmd.identifier();
 
-        let message = Some(TargetMessage::Command(CommandMessage::with_session(
-            cmd, tx, session,
-        )?));
+        let message = Some(TargetMessage::Command(CommandMessage::with_session(cmd, tx, session)?));
 
-        let delay = futures_timer::Delay::new(std::time::Duration::from_millis(
-            crate::handler::REQUEST_TIMEOUT,
-        ));
+        let delay = futures_timer::Delay::new(std::time::Duration::from_millis(crate::handler::REQUEST_TIMEOUT));
 
         Ok(Self {
             target_sender,
@@ -87,9 +79,7 @@ where
             Poll::Ready(Err(crate::error::CdpError::Timeout))
         } else {
             match this.rx_command.as_mut().poll(cx) {
-                Poll::Ready(Ok(Ok(response))) => {
-                    Poll::Ready(to_command_response::<T>(response, this.method.clone()))
-                }
+                Poll::Ready(Ok(Ok(response))) => Poll::Ready(to_command_response::<T>(response, this.method.clone())),
                 Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(e)),
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
                 Poll::Pending => Poll::Pending,

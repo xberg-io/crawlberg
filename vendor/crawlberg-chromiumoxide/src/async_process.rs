@@ -124,17 +124,9 @@ impl ChildStderr {
 }
 
 impl futures::AsyncRead for ChildStderr {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
         let mut buf = tokio::io::ReadBuf::new(buf);
-        futures::ready!(tokio::io::AsyncRead::poll_read(
-            Pin::new(&mut self.inner),
-            cx,
-            &mut buf
-        ))?;
+        futures::ready!(tokio::io::AsyncRead::poll_read(Pin::new(&mut self.inner), cx, &mut buf))?;
         Poll::Ready(Ok(buf.filled().len()))
     }
 }

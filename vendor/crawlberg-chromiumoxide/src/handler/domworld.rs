@@ -38,10 +38,7 @@ impl DOMWorld {
     }
 
     pub fn take_context(&mut self) -> (Option<ExecutionContextId>, Option<String>) {
-        (
-            self.execution_ctx.take(),
-            self.execution_ctx_unique_id.take(),
-        )
+        (self.execution_ctx.take(), self.execution_ctx_unique_id.take())
     }
 
     pub fn is_detached(&self) -> bool {

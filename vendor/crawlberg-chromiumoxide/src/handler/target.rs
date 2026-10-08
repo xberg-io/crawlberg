@@ -26,9 +26,7 @@ use crate::error::{CdpError, Result};
 use crate::handler::browser::BrowserContext;
 use crate::handler::domworld::DOMWorldKind;
 use crate::handler::emulation::EmulationManager;
-use crate::handler::frame::{
-    FrameEvent, FrameManager, NavigationError, NavigationId, NavigationOk,
-};
+use crate::handler::frame::{FrameEvent, FrameManager, NavigationError, NavigationId, NavigationOk};
 use crate::handler::frame::{FrameNavigationRequest, UTILITY_WORLD_NAME};
 use crate::handler::network::{NetworkEvent, NetworkManager};
 use crate::handler::page::PageHandle;
@@ -36,9 +34,7 @@ use crate::handler::viewport::Viewport;
 use crate::handler::{PageInner, REQUEST_TIMEOUT};
 use crate::listeners::{EventListenerRequest, EventListeners};
 use crate::{ArcHttpRequest, page::Page};
-use chromiumoxide_cdp::cdp::js_protocol::runtime::{
-    ExecutionContextId, RunIfWaitingForDebuggerParams,
-};
+use chromiumoxide_cdp::cdp::js_protocol::runtime::{ExecutionContextId, RunIfWaitingForDebuggerParams};
 use std::time::Duration;
 
 macro_rules! advance_state {
@@ -162,8 +158,7 @@ impl Target {
     fn create_page(&mut self) {
         if self.page.is_none() {
             if let Some(session) = self.session_id.clone() {
-                let handle =
-                    PageHandle::new(self.target_id().clone(), session, self.opener_id().cloned());
+                let handle = PageHandle::new(self.target_id().clone(), session, self.opener_id().cloned());
                 self.page = Some(handle);
             }
         }
@@ -234,18 +229,12 @@ impl Target {
                 .on_frame_attached(ev.frame_id.clone(), Some(ev.parent_frame_id.clone())),
             CdpEvent::PageFrameDetached(ev) => self.frame_manager.on_frame_detached(ev),
             CdpEvent::PageFrameNavigated(ev) => self.frame_manager.on_frame_navigated(&ev.frame),
-            CdpEvent::PageNavigatedWithinDocument(ev) => {
-                self.frame_manager.on_frame_navigated_within_document(ev)
-            }
-            CdpEvent::RuntimeExecutionContextCreated(ev) => {
-                self.frame_manager.on_frame_execution_context_created(ev)
-            }
+            CdpEvent::PageNavigatedWithinDocument(ev) => self.frame_manager.on_frame_navigated_within_document(ev),
+            CdpEvent::RuntimeExecutionContextCreated(ev) => self.frame_manager.on_frame_execution_context_created(ev),
             CdpEvent::RuntimeExecutionContextDestroyed(ev) => {
                 self.frame_manager.on_frame_execution_context_destroyed(ev)
             }
-            CdpEvent::RuntimeExecutionContextsCleared(_) => {
-                self.frame_manager.on_execution_contexts_cleared()
-            }
+            CdpEvent::RuntimeExecutionContextsCleared(_) => self.frame_manager.on_execution_contexts_cleared(),
             CdpEvent::RuntimeBindingCalled(ev) => {
                 // TODO check if binding registered and payload is json
                 self.frame_manager.on_runtime_binding_called(ev)
@@ -283,19 +272,11 @@ impl Target {
             // `NetworkManager` events
             CdpEvent::FetchRequestPaused(ev) => self.network_manager.on_fetch_request_paused(ev),
             CdpEvent::FetchAuthRequired(ev) => self.network_manager.on_fetch_auth_required(ev),
-            CdpEvent::NetworkRequestWillBeSent(ev) => {
-                self.network_manager.on_request_will_be_sent(ev)
-            }
-            CdpEvent::NetworkRequestServedFromCache(ev) => {
-                self.network_manager.on_request_served_from_cache(ev)
-            }
+            CdpEvent::NetworkRequestWillBeSent(ev) => self.network_manager.on_request_will_be_sent(ev),
+            CdpEvent::NetworkRequestServedFromCache(ev) => self.network_manager.on_request_served_from_cache(ev),
             CdpEvent::NetworkResponseReceived(ev) => self.network_manager.on_response_received(ev),
-            CdpEvent::NetworkLoadingFinished(ev) => {
-                self.network_manager.on_network_loading_finished(ev)
-            }
-            CdpEvent::NetworkLoadingFailed(ev) => {
-                self.network_manager.on_network_loading_failed(ev)
-            }
+            CdpEvent::NetworkLoadingFinished(ev) => self.network_manager.on_network_loading_finished(ev),
+            CdpEvent::NetworkLoadingFailed(ev) => self.network_manager.on_network_loading_failed(ev),
             _ => {}
         }
         chromiumoxide_cdp::consume_event!(match params {
@@ -326,9 +307,8 @@ impl Target {
         }
         match &mut self.init_state {
             TargetInit::AttachToTarget => {
-                self.init_state = TargetInit::InitializingFrame(FrameManager::init_commands(
-                    self.config.request_timeout,
-                ));
+                self.init_state =
+                    TargetInit::InitializingFrame(FrameManager::init_commands(self.config.request_timeout));
                 let params = AttachToTargetParams::builder()
                     .target_id(self.target_id().clone())
                     .flatten(true)
@@ -350,9 +330,7 @@ impl Target {
                             {
                                 *cmds = isolated_world_cmds;
                             } else {
-                                self.init_state = TargetInit::InitializingNetwork(
-                                    self.network_manager.init_commands(),
-                                );
+                                self.init_state = TargetInit::InitializingNetwork(self.network_manager.init_commands());
                             }
                             self.poll(cx, now)
                         }
@@ -386,9 +364,8 @@ impl Target {
                     now,
                     cmds,
                     match self.config.viewport.as_ref() {
-                        Some(viewport) => TargetInit::InitializingEmulation(
-                            self.emulation_manager.init_commands(viewport)
-                        ),
+                        Some(viewport) =>
+                            TargetInit::InitializingEmulation(self.emulation_manager.init_commands(viewport)),
                         None => TargetInit::Initialized,
                     }
                 );
@@ -438,16 +415,10 @@ impl Target {
                             self.queued_events.push_back(TargetEvent::Command(cmd));
                         }
                         TargetMessage::MainFrame(tx) => {
-                            let _ =
-                                tx.send(self.frame_manager.main_frame().map(|f| f.id().clone()));
+                            let _ = tx.send(self.frame_manager.main_frame().map(|f| f.id().clone()));
                         }
                         TargetMessage::AllFrames(tx) => {
-                            let _ = tx.send(
-                                self.frame_manager
-                                    .frames()
-                                    .map(|f| f.id().clone())
-                                    .collect(),
-                            );
+                            let _ = tx.send(self.frame_manager.frames().map(|f| f.id().clone()).collect());
                         }
                         TargetMessage::Url(req) => {
                             let GetUrl { frame_id, tx } = req;
@@ -508,8 +479,7 @@ impl Target {
                                         let _ = tx.send(frame.main_world().execution_context());
                                     }
                                     DOMWorldKind::Secondary => {
-                                        let _ =
-                                            tx.send(frame.secondary_world().execution_context());
+                                        let _ = tx.send(frame.secondary_world().execution_context());
                                     }
                                 }
                             } else {
@@ -547,12 +517,10 @@ impl Target {
             while let Some(event) = self.frame_manager.poll(now) {
                 match event {
                     FrameEvent::NavigationResult(res) => {
-                        self.queued_events
-                            .push_back(TargetEvent::NavigationResult(res));
+                        self.queued_events.push_back(TargetEvent::NavigationResult(res));
                     }
                     FrameEvent::NavigationRequest(id, req) => {
-                        self.queued_events
-                            .push_back(TargetEvent::NavigationRequest(id, req));
+                        self.queued_events.push_back(TargetEvent::NavigationRequest(id, req));
                     }
                 }
             }
@@ -587,10 +555,7 @@ impl Target {
                 enable_performance.identifier(),
                 serde_json::to_value(enable_performance).unwrap(),
             ),
-            (
-                enable_log.identifier(),
-                serde_json::to_value(enable_log).unwrap(),
-            ),
+            (enable_log.identifier(), serde_json::to_value(enable_log).unwrap()),
         ]);
         CommandChain::new(commands, timeout)
     }
@@ -854,10 +819,7 @@ mod tests {
 
     #[test]
     fn disabling_child_management_omits_auto_attach_but_keeps_page_initialization() {
-        assert_eq!(
-            page_init_methods(false),
-            ["Performance.enable", "Log.enable"]
-        );
+        assert_eq!(page_init_methods(false), ["Performance.enable", "Log.enable"]);
         assert_eq!(
             page_init_methods(true),
             ["Target.setAutoAttach", "Performance.enable", "Log.enable"]
@@ -873,10 +835,7 @@ mod tests {
                     "Runtime.runIfWaitingForDebugger".to_owned(),
                     Some("child-session".to_owned()),
                 ),
-                (
-                    "Target.detachFromTarget".to_owned(),
-                    Some("parent-session".to_owned()),
-                ),
+                ("Target.detachFromTarget".to_owned(), Some("parent-session".to_owned()),),
             ]
         );
     }
@@ -885,5 +844,4 @@ mod tests {
     fn disabled_child_management_does_not_resume_or_detach_an_attached_service_worker() {
         assert_eq!(attached_child_methods(false), []);
     }
-
 }

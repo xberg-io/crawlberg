@@ -11,8 +11,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     SetTimezoneOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
-    Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetCookiesParams,
-    SetUserAgentOverrideParams,
+    Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetCookiesParams, SetUserAgentOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
@@ -20,8 +19,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol;
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
-    AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
-    RemoteObjectType, ScriptId,
+    AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId, RemoteObjectType,
+    ScriptId,
 };
 use chromiumoxide_cdp::cdp::{IntoEventKind, browser_protocol};
 use chromiumoxide_types::*;
@@ -315,27 +314,19 @@ impl Page {
         self.inner
             .sender()
             .clone()
-            .send(TargetMessage::AddEventListener(
-                EventListenerRequest::new::<T>(tx),
-            ))
+            .send(TargetMessage::AddEventListener(EventListenerRequest::new::<T>(tx)))
             .await?;
 
         Ok(EventStream::new(rx))
     }
 
-    pub async fn expose_function(
-        &self,
-        name: impl Into<String>,
-        function: impl AsRef<str>,
-    ) -> Result<()> {
+    pub async fn expose_function(&self, name: impl Into<String>, function: impl AsRef<str>) -> Result<()> {
         let name = name.into();
         let expression = utils::evaluation_string(function, &["exposedFun", name.as_str()]);
 
         self.execute(AddBindingParams::new(name)).await?;
-        self.execute(AddScriptToEvaluateOnNewDocumentParams::new(
-            expression.clone(),
-        ))
-        .await?;
+        self.execute(AddScriptToEvaluateOnNewDocumentParams::new(expression.clone()))
+            .await?;
 
         // TODO add execution context tracking for frames
         //let frames = self.frames().await?;
@@ -448,30 +439,19 @@ impl Page {
     /// Return the main frame of the page
     pub async fn mainframe(&self) -> Result<Option<FrameId>> {
         let (tx, rx) = oneshot_channel();
-        self.inner
-            .sender()
-            .clone()
-            .send(TargetMessage::MainFrame(tx))
-            .await?;
+        self.inner.sender().clone().send(TargetMessage::MainFrame(tx)).await?;
         Ok(rx.await?)
     }
 
     /// Return the frames of the page
     pub async fn frames(&self) -> Result<Vec<FrameId>> {
         let (tx, rx) = oneshot_channel();
-        self.inner
-            .sender()
-            .clone()
-            .send(TargetMessage::AllFrames(tx))
-            .await?;
+        self.inner.sender().clone().send(TargetMessage::AllFrames(tx)).await?;
         Ok(rx.await?)
     }
 
     /// Allows overriding user agent with the given string.
-    pub async fn set_user_agent(
-        &self,
-        params: impl Into<SetUserAgentOverrideParams>,
-    ) -> Result<&Self> {
+    pub async fn set_user_agent(&self, params: impl Into<SetUserAgentOverrideParams>) -> Result<&Self> {
         self.execute(params.into()).await?;
         Ok(self)
     }
@@ -527,12 +507,7 @@ impl Page {
     /// Describes node given its id
     pub async fn describe_node(&self, node_id: NodeId) -> Result<Node> {
         let resp = self
-            .execute(
-                DescribeNodeParams::builder()
-                    .node_id(node_id)
-                    .depth(100)
-                    .build(),
-            )
+            .execute(DescribeNodeParams::builder().node_id(node_id).depth(100).build())
             .await?;
         Ok(resp.result.node)
     }
@@ -729,11 +704,7 @@ impl Page {
     /// pdf contents.
     ///
     /// # Note Generating a pdf is currently only supported in Chrome headless.
-    pub async fn save_pdf(
-        &self,
-        opts: PrintToPdfParams,
-        output: impl AsRef<Path>,
-    ) -> Result<Vec<u8>> {
+    pub async fn save_pdf(&self, opts: PrintToPdfParams, output: impl AsRef<Path>) -> Result<Vec<u8>> {
         let pdf = self.pdf(opts).await?;
         utils::write(output.as_ref(), &pdf).await?;
         Ok(pdf)
@@ -754,42 +725,26 @@ impl Page {
 
     /// Changes the CSS media type of the page
     // Based on https://pptr.dev/api/puppeteer.page.emulatemediatype
-    pub async fn emulate_media_type(
-        &self,
-        media_type: impl Into<MediaTypeParams>,
-    ) -> Result<&Self> {
-        self.execute(
-            SetEmulatedMediaParams::builder()
-                .media(media_type.into())
-                .build(),
-        )
-        .await?;
+    pub async fn emulate_media_type(&self, media_type: impl Into<MediaTypeParams>) -> Result<&Self> {
+        self.execute(SetEmulatedMediaParams::builder().media(media_type.into()).build())
+            .await?;
         Ok(self)
     }
 
     /// Overrides default host system timezone
-    pub async fn emulate_timezone(
-        &self,
-        timezoune_id: impl Into<SetTimezoneOverrideParams>,
-    ) -> Result<&Self> {
+    pub async fn emulate_timezone(&self, timezoune_id: impl Into<SetTimezoneOverrideParams>) -> Result<&Self> {
         self.execute(timezoune_id.into()).await?;
         Ok(self)
     }
 
     /// Overrides default host system locale with the specified one
-    pub async fn emulate_locale(
-        &self,
-        locale: impl Into<SetLocaleOverrideParams>,
-    ) -> Result<&Self> {
+    pub async fn emulate_locale(&self, locale: impl Into<SetLocaleOverrideParams>) -> Result<&Self> {
         self.execute(locale.into()).await?;
         Ok(self)
     }
 
     /// Overrides the Geolocation Position or Error. Omitting any of the parameters emulates position unavailable.
-    pub async fn emulate_geolocation(
-        &self,
-        geolocation: impl Into<SetGeolocationOverrideParams>,
-    ) -> Result<&Self> {
+    pub async fn emulate_geolocation(&self, geolocation: impl Into<SetGeolocationOverrideParams>) -> Result<&Self> {
         self.execute(geolocation.into()).await?;
         Ok(self)
     }
@@ -819,8 +774,7 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Log#method-enable
     pub async fn enable_log(&self) -> Result<&Self> {
-        self.execute(browser_protocol::log::EnableParams::default())
-            .await?;
+        self.execute(browser_protocol::log::EnableParams::default()).await?;
         Ok(self)
     }
 
@@ -830,64 +784,55 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Log#method-disable
     pub async fn disable_log(&self) -> Result<&Self> {
-        self.execute(browser_protocol::log::DisableParams::default())
-            .await?;
+        self.execute(browser_protocol::log::DisableParams::default()).await?;
         Ok(self)
     }
 
     /// Enables runtime domain. Activated by default.
     pub async fn enable_runtime(&self) -> Result<&Self> {
-        self.execute(js_protocol::runtime::EnableParams::default())
-            .await?;
+        self.execute(js_protocol::runtime::EnableParams::default()).await?;
         Ok(self)
     }
 
     /// Disables runtime domain
     pub async fn disable_runtime(&self) -> Result<&Self> {
-        self.execute(js_protocol::runtime::DisableParams::default())
-            .await?;
+        self.execute(js_protocol::runtime::DisableParams::default()).await?;
         Ok(self)
     }
 
     /// Enables Debugger. Enabled by default.
     pub async fn enable_debugger(&self) -> Result<&Self> {
-        self.execute(js_protocol::debugger::EnableParams::default())
-            .await?;
+        self.execute(js_protocol::debugger::EnableParams::default()).await?;
         Ok(self)
     }
 
     /// Disables Debugger.
     pub async fn disable_debugger(&self) -> Result<&Self> {
-        self.execute(js_protocol::debugger::DisableParams::default())
-            .await?;
+        self.execute(js_protocol::debugger::DisableParams::default()).await?;
         Ok(self)
     }
 
     // Enables DOM agent
     pub async fn enable_dom(&self) -> Result<&Self> {
-        self.execute(browser_protocol::dom::EnableParams::default())
-            .await?;
+        self.execute(browser_protocol::dom::EnableParams::default()).await?;
         Ok(self)
     }
 
     // Disables DOM agent
     pub async fn disable_dom(&self) -> Result<&Self> {
-        self.execute(browser_protocol::dom::DisableParams::default())
-            .await?;
+        self.execute(browser_protocol::dom::DisableParams::default()).await?;
         Ok(self)
     }
 
     // Enables the CSS agent
     pub async fn enable_css(&self) -> Result<&Self> {
-        self.execute(browser_protocol::css::EnableParams::default())
-            .await?;
+        self.execute(browser_protocol::css::EnableParams::default()).await?;
         Ok(self)
     }
 
     // Disables the CSS agent
     pub async fn disable_css(&self) -> Result<&Self> {
-        self.execute(browser_protocol::css::DisableParams::default())
-            .await?;
+        self.execute(browser_protocol::css::DisableParams::default()).await?;
         Ok(self)
     }
 
@@ -899,11 +844,7 @@ impl Page {
 
     /// Returns all cookies that match the tab's current URL.
     pub async fn get_cookies(&self) -> Result<Vec<Cookie>> {
-        Ok(self
-            .execute(GetCookiesParams::default())
-            .await?
-            .result
-            .cookies)
+        Ok(self.execute(GetCookiesParams::default()).await?.result.cookies)
     }
 
     /// Set a single cookie
@@ -926,27 +867,20 @@ impl Page {
         if let Some(url) = cookie.url.as_ref() {
             validate_cookie_url(url)?;
         } else {
-            let url = self
-                .url()
-                .await?
-                .ok_or_else(|| CdpError::msg("Page url not found"))?;
+            let url = self.url().await?.ok_or_else(|| CdpError::msg("Page url not found"))?;
             validate_cookie_url(&url)?;
             if url.starts_with("http") {
                 cookie.url = Some(url);
             }
         }
-        self.execute(DeleteCookiesParams::from_cookie(&cookie))
-            .await?;
+        self.execute(DeleteCookiesParams::from_cookie(&cookie)).await?;
         self.execute(SetCookiesParams::new(vec![cookie])).await?;
         Ok(self)
     }
 
     /// Set all the cookies
     pub async fn set_cookies(&self, mut cookies: Vec<CookieParam>) -> Result<&Self> {
-        let url = self
-            .url()
-            .await?
-            .ok_or_else(|| CdpError::msg("Page url not found"))?;
+        let url = self.url().await?.ok_or_else(|| CdpError::msg("Page url not found"))?;
         let is_http = url.starts_with("http");
         if !is_http {
             validate_cookie_url(&url)?;
@@ -970,10 +904,7 @@ impl Page {
     pub async fn delete_cookie(&self, cookie: impl Into<DeleteCookiesParams>) -> Result<&Self> {
         let mut cookie = cookie.into();
         if cookie.url.is_none() {
-            let url = self
-                .url()
-                .await?
-                .ok_or_else(|| CdpError::msg("Page url not found"))?;
+            let url = self.url().await?.ok_or_else(|| CdpError::msg("Page url not found"))?;
             if url.starts_with("http") {
                 cookie.url = Some(url);
             }
@@ -992,10 +923,7 @@ impl Page {
                         cookie.url = Some(url.clone())
                     }
                 } else {
-                    let page_url = self
-                        .url()
-                        .await?
-                        .ok_or_else(|| CdpError::msg("Page url not found"))?;
+                    let page_url = self.url().await?.ok_or_else(|| CdpError::msg("Page url not found"))?;
                     let is_http = page_url.starts_with("http");
                     if is_http {
                         cookie.url = Some(page_url.clone())
@@ -1010,13 +938,9 @@ impl Page {
 
     /// Convenience method that prevents another channel roundtrip to get the
     /// url and validate it
-    async fn delete_cookies_unchecked(
-        &self,
-        cookies: impl Iterator<Item = DeleteCookiesParams>,
-    ) -> Result<&Self> {
+    async fn delete_cookies_unchecked(&self, cookies: impl Iterator<Item = DeleteCookiesParams>) -> Result<&Self> {
         // NOTE: the buffer size is arbitrary
-        let mut cmds = stream::iter(cookies.into_iter().map(|cookie| self.execute(cookie)))
-            .buffer_unordered(5);
+        let mut cmds = stream::iter(cookies.into_iter().map(|cookie| self.execute(cookie))).buffer_unordered(5);
         while let Some(resp) = cmds.next().await {
             resp?;
         }
@@ -1029,20 +953,12 @@ impl Page {
 
         let title: String = result.into_value()?;
 
-        if title.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(title))
-        }
+        if title.is_empty() { Ok(None) } else { Ok(Some(title)) }
     }
 
     /// Retrieve current values of run-time metrics.
     pub async fn metrics(&self) -> Result<Vec<Metric>> {
-        Ok(self
-            .execute(GetMetricsParams::default())
-            .await?
-            .result
-            .metrics)
+        Ok(self.execute(GetMetricsParams::default()).await?.result.metrics)
     }
 
     /// Returns metrics relating to the layout of the page
@@ -1072,10 +988,7 @@ impl Page {
     ///     # Ok(())
     /// # }
     /// ```
-    pub async fn evaluate_expression(
-        &self,
-        evaluate: impl Into<EvaluateParams>,
-    ) -> Result<EvaluationResult> {
+    pub async fn evaluate_expression(&self, evaluate: impl Into<EvaluateParams>) -> Result<EvaluationResult> {
         self.inner.evaluate_expression(evaluate).await
     }
 
@@ -1214,10 +1127,7 @@ impl Page {
     ///     # Ok(())
     /// # }
     /// ```
-    pub async fn evaluate_function(
-        &self,
-        evaluate: impl Into<CallFunctionOnParams>,
-    ) -> Result<EvaluationResult> {
+    pub async fn evaluate_function(&self, evaluate: impl Into<CallFunctionOnParams>) -> Result<EvaluationResult> {
         self.inner.evaluate_function(evaluate).await
     }
 
@@ -1236,17 +1146,11 @@ impl Page {
         self.inner.secondary_execution_context().await
     }
 
-    pub async fn frame_execution_context(
-        &self,
-        frame_id: FrameId,
-    ) -> Result<Option<ExecutionContextId>> {
+    pub async fn frame_execution_context(&self, frame_id: FrameId) -> Result<Option<ExecutionContextId>> {
         self.inner.frame_execution_context(frame_id).await
     }
 
-    pub async fn frame_secondary_execution_context(
-        &self,
-        frame_id: FrameId,
-    ) -> Result<Option<ExecutionContextId>> {
+    pub async fn frame_secondary_execution_context(&self, frame_id: FrameId) -> Result<Option<ExecutionContextId>> {
         self.inner.frame_secondary_execution_context(frame_id).await
     }
 
@@ -1309,11 +1213,7 @@ impl Page {
             document.close();
         }",
             )
-            .argument(
-                CallArgument::builder()
-                    .value(serde_json::json!(html.as_ref()))
-                    .build(),
-            )
+            .argument(CallArgument::builder().value(serde_json::json!(html.as_ref())).build())
             .build()
             .unwrap();
 

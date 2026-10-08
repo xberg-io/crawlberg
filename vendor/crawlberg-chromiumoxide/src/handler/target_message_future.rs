@@ -24,11 +24,7 @@ pin_project! {
 }
 
 impl<T> TargetMessageFuture<T> {
-    pub fn new(
-        target_sender: TargetSender,
-        message: TargetMessage,
-        rx_request: oneshot::Receiver<T>,
-    ) -> Self {
+    pub fn new(target_sender: TargetSender, message: TargetMessage, rx_request: oneshot::Receiver<T>) -> Self {
         Self {
             target_sender,
             rx_request,

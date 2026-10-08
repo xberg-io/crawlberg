@@ -1,8 +1,6 @@
 use serde::de::DeserializeOwned;
 
-use chromiumoxide_cdp::cdp::js_protocol::runtime::{
-    CallFunctionOnParams, EvaluateParams, RemoteObject,
-};
+use chromiumoxide_cdp::cdp::js_protocol::runtime::{CallFunctionOnParams, EvaluateParams, RemoteObject};
 
 use crate::utils::is_likely_js_function;
 

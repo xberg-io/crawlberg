@@ -61,10 +61,7 @@ impl Arg {
         }
     }
 
-    pub fn values(
-        key: impl AsRef<str>,
-        values: impl IntoIterator<Item = impl fmt::Display>,
-    ) -> Self {
+    pub fn values(key: impl AsRef<str>, values: impl IntoIterator<Item = impl fmt::Display>) -> Self {
         Self {
             key: key.as_ref().to_string(),
             values: values.into_iter().map(|v| v.to_string()).collect(),

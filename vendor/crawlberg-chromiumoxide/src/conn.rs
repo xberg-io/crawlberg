@@ -34,15 +34,9 @@ pub struct Connection<T: EventMessage> {
 
 impl<T: EventMessage + Unpin> Connection<T> {
     pub async fn connect(debug_ws_url: impl AsRef<str>) -> Result<Self> {
-        let config = WebSocketConfig::default()
-            .max_message_size(None)
-            .max_frame_size(None);
+        let config = WebSocketConfig::default().max_message_size(None).max_frame_size(None);
 
-        let (ws, _) = async_tungstenite::tokio::connect_async_with_config(
-            debug_ws_url.as_ref(),
-            Some(config),
-        )
-        .await?;
+        let (ws, _) = async_tungstenite::tokio::connect_async_with_config(debug_ws_url.as_ref(), Some(config)).await?;
 
         Ok(Self {
             pending_commands: Default::default(),

@@ -1,6 +1,5 @@
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
-    ScreenOrientation, ScreenOrientationType, SetDeviceMetricsOverrideParams,
-    SetTouchEmulationEnabledParams,
+    ScreenOrientation, ScreenOrientationType, SetDeviceMetricsOverrideParams, SetTouchEmulationEnabledParams,
 };
 use chromiumoxide_types::Method;
 
@@ -46,20 +45,13 @@ impl EmulationManager {
 
         let chain = CommandChain::new(
             vec![
-                (
-                    set_device.identifier(),
-                    serde_json::to_value(set_device).unwrap(),
-                ),
-                (
-                    set_touch.identifier(),
-                    serde_json::to_value(set_touch).unwrap(),
-                ),
+                (set_device.identifier(), serde_json::to_value(set_device).unwrap()),
+                (set_touch.identifier(), serde_json::to_value(set_touch).unwrap()),
             ],
             self.request_timeout,
         );
 
-        self.needs_reload = self.emulating_mobile != viewport.emulating_mobile
-            || self.has_touch != viewport.has_touch;
+        self.needs_reload = self.emulating_mobile != viewport.emulating_mobile || self.has_touch != viewport.has_touch;
         chain
     }
 }

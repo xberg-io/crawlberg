@@ -335,3 +335,4 @@ poly.local.toml
 
 # Runtime log written and truncated by e2e/brew/run_tests.sh on every run.
 mock_server.stdout
+vendor/

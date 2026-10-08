@@ -398,11 +398,7 @@ impl BrowserConfig {
         if self.extensions.is_empty() {
             builder.arg(Arg::key("disable-extensions"));
         } else {
-            builder.args(
-                self.extensions
-                    .iter()
-                    .map(|e| Arg::value("load-extension", e)),
-            );
+            builder.args(self.extensions.iter().map(|e| Arg::value("load-extension", e)));
         }
 
         if let Some(ref user_data) = self.user_data_dir {
@@ -474,10 +470,7 @@ impl BrowserConfig {
 /// Via https://github.com/puppeteer/puppeteer/blob/4846b8723cf20d3551c0d755df394cc5e0c82a94/src/node/Launcher.ts#L157
 static DEFAULT_ARGS: [ArgConst; 24] = [
     ArgConst::key("disable-background-networking"),
-    ArgConst::values(
-        "enable-features",
-        &["NetworkService", "NetworkServiceInProcess"],
-    ),
+    ArgConst::values("enable-features", &["NetworkService", "NetworkServiceInProcess"]),
     ArgConst::key("disable-background-timer-throttling"),
     ArgConst::key("disable-backgrounding-occluded-windows"),
     ArgConst::key("disable-breakpad"),

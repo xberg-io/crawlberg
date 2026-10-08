@@ -94,11 +94,7 @@ impl Handler {
         config: HandlerConfig,
     ) -> Self {
         let discover = SetDiscoverTargetsParams::new(true);
-        let _ = conn.submit_command(
-            discover.identifier(),
-            None,
-            serde_json::to_value(discover).unwrap(),
-        );
+        let _ = conn.submit_command(discover.identifier(), None, serde_json::to_value(discover).unwrap());
 
         let browser_contexts = config
             .context_ids
@@ -153,8 +149,7 @@ impl Handler {
                         let _ = nav.tx.send(Ok(resp));
                     } else {
                         nav.set_response(resp);
-                        self.navigations
-                            .insert(id, NavigationRequest::Navigate(nav));
+                        self.navigations.insert(id, NavigationRequest::Navigate(nav));
                     }
                 }
             }
@@ -173,8 +168,7 @@ impl Handler {
                                 let _ = nav.tx.send(Ok(resp));
                             } else {
                                 nav.set_navigated();
-                                self.navigations
-                                    .insert(id, NavigationRequest::Navigate(nav));
+                                self.navigations.insert(id, NavigationRequest::Navigate(nav));
                             }
                         }
                     }
@@ -213,30 +207,28 @@ impl Handler {
                         }
                     }
                 }
-                PendingRequest::GetTargets(tx) => {
-                    match to_command_response::<GetTargetsParams>(resp, method) {
-                        Ok(resp) => {
-                            let targets: Vec<TargetInfo> = resp.result.target_infos;
-                            let results = targets.clone();
-                            for target_info in targets {
-                                let target_id = target_info.target_id.clone();
-                                let event: EventTargetCreated = EventTargetCreated { target_info };
-                                self.on_target_created(event);
-                                let attach = AttachToTargetParams::new(target_id);
-                                let _ = self.conn.submit_command(
-                                    attach.identifier(),
-                                    None,
-                                    serde_json::to_value(attach).unwrap(),
-                                );
-                            }
+                PendingRequest::GetTargets(tx) => match to_command_response::<GetTargetsParams>(resp, method) {
+                    Ok(resp) => {
+                        let targets: Vec<TargetInfo> = resp.result.target_infos;
+                        let results = targets.clone();
+                        for target_info in targets {
+                            let target_id = target_info.target_id.clone();
+                            let event: EventTargetCreated = EventTargetCreated { target_info };
+                            self.on_target_created(event);
+                            let attach = AttachToTargetParams::new(target_id);
+                            let _ = self.conn.submit_command(
+                                attach.identifier(),
+                                None,
+                                serde_json::to_value(attach).unwrap(),
+                            );
+                        }
 
-                            let _ = tx.send(Ok(results)).ok();
-                        }
-                        Err(err) => {
-                            let _ = tx.send(Err(err)).ok();
-                        }
+                        let _ = tx.send(Ok(results)).ok();
                     }
-                }
+                    Err(err) => {
+                        let _ = tx.send(Err(err)).ok();
+                    }
+                },
                 PendingRequest::Navigate(id) => {
                     self.on_navigation_response(id, resp);
                 }
@@ -257,36 +249,21 @@ impl Handler {
     }
 
     /// Submit a command initiated via channel
-    pub(crate) fn submit_external_command(
-        &mut self,
-        msg: CommandMessage,
-        now: Instant,
-    ) -> Result<()> {
+    pub(crate) fn submit_external_command(&mut self, msg: CommandMessage, now: Instant) -> Result<()> {
         let call_id = self
             .conn
             .submit_command(msg.method.clone(), msg.session_id, msg.params)?;
-        self.pending_commands.insert(
-            call_id,
-            (PendingRequest::ExternalCommand(msg.sender), msg.method, now),
-        );
+        self.pending_commands
+            .insert(call_id, (PendingRequest::ExternalCommand(msg.sender), msg.method, now));
         Ok(())
     }
 
-    pub(crate) fn submit_internal_command(
-        &mut self,
-        target_id: TargetId,
-        req: CdpRequest,
-        now: Instant,
-    ) -> Result<()> {
-        let call_id = self.conn.submit_command(
-            req.method.clone(),
-            req.session_id.map(Into::into),
-            req.params,
-        )?;
-        self.pending_commands.insert(
-            call_id,
-            (PendingRequest::InternalCommand(target_id), req.method, now),
-        );
+    pub(crate) fn submit_internal_command(&mut self, target_id: TargetId, req: CdpRequest, now: Instant) -> Result<()> {
+        let call_id = self
+            .conn
+            .submit_command(req.method.clone(), req.session_id.map(Into::into), req.params)?;
+        self.pending_commands
+            .insert(call_id, (PendingRequest::InternalCommand(target_id), req.method, now));
         Ok(())
     }
 
@@ -307,11 +284,7 @@ impl Handler {
     fn submit_navigation(&mut self, id: NavigationId, req: CdpRequest, now: Instant) {
         let call_id = self
             .conn
-            .submit_command(
-                req.method.clone(),
-                req.session_id.map(Into::into),
-                req.params,
-            )
+            .submit_command(req.method.clone(), req.session_id.map(Into::into), req.params)
             .unwrap();
 
         self.pending_commands
@@ -324,11 +297,7 @@ impl Handler {
 
         let call_id = self
             .conn
-            .submit_command(
-                method.clone(),
-                None,
-                serde_json::to_value(close_msg).unwrap(),
-            )
+            .submit_command(method.clone(), None, serde_json::to_value(close_msg).unwrap())
             .unwrap();
 
         self.pending_commands
@@ -342,10 +311,8 @@ impl Handler {
             let (req, tx) = msg.split();
             let id = self.next_navigation_id();
             target.goto(FrameNavigationRequest::new(id, req));
-            self.navigations.insert(
-                id,
-                NavigationRequest::Navigate(NavigationInProgress::new(tx)),
-            );
+            self.navigations
+                .insert(id, NavigationRequest::Navigate(NavigationInProgress::new(tx)));
         } else {
             let _ = self.submit_external_command(msg, now);
         }
@@ -375,10 +342,8 @@ impl Handler {
                 match serde_json::to_value(params) {
                     Ok(params) => match self.conn.submit_command(method.clone(), None, params) {
                         Ok(call_id) => {
-                            self.pending_commands.insert(
-                                call_id,
-                                (PendingRequest::CreateTarget(tx), method, Instant::now()),
-                            );
+                            self.pending_commands
+                                .insert(call_id, (PendingRequest::CreateTarget(tx), method, Instant::now()));
                         }
                         Err(err) => {
                             let _ = tx.send(Err(err.into())).ok();
@@ -583,11 +548,7 @@ impl Stream for Handler {
                     while let Some(event) = target.poll(cx, now) {
                         match event {
                             TargetEvent::Request(req) => {
-                                let _ = pin.submit_internal_command(
-                                    target.target_id().clone(),
-                                    req,
-                                    now,
-                                );
+                                let _ = pin.submit_internal_command(target.target_id().clone(), req, now);
                             }
                             TargetEvent::Command(msg) => {
                                 pin.on_target_message(&mut target, msg, now);
@@ -595,9 +556,7 @@ impl Stream for Handler {
                             TargetEvent::NavigationRequest(id, req) => {
                                 pin.submit_navigation(id, req, now);
                             }
-                            TargetEvent::NavigationResult(res) => {
-                                pin.on_navigation_lifecycle_completed(res)
-                            }
+                            TargetEvent::NavigationResult(res) => pin.on_navigation_lifecycle_completed(res),
                         }
                     }
 

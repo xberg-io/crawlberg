@@ -357,32 +357,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chromiumoxide"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26ed067eb6c1f660bdb87c05efb964421d2ca262bae0296cdfe38cf0cd949a3e"
-dependencies = [
- "async-tungstenite",
- "base64 0.22.1",
- "chromiumoxide_cdp",
- "chromiumoxide_types",
- "dunce",
- "fnv",
- "futures",
- "futures-timer",
- "pin-project-lite",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
- "which",
- "windows-registry",
-]
-
-[[package]]
 name = "chromiumoxide_cdp"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,18 +564,19 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "ahash",
  "aho-corasick",
  "arc-swap",
  "astral-tl",
  "async-trait",
+ "async-tungstenite",
  "base64 0.23.1",
  "blake3",
  "bytes",
- "chromiumoxide",
  "chrono",
+ "crawlberg-chromiumoxide",
  "crawlberg-robots",
  "dashmap",
  "dirs",
@@ -653,8 +628,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "crawlberg-chromiumoxide"
+version = "1.10.3"
+dependencies = [
+ "async-tungstenite",
+ "base64 0.22.1",
+ "chromiumoxide_cdp",
+ "chromiumoxide_types",
+ "dunce",
+ "fnv",
+ "futures",
+ "futures-timer",
+ "pin-project-lite",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "which",
+ "windows-registry",
+]
+
+[[package]]
 name = "crawlberg-e2e-rust"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "axum",
  "brotli",
@@ -669,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.10.2"
+version = "1.10.3"
 
 [[package]]
 name = "crc32fast"
@@ -2679,9 +2678,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.6"
+version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2071df9448915b71c4fe6d25deaf1c22f12bd234f01540b77312bb8e41361e6"
+checksum = "92ab6a2f8bfe508deb3c6406578252e491d299cbbf3bc0529ecc3313aee4a52f"
 dependencies = [
  "libc",
  "memchr",

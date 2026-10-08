@@ -7,9 +7,8 @@ use serde_json::map::Entry;
 
 use chromiumoxide_cdp::cdp::browser_protocol::network::LoaderId;
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    AddScriptToEvaluateOnNewDocumentParams, CreateIsolatedWorldParams, EventFrameDetached,
-    EventFrameStartedLoading, EventFrameStoppedLoading, EventLifecycleEvent,
-    EventNavigatedWithinDocument, Frame as CdpFrame, FrameTree,
+    AddScriptToEvaluateOnNewDocumentParams, CreateIsolatedWorldParams, EventFrameDetached, EventFrameStartedLoading,
+    EventFrameStoppedLoading, EventLifecycleEvent, EventNavigatedWithinDocument, Frame as CdpFrame, FrameTree,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::EventAttachedToTarget;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::*;
@@ -220,14 +219,8 @@ impl FrameManager {
         CommandChain::new(
             vec![
                 (enable.identifier(), serde_json::to_value(enable).unwrap()),
-                (
-                    get_tree.identifier(),
-                    serde_json::to_value(get_tree).unwrap(),
-                ),
-                (
-                    set_lifecycle.identifier(),
-                    serde_json::to_value(set_lifecycle).unwrap(),
-                ),
+                (get_tree.identifier(), serde_json::to_value(get_tree).unwrap()),
+                (set_lifecycle.identifier(), serde_json::to_value(set_lifecycle).unwrap()),
                 (
                     enable_runtime.identifier(),
                     serde_json::to_value(enable_runtime).unwrap(),
@@ -268,11 +261,7 @@ impl FrameManager {
             .all(|f| self.check_lifecycle(watcher, f))
     }
 
-    fn check_lifecycle_complete(
-        &self,
-        watcher: &NavigationWatcher,
-        frame: &Frame,
-    ) -> Option<NavigationOk> {
+    fn check_lifecycle_complete(&self, watcher: &NavigationWatcher, frame: &Frame) -> Option<NavigationOk> {
         if !self.check_lifecycle(watcher, frame) {
             return None;
         }
@@ -302,12 +291,10 @@ impl FrameManager {
         if let Some((watcher, deadline)) = self.navigation.take() {
             if now > deadline {
                 // navigation request timed out
-                return Some(FrameEvent::NavigationResult(Err(
-                    NavigationError::Timeout {
-                        err: DeadlineExceeded::new(now, deadline),
-                        id: watcher.id,
-                    },
-                )));
+                return Some(FrameEvent::NavigationResult(Err(NavigationError::Timeout {
+                    err: DeadlineExceeded::new(now, deadline),
+                    id: watcher.id,
+                })));
             }
             if let Some(frame) = self.frames.get(&watcher.frame_id) {
                 if let Some(nav) = self.check_lifecycle_complete(&watcher, frame) {
@@ -319,12 +306,10 @@ impl FrameManager {
                     self.navigation = Some((watcher, deadline));
                 }
             } else {
-                return Some(FrameEvent::NavigationResult(Err(
-                    NavigationError::FrameNotFound {
-                        frame: watcher.frame_id,
-                        id: watcher.id,
-                    },
-                )));
+                return Some(FrameEvent::NavigationResult(Err(NavigationError::FrameNotFound {
+                    frame: watcher.frame_id,
+                    id: watcher.id,
+                })));
             }
         } else if let Some((req, watcher)) = self.pending_navigations.pop_front() {
             // queue in the next navigation that is must be fulfilled until `deadline`
@@ -357,10 +342,7 @@ impl FrameManager {
     }
 
     pub fn on_frame_tree(&mut self, frame_tree: FrameTree) {
-        self.on_frame_attached(
-            frame_tree.frame.id.clone(),
-            frame_tree.frame.parent_id.clone(),
-        );
+        self.on_frame_attached(frame_tree.frame.id.clone(), frame_tree.frame.parent_id.clone());
         self.on_frame_navigated(&frame_tree.frame);
         if let Some(children) = frame_tree.child_frames {
             for child_tree in children {
@@ -444,12 +426,7 @@ impl FrameManager {
 
     /// Issued when new execution context is created
     pub fn on_frame_execution_context_created(&mut self, event: &EventExecutionContextCreated) {
-        if let Some(frame_id) = event
-            .context
-            .aux_data
-            .as_ref()
-            .and_then(|v| v["frameId"].as_str())
-        {
+        if let Some(frame_id) = event.context.aux_data.as_ref().and_then(|v| v["frameId"].as_str()) {
             if let Some(frame) = self.frames.get_mut(frame_id) {
                 if event
                     .context
@@ -570,14 +547,8 @@ pub enum FrameEvent {
 
 #[derive(Debug)]
 pub enum NavigationError {
-    Timeout {
-        id: NavigationId,
-        err: DeadlineExceeded,
-    },
-    FrameNotFound {
-        id: NavigationId,
-        frame: FrameId,
-    },
+    Timeout { id: NavigationId, err: DeadlineExceeded },
+    FrameNotFound { id: NavigationId, frame: FrameId },
 }
 
 impl NavigationError {

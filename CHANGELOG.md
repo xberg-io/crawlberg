@@ -4,6 +4,21 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-10-09
+
+### Security
+
+- Enforce browser egress policy before every page, popup, iframe, worker, and service-worker
+  target can execute. Browser controller loss now fails closed, and WebSocket, WebRTC, and UDP
+  transports remain confined to the configured proxy boundary.
+
+### Changed
+
+- Reject external browser endpoints while IP-based SSRF denial is active because Crawlberg cannot
+  prove or control the remote browser's network boundary.
+- Update compatible dependencies, including ext-php-rs 0.16.1, liter-llm 2.2, and minijinja 3.
+- Use the security-hardened `crawlberg-chromiumoxide` 0.9.2 fork for browser control.
+
 ## [1.10.2] - 2026-10-06
 
 ### Changed
