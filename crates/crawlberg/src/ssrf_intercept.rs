@@ -15,17 +15,16 @@
 //! ~keep no dependency on anything `browser`-gated, so it is gated on `browser-chromiumoxide`
 //! ~keep alone in `lib.rs`, matching both callers' actual requirement.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 use chromiumoxide::Browser;
-use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
+use chromiumoxide::cdp::browser_protocol::browser::{BrowserContextId, CloseParams as CloseBrowserParams};
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
-    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
-    RequestId as FetchRequestId, RequestPattern, RequestStage,
+    ContinueRequestParams, ContinueResponseParams, EnableParams as FetchEnableParams, EventRequestPaused,
+    FailRequestParams, FulfillRequestParams, HeaderEntry, RequestId as FetchRequestId, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
@@ -36,7 +35,7 @@ use chromiumoxide::cdp::browser_protocol::storage::{
 };
 use chromiumoxide::cdp::browser_protocol::target::{
     CloseTargetParams, CreateBrowserContextParams, CreateTargetParams, EventTargetCreated, EventTargetDestroyed,
-    GetTargetsParams, TargetId,
+    GetBrowserContextsParams, GetTargetsParams, SetAutoAttachParams, TargetId, TargetInfo,
 };
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
@@ -62,6 +61,14 @@ const UNPARSEABLE_URL: &str = "(unparseable URL)";
 /// ~keep that never sends them. It is longer than `ACTION_SETTLE_LIMIT`, which waits only for the
 /// ~keep check's own verdicts, because this waits for Chrome's renderer to let the page go.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+const CONTROLLER_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// The stop must outlive its bounded context-disposal census before treating the listener as lost. ~keep
+const FIREWALL_STOP_TIMEOUT: Duration = Duration::from_secs(6);
+const FRAME_ATTRIBUTION_TIMEOUT: Duration = Duration::from_millis(250);
+const FRAME_ATTRIBUTION_TARGET_LIMIT: usize = 16;
+const CHILD_CONTROLLER_PENDING_LIMIT: usize = 256;
+const RETIRED_CONTEXT_LIMIT: usize = 256;
+const CHILD_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long after an action returns a request it started still counts as its own: for a
 /// script, a scroll or a wait, and for input (a click, a key press, typing) that can start a
@@ -240,6 +247,7 @@ impl std::fmt::Debug for DocumentResponse {
 pub(crate) struct BrowserFirewall {
     handle: FirewallHandle,
     listener: tokio::task::JoinHandle<()>,
+    child_controller: tokio::task::JoinHandle<()>,
     stopped: bool,
 }
 
@@ -338,6 +346,7 @@ impl PageContext {
 #[derive(Clone)]
 pub(crate) struct FirewallHandle {
     commands: mpsc::UnboundedSender<Command>,
+    child_commands: mpsc::Sender<ChildCommand>,
     shared: Arc<Shared>,
     /// The browser, held weakly so the owner's `Arc::into_inner` still finds it alone once the
     /// check has stopped.
@@ -394,6 +403,21 @@ struct WatchedPage {
 #[derive(Default)]
 struct Registry {
     pages: Vec<Arc<WatchedPage>>,
+    /// Owner of the browser's default context. It is used only by the process-exclusive
+    /// `PageContext::Shared` mode, where Chrome does not expose a BrowserContextId. ~keep
+    default_context_owner: Option<Arc<WatchedPage>>,
+    shared_context: bool,
+    /// Browser contexts created by this firewall and their immutable policy fingerprints.
+    /// An unbound owner is opening or parked and therefore remains fail-closed. ~keep
+    contexts: HashMap<BrowserContextId, ContextOwner>,
+    /// Recently retired context ids, bounded because authoritative absence is the ordering
+    /// barrier for older events and known target ids remain in `context_targets`. ~keep
+    retired_contexts: VecDeque<BrowserContextId>,
+    /// Every target observed in an owned context, retained across park/rewatch handoffs. ~keep
+    context_targets: HashMap<TargetId, BrowserContextId>,
+    /// The authoritative state of every target the controller has classified. Context identity
+    /// is the only path into `Watched`; lineage is used only to detect contradictions. ~keep
+    ownership: HashMap<TargetId, TargetOwnership>,
     /// Every live target a watched page owns, in the order they were created: its own and the
     /// popups it opened. A target of an ended watch stays until Chrome destroys it, its
     /// requests refused, and interception stays on until then.
@@ -401,6 +425,8 @@ struct Registry {
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
+    /// Bounded event-order index for the rare in-process-frame fallback on external pages. ~keep
+    other_candidates: Vec<TargetId>,
     /// Identity token for each target's current ownership generation. ~keep
     target_generations: HashMap<TargetId, Arc<()>>,
     /// Frames, keyed by frame id: an in-process frame as a request names it, and a frame Chrome
@@ -411,6 +437,45 @@ struct Registry {
     /// it has one of its own. The page goes when its watch ends with it, when Chrome destroys it,
     /// or when the check stops; a context of its own, and its popups, go with it.
     opened: HashMap<TargetId, Option<BrowserContextId>>,
+}
+
+#[derive(Clone)]
+enum TargetOwnership {
+    Watched(Arc<WatchedPage>),
+    PendingContext(BrowserContextId),
+    /// A target in the process-exclusive default context before its watch is installed. ~keep
+    PendingShared,
+    Other,
+    /// An owned or lineage-related target whose authoritative record is missing or conflicts.
+    /// Its requests are always refused and teardown continues to account for it. ~keep
+    Quarantined,
+}
+
+struct ContextOwner {
+    policy: Option<PolicyIdentity>,
+    owner: Option<Arc<WatchedPage>>,
+    disposal_acknowledged: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PolicyIdentity {
+    deny_private: bool,
+    allowlist: Vec<crate::net::ssrf::HostMatcher>,
+    denylist: Vec<crate::net::ssrf::HostMatcher>,
+    max_redirects: u8,
+    scheme_allowlist: Vec<String>,
+}
+
+impl From<&crate::net::ssrf::SsrfPolicy> for PolicyIdentity {
+    fn from(policy: &crate::net::ssrf::SsrfPolicy) -> Self {
+        Self {
+            deny_private: policy.deny_private,
+            allowlist: policy.allowlist.clone(),
+            denylist: policy.denylist.clone(),
+            max_redirects: policy.max_redirects,
+            scheme_allowlist: policy.scheme_allowlist.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -459,11 +524,23 @@ enum Owner {
 }
 
 impl Registry {
+    fn register_context(&mut self, context: BrowserContextId, policy: Option<&crate::net::ssrf::SsrfPolicy>) {
+        self.retired_contexts.retain(|retired| retired != &context);
+        self.contexts.insert(
+            context,
+            ContextOwner {
+                policy: policy.map(PolicyIdentity::from),
+                owner: None,
+                disposal_acknowledged: false,
+            },
+        );
+    }
+
     fn owner_of_target(&self, target: &str) -> Option<Arc<WatchedPage>> {
-        self.targets
-            .iter()
-            .find(|(id, _)| id.inner() == target)
-            .map(|(_, page)| Arc::clone(page))
+        match self.ownership.get(&TargetId::new(target)) {
+            Some(TargetOwnership::Watched(page)) => Some(Arc::clone(page)),
+            _ => None,
+        }
     }
 
     fn owner_of_frame(&self, frame: &FrameId) -> Option<Owner> {
@@ -502,30 +579,100 @@ impl Registry {
         self.others.remove(&target);
         self.targets.retain(|(id, _)| *id != target);
         self.target_generations.insert(target.clone(), Arc::new(()));
-        self.targets.push((target, owner));
+        self.targets.push((target.clone(), Arc::clone(&owner)));
+        self.ownership.insert(target, TargetOwnership::Watched(owner));
     }
 
     fn register_other(&mut self, target: TargetId) {
         // ~keep A creation event queued before `Watch` can arrive after it; it must not demote
         // ~keep the target whose watch is already installed to an unrestricted external target.
-        if self.targets.iter().any(|(id, _)| *id == target) || self.others.contains(&target) {
+        if self.targets.iter().any(|(id, _)| *id == target)
+            || self.others.contains(&target)
+            || self.context_targets.contains_key(&target)
+            || self.ownership.contains_key(&target)
+        {
             return;
         }
         self.invalidate_frames_from(&target);
         self.others.insert(target.clone());
+        self.ownership.insert(target.clone(), TargetOwnership::Other);
+        if self.other_candidates.len() < FRAME_ATTRIBUTION_TARGET_LIMIT {
+            self.other_candidates.push(target.clone());
+        }
         self.target_generations.insert(target, Arc::new(()));
+    }
+
+    fn register_pending(&mut self, target: TargetId, context: BrowserContextId) {
+        self.invalidate_frames_from(&target);
+        self.others.remove(&target);
+        self.targets.retain(|(id, _)| *id != target);
+        self.target_generations.insert(target.clone(), Arc::new(()));
+        self.context_targets.insert(target.clone(), context.clone());
+        self.ownership.insert(target, TargetOwnership::PendingContext(context));
+    }
+
+    fn register_pending_shared(&mut self, target: TargetId) {
+        self.invalidate_frames_from(&target);
+        self.others.remove(&target);
+        self.targets.retain(|(id, _)| *id != target);
+        self.target_generations.insert(target.clone(), Arc::new(()));
+        self.ownership.insert(target, TargetOwnership::PendingShared);
     }
 
     fn remove_target(&mut self, target: &TargetId) {
         self.invalidate_frames_from(target);
         self.targets.retain(|(id, _)| id != target);
         self.others.remove(target);
+        self.context_targets.remove(target);
+        self.ownership.remove(target);
+        self.other_candidates.retain(|candidate| candidate != target);
         self.target_generations.remove(target);
     }
 
     fn invalidate_frames_from(&mut self, target: &TargetId) {
         self.frames
             .retain(|frame, cached| frame.inner() != target.inner() && cached.source != *target);
+    }
+
+    fn register_quarantined(&mut self, target: TargetId, context: Option<BrowserContextId>) {
+        self.invalidate_frames_from(&target);
+        self.others.remove(&target);
+        self.targets.retain(|(id, _)| *id != target);
+        match &context {
+            Some(context) => {
+                self.context_targets.insert(target.clone(), context.clone());
+            }
+            None => {
+                self.context_targets.remove(&target);
+            }
+        }
+        self.target_generations.insert(target.clone(), Arc::new(()));
+        self.ownership.insert(target, TargetOwnership::Quarantined);
+    }
+
+    fn retire_context(&mut self, context: &BrowserContextId) -> bool {
+        let Some(registered) = self.contexts.get(context) else {
+            return false;
+        };
+        if !registered.disposal_acknowledged {
+            return false;
+        }
+        self.contexts.remove(context);
+        self.retired_contexts.retain(|retired| retired != context);
+        self.retired_contexts.push_back(context.clone());
+        if self.retired_contexts.len() > RETIRED_CONTEXT_LIMIT {
+            self.retired_contexts.pop_front();
+        }
+        self.targets
+            .retain(|(target, _)| self.context_targets.get(target) != Some(context));
+        self.frames
+            .retain(|_, frame| self.context_targets.get(&frame.source) != Some(context));
+        for (target, ownership) in &mut self.ownership {
+            if self.context_targets.get(target) == Some(context) {
+                *ownership = TargetOwnership::Quarantined;
+            }
+        }
+        true
     }
 
     fn owns_live_target(&self, page: &Arc<WatchedPage>, keep_root: bool) -> bool {
@@ -556,8 +703,65 @@ struct Shared {
     /// listener received its pause. The match can take longer than the grace after an action,
     /// so a wait on the page's own count alone misses such a request: see [`Watch::settle`].
     unmatched: Mutex<Vec<Instant>>,
+    /// Page creation is detached from its caller so cancellation cannot leak a context. ~keep
+    opening: AtomicUsize,
+    stopping: AtomicBool,
+    failed: AtomicBool,
+    failure: Notify,
+    handler_abort: Option<tokio::task::AbortHandle>,
     #[cfg(test)]
     delays: TestDelays,
+}
+
+struct Opening(Arc<Shared>);
+
+impl Opening {
+    fn begin(shared: &Arc<Shared>) -> Result<Self, CrawlError> {
+        let stopped = || CrawlError::browser_error("request interception stopped");
+        if shared.stopping.load(Ordering::Acquire) {
+            return Err(stopped());
+        }
+        shared.opening.fetch_add(1, Ordering::AcqRel);
+        if shared.stopping.load(Ordering::Acquire) {
+            shared.opening.fetch_sub(1, Ordering::AcqRel);
+            return Err(stopped());
+        }
+        Ok(Self(Arc::clone(shared)))
+    }
+}
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        self.0.opening.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct WatchSetup {
+    commands: mpsc::UnboundedSender<Command>,
+    root: TargetId,
+    armed: bool,
+}
+
+impl WatchSetup {
+    fn new(commands: &mpsc::UnboundedSender<Command>, root: TargetId) -> Self {
+        Self {
+            commands: commands.clone(),
+            root,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WatchSetup {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.commands.send(Command::Abandon(self.root.clone()));
+        }
+    }
 }
 
 /// Delays and faults a unit test injects to widen a race window deterministically.
@@ -570,12 +774,6 @@ struct TestDelays {
     deliver: Duration,
     /// Before a watch's end closes a target, as Chrome under load is slow to destroy one.
     close: Duration,
-    /// Leave a closed page's context in place at its watch's end, as when Chrome fails the
-    /// dispose, so the page is still open and sending when the watch gives up.
-    keep_context: bool,
-    /// Before a page opened while the check stops is dropped, until the test gives the gate a
-    /// permit.
-    drop_late_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Between a request's verdict and its delivery, until the test gives the gate a permit.
     deliver_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Before the listener takes in a paused request, until the test gives the gate a permit.
@@ -594,13 +792,8 @@ struct TestDelays {
     received: Arc<Mutex<Vec<String>>>,
     /// The pages the listener has dropped, recorded as each drop starts.
     dropped: Arc<Mutex<Vec<TargetId>>>,
-    /// Keep the browser up after the stop has turned interception off or left it on, as a slow
-    /// teardown does, and record the pages still open then.
-    stop_hold: Option<Arc<StopHold>>,
     /// ~keep Skip the socket-level SSRF proxy so a negative control isolates Fetch interception.
     bypass_egress: bool,
-    /// ~keep Turn interception off at a killed browser's stop so a negative control isolates the SSRF proxy.
-    disable_interception_on_stop: bool,
     /// ~keep Per action, its attribution grace and subsequent request-settling poll count.
     action_waits: Arc<Mutex<Vec<(Duration, usize)>>>,
     /// Before a watch hands its policy to the listener, until the test gives one permit. ~keep
@@ -611,75 +804,9 @@ struct TestDelays {
     lifecycle_query_gate: Option<Arc<UrlGate>>,
 }
 
-/// How long a stopped check keeps its browser up before the stop returns, and the URLs of the
-/// pages Chrome still had open as that hold began.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct StopHold {
-    hold: Duration,
-    open_pages: Mutex<Vec<String>>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum SessionRequestDefense {
-    Both,
-    #[cfg_attr(
-        not(feature = "browser"),
-        expect(
-            dead_code,
-            reason = "the isolated one-shot defense test requires the browser feature"
-        )
-    )]
-    Interception,
-    #[cfg_attr(
-        not(feature = "browser"),
-        expect(
-            dead_code,
-            reason = "the isolated one-shot defense test requires the browser feature"
-        )
-    )]
-    Egress,
-    Neither,
-}
-
-#[cfg(test)]
-impl StopHold {
-    /// The URLs of the pages Chrome still had open as the hold began.
-    pub(crate) fn open_pages(&self) -> Vec<String> {
-        lock(&self.open_pages).clone()
-    }
-}
-
 #[cfg(test)]
 tokio::task_local! {
     static CALL_SITE_DELAYS: TestDelays;
-}
-
-/// Run `body`, a caller of [`BrowserFirewall::start`], so that every check it starts leaves a
-/// closed page's context in place, as when Chrome fails the dispose, and keeps the browser up for
-/// `hold` after its stop. A page that keeps sending is then still sending after the stop.
-#[cfg(test)]
-pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
-    hold: Duration,
-    defense: SessionRequestDefense,
-    body: F,
-) -> (F::Output, Arc<StopHold>) {
-    let stop_hold = Arc::new(StopHold {
-        hold,
-        ..StopHold::default()
-    });
-    let delays = TestDelays {
-        keep_context: true,
-        stop_hold: Some(Arc::clone(&stop_hold)),
-        bypass_egress: matches!(
-            defense,
-            SessionRequestDefense::Interception | SessionRequestDefense::Neither
-        ),
-        disable_interception_on_stop: matches!(defense, SessionRequestDefense::Egress | SessionRequestDefense::Neither),
-        ..TestDelays::default()
-    };
-    (CALL_SITE_DELAYS.scope(delays, body).await, stop_hold)
 }
 
 #[cfg(test)]
@@ -692,118 +819,6 @@ pub(crate) async fn with_recorded_action_waits<F: std::future::Future>(body: F) 
     let output = CALL_SITE_DELAYS.scope(delays, body).await;
     let recorded = lock(&action_waits).clone();
     (output, recorded)
-}
-
-/// A page fixture on `localhost` that repeatedly reaches a denied address, and the config that
-/// loads it with a browser crawlberg launches.
-///
-/// ~keep The page is allowlisted by name; the denied server is the literal `127.0.0.1`, which
-/// ~keep `deny_private` refuses.
-#[cfg(test)]
-pub(crate) struct SendingSite {
-    pub(crate) seed: String,
-    pub(crate) popup: Option<String>,
-    pub(crate) action_script: Option<String>,
-    pub(crate) config: CrawlConfig,
-    denied: wiremock::MockServer,
-    _site: wiremock::MockServer,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-enum SendingSiteKind {
-    Page,
-    Popup,
-    PopupOpeningPage,
-}
-
-#[cfg(test)]
-impl SendingSite {
-    pub(crate) async fn start() -> Self {
-        Self::start_with_kind(SendingSiteKind::Page).await
-    }
-
-    pub(crate) async fn start_popup() -> Self {
-        Self::start_with_kind(SendingSiteKind::Popup).await
-    }
-
-    pub(crate) async fn start_opening_denied_popups() -> Self {
-        Self::start_with_kind(SendingSiteKind::PopupOpeningPage).await
-    }
-
-    async fn start_with_kind(kind: SendingSiteKind) -> Self {
-        use wiremock::matchers::any;
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-        let denied = MockServer::start().await;
-        Mock::given(any())
-            .respond_with(ResponseTemplate::new(200).set_body_raw("denied", "text/plain"))
-            .mount(&denied)
-            .await;
-        let target = format!("http://127.0.0.1:{}/secret", denied.address().port());
-        let site = MockServer::start().await;
-        let sending = format!(
-            "<html><body><p>sending</p><script>setInterval(() => fetch({target:?} + '?' + \
-             Math.random(), {{ mode: 'no-cors' }}).catch(() => 0), 5);</script></body></html>"
-        );
-        let seed_body = match kind {
-            SendingSiteKind::Page => sending.clone(),
-            SendingSiteKind::Popup | SendingSiteKind::PopupOpeningPage => {
-                "<html><body><p>opening</p></body></html>".to_owned()
-            }
-        };
-        Mock::given(method("GET"))
-            .and(path("/"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(seed_body, "text/html"))
-            .mount(&site)
-            .await;
-        if matches!(kind, SendingSiteKind::Popup) {
-            Mock::given(method("GET"))
-                .and(path("/popup"))
-                .respond_with(ResponseTemplate::new(200).set_body_raw(sending, "text/html"))
-                .mount(&site)
-                .await;
-        }
-        let seed = format!("http://localhost:{}/", site.address().port());
-        let popup =
-            matches!(kind, SendingSiteKind::Popup).then(|| format!("http://localhost:{}/popup", site.address().port()));
-        let action_script = match kind {
-            SendingSiteKind::Page => None,
-            SendingSiteKind::Popup => Some("window.open('/popup'); return true".to_owned()),
-            SendingSiteKind::PopupOpeningPage => Some(format!(
-                "setInterval(() => window.open({target:?} + '?' + Math.random()), 50); return true"
-            )),
-        };
-        let config = CrawlConfig {
-            browser: crate::types::BrowserConfig {
-                backend: crate::types::BrowserBackend::Chromiumoxide,
-                mode: crate::types::BrowserMode::Always,
-                timeout: Duration::from_secs(20),
-                ..crate::types::BrowserConfig::default()
-            },
-            respect_robots_txt: false,
-            ..CrawlConfig::builder()
-                .allow_private_networks(false)
-                .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
-                .build()
-        };
-        Self {
-            seed,
-            popup,
-            action_script,
-            config,
-            denied,
-            _site: site,
-        }
-    }
-
-    /// How many requests reached the denied address.
-    pub(crate) async fn denied_hits(&self) -> usize {
-        self.denied
-            .received_requests()
-            .await
-            .map_or(0, |received| received.len())
-    }
 }
 
 /// Holds each request at one step of its answer until the test gives a permit, and lists the URLs
@@ -825,6 +840,8 @@ enum Command {
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
         oneshot::Sender<Result<(), String>>,
     ),
+    /// Cancellation cannot run async cleanup, so it hands disposal to the listener. ~keep
+    Abandon(TargetId),
     /// Close the page's popups, and the page itself when `close_page` is set, then stop
     /// watching it.
     End {
@@ -840,6 +857,17 @@ enum Command {
     Stop(Option<oneshot::Sender<()>>),
 }
 
+enum ChildCommand {
+    Enable {
+        done: oneshot::Sender<Result<(), String>>,
+    },
+    Arm {
+        root: TargetId,
+        done: oneshot::Sender<Result<(), String>>,
+    },
+    Stop,
+}
+
 /// What a finished task of the listener reports back to it.
 enum Done {
     Answered,
@@ -851,25 +879,63 @@ enum Done {
 impl BrowserFirewall {
     /// Turn interception on for `browser` and start the listener on its session. The check
     /// opens its pages in the context `context` names.
+    #[cfg(test)]
     pub(crate) async fn start(
         browser: Arc<Browser>,
         origin: BrowserOrigin,
         context: PageContext,
     ) -> Result<Self, CrawlError> {
-        Self::start_with(
+        Self::start_with_supervisor(
             browser,
             origin,
             context,
+            None,
             #[cfg(test)]
             CALL_SITE_DELAYS.try_with(TestDelays::clone).unwrap_or_default(),
         )
         .await
     }
 
+    pub(crate) async fn start_supervised(
+        browser: Arc<Browser>,
+        origin: BrowserOrigin,
+        context: PageContext,
+        handler_abort: tokio::task::AbortHandle,
+    ) -> Result<Self, CrawlError> {
+        Self::start_with_supervisor(
+            browser,
+            origin,
+            context,
+            Some(handler_abort),
+            #[cfg(test)]
+            CALL_SITE_DELAYS.try_with(TestDelays::clone).unwrap_or_default(),
+        )
+        .await
+    }
+
+    #[cfg(test)]
     async fn start_with(
         browser: Arc<Browser>,
         origin: BrowserOrigin,
         context: PageContext,
+        #[cfg(test)] delays: TestDelays,
+    ) -> Result<Self, CrawlError> {
+        Self::start_with_supervisor(
+            browser,
+            origin,
+            context,
+            None,
+            #[cfg(test)]
+            delays,
+        )
+        .await
+    }
+
+    async fn start_with_supervisor(
+        browser: Arc<Browser>,
+        origin: BrowserOrigin,
+        context: PageContext,
+        handler_abort: Option<tokio::task::AbortHandle>,
         #[cfg(test)] delays: TestDelays,
     ) -> Result<Self, CrawlError> {
         let listen_error = |e| CrawlError::browser_error(format!("failed to register intercept listener: {e}"));
@@ -887,16 +953,33 @@ impl BrowserFirewall {
             .map_err(listen_error)?;
         // ~keep Targets that exist before the listener starts, such as another client's tabs on
         // ~keep an external browser, are seeded here; later ones arrive as creation events.
-        let existing = browser
-            .execute(GetTargetsParams::default())
-            .await
-            .map(|response| response.result.target_infos)
-            .unwrap_or_default();
+        let existing = match browser.execute(GetTargetsParams::default()).await {
+            Ok(response) => response.result.target_infos,
+            Err(error) if origin == BrowserOrigin::External => {
+                return Err(CrawlError::browser_error(format!(
+                    "failed to enumerate existing external-browser targets: {error}"
+                )));
+            }
+            Err(error) => {
+                tracing::debug!(%error, "failed to enumerate targets before enabling browser interception");
+                Vec::new()
+            }
+        };
         browser
             .execute(fetch_enable_params())
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
-        let mut registry = Registry::default();
+        let (child_socket, _) = tokio::time::timeout(
+            CONTROLLER_TEARDOWN_TIMEOUT,
+            async_tungstenite::tokio::connect_async(browser.websocket_address().as_str()),
+        )
+        .await
+        .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
+        .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
+        let mut registry = Registry {
+            shared_context: context == PageContext::Shared,
+            ..Registry::default()
+        };
         for info in existing {
             registry.register_other(info.target_id);
         }
@@ -906,36 +989,74 @@ impl BrowserFirewall {
             origin,
             context,
             unmatched: Mutex::new(Vec::new()),
+            opening: AtomicUsize::new(0),
+            stopping: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            failure: Notify::new(),
+            handler_abort,
             #[cfg(test)]
             delays,
         });
         let (commands, receiver) = mpsc::unbounded_channel();
+        let (child_commands, child_receiver) = mpsc::channel(CHILD_CONTROLLER_PENDING_LIMIT);
         let handle = FirewallHandle {
             commands,
+            child_commands: child_commands.clone(),
             shared: Arc::clone(&shared),
             browser: Arc::downgrade(&browser),
             context,
             egress: Arc::default(),
         };
-        let listener = tokio::spawn(serve(
-            browser,
-            Arc::clone(&shared),
-            Events {
-                paused,
-                created,
-                destroyed,
-            },
-            receiver,
-        ));
+        let child_shared = Arc::clone(&shared);
+        let child_browser = Arc::clone(&browser);
+        let child_controller = tokio::spawn(async move {
+            let expected = controller_completed(serve_child_targets(child_socket, child_receiver, &child_shared)).await;
+            if !expected && !child_shared.stopping.load(Ordering::Acquire) {
+                fail_controller(&child_browser, &child_shared, "child-target controller").await;
+            }
+        });
+        let (enabled, ready) = oneshot::channel();
+        child_commands
+            .send(ChildCommand::Enable { done: enabled })
+            .await
+            .map_err(|_| CrawlError::browser_error("child-target controller stopped before it could be enabled"))?;
+        tokio::time::timeout(CHILD_COMMAND_TIMEOUT, ready)
+            .await
+            .map_err(|_| CrawlError::browser_error("timed out enabling the child-target controller"))?
+            .map_err(|_| CrawlError::browser_error("child-target controller stopped before it could be enabled"))?
+            .map_err(CrawlError::browser_error)?;
+        let listener_shared = Arc::clone(&shared);
+        let listener = tokio::spawn(async move {
+            let expected = controller_completed(serve(
+                Arc::clone(&browser),
+                Arc::clone(&listener_shared),
+                Events {
+                    paused,
+                    created,
+                    destroyed,
+                },
+                receiver,
+            ))
+            .await;
+            if expected {
+                return;
+            }
+            fail_controller(&browser, &listener_shared, "request-interception controller").await;
+        });
         Ok(Self {
             handle,
             listener,
+            child_controller,
             stopped: false,
         })
     }
 
     pub(crate) fn handle(&self) -> FirewallHandle {
         self.handle.clone()
+    }
+
+    pub(crate) fn has_failed(&self) -> bool {
+        self.handle.shared.failed.load(Ordering::Acquire)
     }
 
     /// Drop every page of the check that is left, so no page of it can still send, turn
@@ -953,32 +1074,88 @@ impl BrowserFirewall {
     /// ~keep pending requests before it. The browser, launched for this one session, is closed
     /// ~keep instead. This is a precaution: a disable here was not seen to leak (0 of 13 runs).
     pub(crate) async fn stop(mut self) {
+        self.handle.shared.stopping.store(true, Ordering::Release);
         let (done, stopped) = oneshot::channel();
-        if self.handle.commands.send(Command::Stop(Some(done))).is_ok() {
-            let _ = stopped.await;
+        let completed = if self.handle.commands.send(Command::Stop(Some(done))).is_ok() {
+            tokio::time::timeout(FIREWALL_STOP_TIMEOUT, stopped).await.is_ok()
+        } else {
+            true
+        };
+        if !completed {
+            self.handle.shared.failed.store(true, Ordering::Release);
+            self.handle.shared.failure.notify_waiters();
+            tracing::error!("browser request-interception teardown exceeded its bound");
+            if self.handle.shared.origin != BrowserOrigin::External
+                && let Some(browser) = self.handle.browser.upgrade()
+            {
+                let _ = tokio::time::timeout(
+                    CONTROLLER_TEARDOWN_TIMEOUT,
+                    browser.execute(CloseBrowserParams::default()),
+                )
+                .await;
+            }
+            if let Some(abort) = &self.handle.shared.handler_abort {
+                abort.abort();
+            }
+            self.listener.abort();
         }
         self.stopped = true;
-        let _ = (&mut self.listener).await;
+        if tokio::time::timeout(CONTROLLER_TEARDOWN_TIMEOUT, &mut self.listener)
+            .await
+            .is_err()
+        {
+            self.handle.shared.failed.store(true, Ordering::Release);
+            self.handle.shared.failure.notify_waiters();
+            tracing::error!("browser request-interception controller did not terminate within its bound");
+            if let Some(abort) = &self.handle.shared.handler_abort {
+                abort.abort();
+            }
+            self.listener.abort();
+        }
+        let _ = self.handle.child_commands.send(ChildCommand::Stop).await;
+        if tokio::time::timeout(CONTROLLER_TEARDOWN_TIMEOUT, &mut self.child_controller)
+            .await
+            .is_err()
+        {
+            self.handle.shared.failed.store(true, Ordering::Release);
+            self.handle.shared.failure.notify_waiters();
+            tracing::error!("child-target controller did not terminate within its bound");
+            self.child_controller.abort();
+        }
+    }
+}
+
+async fn fail_controller(browser: &Browser, shared: &Shared, controller: &'static str) {
+    if shared.failed.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    shared.failure.notify_waiters();
+    shared.stopping.store(true, Ordering::Release);
+    tracing::error!(controller, "browser security controller ended unexpectedly");
+    if shared.origin != BrowserOrigin::External {
+        let _ = tokio::time::timeout(
+            CONTROLLER_TEARDOWN_TIMEOUT,
+            browser.execute(CloseBrowserParams::default()),
+        )
+        .await;
+    }
+    if let Some(abort) = &shared.handler_abort {
+        abort.abort();
     }
 }
 
 impl Drop for BrowserFirewall {
     // ~keep The stop repeats `stop`'s for the path that never reaches it: a cancelled fetch
     // ~keep future drops the firewall without stopping it, and interception left on with no
-    // ~keep listener pauses the whole browser. The listener keeps answering until it has turned
-    // ~keep interception off, then ends and lets go of the browser. A `Killed` browser keeps it on:
-    // ~keep chromiumoxide kills the process it launched when the last reference goes.
+    // ~keep listener pauses the whole browser. The listener keeps answering until its authoritative
+    // ~keep census proves every owned target is gone, then ends and lets go of the browser. External
+    // ~keep sessions lose interception on detach; launched and killed browsers retain it until exit.
     fn drop(&mut self) {
         if !self.stopped {
+            self.handle.shared.stopping.store(true, Ordering::Release);
             let _ = self.handle.commands.send(Command::Stop(None));
+            let _ = self.handle.child_commands.try_send(ChildCommand::Stop);
         }
-    }
-}
-
-/// Turn CDP Fetch interception off for the whole browser.
-async fn disable_fetch(browser: &Browser) {
-    if let Err(error) = browser.execute(FetchDisableParams::default()).await {
-        tracing::warn!(%error, "failed to turn browser request interception off");
     }
 }
 
@@ -989,9 +1166,11 @@ async fn disable_fetch(browser: &Browser) {
 /// ~keep Closing a target under browser-wide interception lets none of its pending requests
 /// ~keep out (measured: 854 to 6674 pauses outstanding at the close, 0 reached, 3 of 3 runs);
 /// ~keep what takes them out is turning interception off, which a shared-context check never does.
-async fn drop_page(browser: &Browser, root: TargetId, context: Option<BrowserContextId>) {
+async fn drop_page(browser: &Browser, shared: &Shared, root: TargetId, context: Option<BrowserContextId>) {
     match context {
-        Some(context) => dispose_context(browser, context).await,
+        Some(context) => {
+            let _ = dispose_and_retire_context(browser, shared, context).await;
+        }
         None => {
             if let Err(error) = browser.execute(CloseTargetParams::new(root)).await {
                 tracing::debug!(%error, "failed to close a page of the check");
@@ -1002,10 +1181,52 @@ async fn drop_page(browser: &Browser, root: TargetId, context: Option<BrowserCon
 
 /// Dispose the browser context `context`, and with it every page in it and every request of
 /// theirs Chrome still holds.
-async fn dispose_context(browser: &Browser, context: BrowserContextId) {
+async fn dispose_context(browser: &Browser, context: BrowserContextId) -> bool {
     if let Err(error) = browser.dispose_browser_context(context).await {
         tracing::debug!(%error, "failed to dispose a page's browser context");
+        return false;
     }
+    true
+}
+
+async fn context_absent(browser: &Browser, context: &BrowserContextId) -> bool {
+    let Ok(contexts) = browser.execute(GetBrowserContextsParams::default()).await else {
+        return false;
+    };
+    if contexts.result.browser_context_ids.contains(context) {
+        return false;
+    }
+    let Ok(targets) = browser.execute(GetTargetsParams::default()).await else {
+        return false;
+    };
+    !targets
+        .result
+        .target_infos
+        .iter()
+        .any(|target| target.browser_context_id.as_ref() == Some(context))
+}
+
+async fn dispose_and_retire_context(browser: &Browser, shared: &Shared, context: BrowserContextId) -> bool {
+    if !dispose_context(browser, context.clone()).await {
+        return false;
+    }
+    if let Some(registered) = lock(&shared.registry).contexts.get_mut(&context) {
+        registered.disposal_acknowledged = true;
+    }
+    let absent = tokio::time::timeout(CLOSE_TIMEOUT, async {
+        loop {
+            if context_absent(browser, &context).await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .is_ok();
+    if absent {
+        let _ = lock(&shared.registry).retire_context(&context);
+    }
+    absent
 }
 
 /// Copy every cookie of the browser's own context into the browser context `context`. Returns
@@ -1053,7 +1274,76 @@ fn cookie_param(cookie: Cookie) -> CookieParam {
     }
 }
 
+async fn open_page(
+    browser: &Browser,
+    shared: &Shared,
+    commands: &mpsc::UnboundedSender<Command>,
+    mode: PageContext,
+    proxy_server: Option<String>,
+    policy: Option<crate::net::ssrf::SsrfPolicy>,
+) -> Result<(chromiumoxide::Page, Option<BrowserContextId>), CrawlError> {
+    let stopped = || CrawlError::browser_error("request interception stopped");
+    let failed = |error: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {error}"));
+    let context = match mode {
+        PageContext::Shared => None,
+        PageContext::Isolated | PageContext::Copied => Some(
+            browser
+                .create_browser_context(CreateBrowserContextParams {
+                    dispose_on_detach: Some(true),
+                    proxy_bypass_list: proxy_server
+                        .as_ref()
+                        .map(|_| crate::browser_pool::NO_LOOPBACK_BYPASS.to_owned()),
+                    proxy_server,
+                    ..CreateBrowserContextParams::default()
+                })
+                .await
+                .map_err(|error| failed(&error))?,
+        ),
+    };
+    if let Some(context) = &context {
+        lock(&shared.registry).register_context(context.clone(), policy.as_ref());
+    }
+    if mode == PageContext::Copied
+        && let Some(context) = &context
+        && let Err(error) = copy_cookies(browser, context.clone()).await
+    {
+        let _ = dispose_and_retire_context(browser, shared, context.clone()).await;
+        return Err(CrawlError::browser_error(format!(
+            "failed to copy the browser's cookies into the page: {error}"
+        )));
+    }
+    let mut params = CreateTargetParams::new("about:blank");
+    params.browser_context_id = context.clone();
+    let page = match browser.new_page(params).await {
+        Ok(page) => page,
+        Err(error) => {
+            if let Some(context) = context {
+                let _ = dispose_and_retire_context(browser, shared, context).await;
+            }
+            return Err(failed(&error));
+        }
+    };
+    let root = page.target_id().clone();
+    if commands.send(Command::Opened(root.clone(), context.clone())).is_err() {
+        drop_page(browser, shared, root, context).await;
+        return Err(stopped());
+    }
+    Ok((page, context))
+}
+
 impl FirewallHandle {
+    pub(crate) async fn failed(&self) {
+        loop {
+            let notified = self.shared.failure.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.shared.failed.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     /// The SSRF proxy for `policy` leaving through `upstream`, started on first use, or none
     /// when the policy has no IP-level denials.
     async fn egress_proxy(
@@ -1095,64 +1385,59 @@ impl FirewallHandle {
     /// it. With `sockets` under `deny_private` the context goes through the SSRF proxy instead,
     /// which leaves through `proxy`. The browser's own context has no proxy of its own: a
     /// `PageContext::Shared` page uses the proxy the browser was launched with.
+    ///
+    /// ~keep Crawlberg's chromiumoxide fork leaves child resumption to the raw controller. That
+    /// ~keep controller arms the structural tab and its context-bearing page before either can
+    /// ~keep resume; browser-wide Fetch is already enabled, and any exact-policy egress proxy is
+    /// ~keep installed on the context before its first target exists. External Chrome is rejected
+    /// ~keep when its socket boundary cannot enforce the configured policy.
+    pub(crate) async fn new_page_with_policy(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+        sockets: Option<&crate::net::ssrf::SsrfPolicy>,
+        policy: &crate::net::ssrf::SsrfPolicy,
+    ) -> Result<chromiumoxide::Page, CrawlError> {
+        self.new_page_inner(proxy, sockets, Some(policy)).await
+    }
+
+    #[cfg(test)]
     pub(crate) async fn new_page(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
         sockets: Option<&crate::net::ssrf::SsrfPolicy>,
     ) -> Result<chromiumoxide::Page, CrawlError> {
+        self.new_page_inner(proxy, sockets, None).await
+    }
+
+    async fn new_page_inner(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+        sockets: Option<&crate::net::ssrf::SsrfPolicy>,
+        policy: Option<&crate::net::ssrf::SsrfPolicy>,
+    ) -> Result<chromiumoxide::Page, CrawlError> {
         let stopped = || CrawlError::browser_error("request interception stopped");
         let browser = self.browser.upgrade().ok_or_else(stopped)?;
-        let failed = |e: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {e}"));
         #[cfg(test)]
         let sockets = sockets.filter(|_| !self.shared.delays.bypass_egress);
         let egress = match (&self.context, sockets) {
             (PageContext::Isolated | PageContext::Copied, Some(policy)) => self.egress_proxy(proxy, policy).await?,
             _ => None,
         };
-        let proxy = egress.as_ref().or(proxy);
-        let context = match self.context {
-            PageContext::Shared => None,
-            PageContext::Isolated | PageContext::Copied => Some(
-                browser
-                    .create_browser_context(CreateBrowserContextParams {
-                        dispose_on_detach: Some(true),
-                        proxy_server: proxy.map(|proxy| proxy.server.clone()),
-                        proxy_bypass_list: proxy.map(|_| crate::browser_pool::NO_LOOPBACK_BYPASS.to_owned()),
-                        ..CreateBrowserContextParams::default()
-                    })
-                    .await
-                    .map_err(|e| failed(&e))?,
-            ),
-        };
-        if self.context == PageContext::Copied
-            && let Some(context) = &context
-            && let Err(error) = copy_cookies(&browser, context.clone()).await
-        {
-            dispose_context(&browser, context.clone()).await;
-            return Err(CrawlError::browser_error(format!(
-                "failed to copy the browser's cookies into the page: {error}"
-            )));
-        }
-        let mut params = CreateTargetParams::new("about:blank");
-        params.browser_context_id = context.clone();
-        let page = match browser.new_page(params).await {
-            Ok(page) => page,
-            Err(error) => {
-                if let Some(context) = context {
-                    dispose_context(&browser, context).await;
-                }
-                return Err(failed(&error));
+        let proxy_server = egress.as_ref().or(proxy).map(|proxy| proxy.server.clone());
+        let opening = Opening::begin(&self.shared)?;
+        let shared = Arc::clone(&self.shared);
+        let commands = self.commands.clone();
+        let mode = self.context;
+        let policy = policy.cloned();
+        let (reply, result) = oneshot::channel();
+        tokio::spawn(async move {
+            let _opening = opening;
+            let opened = open_page(&browser, &shared, &commands, mode, proxy_server, policy).await;
+            if let Err(Ok((page, context))) = reply.send(opened) {
+                drop_page(&browser, &shared, page.target_id().clone(), context).await;
             }
-        };
-        let root = page.target_id().clone();
-        if self
-            .commands
-            .send(Command::Opened(root.clone(), context.clone()))
-            .is_err()
-        {
-            drop_page(&browser, root, context).await;
-            return Err(stopped());
-        }
+        });
+        let (page, _) = result.await.map_err(|_| stopped())??;
         Ok(page)
     }
 
@@ -1165,6 +1450,7 @@ impl FirewallHandle {
         config: &CrawlConfig,
         redirect_limit: usize,
     ) -> Result<Watch, CrawlError> {
+        let mut setup = WatchSetup::new(&self.commands, page.target_id().clone());
         let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
         let navigations = page
             .event_listener::<EventFrameNavigated>()
@@ -1207,11 +1493,39 @@ impl FirewallHandle {
             ended: false,
         };
         match enabled.await {
-            Ok(Ok(())) => Ok(watch),
+            Ok(Ok(())) => {
+                disable_primary_child_attach(page).await?;
+                let (armed, boundary) = oneshot::channel();
+                self.child_commands
+                    .send(ChildCommand::Arm {
+                        root: page.target_id().clone(),
+                        done: armed,
+                    })
+                    .await
+                    .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?;
+                boundary
+                    .await
+                    .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?
+                    .map_err(CrawlError::browser_error)?;
+                setup.disarm();
+                Ok(watch)
+            }
             Ok(Err(e)) => Err(CrawlError::browser_error(e)),
             Err(_) => Err(CrawlError::browser_error("request interception stopped")),
         }
     }
+}
+
+async fn disable_primary_child_attach(page: &chromiumoxide::Page) -> Result<(), CrawlError> {
+    page.execute(SetAutoAttachParams {
+        auto_attach: false,
+        wait_for_debugger_on_start: false,
+        flatten: Some(true),
+        filter: None,
+    })
+    .await
+    .map(drop)
+    .map_err(|e| CrawlError::browser_error(format!("failed to disable the primary child-target controller: {e}")))
 }
 
 impl Watch {
@@ -1551,8 +1865,666 @@ enum Lifecycle {
 }
 
 enum ReconciledLifecycle {
-    Created(Arc<EventTargetCreated>, Option<bool>),
+    Created(TargetLookup),
     Destroyed(Arc<EventTargetDestroyed>, Option<bool>),
+}
+
+enum ChildPendingKind {
+    Enable {
+        done: oneshot::Sender<Result<(), String>>,
+    },
+    RecursiveArm {
+        target: TargetId,
+        session: String,
+        waiting_for_debugger: bool,
+        structural_parent: Option<String>,
+    },
+    StructuralArm {
+        session: String,
+    },
+    Boundary,
+    Close,
+}
+
+struct ChildPending {
+    kind: ChildPendingKind,
+    deadline: tokio::time::Instant,
+}
+
+struct RootWaiter {
+    done: oneshot::Sender<Result<(), String>>,
+    deadline: tokio::time::Instant,
+}
+
+struct StructuralTarget {
+    target: TargetId,
+    session: String,
+    waiting_for_debugger: bool,
+    authorized: bool,
+    arm_acknowledged: bool,
+    child_boundary_acknowledged: bool,
+    deadline: tokio::time::Instant,
+}
+
+#[derive(serde::Deserialize)]
+struct ChildAttached {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    #[serde(rename = "targetInfo")]
+    target_info: TargetInfo,
+    #[serde(rename = "waitingForDebugger")]
+    waiting_for_debugger: bool,
+}
+
+fn child_message(
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+    session: Option<&str>,
+) -> async_tungstenite::tungstenite::Message {
+    let mut command = serde_json::json!({
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    if let Some(session) = session {
+        command["sessionId"] = session.into();
+    }
+    async_tungstenite::tungstenite::Message::Text(command.to_string().into())
+}
+
+fn child_command_id(next_id: &mut u64) -> Option<u64> {
+    let id = *next_id;
+    *next_id = next_id.checked_add(1)?;
+    Some(id)
+}
+
+fn child_pending(kind: ChildPendingKind, command_timeout: Duration) -> ChildPending {
+    ChildPending {
+        kind,
+        deadline: tokio::time::Instant::now() + command_timeout,
+    }
+}
+
+fn child_capacity_used(
+    pending: &HashMap<u64, ChildPending>,
+    root_waiters: &HashMap<TargetId, RootWaiter>,
+    armed_targets: &HashSet<TargetId>,
+    session_targets: &HashMap<String, TargetId>,
+    structural_sessions: &HashMap<String, StructuralTarget>,
+) -> usize {
+    pending.len() + root_waiters.len() + armed_targets.len() + session_targets.len() + structural_sessions.len()
+}
+
+fn child_global_arm_params() -> serde_json::Value {
+    serde_json::json!({
+        "autoAttach": true,
+        "waitForDebuggerOnStart": true,
+        "flatten": true,
+        "filter": [
+            { "type": "browser", "exclude": true },
+            { "type": "page", "exclude": true },
+            {},
+        ],
+    })
+}
+
+fn child_recursive_arm_params() -> serde_json::Value {
+    serde_json::json!({
+        "autoAttach": true,
+        "waitForDebuggerOnStart": true,
+        "flatten": true,
+        "filter": [
+            { "type": "browser", "exclude": true },
+            { "type": "tab", "exclude": true },
+            {},
+        ],
+    })
+}
+
+fn take_ready_structural(
+    structural_sessions: &mut HashMap<String, StructuralTarget>,
+    session: &str,
+) -> Option<StructuralTarget> {
+    let ready = structural_sessions
+        .get(session)
+        .is_some_and(|target| target.authorized && target.arm_acknowledged && target.child_boundary_acknowledged);
+    if ready {
+        structural_sessions.remove(session)
+    } else {
+        None
+    }
+}
+
+async fn child_socket_write<S>(
+    socket: &mut async_tungstenite::WebSocketStream<S>,
+    message: async_tungstenite::tungstenite::Message,
+    command_timeout: Duration,
+) -> Result<(), String>
+where
+    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+{
+    match tokio::time::timeout(command_timeout, socket.send(message)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(format!("failed to write child-target controller command: {error}")),
+        Err(_) => Err("timed out writing child-target controller command".to_owned()),
+    }
+}
+
+async fn close_child_socket<S>(socket: &mut async_tungstenite::WebSocketStream<S>, command_timeout: Duration) -> bool
+where
+    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+{
+    tokio::time::timeout(command_timeout, socket.close(None))
+        .await
+        .is_ok_and(|closed| closed.is_ok())
+}
+
+async fn controller_completed<F>(controller: F) -> bool
+where
+    F: std::future::Future<Output = bool>,
+{
+    std::panic::AssertUnwindSafe(controller)
+        .catch_unwind()
+        .await
+        .unwrap_or(false)
+}
+
+fn child_policy_acknowledged(registry: &Registry, target: &TargetId) -> bool {
+    matches!(
+        registry.ownership.get(target),
+        Some(TargetOwnership::Watched(page)) if !page.ending.load(Ordering::Acquire)
+    )
+}
+
+fn child_policy_boundary_exists(registry: &Registry, target: &TargetId) -> bool {
+    match registry.ownership.get(target) {
+        Some(TargetOwnership::Watched(page)) => !page.ending.load(Ordering::Acquire),
+        Some(TargetOwnership::PendingContext(context)) => registry.contexts.contains_key(context),
+        Some(TargetOwnership::PendingShared) => registry.shared_context,
+        Some(TargetOwnership::Other | TargetOwnership::Quarantined) | None => false,
+    }
+}
+
+/// Hold every related target at `waitForDebugger` until its authoritative context has selected
+/// an immutable policy and any competing chromiumoxide page auto-attach has been disabled. ~keep
+async fn serve_child_targets(
+    socket: async_tungstenite::WebSocketStream<async_tungstenite::tokio::ConnectStream>,
+    mut commands: mpsc::Receiver<ChildCommand>,
+    shared: &Arc<Shared>,
+) -> bool {
+    serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+}
+
+async fn serve_child_targets_with_timeout<S>(
+    mut socket: async_tungstenite::WebSocketStream<S>,
+    commands: &mut mpsc::Receiver<ChildCommand>,
+    shared: &Arc<Shared>,
+    command_timeout: Duration,
+) -> bool
+where
+    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+{
+    let mut next_id = 1_u64;
+    let mut pending = HashMap::<u64, ChildPending>::new();
+    let mut root_waiters = HashMap::<TargetId, RootWaiter>::new();
+    let mut armed_targets = HashSet::<TargetId>::new();
+    let mut session_targets = HashMap::<String, TargetId>::new();
+    let mut structural_sessions = HashMap::<String, StructuralTarget>::new();
+    let mut global_requested = false;
+    let mut global_armed = false;
+    let tick = command_timeout.min(Duration::from_millis(10));
+    let mut deadlines = tokio::time::interval(tick.max(Duration::from_millis(1)));
+    loop {
+        tokio::select! {
+            command = commands.recv() => match command {
+                Some(ChildCommand::Enable { done }) => {
+                    if global_armed {
+                        let _ = done.send(Ok(()));
+                        continue;
+                    }
+                    if child_capacity_used(
+                        &pending,
+                        &root_waiters,
+                        &armed_targets,
+                        &session_targets,
+                        &structural_sessions,
+                    )
+                        >= CHILD_CONTROLLER_PENDING_LIMIT
+                    {
+                        let _ = done.send(Err("child-target controller capacity exceeded".to_owned()));
+                        return false;
+                    }
+                    let Some(id) = child_command_id(&mut next_id) else {
+                        let _ = done.send(Err("child-target controller command id exhausted".to_owned()));
+                        return false;
+                    };
+                    if let Err(error) = child_socket_write(
+                        &mut socket,
+                        child_message(id, "Target.setAutoAttach", child_global_arm_params(), None),
+                        command_timeout,
+                    )
+                    .await
+                    {
+                        let _ = done.send(Err(format!(
+                            "failed to arm browser-wide child-target interception: {error}"
+                        )));
+                        return false;
+                    }
+                    global_requested = true;
+                    pending.insert(
+                        id,
+                        child_pending(ChildPendingKind::Enable { done }, command_timeout),
+                    );
+                }
+                Some(ChildCommand::Arm { root, done }) => {
+                    if !global_armed {
+                        let _ = done.send(Err("browser-wide child-target interception is not enabled".to_owned()));
+                        return false;
+                    }
+                    if !child_policy_acknowledged(&lock(&shared.registry), &root) {
+                        let _ = done.send(Err("root target has no acknowledged policy".to_owned()));
+                        return false;
+                    }
+                    if armed_targets.contains(&root) {
+                        let _ = done.send(Ok(()));
+                        continue;
+                    }
+                    if child_capacity_used(
+                        &pending,
+                        &root_waiters,
+                        &armed_targets,
+                        &session_targets,
+                        &structural_sessions,
+                    )
+                        >= CHILD_CONTROLLER_PENDING_LIMIT
+                    {
+                        let _ = done.send(Err("child-target controller capacity exceeded".to_owned()));
+                        return false;
+                    }
+                    if let Some(previous) = root_waiters.insert(
+                        root,
+                        RootWaiter {
+                            done,
+                            deadline: tokio::time::Instant::now() + command_timeout,
+                        },
+                    ) {
+                        let _ = previous.done.send(Err("root target arm was superseded".to_owned()));
+                        return false;
+                    }
+                }
+                Some(ChildCommand::Stop) | None => {
+                    return close_child_socket(&mut socket, command_timeout).await;
+                }
+            },
+            _ = deadlines.tick() => {
+                let now = tokio::time::Instant::now();
+                root_waiters.retain(|_, waiter| !waiter.done.is_closed());
+                if let Some(root) = root_waiters
+                    .iter()
+                    .find_map(|(root, waiter)| (waiter.deadline <= now).then(|| root.clone()))
+                {
+                    if let Some(waiter) = root_waiters.remove(&root) {
+                        let _ = waiter
+                            .done
+                            .send(Err("timed out waiting for the root target attachment".to_owned()));
+                    }
+                    return false;
+                }
+                if structural_sessions.values().any(|target| target.deadline <= now) {
+                    return false;
+                }
+                let expired = pending
+                    .iter()
+                    .find_map(|(id, command)| (command.deadline <= now).then_some(*id));
+                if let Some(id) = expired {
+                    if let Some(command) = pending.remove(&id) {
+                        match command.kind {
+                            ChildPendingKind::Enable { done } => {
+                                let _ = done.send(Err(
+                                    "timed out waiting for browser-wide child-target controller acknowledgement"
+                                        .to_owned(),
+                                ));
+                            }
+                            ChildPendingKind::RecursiveArm { target, .. } => {
+                                if let Some(waiter) = root_waiters.remove(&target) {
+                                    let _ = waiter.done.send(Err(
+                                        "timed out waiting for child-target controller acknowledgement".to_owned(),
+                                    ));
+                                }
+                            }
+                            ChildPendingKind::StructuralArm { .. } => {}
+                            ChildPendingKind::Boundary | ChildPendingKind::Close => {}
+                        }
+                    }
+                    return false;
+                }
+            }
+            message = socket.next() => {
+                let Some(Ok(message)) = message else { return false };
+                let text = match message {
+                    async_tungstenite::tungstenite::Message::Text(text) => text,
+                    async_tungstenite::tungstenite::Message::Ping(payload) => {
+                        if child_socket_write(
+                            &mut socket,
+                            async_tungstenite::tungstenite::Message::Pong(payload),
+                            command_timeout,
+                        ).await.is_err() {
+                            return false;
+                        }
+                        continue;
+                    }
+                    async_tungstenite::tungstenite::Message::Close(_) => return false,
+                    _ => continue,
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(text.as_ref()) else {
+                    return false;
+                };
+                if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
+                    let Some(command) = pending.remove(&id) else { continue };
+                    let error = value.get("error").map(serde_json::Value::to_string);
+                    let acknowledged = error.is_none() && value.get("result").is_some();
+                    match command.kind {
+                        ChildPendingKind::Enable { done } => {
+                            if !acknowledged {
+                                let _ = done.send(Err(format!(
+                                    "failed to arm browser-wide child-target interception: {}",
+                                    error.as_deref().unwrap_or("missing CDP result")
+                                )));
+                                return false;
+                            }
+                            global_armed = true;
+                            let _ = done.send(Ok(()));
+                        }
+                        ChildPendingKind::RecursiveArm {
+                            target,
+                            session,
+                            waiting_for_debugger,
+                            structural_parent,
+                        } => {
+                            if !acknowledged {
+                                if let Some(waiter) = root_waiters.remove(&target) {
+                                    let _ = waiter.done.send(Err(format!(
+                                        "failed to arm child-target interception for {}: {}",
+                                        target.inner(),
+                                        error.as_deref().unwrap_or("missing CDP result")
+                                    )));
+                                }
+                                return false;
+                            }
+                            if armed_targets.len() >= CHILD_CONTROLLER_PENDING_LIMIT
+                                && !armed_targets.contains(&target)
+                            {
+                                return false;
+                            }
+                            armed_targets.insert(target.clone());
+                            if waiting_for_debugger {
+                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                if let Err(write_error) = child_socket_write(&mut socket, child_message(
+                                    id,
+                                    "Runtime.runIfWaitingForDebugger",
+                                    serde_json::json!({}),
+                                    Some(&session),
+                                ), command_timeout).await {
+                                    if let Some(waiter) = root_waiters.remove(&target) {
+                                        let _ = waiter.done.send(Err(format!(
+                                            "failed to resume the armed root target: {write_error}"
+                                        )));
+                                    }
+                                    return false;
+                                }
+                                pending.insert(id, child_pending(ChildPendingKind::Boundary, command_timeout));
+                            }
+                            let ready_parent = if let Some(parent_session) = structural_parent {
+                                let Some(parent) = structural_sessions.get_mut(&parent_session) else {
+                                    return false;
+                                };
+                                parent.child_boundary_acknowledged = true;
+                                take_ready_structural(&mut structural_sessions, &parent_session)
+                            } else {
+                                None
+                            };
+                            if let Some(parent) = ready_parent
+                                && parent.waiting_for_debugger
+                            {
+                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                if child_socket_write(
+                                    &mut socket,
+                                    child_message(
+                                        id,
+                                        "Runtime.runIfWaitingForDebugger",
+                                        serde_json::json!({}),
+                                        Some(&parent.session),
+                                    ),
+                                    command_timeout,
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    return false;
+                                }
+                                pending.insert(id, child_pending(ChildPendingKind::Boundary, command_timeout));
+                            }
+                            if let Some(waiter) = root_waiters.remove(&target) {
+                                if !child_policy_acknowledged(&lock(&shared.registry), &target) {
+                                    let _ = waiter.done.send(Err("root target has no acknowledged policy".to_owned()));
+                                    return false;
+                                }
+                                let _ = waiter.done.send(Ok(()));
+                            }
+                        }
+                        ChildPendingKind::StructuralArm { session } => {
+                            if !acknowledged {
+                                return false;
+                            }
+                            let Some(target) = structural_sessions.get_mut(&session) else {
+                                return false;
+                            };
+                            target.arm_acknowledged = true;
+                            let ready = take_ready_structural(&mut structural_sessions, &session);
+                            if let Some(target) = ready
+                                && target.waiting_for_debugger
+                            {
+                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                if child_socket_write(
+                                    &mut socket,
+                                    child_message(
+                                        id,
+                                        "Runtime.runIfWaitingForDebugger",
+                                        serde_json::json!({}),
+                                        Some(&target.session),
+                                    ),
+                                    command_timeout,
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    return false;
+                                }
+                                pending.insert(id, child_pending(ChildPendingKind::Boundary, command_timeout));
+                            }
+                        }
+                        ChildPendingKind::Boundary | ChildPendingKind::Close if !acknowledged => return false,
+                        ChildPendingKind::Boundary | ChildPendingKind::Close => {}
+                    }
+                    continue;
+                }
+                match value.get("method").and_then(serde_json::Value::as_str) {
+                    Some("Target.targetDestroyed") => {
+                        let Some(target) = value["params"]["targetId"].as_str().map(TargetId::new) else {
+                            return false;
+                        };
+                        if structural_sessions.values().any(|structural| structural.target == target) {
+                            return false;
+                        }
+                        armed_targets.remove(&target);
+                        session_targets.retain(|_, attached| attached != &target);
+                        if let Some(waiter) = root_waiters.remove(&target) {
+                            let _ = waiter.done.send(Err("root target was destroyed before it was armed".to_owned()));
+                            return false;
+                        }
+                        continue;
+                    }
+                    Some("Target.detachedFromTarget") => {
+                        let Some(session) = value["params"]["sessionId"].as_str() else {
+                            return false;
+                        };
+                        if structural_sessions.remove(session).is_some() {
+                            return false;
+                        }
+                        if let Some(target) = session_targets.remove(session) {
+                            armed_targets.remove(&target);
+                            if let Some(waiter) = root_waiters.remove(&target) {
+                                let _ = waiter.done.send(Err(
+                                    "root target detached before its boundary was acknowledged".to_owned(),
+                                ));
+                                return false;
+                            }
+                        }
+                        continue;
+                    }
+                    Some("Target.attachedToTarget") => {}
+                    _ => continue,
+                }
+                let Ok(attached) = serde_json::from_value::<ChildAttached>(value["params"].clone()) else {
+                    return false;
+                };
+                let parent_session = value
+                    .get("sessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                if !global_requested {
+                    return false;
+                }
+                if child_capacity_used(
+                    &pending,
+                    &root_waiters,
+                    &armed_targets,
+                    &session_targets,
+                    &structural_sessions,
+                )
+                    >= CHILD_CONTROLLER_PENDING_LIMIT
+                {
+                    return false;
+                }
+                if attached.target_info.r#type == "tab" {
+                    let _ = adopt_target(shared, &attached.target_info);
+                    let authorized = {
+                        let registry = lock(&shared.registry);
+                        child_policy_boundary_exists(&registry, &attached.target_info.target_id)
+                            || matches!(
+                                registry.ownership.get(&attached.target_info.target_id),
+                                Some(TargetOwnership::Other)
+                            )
+                    };
+                    let structural = StructuralTarget {
+                        target: attached.target_info.target_id,
+                        session: attached.session_id.clone(),
+                        waiting_for_debugger: attached.waiting_for_debugger,
+                        authorized,
+                        arm_acknowledged: false,
+                        child_boundary_acknowledged: false,
+                        deadline: tokio::time::Instant::now() + command_timeout,
+                    };
+                    if structural_sessions
+                        .insert(attached.session_id.clone(), structural)
+                        .is_some()
+                    {
+                        return false;
+                    }
+                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    if child_socket_write(
+                        &mut socket,
+                        child_message(
+                            id,
+                            "Target.setAutoAttach",
+                            child_recursive_arm_params(),
+                            Some(&attached.session_id),
+                        ),
+                        command_timeout,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        structural_sessions.remove(&attached.session_id);
+                        return false;
+                    }
+                    pending.insert(
+                        id,
+                        child_pending(
+                            ChildPendingKind::StructuralArm {
+                                session: attached.session_id,
+                            },
+                            command_timeout,
+                        ),
+                    );
+                    continue;
+                }
+                let _ = adopt_target(shared, &attached.target_info);
+                let target = attached.target_info.target_id.clone();
+                let (permitted, other) = {
+                    let registry = lock(&shared.registry);
+                    (
+                        child_policy_boundary_exists(&registry, &target),
+                        matches!(registry.ownership.get(&target), Some(TargetOwnership::Other)),
+                    )
+                };
+                if !(attached.waiting_for_debugger || permitted || other) {
+                    return false;
+                }
+                if !(permitted || other) {
+                    if attached.target_info.r#type != "iframe" {
+                        let Some(id) = child_command_id(&mut next_id) else { return false };
+                        if child_socket_write(&mut socket, child_message(
+                                    id,
+                                    "Target.closeTarget",
+                                    serde_json::json!({ "targetId": target }),
+                                    None,
+                                ), command_timeout).await.is_err() {
+                            return false;
+                        }
+                        pending.insert(id, child_pending(ChildPendingKind::Close, command_timeout));
+                    }
+                    continue;
+                }
+                let structural_parent = parent_session.filter(|session| structural_sessions.contains_key(session));
+                if let Some(parent) = structural_parent
+                    .as_deref()
+                    .and_then(|session| structural_sessions.get_mut(session))
+                {
+                    parent.authorized = true;
+                }
+                let Some(id) = child_command_id(&mut next_id) else { return false };
+                if child_socket_write(&mut socket, child_message(
+                    id,
+                    "Target.setAutoAttach",
+                    child_recursive_arm_params(),
+                    Some(&attached.session_id),
+                ), command_timeout).await.is_err() {
+                    return false;
+                }
+                session_targets.insert(attached.session_id.clone(), target.clone());
+                pending.insert(
+                    id,
+                    child_pending(
+                        ChildPendingKind::RecursiveArm {
+                            target,
+                            session: attached.session_id,
+                            waiting_for_debugger: attached.waiting_for_debugger,
+                            structural_parent,
+                        },
+                        command_timeout,
+                    ),
+                );
+            }
+        }
+    }
+}
+
+enum TargetLookup {
+    Live(Box<TargetInfo>),
+    Absent,
+    Failed,
 }
 
 /// The listener. It runs the watch commands in order, tracks the targets each watched page owns
@@ -1560,14 +2532,15 @@ enum ReconciledLifecycle {
 /// lookup for one page does not hold up the others. Interception is turned off only on a stop,
 /// once every page of the check is dropped and every answer and every watch end already
 /// started has finished, and on an external browser once every target of a closed page is
-/// destroyed. It is never turned off when the pages share the browser's own context or on a
-/// [`BrowserOrigin::Killed`] browser.
+/// destroyed. It is never turned off when the pages share the browser's own context, when the
+/// browser is killed, or on an external browser whose debugging-session detach removes the
+/// interception and every `dispose_on_detach` context together. ~keep
 async fn serve(
     browser: Arc<Browser>,
     shared: Arc<Shared>,
     mut events: Events,
     mut commands: mpsc::UnboundedReceiver<Command>,
-) {
+) -> bool {
     let browser = &*browser;
     let shared = &*shared;
     let mut running: FuturesUnordered<BoxFuture<'_, Done>> = FuturesUnordered::new();
@@ -1582,43 +2555,25 @@ async fn serve(
     // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
     // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
     let mut lifecycles: FuturesOrdered<BoxFuture<'_, ReconciledLifecycle>> = FuturesOrdered::new();
+    let mut teardown_checks = tokio::time::interval(Duration::from_millis(25));
+    let mut inspect_teardown = false;
     loop {
         if draining.is_empty()
+            && inspect_teardown
             && let Some(stopped) = stopping.take()
         {
-            // ~keep Pages in the browser's own context had no context to dispose, so no disposal
-            // ~keep took their pending requests before a disable. Interception stays on as a
-            // ~keep precaution (a disable here was not seen to leak, 0 of 13 runs); the owner
-            // ~keep closes the browser, which was launched for this one session, and the pauses
-            // ~keep die with it (measured 0 reached in 3 of 3 runs). A `Killed` browser keeps it
-            // ~keep on until the kill, so a tab outside the check stays paused (xberg-io/crawlberg#468).
-            let keep_interception = shared.origin == BrowserOrigin::Killed && {
-                #[cfg(test)]
-                {
-                    !shared.delays.disable_interception_on_stop
-                }
-                #[cfg(not(test))]
-                {
-                    true
-                }
-            };
-            if shared.context != PageContext::Shared && !keep_interception {
-                disable_fetch(browser).await;
-            }
-            #[cfg(test)]
-            if let Some(stop_hold) = &shared.delays.stop_hold {
-                let open = browser
-                    .execute(GetTargetsParams::default())
-                    .await
-                    .map(|response| response.result.target_infos)
-                    .unwrap_or_default();
-                lock(&stop_hold.open_pages).extend(open.into_iter().map(|info| info.url));
-                tokio::time::sleep(stop_hold.hold).await;
+            inspect_teardown = false;
+            if shared.context != PageContext::Shared
+                && shared.origin != BrowserOrigin::Killed
+                && !owned_targets_absent(browser, shared).await
+            {
+                stopping = Some(stopped);
+                continue;
             }
             for done in stopped {
                 let _ = done.send(());
             }
-            break;
+            return true;
         }
         tokio::select! {
             command = commands.recv(), if commands_open => match command {
@@ -1627,19 +2582,44 @@ async fn serve(
                 // ~keep joins the drain, since the loop ends, and turns interception off, as
                 // ~keep soon as the drain is empty, whatever is still running.
                 Some(Command::Opened(root, context)) if stopping.is_some() => {
+                    if let Some(context) = &context {
+                        lock(&shared.registry)
+                            .context_targets
+                            .insert(root.clone(), context.clone());
+                    }
                     draining.push(Box::pin(async move {
                         #[cfg(test)]
-                        if let Some(gate) = &shared.delays.drop_late_gate {
-                            let _ = gate.acquire().await;
-                        }
-                        #[cfg(test)]
                         lock(&shared.delays.dropped).push(root.clone());
-                        drop_page(browser, root, context).await;
+                        drop_page(browser, shared, root, context).await;
                         Done::Dropped
                     }));
                 }
                 Some(Command::Opened(root, context)) => {
-                    lock(&shared.registry).opened.insert(root, context);
+                    let mut registry = lock(&shared.registry);
+                    if let Some(context) = &context {
+                        registry.context_targets.insert(root.clone(), context.clone());
+                    }
+                    registry.opened.insert(root, context);
+                }
+                Some(Command::Abandon(root)) => {
+                    let context = {
+                        let mut registry = lock(&shared.registry);
+                        if let Some(owner) = registry.owner_of_target(root.inner()) {
+                            begin_ending(&owner);
+                        }
+                        registry.opened.remove(&root)
+                    };
+                    if let Some(context) = context {
+                        let dropping = Box::pin(async move {
+                            drop_page(browser, shared, root, context).await;
+                            Done::Dropped
+                        });
+                        if stopping.is_some() {
+                            draining.push(dropping);
+                        } else {
+                            running.push(dropping);
+                        }
+                    }
                 }
                 Some(Command::Watch(_, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
@@ -1653,7 +2633,11 @@ async fn serve(
                         ));
                         continue;
                     }
-                    install_watch(&mut registry, &page);
+                    if let Err(error) = install_watch(&mut registry, &page) {
+                        drop(registry);
+                        let _ = ack.send(Err(error));
+                        continue;
+                    }
                     drop(registry);
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
@@ -1671,7 +2655,7 @@ async fn serve(
                             draining.push(Box::pin(async move {
                                 #[cfg(test)]
                                 lock(&shared.delays.dropped).push(root.clone());
-                                drop_page(browser, root, context).await;
+                                drop_page(browser, shared, root, context).await;
                                 Done::Dropped
                             }));
                         }
@@ -1706,28 +2690,71 @@ async fn serve(
                         Done::Answered
                     }));
                 }
-                None => break,
+                None => return false,
             },
             event = events.created.next(), if stopping.is_none() => {
-                if let Some(event) = event {
-                    lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Created(event)));
-                }
+                let Some(event) = event else { return false };
+                lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Created(event)));
             }
             event = events.destroyed.next(), if stopping.is_none() => {
-                if let Some(event) = event {
-                    lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Destroyed(event)));
-                }
+                let Some(event) = event else { return false };
+                lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Destroyed(event)));
             }
             Some(event) = lifecycles.next(), if !lifecycles.is_empty() && stopping.is_none() => {
-                apply_lifecycle(browser, shared, event, &mut running);
+                if !apply_lifecycle(browser, shared, event, &mut running) {
+                    return false;
+                }
             }
             Some((page, failed)) = failures.next(), if !failures.is_empty() => {
                 record_document_failure(&page, &failed);
             }
             Some(done) = running.next(), if !running.is_empty() => settle(shared, done),
             Some(done) = draining.next(), if !draining.is_empty() => settle(shared, done),
+            _ = teardown_checks.tick(), if draining.is_empty() && stopping.is_some() => {
+                inspect_teardown = true;
+            }
         }
     }
+}
+
+async fn owned_targets_absent(browser: &Browser, shared: &Shared) -> bool {
+    if shared.opening.load(Ordering::Acquire) != 0 {
+        return false;
+    }
+    let Ok(contexts) = browser.execute(GetBrowserContextsParams::default()).await else {
+        return false;
+    };
+    let Ok(targets) = browser.execute(GetTargetsParams::default()).await else {
+        return false;
+    };
+    let owned_contexts: HashSet<_> = lock(&shared.registry).contexts.keys().cloned().collect();
+    if contexts
+        .result
+        .browser_context_ids
+        .iter()
+        .any(|context| owned_contexts.contains(context))
+    {
+        return false;
+    }
+    let absent = {
+        let registry = lock(&shared.registry);
+        !targets.result.target_infos.iter().any(|info| {
+            info.browser_context_id
+                .as_ref()
+                .is_some_and(|context| owned_contexts.contains(context))
+                || registry
+                    .ownership
+                    .get(&info.target_id)
+                    .is_some_and(|ownership| !matches!(ownership, TargetOwnership::Other))
+        })
+    };
+    if absent {
+        let mut registry = lock(&shared.registry);
+        for context in &owned_contexts {
+            let _ = registry.retire_context(context);
+        }
+    }
+    absent
 }
 
 fn reconcile_lifecycle<'a>(
@@ -1738,8 +2765,8 @@ fn reconcile_lifecycle<'a>(
     async move {
         match event {
             Lifecycle::Created(event) => {
-                let live = target_is_live(browser, shared, &event.target_info.target_id).await;
-                ReconciledLifecycle::Created(event, live)
+                let info = live_target_info(browser, shared, &event.target_info.target_id).await;
+                ReconciledLifecycle::Created(info)
             }
             Lifecycle::Destroyed(event) => {
                 let live = target_is_live(browser, shared, &event.target_id).await;
@@ -1755,10 +2782,10 @@ fn apply_lifecycle<'a>(
     shared: &'a Shared,
     event: ReconciledLifecycle,
     running: &mut FuturesUnordered<BoxFuture<'a, Done>>,
-) {
+) -> bool {
     match event {
-        ReconciledLifecycle::Created(event, Some(live)) => {
-            if let Some(close) = reconcile_created(shared, &event, live) {
+        ReconciledLifecycle::Created(TargetLookup::Live(info)) => {
+            if let Some(close) = reconcile_created(shared, Some(&info)) {
                 running.push(Box::pin(async move {
                     let _ = browser.execute(CloseTargetParams::new(close)).await;
                     Done::Closed
@@ -1776,14 +2803,32 @@ fn apply_lifecycle<'a>(
                 // ~keep goes here, and its popups with it.
                 if let Some(context) = context {
                     running.push(Box::pin(async move {
-                        dispose_context(browser, context).await;
+                        let _ = dispose_and_retire_context(browser, shared, context).await;
                         Done::Dropped
                     }));
                 }
             }
         }
-        ReconciledLifecycle::Created(_, None) | ReconciledLifecycle::Destroyed(_, None) => {}
+        ReconciledLifecycle::Created(TargetLookup::Failed) => return false,
+        ReconciledLifecycle::Created(TargetLookup::Absent) | ReconciledLifecycle::Destroyed(_, None) => {}
     }
+    true
+}
+
+/// The live target record is the authoritative source of its browser context. Creation events
+/// may omit that field, so ownership is never installed from their lineage alone. ~keep
+async fn live_target_info(browser: &Browser, _shared: &Shared, target: &TargetId) -> TargetLookup {
+    #[cfg(test)]
+    wait_for_lifecycle_query(_shared, target).await;
+    let Ok(response) = browser.execute(GetTargetsParams::default()).await else {
+        return TargetLookup::Failed;
+    };
+    response
+        .result
+        .target_infos
+        .into_iter()
+        .find(|info| info.target_id == *target)
+        .map_or(TargetLookup::Absent, |info| TargetLookup::Live(Box::new(info)))
 }
 
 /// Whether Chrome currently lists `target`; `None` leaves ownership unchanged and fail-closed.
@@ -1791,12 +2836,7 @@ fn apply_lifecycle<'a>(
 /// ~keep applies the converging mutation (destroy removes a created ghost; create restores reuse).
 async fn target_is_live(browser: &Browser, _shared: &Shared, target: &TargetId) -> Option<bool> {
     #[cfg(test)]
-    if let Some(gate) = &_shared.delays.lifecycle_query_gate {
-        lock(&gate.held).push(target.inner().clone());
-        if let Ok(permit) = gate.permits.acquire().await {
-            permit.forget();
-        }
-    }
+    wait_for_lifecycle_query(_shared, target).await;
     browser.execute(GetTargetsParams::default()).await.ok().map(|response| {
         response
             .result
@@ -1806,8 +2846,18 @@ async fn target_is_live(browser: &Browser, _shared: &Shared, target: &TargetId) 
     })
 }
 
-fn reconcile_created(shared: &Shared, event: &EventTargetCreated, live: bool) -> Option<TargetId> {
-    live.then(|| adopt_target(shared, event)).flatten()
+#[cfg(test)]
+async fn wait_for_lifecycle_query(shared: &Shared, target: &TargetId) {
+    if let Some(gate) = &shared.delays.lifecycle_query_gate {
+        lock(&gate.held).push(target.inner().clone());
+        if let Ok(permit) = gate.permits.acquire().await {
+            permit.forget();
+        }
+    }
+}
+
+fn reconcile_created(shared: &Shared, info: Option<&TargetInfo>) -> Option<TargetId> {
+    info.and_then(|info| adopt_target(shared, info))
 }
 
 fn reconcile_destroyed(registry: &mut Registry, target: &TargetId, live: bool) -> bool {
@@ -1831,11 +2881,50 @@ fn settle(shared: &Shared, done: Done) {
     }
 }
 
-fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) {
+fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) -> Result<(), String> {
+    let context = registry.opened.get(&page.root).cloned().flatten();
+    if let Some(context) = &context {
+        let expected = PolicyIdentity::from(&page.config.ssrf);
+        let registered = registry
+            .contexts
+            .get(context)
+            .ok_or_else(|| "the page's browser context has no registered policy".to_owned())?;
+        if registered.policy.as_ref().is_some_and(|policy| policy != &expected) {
+            return Err("the page's browser context was opened under a different SSRF policy".to_owned());
+        }
+    }
     registry.pages.push(Arc::clone(page));
     // ~keep Replace ownership under the registry lock: a popup event processed before this
     // ~keep remains fail-closed under the ending watch, and one processed after uses this policy.
     registry.register_watched(page.root.clone(), Arc::clone(page));
+    if let Some(context) = context {
+        let pending: Vec<_> = registry
+            .ownership
+            .iter()
+            .filter(|(_, ownership)| {
+                matches!(ownership, TargetOwnership::PendingContext(pending_context) if *pending_context == context)
+            })
+            .map(|(target, _)| target.clone())
+            .collect();
+        if let Some(registered) = registry.contexts.get_mut(&context) {
+            registered.owner = Some(Arc::clone(page));
+        }
+        for target in pending {
+            registry.register_watched(target, Arc::clone(page));
+        }
+    } else if registry.shared_context {
+        registry.default_context_owner = Some(Arc::clone(page));
+        let pending: Vec<_> = registry
+            .ownership
+            .iter()
+            .filter(|(_, ownership)| matches!(ownership, TargetOwnership::PendingShared))
+            .map(|(target, _)| target.clone())
+            .collect();
+        for target in pending {
+            registry.register_watched(target, Arc::clone(page));
+        }
+    }
+    Ok(())
 }
 
 /// Record a new target that belongs to a watched page. A popup it opened, directly, through
@@ -1850,10 +2939,9 @@ fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) {
 /// ~keep A popup opened from inside that frame names the page's target as its opener and the
 /// ~keep frame only as `openerFrameId` (measured on Chrome 154), so the opener is found among
 /// ~keep the targets as before.
-fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId> {
-    let info = &event.target_info;
+fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     let mut registry = lock(&shared.registry);
-    let (owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
+    let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
         (None, Some(parent)) => {
             let frame_owner = registry.frame_owner(parent);
@@ -1862,14 +2950,62 @@ fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId>
         }
         (None, None) => (None, None),
     };
+    let context = info.browser_context_id.as_ref();
+    let context_was_retired = context.is_some_and(|context| {
+        registry.retired_contexts.contains(context)
+            || (registry.context_targets.get(&info.target_id) == Some(context)
+                && !registry.contexts.contains_key(context))
+    });
+    if context_was_retired {
+        registry.register_quarantined(info.target_id.clone(), context.cloned());
+        return (info.r#type != "iframe").then(|| info.target_id.clone());
+    }
+    let owned_context = context.and_then(|id| registry.contexts.get(id).map(|registered| (id, registered)));
+    let context_owner = owned_context
+        .and_then(|(_, registered)| registered.owner.clone())
+        .or_else(|| {
+            (context.is_none() && registry.shared_context)
+                .then(|| registry.default_context_owner.clone())
+                .flatten()
+        });
+    let context_is_owned = owned_context.is_some() || (context.is_none() && registry.shared_context);
+    if let Some((context, _)) = owned_context {
+        registry.context_targets.insert(info.target_id.clone(), context.clone());
+    }
+    let owner = match (context_owner, lineage_owner) {
+        (Some(context_owner), Some(lineage_owner)) if !Arc::ptr_eq(&context_owner, &lineage_owner) => {
+            registry.register_quarantined(info.target_id.clone(), context.cloned());
+            return (info.r#type != "iframe").then(|| info.target_id.clone());
+        }
+        (Some(context_owner), _) => Some(context_owner),
+        (None, _) if context_is_owned => {
+            if let Some(context) = context {
+                registry.register_pending(info.target_id.clone(), context.clone());
+            } else {
+                registry.register_pending_shared(info.target_id.clone());
+            }
+            return None;
+        }
+        (None, Some(_)) => {
+            registry.register_quarantined(info.target_id.clone(), context.cloned());
+            return (info.r#type != "iframe").then(|| info.target_id.clone());
+        }
+        (None, None) => None,
+    };
     let Some(owner) = owner else {
         registry.register_other(info.target_id.clone());
         return None;
     };
-    if let Some(frame_owner) = frame_owner {
+    if info.r#type == "iframe" || frame_owner.is_some() {
         registry
-            .frames
-            .insert(FrameId::new(info.target_id.inner()), frame_owner);
+            .ownership
+            .insert(info.target_id.clone(), TargetOwnership::Watched(Arc::clone(&owner)));
+        registry.target_generations.insert(info.target_id.clone(), Arc::new(()));
+        if let Some(frame_owner) = frame_owner {
+            registry
+                .frames
+                .insert(FrameId::new(info.target_id.inner()), frame_owner);
+        }
         return None;
     }
     let ending = owner.ending.load(Ordering::Acquire);
@@ -1998,6 +3134,13 @@ fn record_document_failure_outcome(
 fn release(shared: &Shared, page: &Arc<WatchedPage>, _keep_root: bool) {
     let mut registry = lock(&shared.registry);
     registry.pages.retain(|watched| !Arc::ptr_eq(watched, page));
+    if registry
+        .default_context_owner
+        .as_ref()
+        .is_some_and(|owner| Arc::ptr_eq(owner, page))
+    {
+        registry.default_context_owner = None;
+    }
     registry
         .frames
         .retain(|_, cached| !cached.owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, page)));
@@ -2022,12 +3165,11 @@ async fn end_watch(
         .then(|| lock(&shared.registry).opened.remove(&page.root))
         .flatten()
         .flatten();
-    let disposed = context.is_some();
-    #[cfg(test)]
-    let context = context.filter(|_| !shared.delays.keep_context);
-    if let Some(context) = context {
-        dispose_context(browser, context).await;
-    }
+    let disposed = if let Some(context) = context {
+        dispose_and_retire_context(browser, shared, context).await
+    } else {
+        false
+    };
     let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
         loop {
             let destroyed = shared.destroyed.notified();
@@ -2069,17 +3211,30 @@ async fn end_watch(
     Done::Ended(page, keep_root, done)
 }
 
-/// Who a request belongs to, found through the frame that sent it. A frame not known yet is
-/// looked up in the frame trees of the live pages. `None` when it cannot be placed, and the
-/// request is then refused.
+/// Who a request belongs to, found through the frame that sent it. A missing event-index entry
+/// gets one bounded, deterministic lookup; timeout or overflow remains unknown and fail-closed.
 async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Option<Owner> {
-    if let Some(owner) = lock(&shared.registry).owner_of_frame(frame) {
-        return Some(owner);
+    {
+        let registry = lock(&shared.registry);
+        if matches!(
+            registry.ownership.get(&TargetId::new(frame.inner())),
+            Some(TargetOwnership::Quarantined | TargetOwnership::PendingContext(_) | TargetOwnership::PendingShared)
+        ) {
+            return None;
+        }
+        if let Some(owner) = registry.owner_of_frame(frame) {
+            return Some(owner);
+        }
     }
     let live: Vec<TargetId> = {
         let registry = lock(&shared.registry);
-        let owned = registry.targets.iter().map(|(id, _)| id.clone());
-        owned.chain(registry.others.iter().cloned()).collect()
+        registry
+            .targets
+            .iter()
+            .map(|(id, _)| id.clone())
+            .chain(registry.other_candidates.iter().cloned())
+            .take(FRAME_ATTRIBUTION_TARGET_LIMIT)
+            .collect()
     };
     #[cfg(test)]
     if let Some(gate) = &shared.delays.attribute_snapshot_gate {
@@ -2088,35 +3243,40 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
             permit.forget();
         }
     }
-    for target in live {
-        let Ok(page) = browser.get_page(target.clone()).await else {
-            continue;
-        };
-        let Ok(frames) = page.frames().await else {
-            continue;
-        };
-        if frames.contains(frame) {
-            // ~keep Ownership can change across the CDP awaits above; cache only the current
-            // ~keep owner, or a reused root can retain its preceding watch's policy.
-            let mut registry = lock(&shared.registry);
-            let owner = registry.owner_of_target(target.inner());
-            let current = if owner.is_some() || registry.others.contains(&target) {
-                registry.current_frame_owner(target, owner)
-            } else {
-                None
-            };
-            let Some(current) = current else {
+    tokio::time::timeout(FRAME_ATTRIBUTION_TIMEOUT, async {
+        for target in live {
+            let Ok(page) = browser.get_page(target.clone()).await else {
                 continue;
             };
-            let owner = current
-                .owner
-                .as_ref()
-                .map_or(Owner::Other, |owner| Owner::Watched(Arc::clone(owner)));
-            registry.frames.insert(frame.clone(), current);
-            return Some(owner);
+            let Ok(frames) = page.frames().await else {
+                continue;
+            };
+            if frames.contains(frame) {
+                // ~keep Ownership can change across the CDP awaits above; cache only the current
+                // ~keep owner, or a reused root can retain its preceding watch's policy.
+                let mut registry = lock(&shared.registry);
+                let owner = registry.owner_of_target(target.inner());
+                let current = if owner.is_some() || registry.others.contains(&target) {
+                    registry.current_frame_owner(target, owner)
+                } else {
+                    None
+                };
+                let Some(current) = current else {
+                    continue;
+                };
+                let owner = current
+                    .owner
+                    .as_ref()
+                    .map_or(Owner::Other, |owner| Owner::Watched(Arc::clone(owner)));
+                registry.frames.insert(frame.clone(), current);
+                return Some(owner);
+            }
         }
-    }
-    None
+        None
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Answer one paused request. It is judged by the policy of the watched page it belongs to,
@@ -2137,7 +3297,8 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     }
     // ~keep `_in_flight` lives to the end of this function, so the page counts the request until
     // ~keep its answer has been sent: a watch ending on a zero count has nothing still paused.
-    let (verdict, _in_flight) = match attribute(browser, shared, &event.frame_id).await {
+    let attributed = attribute(browser, shared, &event.frame_id).await;
+    let (verdict, _in_flight) = match attributed {
         Some(Owner::Watched(page)) => {
             let in_flight = paused.matched(page);
             let page = &in_flight.0;
@@ -2637,15 +3798,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use tokio::sync::Notify;
+    use futures::StreamExt as _;
+    use tokio::sync::{Notify, mpsc, oneshot};
 
     use super::{
-        BrowserContextId, BrowserOrigin, EventLoadingFailed, EventRequestPaused, EventTargetCreated, FetchRequestId,
-        FrameId, HeaderEntry, InterceptOutcome, Owner, PageContext, Registry, Shared, TargetId, TestDelays, Verdict,
-        WatchedPage, adopt_target, begin_ending, complete_stopped_response_outcome, events_of,
+        BrowserContextId, BrowserOrigin, CLOSE_TIMEOUT, EventLoadingFailed, EventRequestPaused, EventTargetCreated,
+        FIREWALL_STOP_TIMEOUT, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome, Opening, Owner, PageContext,
+        Registry, Shared, TargetId, TargetOwnership, TestDelays, Verdict, WatchedPage, adopt_target, begin_ending,
+        child_policy_acknowledged, complete_stopped_response_outcome, controller_completed, events_of,
         failed_document_response, install_watch, judge, lock, main_frame_verdict, navigation_verdict,
         reconcile_created, reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit,
-        registered_context, release, require_main_frame, ssrf_verdict, ssrf_verdict_for_browser,
+        registered_context, release, require_main_frame, serve_child_targets_with_timeout, ssrf_verdict,
+        ssrf_verdict_for_browser,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -2658,6 +3822,11 @@ mod tests {
             deny_private: false,
             ..SsrfPolicy::default()
         }
+    }
+
+    #[test]
+    fn firewall_stop_outlives_its_bounded_context_disposal_census() {
+        assert!(FIREWALL_STOP_TIMEOUT > CLOSE_TIMEOUT);
     }
 
     #[test]
@@ -2858,8 +4027,226 @@ mod tests {
             origin: BrowserOrigin::External,
             context: PageContext::Copied,
             unmatched: Mutex::new(Vec::new()),
+            opening: AtomicUsize::new(0),
+            stopping: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            failure: Notify::new(),
+            handler_abort: None,
             delays: TestDelays::default(),
         }
+    }
+
+    type TestChildSocket =
+        async_tungstenite::WebSocketStream<async_tungstenite::tokio::TokioAdapter<tokio::net::TcpStream>>;
+
+    struct StalledIo;
+
+    impl futures::io::AsyncRead for StalledIo {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+            _buffer: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl futures::io::AsyncWrite for StalledIo {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+            _buffer: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    async fn test_child_controller(
+        shared: Arc<Shared>,
+        command_timeout: Duration,
+    ) -> (
+        TestChildSocket,
+        mpsc::Sender<super::ChildCommand>,
+        tokio::task::JoinHandle<bool>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind child controller test socket");
+        let address = listener.local_addr().expect("test socket address");
+        let accepted = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept child controller");
+            async_tungstenite::tokio::accept_async(stream)
+                .await
+                .expect("accept WebSocket")
+        });
+        let (client, _) = async_tungstenite::tokio::connect_async(format!("ws://{address}"))
+            .await
+            .expect("connect child controller WebSocket");
+        let mut server = accepted.await.expect("WebSocket accept task");
+        let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
+        let controller = tokio::spawn(async move {
+            serve_child_targets_with_timeout(client, &mut receiver, &shared, command_timeout).await
+        });
+        let (done, enabled) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Enable { done })
+            .await
+            .expect("enable child controller");
+        let global = next_child_message(&mut server).await;
+        assert_eq!(global["method"], "Target.setAutoAttach");
+        assert_eq!(global["params"]["waitForDebuggerOnStart"], true);
+        assert_eq!(
+            global["params"]["filter"],
+            serde_json::json!([
+                { "type": "browser", "exclude": true },
+                { "type": "page", "exclude": true },
+                {},
+            ])
+        );
+        answer_child_command(&mut server, &global).await;
+        enabled
+            .await
+            .expect("global arm sender")
+            .expect("global arm acknowledgement");
+        (server, commands, controller)
+    }
+
+    async fn next_child_message(socket: &mut TestChildSocket) -> serde_json::Value {
+        let message = tokio::time::timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("child controller must send within the test bound")
+            .expect("child controller socket must stay open")
+            .expect("child controller message must be valid");
+        let async_tungstenite::tungstenite::Message::Text(text) = message else {
+            panic!("child controller must send text commands")
+        };
+        serde_json::from_str(text.as_ref()).expect("child controller command JSON")
+    }
+
+    async fn answer_child_command(socket: &mut TestChildSocket, command: &serde_json::Value) {
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": command["id"], "result": {} })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("answer child controller command");
+    }
+
+    async fn begin_root_arm(socket: &mut TestChildSocket, context: &BrowserContextId) -> serde_json::Value {
+        send_attached_target_of_type(socket, "S-ROOT", "ROOT", "page", None, context).await;
+        let recursive = next_child_message(socket).await;
+        assert_eq!(recursive["method"], "Target.setAutoAttach");
+        assert_eq!(recursive["sessionId"], "S-ROOT");
+        recursive
+    }
+
+    async fn finish_root_arm(
+        socket: &mut TestChildSocket,
+        arm: &serde_json::Value,
+        armed: oneshot::Receiver<Result<(), String>>,
+    ) {
+        answer_child_command(socket, arm).await;
+        armed.await.expect("root arm sender").expect("root arm acknowledgement");
+        let resume = next_child_message(socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-ROOT");
+        answer_child_command(socket, &resume).await;
+    }
+
+    async fn send_attached_target(
+        socket: &mut TestChildSocket,
+        session: &str,
+        target: &str,
+        opener: Option<&str>,
+        context: &BrowserContextId,
+    ) {
+        send_attached_target_of_type(socket, session, target, "worker", opener, context).await;
+    }
+
+    async fn send_attached_target_of_type(
+        socket: &mut TestChildSocket,
+        session: &str,
+        target: &str,
+        target_type: &str,
+        opener: Option<&str>,
+        context: &BrowserContextId,
+    ) {
+        send_attached_target_with_waiting(socket, session, target, target_type, opener, context, true).await;
+    }
+
+    async fn send_attached_target_with_waiting(
+        socket: &mut TestChildSocket,
+        session: &str,
+        target: &str,
+        target_type: &str,
+        opener: Option<&str>,
+        context: &BrowserContextId,
+        waiting_for_debugger: bool,
+    ) {
+        send_attached_target_from_parent(
+            socket,
+            session,
+            target,
+            target_type,
+            opener,
+            context,
+            waiting_for_debugger,
+            None,
+        )
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_attached_target_from_parent(
+        socket: &mut TestChildSocket,
+        session: &str,
+        target: &str,
+        target_type: &str,
+        opener: Option<&str>,
+        context: &BrowserContextId,
+        waiting_for_debugger: bool,
+        parent_session: Option<&str>,
+    ) {
+        let mut event = serde_json::json!({
+            "method": "Target.attachedToTarget",
+            "params": {
+                "sessionId": session,
+                "targetInfo": {
+                    "targetId": target,
+                    "type": target_type,
+                    "title": "",
+                    "url": "http://a.localhost/worker.js",
+                    "attached": true,
+                    "canAccessOpener": false,
+                    "openerId": opener,
+                    "browserContextId": context.inner(),
+                },
+                "waitingForDebugger": waiting_for_debugger,
+            }
+        });
+        if let Some(parent_session) = parent_session {
+            event["sessionId"] = parent_session.into();
+        }
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(event.to_string().into()))
+            .await
+            .expect("send attached target");
     }
 
     /// Chrome's report of a new target `id` of type `kind`: a frame of `parent`, or a popup that
@@ -2890,6 +4277,550 @@ mod tests {
         .expect("a target created event")
     }
 
+    fn target_created_in_context(id: &str, opener: Option<&str>, context: &BrowserContextId) -> EventTargetCreated {
+        serde_json::from_value(serde_json::json!({
+            "targetInfo": {
+                "targetId": id,
+                "type": "page",
+                "title": "",
+                "url": "http://a.localhost/frame",
+                "attached": false,
+                "canAccessOpener": false,
+                "openerId": opener,
+                "browserContextId": context.inner(),
+            }
+        }))
+        .expect("a target created event with a browser context")
+    }
+
+    fn in_context(mut event: EventTargetCreated, context: &BrowserContextId) -> EventTargetCreated {
+        event.target_info.browser_context_id = Some(context.clone());
+        event
+    }
+
+    fn register_owned_context(shared: &Shared, page: &Arc<WatchedPage>) -> BrowserContextId {
+        let context = BrowserContextId::new("OWNED-CONTEXT");
+        let mut registry = lock(&shared.registry);
+        registry.register_context(context.clone(), Some(&page.config.ssrf));
+        registry
+            .contexts
+            .get_mut(&context)
+            .expect("the context must be registered")
+            .owner = Some(Arc::clone(page));
+        registry.opened.insert(page.root.clone(), Some(context.clone()));
+        registry.context_targets.insert(page.root.clone(), context.clone());
+        context
+    }
+
+    #[tokio::test]
+    async fn an_existing_running_target_before_the_global_ack_does_not_stop_the_controller() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind child controller test socket");
+        let address = listener.local_addr().expect("test socket address");
+        let accepted = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept child controller");
+            async_tungstenite::tokio::accept_async(stream)
+                .await
+                .expect("accept WebSocket")
+        });
+        let (client, _) = async_tungstenite::tokio::connect_async(format!("ws://{address}"))
+            .await
+            .expect("connect child controller WebSocket");
+        let mut socket = accepted.await.expect("WebSocket accept task");
+        let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
+        let controller = tokio::spawn(async move {
+            serve_child_targets_with_timeout(client, &mut receiver, &shared, Duration::from_millis(250)).await
+        });
+        let (done, enabled) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Enable { done })
+            .await
+            .expect("enable child controller");
+        let global = next_child_message(&mut socket).await;
+        send_attached_target_with_waiting(
+            &mut socket,
+            "S-OTHER",
+            "OTHER",
+            "page",
+            None,
+            &BrowserContextId::new("DEFAULT"),
+            false,
+        )
+        .await;
+        answer_child_command(&mut socket, &global).await;
+        enabled
+            .await
+            .expect("global arm sender")
+            .expect("global arm acknowledgement");
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn an_existing_running_owned_target_is_recursively_armed_without_being_resumed() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &context, false).await;
+        let recursive_arm = next_child_message(&mut socket).await;
+        assert_eq!(recursive_arm["method"], "Target.setAutoAttach");
+        assert_eq!(recursive_arm["sessionId"], "S-ROOT");
+        assert_eq!(
+            recursive_arm["params"]["filter"],
+            serde_json::json!([
+                { "type": "browser", "exclude": true },
+                { "type": "tab", "exclude": true },
+                {},
+            ])
+        );
+        answer_child_command(&mut socket, &recursive_arm).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "a target that was already running must not receive a redundant resume"
+        );
+
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm existing root");
+        armed
+            .await
+            .expect("root arm sender")
+            .expect("existing recursive boundary");
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_structural_tab_stays_paused_until_its_context_bearing_child_boundary_is_acknowledged() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let tab_arm = next_child_message(&mut socket).await;
+        assert_eq!(tab_arm["method"], "Target.setAutoAttach");
+        assert_eq!(tab_arm["sessionId"], "S-TAB");
+        assert_eq!(
+            tab_arm["params"]["filter"],
+            serde_json::json!([
+                { "type": "browser", "exclude": true },
+                { "type": "tab", "exclude": true },
+                {},
+            ])
+        );
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-PAGE",
+            "PAGE",
+            "page",
+            None,
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
+        let page_arm = next_child_message(&mut socket).await;
+        assert_eq!(page_arm["method"], "Target.setAutoAttach");
+        assert_eq!(page_arm["sessionId"], "S-PAGE");
+        answer_child_command(&mut socket, &page_arm).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the tab resumed before its own recursive boundary was acknowledged"
+        );
+
+        answer_child_command(&mut socket, &tab_arm).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-TAB");
+        answer_child_command(&mut socket, &resume).await;
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_structural_tab_without_a_child_boundary_fails_within_the_controller_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, _commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(40)).await;
+
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let tab_arm = next_child_message(&mut socket).await;
+        assert_eq!(tab_arm["method"], "Target.setAutoAttach");
+        answer_child_command(&mut socket, &tab_arm).await;
+
+        assert!(
+            !tokio::time::timeout(Duration::from_millis(250), controller)
+                .await
+                .expect("structural child deadline")
+                .expect("child controller task"),
+            "a structural target without an authoritative child boundary must fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nested_child_stays_paused_until_each_recursive_boundary_is_acknowledged() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+
+        for (session, target, opener) in [("S-CHILD", "CHILD", "ROOT"), ("S-NESTED", "NESTED", "CHILD")] {
+            send_attached_target(&mut socket, session, target, Some(opener), &context).await;
+            let recursive_arm = next_child_message(&mut socket).await;
+            assert_eq!(recursive_arm["method"], "Target.setAutoAttach");
+            assert_eq!(recursive_arm["sessionId"], session);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), socket.next())
+                    .await
+                    .is_err(),
+                "{target} resumed before its recursive target boundary was acknowledged"
+            );
+            answer_child_command(&mut socket, &recursive_arm).await;
+            let resume = next_child_message(&mut socket).await;
+            assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+            assert_eq!(resume["sessionId"], session);
+            answer_child_command(&mut socket, &resume).await;
+        }
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn an_openerless_owned_target_is_caught_by_the_browser_wide_boundary() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+
+        send_attached_target(&mut socket, "S-NOOPENER", "NOOPENER", None, &context).await;
+        let recursive_arm = next_child_message(&mut socket).await;
+        assert_eq!(recursive_arm["method"], "Target.setAutoAttach");
+        assert_eq!(recursive_arm["sessionId"], "S-NOOPENER");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the openerless target resumed before its recursive boundary was acknowledged"
+        );
+        answer_child_command(&mut socket, &recursive_arm).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-NOOPENER");
+        answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_foreign_external_target_is_resumed_without_an_owned_policy() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+
+        let foreign = BrowserContextId::new(format!("FOREIGN-{}", context.inner()));
+        send_attached_target(&mut socket, "S-OTHER", "OTHER", None, &foreign).await;
+        let recursive_arm = next_child_message(&mut socket).await;
+        assert_eq!(recursive_arm["method"], "Target.setAutoAttach");
+        assert_eq!(recursive_arm["sessionId"], "S-OTHER");
+        answer_child_command(&mut socket, &recursive_arm).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-OTHER");
+        answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn the_watched_root_resumes_after_its_existing_boundary_ack() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        send_attached_target_of_type(&mut socket, "S-ROOT", "ROOT", "page", None, &context).await;
+        let root_arm = next_child_message(&mut socket).await;
+        assert_eq!(root_arm["method"], "Target.setAutoAttach");
+        assert_eq!(root_arm["sessionId"], "S-ROOT");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the watched root resumed before its existing boundary was acknowledged"
+        );
+        answer_child_command(&mut socket, &root_arm).await;
+        armed.await.expect("root arm sender").expect("root arm acknowledgement");
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-ROOT");
+        answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_root_arm_acknowledgement_fails_within_the_controller_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(40)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let _arm = begin_root_arm(&mut socket, &context).await;
+
+        let error = tokio::time::timeout(Duration::from_millis(250), armed)
+            .await
+            .expect("arm deadline")
+            .expect("arm result sender")
+            .expect_err("missing acknowledgement must fail the arm");
+        assert!(error.contains("timed out"), "unexpected arm error: {error}");
+        assert!(!controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_stalled_child_socket_write_fails_within_the_controller_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let socket = async_tungstenite::WebSocketStream::from_raw_socket(
+            StalledIo,
+            async_tungstenite::tungstenite::protocol::Role::Client,
+            None,
+        )
+        .await;
+        let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
+        let controller = tokio::spawn(async move {
+            serve_child_targets_with_timeout(socket, &mut receiver, &shared, Duration::from_millis(40)).await
+        });
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Enable { done })
+            .await
+            .expect("arm root");
+
+        let error = tokio::time::timeout(Duration::from_millis(250), armed)
+            .await
+            .expect("socket write deadline")
+            .expect("arm result sender")
+            .expect_err("a stalled socket write must fail the arm");
+        assert!(error.contains("timed out writing"), "unexpected write error: {error}");
+        assert!(!controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_fails_a_pending_root_arm() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let _arm = begin_root_arm(&mut socket, &context).await;
+        socket.close(None).await.expect("drop controller connection");
+
+        assert!(
+            armed.await.is_err(),
+            "a dropped connection must drop the pending arm reply"
+        );
+        assert!(!controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_runtime_acknowledgement_fails_within_the_controller_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(40)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        send_attached_target(&mut socket, "S-CHILD", "CHILD", Some("ROOT"), &context).await;
+        let recursive_arm = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &recursive_arm).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+
+        let ended = tokio::time::timeout(Duration::from_millis(250), controller)
+            .await
+            .expect("runtime acknowledgement deadline")
+            .expect("child controller task");
+        assert!(!ended, "missing Runtime acknowledgement must fail the controller");
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_fails_a_pending_runtime_resume() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        send_attached_target(&mut socket, "S-CHILD", "CHILD", Some("ROOT"), &context).await;
+        let recursive_arm = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &recursive_arm).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        socket.close(None).await.expect("drop controller connection");
+
+        assert!(!controller.await.expect("child controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_arm_caller_does_not_leave_a_pending_command() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(40)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        drop(armed);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "a cancelled root waiter must not emit a target command"
+        );
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(
+            controller.await.expect("child controller task"),
+            "a cancelled caller must not turn its abandoned acknowledgement into controller failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_child_controller_panic_is_reported_as_unexpected_completion() {
+        let completed = controller_completed(async { panic!("injected child-controller panic") }).await;
+        assert!(!completed);
+    }
+
+    #[tokio::test]
+    async fn a_request_listener_panic_is_reported_as_unexpected_completion() {
+        let completed = controller_completed(async { panic!("injected request-listener panic") }).await;
+        assert!(!completed);
+    }
+
     /// The ids of the targets the registry holds for watched pages, in order.
     fn owned(registry: &Registry) -> Vec<&str> {
         registry.targets.iter().map(|(id, _)| id.inner().as_str()).collect()
@@ -2903,16 +4834,20 @@ mod tests {
     fn a_frame_target_of_a_page_is_its_frame_and_not_a_target_to_close() {
         let page = watched("ROOT");
         let shared = shared_with(&page, "OTHER");
-        let frame = adopt_target(&shared, &target_created("FRAME", "iframe", None, None, Some("ROOT")));
-        let popup = adopt_target(
-            &shared,
-            &target_created("POPUP", "page", Some("ROOT"), Some("FRAME"), None),
+        let context = register_owned_context(&shared, &page);
+        let frame_event = in_context(target_created("FRAME", "iframe", None, None, Some("ROOT")), &context);
+        let frame = adopt_target(&shared, &frame_event.target_info);
+        let popup_event = in_context(
+            target_created("POPUP", "page", Some("ROOT"), Some("FRAME"), None),
+            &context,
         );
+        let popup = adopt_target(&shared, &popup_event.target_info);
         page.ending.store(true, Ordering::Release);
-        let late = adopt_target(
-            &shared,
-            &target_created("LATE", "page", Some("ROOT"), Some("FRAME"), None),
+        let late_event = in_context(
+            target_created("LATE", "page", Some("ROOT"), Some("FRAME"), None),
+            &context,
         );
+        let late = adopt_target(&shared, &late_event.target_info);
         let (owned_now, others_now, frame_owner_is_page) = {
             let registry = lock(&shared.registry);
             (
@@ -2946,15 +4881,154 @@ mod tests {
     }
 
     #[test]
+    fn a_lineaged_target_without_an_authoritative_context_stays_fail_closed() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let frame = target_created("FRAME", "iframe", None, None, Some("ROOT"));
+        let popup = target_created("POPUP", "page", Some("ROOT"), None, None);
+
+        let close_frame = adopt_target(&shared, &frame.target_info);
+        let close_popup = adopt_target(&shared, &popup.target_info);
+        let registry = lock(&shared.registry);
+
+        assert!(close_frame.is_none(), "an OOPIF must not be closed independently");
+        assert_eq!(close_popup, Some(TargetId::new("POPUP")));
+        assert!(
+            matches!(
+                registry.ownership.get(&TargetId::new("FRAME")),
+                Some(TargetOwnership::Quarantined)
+            ) && matches!(
+                registry.ownership.get(&TargetId::new("POPUP")),
+                Some(TargetOwnership::Quarantined)
+            ),
+            "both targets must be excluded from lineage fallback"
+        );
+        assert!(
+            registry.owner_of_target("FRAME").is_none()
+                && registry.owner_of_target("POPUP").is_none()
+                && !registry.others.contains(&TargetId::new("FRAME"))
+                && !registry.others.contains(&TargetId::new("POPUP")),
+            "a missing context must inherit neither the opener's policy nor foreign-target privileges"
+        );
+        assert!(
+            !child_policy_acknowledged(&registry, &TargetId::new("FRAME"))
+                && !child_policy_acknowledged(&registry, &TargetId::new("POPUP")),
+            "neither quarantined child may be resumed"
+        );
+    }
+
+    #[test]
+    fn an_absent_disposed_context_releases_its_owner_but_keeps_fail_closed_tombstones() {
+        let page = watched("ROOT");
+        let weak = Arc::downgrade(&page);
+        let context = BrowserContextId::new("DISPOSED-CONTEXT");
+        let target = TargetId::new("CHILD");
+        let mut registry = Registry::default();
+        registry.register_context(context.clone(), Some(&page.config.ssrf));
+        registry
+            .contexts
+            .get_mut(&context)
+            .expect("the context is registered")
+            .owner = Some(Arc::clone(&page));
+        registry.context_targets.insert(target.clone(), context.clone());
+        registry.register_watched(target.clone(), Arc::clone(&page));
+
+        assert!(
+            !registry.retire_context(&context),
+            "authoritative absence alone must not retire a context before disposal is acknowledged"
+        );
+        registry
+            .contexts
+            .get_mut(&context)
+            .expect("the context is registered")
+            .disposal_acknowledged = true;
+        assert!(registry.retire_context(&context));
+        drop(page);
+
+        assert!(weak.upgrade().is_none(), "retirement must release every owner Arc");
+        assert!(
+            !registry.contexts.contains_key(&context) && registry.retired_contexts.contains(&context),
+            "retirement must replace the full context policy with a minimal tombstone"
+        );
+        assert_eq!(
+            registry.context_targets.get(&target),
+            Some(&context),
+            "the target-to-context census must remain for fail-closed accounting"
+        );
+        assert!(
+            matches!(registry.ownership.get(&target), Some(TargetOwnership::Quarantined)),
+            "a retired target must remain explicitly quarantined"
+        );
+
+        let shared = Shared {
+            registry: Mutex::new(registry),
+            destroyed: Notify::new(),
+            origin: BrowserOrigin::External,
+            context: PageContext::Copied,
+            unmatched: Mutex::new(Vec::new()),
+            opening: AtomicUsize::new(0),
+            stopping: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            failure: Notify::new(),
+            handler_abort: None,
+            delays: TestDelays::default(),
+        };
+        let late = target_created_in_context("LATE", None, &context);
+        let close = adopt_target(&shared, &late.target_info);
+        assert_eq!(close, Some(TargetId::new("LATE")));
+        assert!(
+            matches!(
+                lock(&shared.registry).ownership.get(&TargetId::new("LATE")),
+                Some(TargetOwnership::Quarantined)
+            ),
+            "a late event from a retired context must remain fail-closed"
+        );
+    }
+
+    #[test]
+    fn repeated_context_retirement_keeps_no_full_policies_and_bounds_tombstones() {
+        let page = watched("ROOT");
+        let weak = Arc::downgrade(&page);
+        let mut registry = Registry::default();
+        let total = super::RETIRED_CONTEXT_LIMIT + 17;
+
+        for index in 0..total {
+            let context = BrowserContextId::new(format!("RETIRED-{index}"));
+            registry.register_context(context.clone(), Some(&page.config.ssrf));
+            let registered = registry.contexts.get_mut(&context).expect("the context is registered");
+            registered.owner = Some(Arc::clone(&page));
+            registered.disposal_acknowledged = true;
+            assert!(registry.retire_context(&context));
+        }
+        drop(page);
+
+        assert!(
+            registry.contexts.is_empty(),
+            "retired contexts must retain no full policy identity"
+        );
+        assert_eq!(registry.retired_contexts.len(), super::RETIRED_CONTEXT_LIMIT);
+        assert!(
+            !registry.retired_contexts.contains(&BrowserContextId::new("RETIRED-0"))
+                && registry
+                    .retired_contexts
+                    .contains(&BrowserContextId::new(format!("RETIRED-{}", total - 1))),
+            "the minimal retirement barrier must evict oldest ids and retain the newest"
+        );
+        assert!(weak.upgrade().is_none(), "retirement must not retain a policy owner");
+    }
+
+    #[test]
     fn a_parked_root_stays_fail_closed_until_the_next_watch_owns_it() {
         let old = watched("ROOT");
         let shared = shared_with(&old, "OTHER");
+        let context = register_owned_context(&shared, &old);
         begin_ending(&old);
         release(&shared, &old, true);
 
-        let late_popup = adopt_target(&shared, &target_created("LATE", "page", Some("ROOT"), None, None));
+        let late_event = in_context(target_created("LATE", "page", Some("ROOT"), None, None), &context);
+        let late_popup = adopt_target(&shared, &late_event.target_info);
         let new = watched("ROOT");
-        install_watch(&mut lock(&shared.registry), &new);
+        install_watch(&mut lock(&shared.registry), &new).expect("install watch");
         let registry = lock(&shared.registry);
         let root_owner = registry.owner_of_target("ROOT").expect("the root stays owned");
         let popup_owner = registry.owner_of_target("LATE").expect("the popup stays owned");
@@ -2979,6 +5053,110 @@ mod tests {
     }
 
     #[test]
+    fn a_target_with_conflicting_context_and_lineage_owners_is_closed() {
+        let context_owner = watched("CONTEXT-ROOT");
+        let lineage_owner = watched("LINEAGE-ROOT");
+        let shared = shared_with(&context_owner, "OTHER");
+        let context = BrowserContextId::new("OWNED-CONTEXT");
+        {
+            let mut registry = lock(&shared.registry);
+            registry.register_watched(lineage_owner.root.clone(), Arc::clone(&lineage_owner));
+            registry.register_context(context.clone(), Some(&context_owner.config.ssrf));
+            registry
+                .contexts
+                .get_mut(&context)
+                .expect("the context must be registered")
+                .owner = Some(Arc::clone(&context_owner));
+        }
+
+        let close = adopt_target(
+            &shared,
+            &target_created_in_context("CONFLICT", Some("LINEAGE-ROOT"), &context).target_info,
+        );
+        let registry = lock(&shared.registry);
+
+        assert_eq!(close, Some(TargetId::new("CONFLICT")));
+        assert!(
+            registry.owner_of_target("CONFLICT").is_none(),
+            "a conflicting target must not inherit either policy"
+        );
+        assert!(
+            !registry.others.contains(&TargetId::new("CONFLICT")),
+            "a conflicting target must not become an unrestricted external target"
+        );
+        assert!(
+            !child_policy_acknowledged(&registry, &TargetId::new("CONFLICT")),
+            "a conflicting child must stay paused"
+        );
+    }
+
+    #[test]
+    fn a_target_created_before_watch_installation_is_bound_by_its_context() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("OWNED-CONTEXT");
+        {
+            let mut registry = lock(&shared.registry);
+            registry.register_context(context.clone(), Some(&page.config.ssrf));
+            registry.opened.insert(page.root.clone(), Some(context.clone()));
+        }
+
+        let close = adopt_target(&shared, &target_created_in_context("EARLY", None, &context).target_info);
+        {
+            let registry = lock(&shared.registry);
+            assert_eq!(close, None);
+            assert_eq!(registry.context_targets.get(&TargetId::new("EARLY")), Some(&context));
+            assert!(
+                registry.owner_of_target("EARLY").is_none(),
+                "the target must remain pending until its context's watch arrives"
+            );
+            assert!(
+                !child_policy_acknowledged(&registry, &TargetId::new("EARLY")),
+                "a pending child must stay paused before policy acknowledgement"
+            );
+            assert!(
+                !registry.others.contains(&TargetId::new("EARLY")),
+                "a pending owned target must remain fail-closed"
+            );
+        }
+
+        install_watch(&mut lock(&shared.registry), &page).expect("the matching context policy must install");
+        let registry = lock(&shared.registry);
+        let owner = registry
+            .owner_of_target("EARLY")
+            .expect("the pending target must be adopted");
+        assert!(
+            Arc::ptr_eq(&owner, &page),
+            "the context's watch must own the pending target"
+        );
+        assert!(
+            child_policy_acknowledged(&registry, &TargetId::new("EARLY")),
+            "the child may resume only after the exact context policy is installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_page_open_releases_the_opening_guard() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let task_shared = Arc::clone(&shared);
+        let (started, started_rx) = tokio::sync::oneshot::channel();
+        let opening = tokio::spawn(async move {
+            let _opening = Opening::begin(&task_shared).expect("the firewall is running");
+            let _ = started.send(());
+            futures::future::pending::<()>().await;
+        });
+        started_rx.await.expect("the opening task must acquire its guard");
+        assert_eq!(shared.opening.load(Ordering::Acquire), 1);
+
+        opening.abort();
+        let error = opening.await.expect_err("the opening task must be cancelled");
+
+        assert!(error.is_cancelled(), "the task must end because it was cancelled");
+        assert_eq!(shared.opening.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn a_frame_cached_before_install_cannot_keep_the_old_watch() {
         let old = watched("ROOT");
         let new = watched("ROOT");
@@ -2989,7 +5167,7 @@ mod tests {
             .expect("the old target has a generation");
         registry.frames.insert(FrameId::new("CHILD"), cached);
 
-        install_watch(&mut registry, &new);
+        install_watch(&mut registry, &new).expect("install watch");
 
         assert!(
             registry.owner_of_frame(&FrameId::new("CHILD")).is_none(),
@@ -3012,7 +5190,7 @@ mod tests {
         );
 
         let watched = watched("ROOT");
-        install_watch(&mut registry, &watched);
+        install_watch(&mut registry, &watched).expect("install watch");
         registry.register_other(TargetId::new("ROOT"));
 
         assert!(
@@ -3054,9 +5232,7 @@ mod tests {
             let mut registry = lock(&shared.registry);
             assert!(reconcile_destroyed(&mut registry, &ghost, false));
         }
-        let late_created = target_created("GHOST", "page", None, None, None);
-
-        let close = reconcile_created(&shared, &late_created, false);
+        let close = reconcile_created(&shared, None);
         let registry = lock(&shared.registry);
 
         assert!(close.is_none(), "an absent target has nothing to close");
@@ -3074,7 +5250,7 @@ mod tests {
         let new = watched("ROOT");
         let mut registry = Registry::default();
         registry.register_watched(old.root.clone(), old);
-        install_watch(&mut registry, &new);
+        install_watch(&mut registry, &new).expect("install watch");
         let generation = Arc::clone(
             registry
                 .target_generations
@@ -3114,7 +5290,7 @@ mod tests {
             )
         };
 
-        let close = adopt_target(&shared, &target_created("ROOT", "page", None, None, None));
+        let close = adopt_target(&shared, &target_created("ROOT", "page", None, None, None).target_info);
         let registry = lock(&shared.registry);
 
         assert!(close.is_none(), "the root's creation event is not a popup to close");
@@ -3138,11 +5314,11 @@ mod tests {
         let shared = shared_with(&page, "OTHER");
         let frame = adopt_target(
             &shared,
-            &target_created("OTHER-FRAME", "iframe", None, None, Some("OTHER")),
+            &target_created("OTHER-FRAME", "iframe", None, None, Some("OTHER")).target_info,
         );
         let popup = adopt_target(
             &shared,
-            &target_created("OTHER-POPUP", "page", Some("OTHER"), Some("OTHER-FRAME"), None),
+            &target_created("OTHER-POPUP", "page", Some("OTHER"), Some("OTHER-FRAME"), None).target_info,
         );
         let registry = lock(&shared.registry);
 
@@ -3779,6 +5955,7 @@ mod race_tests {
 
     use chromiumoxide::Browser;
     use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
+    use chromiumoxide::cdp::browser_protocol::fetch::DisableParams as FetchDisableParams;
     use chromiumoxide::cdp::browser_protocol::network::CookieParam;
     use chromiumoxide::cdp::browser_protocol::storage::{
         GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
@@ -3789,7 +5966,7 @@ mod race_tests {
 
     use super::{
         ACTION_GRACE, ACTION_SETTLE_LIMIT, BrowserFirewall, BrowserOrigin, CALL_SITE_DELAYS, EventTargetCreated,
-        EventTargetDestroyed, FetchDisableParams, FrameId, Owner, PageContext, TestDelays, UrlGate, lock,
+        EventTargetDestroyed, FrameId, Owner, PageContext, TestDelays, UrlGate, lock,
     };
 
     /// How long a test gives a stop to finish, or interception to turn off, while the check still
@@ -3804,10 +5981,14 @@ mod race_tests {
     )]
     async fn launch(test_name: &str) -> Option<Arc<Browser>> {
         let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
-        let builder = chromiumoxide::browser::BrowserConfig::builder()
+        let mut builder = chromiumoxide::browser::BrowserConfig::builder()
             .no_sandbox()
             .new_headless_mode()
+            .manage_child_targets(false)
             .user_data_dir(dir);
+        if let Some(chrome) = crate::browser_pool::chrome_executable(None) {
+            builder = builder.chrome_executable(chrome);
+        }
         let config = crate::browser_pool::tests::expect_chrome_or_skip(
             test_name,
             crate::browser_pool::apply_default_args(builder, &[]).build(),
@@ -4126,13 +6307,8 @@ mod race_tests {
     /// another client had open before the check started, keep working.
     ///
     /// ~keep The page's context goes at the close, and with it every request of the page Chrome
-    /// ~keep still holds, before the stop turns interception off. Run under load, the printed line
-    /// ~keep is the measurement of xberg-io/crawlberg#484.
+    /// ~keep still holds, before the stop turns interception off.
     #[tokio::test(flavor = "multi_thread")]
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only measurement line, so a run under load reads as a count of leaked requests"
-    )]
     async fn an_external_browser_keeps_refusing_a_session_page_until_chrome_destroys_it() {
         let test_name = "an_external_browser_keeps_refusing_a_session_page_until_chrome_destroys_it";
         let Some(browser) = launch(test_name).await else {
@@ -4141,24 +6317,6 @@ mod race_tests {
         let other = browser.new_page("about:blank").await.expect("the other client's tab");
         open_blank_site(&other).await;
         let run = session_page_end(&browser, false).await;
-        // ~keep Printed so a run under load is a measurement of the leak (xberg-io/crawlberg#484,
-        // ~keep #506): how many requests reached the denied address by the time the stop returned,
-        // ~keep and how many by the end of the watch after it, which ends at the first request
-        // ~keep or after 5 s.
-        eprintln!(
-            "SESSION_END_PROBE open_at_stop={} stop_ms={} hits_at_stop={} open_after_stop={} final_hits={} load={}",
-            run.open_at_stop,
-            run.stop_ms,
-            run.hits_at_stop,
-            run.open_after_stop,
-            run.final_hits,
-            std::fs::read_to_string("/proc/loadavg")
-                .unwrap_or_default()
-                .split(' ')
-                .next()
-                .unwrap_or("")
-        );
-
         let (reachable, other_hits) = denied_listener().await;
         let _ = other
             .evaluate(format!("fetch({reachable:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
@@ -4221,9 +6379,6 @@ mod race_tests {
     /// What `session_page_end` saw of the session page.
     struct SessionPageEnd {
         refused: bool,
-        open_at_stop: bool,
-        stop_ms: u128,
-        hits_at_stop: usize,
         open_after_stop: bool,
         reached: bool,
         final_hits: usize,
@@ -4242,9 +6397,14 @@ mod race_tests {
             .await
             .expect("the check must open a page");
         let session_target = page.target_id().clone();
+        let allowing = crate::types::CrawlConfig::builder()
+            .allow_private_networks(false)
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("a.localhost"))
+            .build();
         let watch = firewall
             .handle()
-            .watch(&page, &config(), 0)
+            .watch(&page, &allowing, 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -4262,28 +6422,17 @@ mod race_tests {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let stopping;
-        let open_at_stop = if stop_as_closing {
-            stopping = Instant::now();
+        if stop_as_closing {
             tokio::join!(watch.close(), firewall.stop());
-            false
         } else {
             watch.close().await;
-            let open = open_targets(browser).await.contains(&session_target);
-            stopping = Instant::now();
             firewall.stop().await;
-            open
-        };
-        let stop_ms = stopping.elapsed().as_millis();
-        let hits_at_stop = denied_hits.load(Ordering::SeqCst);
+        }
         let open_after_stop = open_targets(browser).await.contains(&session_target);
         let reached = served(&denied_hits).await;
         drop(page);
         SessionPageEnd {
             refused,
-            open_at_stop,
-            stop_ms,
-            hits_at_stop,
             open_after_stop,
             reached,
             final_hits: denied_hits.load(Ordering::SeqCst),
@@ -4855,6 +7004,71 @@ mod race_tests {
         );
         assert!(open_after_park, "{test_name}: parking must leave the page open");
         assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_openerless_popup_inherits_its_browser_context_s_policy() {
+        let test_name = "an_openerless_popup_inherits_its_browser_context_s_policy";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::External, PageContext::Isolated)
+            .await
+            .expect("the listener must start");
+        let page = firewall
+            .handle()
+            .new_page(None, None)
+            .await
+            .expect("the check must open a page");
+        let allowing = crate::types::CrawlConfig::builder()
+            .allow_private_networks(false)
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("a.localhost"))
+            .build();
+        let watch = firewall
+            .handle()
+            .watch(&page, &allowing, 0)
+            .await
+            .expect("the watch must start");
+        open_blank_site(&page).await;
+        let (denied, denied_hits) = denied_listener().await;
+        let (popup_url, allowed_hits) = frame_site(format!(
+            "<script>fetch({denied:?}, {{ mode: 'no-cors' }}).finally(() => fetch('/ok'));</script>"
+        ))
+        .await;
+        page.evaluate(format!("window.open({popup_url:?}, '_blank', 'noopener'); 1"))
+            .await
+            .expect("the page must open its popup");
+        let popup_executed = served(&allowed_hits).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let denied_count = denied_hits.load(Ordering::SeqCst);
+        let controller_failed = firewall.handle().shared.failed.load(Ordering::Acquire);
+        let open = browser
+            .execute(GetTargetsParams::default())
+            .await
+            .map(|response| {
+                response
+                    .result
+                    .target_infos
+                    .into_iter()
+                    .map(|target| (target.r#type, target.url))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        watch.close().await;
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+
+        assert!(
+            popup_executed,
+            "{test_name}: the popup must execute through its post-attempt marker; controller failed: \
+             {controller_failed}; open targets: {open:?}; denied requests: {denied_count}"
+        );
+        assert_eq!(
+            denied_count, 0,
+            "{test_name}: the denied endpoint must receive no openerless-popup request"
+        );
     }
 
     /// A page the check did not open is refused a watch: it lives in the browser's own context,
@@ -5599,20 +7813,7 @@ mod race_tests {
         assert_eq!(kept[1].1, 204, "{test_name}: the newest response must be kept");
     }
 
-    /// A page opened while the check is stopping is refused a watch, and is dropped, with a
-    /// context of its own, before the stop returns, even when dropping it outlasts the rest of
-    /// the drain: not left unchecked once interception turns off, in either context the check
-    /// opens in.
-    ///
-    /// ~keep Chrome still lists a closed target for a while after it answers the close, so the
-    /// ~keep test reads the listener's record of the pages it dropped, not Chrome's target list.
-    /// ~keep The delivery gate holds a refusal in the drain, so the stop cannot finish before
-    /// ~keep the late page is opened and watched: the stop is sent before the late page's
-    /// ~keep `Opened` on the same channel, and the gate opens only once the watch has been
-    /// ~keep answered. Two 100 ms sleeps held this before and failed their setup in 13 of 20
-    /// ~keep runs on a loaded host. A second gate holds the late page's drop until the watch has
-    /// ~keep been answered and the refusal let go, so the drop is the last thing the drain waits
-    /// ~keep for, and the late page cannot be dropped before its open returns.
+    /// A new page request after stop begins is refused before creating a context or target.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_page_watched_while_the_check_stops_is_refused() {
         let test_name = "a_page_watched_while_the_check_stops_is_refused";
@@ -5621,12 +7822,8 @@ mod race_tests {
         };
         for context in [PageContext::Isolated, PageContext::Shared] {
             let gate = Arc::new(tokio::sync::Semaphore::new(1));
-            let drop_gate = Arc::new(tokio::sync::Semaphore::new(0));
-            let dropped = Arc::new(std::sync::Mutex::default());
             let delays = TestDelays {
-                drop_late_gate: Some(Arc::clone(&drop_gate)),
                 deliver_gate: Some(Arc::clone(&gate)),
-                dropped: Arc::clone(&dropped),
                 ..TestDelays::default()
             };
             let before = context_count(&browser).await;
@@ -5648,32 +7845,19 @@ mod race_tests {
             );
             let stopping = tokio::spawn(stopping);
             let late = handle.new_page(None, None).await;
-            let opened_while_stopping = !stopping.is_finished();
-            let watched = match &late {
-                Ok(late) => handle.watch(late, &config(), 0).await.map(drop),
-                Err(error) => Err(crate::error::CrawlError::browser_error(error.to_string())),
-            };
+            let stopping_pending = !stopping.is_finished();
             gate.add_permits(1);
-            drop_gate.add_permits(1);
             let _ = stopping.await;
-            let late_target = late.as_ref().ok().map(|late| late.target_id().clone());
-            let late_dropped = late_target
-                .as_ref()
-                .is_some_and(|target| super::lock(&dropped).contains(target));
             let after = context_count(&browser).await;
-            drop((watch, page, late));
+            drop((watch, page));
             assert!(
-                late_target.is_some() && opened_while_stopping,
-                "{test_name} ({context:?}): the late page must open while the check stops, or the test shows nothing"
+                stopping_pending,
+                "{test_name} ({context:?}): stop must still be pending when the open is refused"
             );
-            let refusal = watched.err().map(|error| error.to_string()).unwrap_or_default();
+            let refusal = late.err().map(|error| error.to_string()).unwrap_or_default();
             assert!(
                 refusal.contains("request interception stopped"),
-                "{test_name} ({context:?}): a watch that starts while the check stops must fail as stopped, got {refusal:?}"
-            );
-            assert!(
-                late_dropped,
-                "{test_name} ({context:?}): a page opened while the check stops must be dropped before the stop returns"
+                "{test_name} ({context:?}): a page requested during stop must fail as stopped, got {refusal:?}"
             );
             assert_eq!(
                 after, before,

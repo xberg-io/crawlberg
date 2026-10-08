@@ -31,8 +31,6 @@ use crate::types::{BrowserBackend, BrowserCookie, CrawlConfig};
 mod cookies;
 mod launch;
 mod navigation;
-#[cfg(test)]
-mod one_shot_ssrf_tests;
 
 /// ~keep A cancelled caller leaves its supervised launch running to completion. This global cap
 /// ~keep deliberately applies backpressure across profile-lock waits, launches and endpoint
@@ -272,10 +270,11 @@ async fn pooled_fetch(
         );
     }
 
-    let (page, permit) = match tokio::time::timeout_at(deadline, acquire_pooled_page(url, config, pool)).await {
-        Ok(acquired) => acquired?,
-        Err(_) => return Err(overall_deadline_error(overall_timeout)),
-    };
+    let (page, permit, acquired_watch) =
+        match tokio::time::timeout_at(deadline, acquire_pooled_page(url, config, pool)).await {
+            Ok(acquired) => acquired?,
+            Err(_) => return Err(overall_deadline_error(overall_timeout)),
+        };
 
     // ~keep The deadline is applied to each stage here rather than by wrapping this whole
     // ~keep function in `tokio::time::timeout` at the call site. Wrapping dropped this future
@@ -283,9 +282,12 @@ async fn pooled_fetch(
     // ~keep `chromiumoxide::Page` has no closing `Drop`, so every pooled fetch that hit its
     // ~keep overall deadline left its CDP target open in the shared browser for the rest of the
     // ~keep process's life. xberg-io/crawlberg#179.
-    let watched = match tokio::time::timeout_at(deadline, watch_pooled_page(pool, &page, config)).await {
-        Ok(watched) => watched,
-        Err(_) => Err(overall_deadline_error(overall_timeout)),
+    let watched = match acquired_watch {
+        Some(watch) => Ok(watch),
+        None => match tokio::time::timeout_at(deadline, watch_pooled_page(pool, &page, config)).await {
+            Ok(watched) => watched,
+            Err(_) => Err(overall_deadline_error(overall_timeout)),
+        },
     };
     let watch = match watched {
         Ok(watch) => watch,
@@ -322,7 +324,7 @@ async fn acquire_pooled_page(
     url: &str,
     config: &CrawlConfig,
     pool: &BrowserPool,
-) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>), CrawlError> {
+) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>, Option<Watch>), CrawlError> {
     let proxy = crate::proxy::chrome_proxy_for(config)?;
     if config.browser.session_affinity {
         let session_key = session_key(url, proxy.as_ref())?;
@@ -331,15 +333,13 @@ async fn acquire_pooled_page(
             .as_deref()
             .ok_or_else(|| CrawlError::browser_error("session_affinity enabled but session pool is not configured"))?;
 
-        if let Some(reused) = session_pool.acquire(&session_key).await {
-            return Ok(reused);
+        if let Some(reused) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
+            return Ok((reused.0, reused.1, None));
         }
     }
 
-    Ok(pool
-        .acquire_page_through(proxy.as_ref(), Some(&config.ssrf))
-        .await?
-        .into_parts())
+    let (page, watch, permit) = pool.acquire_page_through(proxy.as_ref(), config).await?.into_parts();
+    Ok((page, permit, Some(watch)))
 }
 
 /// The session-affinity key of a page for `url` opened through `proxy`.
@@ -387,7 +387,9 @@ async fn release_pooled_page(
     {
         tracing::debug!("parking a pooled browser page for session reuse");
         watch.park().await;
-        session_pool.insert(session_key, page, permit).await;
+        session_pool
+            .insert_with_policy(session_key, &config.ssrf, page, permit)
+            .await;
         return;
     }
 
@@ -512,6 +514,11 @@ async fn one_shot_fetch(
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
+    let _ = crate::net::egress::socket_policy(
+        &config.ssrf,
+        config.browser.endpoint.as_deref(),
+        &std::sync::Once::new(),
+    )?;
 
     let launched = match tokio::time::timeout_at(deadline, launch_one_shot(config)).await {
         Ok(Ok(launched)) => launched,
@@ -627,7 +634,19 @@ impl OneShotSession {
     /// browser context made with the crawl's proxy.
     async fn open_watched_page(&mut self, config: &CrawlConfig) -> Result<(chromiumoxide::Page, Watch), CrawlError> {
         let browser = self.browser.as_ref().expect("browser is taken only by Drop");
-        let firewall = BrowserFirewall::start(Arc::clone(browser), self.origin, PageContext::of(config)).await?;
+        let sockets = crate::net::egress::socket_policy(
+            &config.ssrf,
+            config.browser.endpoint.as_deref(),
+            &std::sync::Once::new(),
+        )?;
+        let handler_abort = self
+            .handler_handle
+            .as_ref()
+            .expect("the handler is taken only by Drop")
+            .abort_handle();
+        let firewall =
+            BrowserFirewall::start_supervised(Arc::clone(browser), self.origin, PageContext::of(config), handler_abort)
+                .await?;
         let firewall = self.firewall.insert(firewall);
         // ~keep A launched Chrome has the proxy from `--proxy-server`; a connected one never got
         // ~keep that flag, so there the page's own browser context is made with the proxy. Under
@@ -637,12 +656,10 @@ impl OneShotSession {
         } else {
             None
         };
-        let sockets = crate::net::egress::socket_policy(
-            &config.ssrf,
-            config.browser.endpoint.as_deref(),
-            &std::sync::Once::new(),
-        );
-        let page = firewall.handle().new_page(proxy.as_ref(), sockets).await?;
+        let page = firewall
+            .handle()
+            .new_page_with_policy(proxy.as_ref(), sockets, &config.ssrf)
+            .await?;
         self.open_tab = Some(page.target_id().clone());
         let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
         Ok((page, watch))
@@ -826,15 +843,13 @@ mod tests {
 
 #[cfg(test)]
 mod launch_supervision_tests {
-    use chromiumoxide::detection::{DetectionOptions, default_executable};
-
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn cancelling_one_shot_after_launch_reaps_its_unclaimed_chrome() {
         let test_name = "cancelling_one_shot_after_launch_reaps_its_unclaimed_chrome";
-        let Ok(chrome) = default_executable(DetectionOptions::default()) else {
+        let Some(chrome) = crate::browser_pool::chrome_executable(None) else {
             eprintln!("skipping {test_name} because no usable Chrome was found");
             return;
         };

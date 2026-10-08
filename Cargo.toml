@@ -4,6 +4,7 @@ members = [
     "packages/dart/rust",
     "packages/swift/rust",
     "tools/benchmark-harness",
+    "vendor/crawlberg-chromiumoxide",
 ]
 exclude = [
     ".claude",
@@ -48,11 +49,12 @@ aho-corasick = "1"
 anyhow = "1"
 arc-swap = "1"
 async-trait = "0.1"
+async-tungstenite = { version = "0.32", features = ["tokio-runtime"] }
 axum = "0.8"
 base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
-chromiumoxide = { version = "0.9", default-features = false }
+chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.1", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
@@ -71,7 +73,7 @@ dirs = "7"
 encoding_rs = "0.8"
 
 # Binding framework dependencies
-ext-php-rs = "0.16.0"
+ext-php-rs = "0.16.1"
 fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
@@ -88,10 +90,10 @@ ipnet = "2"
 itertools = "0.15"
 # ~keep sysinfo 0.39.6 still calls Mach APIs on iOS that libc 0.2.190 made macOS-only.
 libc = "=0.2.189"
-liter-llm = { version = "2.1", features = ["native-http"] }
+liter-llm = { version = "2.2", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
-minijinja = "2"
+minijinja = "3"
 napi = { version = "3", default-features = false, features = ["napi8", "tokio_rt"] }
 napi-derive = "3"
 notify = "8"
@@ -145,7 +147,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 servo_arc = "0.5"
 sha2 = "0.11"
-sysinfo = { version = "0.39", default-features = false }
+sysinfo = { version = "0.38", default-features = false }
 tempfile = "3"
 thiserror = "2"
 tl = { package = "astral-tl", version = "0.8" }

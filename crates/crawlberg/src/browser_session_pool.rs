@@ -1,4 +1,4 @@
-//! Per-(domain, proxy) session affinity layer for reusing browser contexts.
+//! Per-(domain, proxy, SSRF policy) session affinity layer for reusing browser contexts.
 //!
 //! Reuses an existing chromiumoxide Page for follow-up requests against the same
 //! origin so cookies + fingerprint + any solved challenge persist within the idle
@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
 use crate::error::CrawlError;
+use crate::net::ssrf::{HostMatcher, SsrfPolicy};
 
 /// Key identifying a reusable session. Same domain + same proxy → same session.
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -52,6 +53,72 @@ impl SessionKey {
             domain,
             proxy: proxy.map(|s| s.to_string()),
         })
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum HostMatcherIdentity {
+    Exact(String),
+    Suffix(String),
+    Cidr(String),
+}
+
+impl From<&HostMatcher> for HostMatcherIdentity {
+    fn from(matcher: &HostMatcher) -> Self {
+        match matcher {
+            HostMatcher::Exact { value } => Self::Exact(value.clone()),
+            HostMatcher::Suffix { value } => Self::Suffix(value.clone()),
+            HostMatcher::Cidr { value } => Self::Cidr(value.clone()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct SsrfPolicyIdentity {
+    deny_private: bool,
+    allowlist: Vec<HostMatcherIdentity>,
+    denylist: Vec<HostMatcherIdentity>,
+    max_redirects: u8,
+    scheme_allowlist: Vec<String>,
+}
+
+impl From<&SsrfPolicy> for SsrfPolicyIdentity {
+    fn from(policy: &SsrfPolicy) -> Self {
+        Self {
+            deny_private: policy.deny_private,
+            allowlist: policy.allowlist.iter().map(HostMatcherIdentity::from).collect(),
+            denylist: policy.denylist.iter().map(HostMatcherIdentity::from).collect(),
+            max_redirects: policy.max_redirects,
+            scheme_allowlist: policy.scheme_allowlist.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum PolicyNamespace {
+    Public,
+    Protected(SsrfPolicyIdentity),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct PoolEntryKey {
+    session: SessionKey,
+    policy: PolicyNamespace,
+}
+
+impl PoolEntryKey {
+    fn public(session: SessionKey) -> Self {
+        Self {
+            session,
+            policy: PolicyNamespace::Public,
+        }
+    }
+
+    fn with_policy(session: SessionKey, policy: &SsrfPolicy) -> Self {
+        Self {
+            session,
+            policy: PolicyNamespace::Protected(policy.into()),
+        }
     }
 }
 
@@ -107,7 +174,7 @@ impl Drop for PooledSession {
 #[cfg(feature = "browser")]
 #[derive(Debug)]
 pub struct BrowserSessionPool {
-    sessions: Mutex<HashMap<SessionKey, PooledSession>>,
+    sessions: Mutex<HashMap<PoolEntryKey, PooledSession>>,
     idle_timeout: Duration,
     max_sessions: usize,
 }
@@ -137,9 +204,21 @@ impl BrowserSessionPool {
     /// was inserted with (if any), so the caller keeps holding the same
     /// concurrency slot across reuse instead of re-acquiring a fresh one.
     pub async fn acquire(&self, key: &SessionKey) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
+        self.acquire_entry(PoolEntryKey::public(key.clone())).await
+    }
+
+    pub(crate) async fn acquire_with_policy(
+        &self,
+        key: &SessionKey,
+        policy: &SsrfPolicy,
+    ) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
+        self.acquire_entry(PoolEntryKey::with_policy(key.clone(), policy)).await
+    }
+
+    async fn acquire_entry(&self, key: PoolEntryKey) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
-        let mut entry = sessions.remove(key)?;
+        let mut entry = sessions.remove(&key)?;
         let page = entry.page.take().expect("acquired session always has a page");
         Some((page, entry.permit.take()))
     }
@@ -149,6 +228,21 @@ impl BrowserSessionPool {
     /// pool is over capacity, evicts the least-recently-used session,
     /// closing its page and releasing its permit.
     pub async fn insert(&self, key: SessionKey, page: chromiumoxide::Page, permit: Option<OwnedSemaphorePermit>) {
+        self.insert_entry(PoolEntryKey::public(key), page, permit).await;
+    }
+
+    pub(crate) async fn insert_with_policy(
+        &self,
+        key: SessionKey,
+        policy: &SsrfPolicy,
+        page: chromiumoxide::Page,
+        permit: Option<OwnedSemaphorePermit>,
+    ) {
+        self.insert_entry(PoolEntryKey::with_policy(key, policy), page, permit)
+            .await;
+    }
+
+    async fn insert_entry(&self, key: PoolEntryKey, page: chromiumoxide::Page, permit: Option<OwnedSemaphorePermit>) {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
 
@@ -172,7 +266,7 @@ impl BrowserSessionPool {
     }
 
     /// Evict all sessions whose last_used is older than idle_timeout.
-    fn evict_expired(&self, sessions: &mut HashMap<SessionKey, PooledSession>) {
+    fn evict_expired(&self, sessions: &mut HashMap<PoolEntryKey, PooledSession>) {
         let now = Instant::now();
         sessions.retain(|_, v| now.duration_since(v.last_used) < self.idle_timeout);
     }
@@ -241,24 +335,28 @@ mod tests {
         }
     }
 
+    fn public_key(domain: &str) -> PoolEntryKey {
+        PoolEntryKey::public(key(domain))
+    }
+
     #[tokio::test]
     async fn should_evict_only_the_sessions_older_than_the_idle_timeout() {
         let pool = BrowserSessionPool::with_config(Duration::from_secs(30), 100);
         {
             let mut sessions = pool.sessions.lock().await;
-            sessions.insert(key("stale.example"), parked_session(Duration::from_secs(60)));
-            sessions.insert(key("fresh.example"), parked_session(Duration::from_secs(1)));
+            sessions.insert(public_key("stale.example"), parked_session(Duration::from_secs(60)));
+            sessions.insert(public_key("fresh.example"), parked_session(Duration::from_secs(1)));
             pool.evict_expired(&mut sessions);
         }
 
         assert_eq!(pool.size().await, 1, "exactly one session should survive eviction");
         let sessions = pool.sessions.lock().await;
         assert!(
-            !sessions.contains_key(&key("stale.example")),
+            !sessions.contains_key(&public_key("stale.example")),
             "the expired session must be evicted"
         );
         assert!(
-            sessions.contains_key(&key("fresh.example")),
+            sessions.contains_key(&public_key("fresh.example")),
             "the live session must be kept"
         );
     }
@@ -269,7 +367,7 @@ mod tests {
         pool.sessions
             .lock()
             .await
-            .insert(key("stale.example"), parked_session(Duration::from_secs(60)));
+            .insert(public_key("stale.example"), parked_session(Duration::from_secs(60)));
 
         assert!(
             pool.acquire(&key("stale.example")).await.is_none(),
@@ -290,6 +388,62 @@ mod tests {
         let key = SessionKey::from_url("https://example.com/path", Some("http://proxy:8080")).unwrap();
         assert_eq!(key.domain, "example.com");
         assert_eq!(key.proxy, Some("http://proxy:8080".to_string()));
+    }
+
+    #[test]
+    fn should_not_reuse_a_session_across_different_ssrf_policies() {
+        let strict = crate::net::ssrf::SsrfPolicy::default();
+        let mut permissive = strict.clone();
+        permissive.deny_private = false;
+
+        let session = SessionKey::from_url("https://example.com/path", None).unwrap();
+        let strict_key = PoolEntryKey::with_policy(session.clone(), &strict);
+        let permissive_key = PoolEntryKey::with_policy(session, &permissive);
+
+        assert_ne!(strict_key, permissive_key);
+    }
+
+    #[test]
+    fn should_include_every_effective_ssrf_policy_field_in_the_session_key() {
+        let baseline = crate::net::ssrf::SsrfPolicy::default();
+        let session = SessionKey::from_url("https://example.com/path", None).unwrap();
+        let baseline_key = PoolEntryKey::with_policy(session.clone(), &baseline);
+
+        let mut policies = Vec::new();
+
+        let mut allowlist = baseline.clone();
+        allowlist
+            .allowlist
+            .push(crate::net::ssrf::HostMatcher::exact("internal.example"));
+        policies.push(allowlist);
+
+        let mut denylist = baseline.clone();
+        denylist
+            .denylist
+            .push(crate::net::ssrf::HostMatcher::cidr("203.0.113.0/24").expect("literal CIDR is valid"));
+        policies.push(denylist);
+
+        let mut redirects = baseline.clone();
+        redirects.max_redirects += 1;
+        policies.push(redirects);
+
+        let mut schemes = baseline.clone();
+        schemes.scheme_allowlist = vec!["https".to_owned()];
+        policies.push(schemes);
+
+        for policy in policies {
+            let key = PoolEntryKey::with_policy(session.clone(), &policy);
+            assert_ne!(baseline_key, key);
+        }
+    }
+
+    #[test]
+    fn should_isolate_the_source_compatible_public_pool_namespace_from_policy_aware_entries() {
+        let session = SessionKey::from_url("https://example.com/path", None).unwrap();
+        let public_key = PoolEntryKey::public(session.clone());
+        let protected_key = PoolEntryKey::with_policy(session, &crate::net::ssrf::SsrfPolicy::default());
+
+        assert_ne!(public_key, protected_key);
     }
 
     #[test]

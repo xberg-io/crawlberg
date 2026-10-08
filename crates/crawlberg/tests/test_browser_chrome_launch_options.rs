@@ -125,12 +125,15 @@ async fn chrome_path_is_launched_with_the_caller_flag_in_place_of_the_default() 
     use std::os::unix::fs::PermissionsExt;
 
     let test_name = "chrome_path_is_launched_with_the_caller_flag_in_place_of_the_default";
-    let real_chrome = match chromiumoxide::detection::default_executable(Default::default()) {
-        Ok(path) => path,
-        Err(message) => {
-            announce_chrome_skip(test_name, &message);
-            return;
-        }
+    let real_chrome = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        Some(path) => path.into(),
+        None => match chromiumoxide::detection::default_executable(Default::default()) {
+            Ok(path) => path,
+            Err(message) => {
+                announce_chrome_skip(test_name, &message);
+                return;
+            }
+        },
     };
     let real_chrome_is_snap = is_snap_executable(&real_chrome);
     let dir = std::env::temp_dir().join(format!("crawlberg-chrome-path-test-{}", std::process::id()));

@@ -59,6 +59,46 @@ fn test_pool_creation() {
 }
 
 #[tokio::test]
+async fn a_stale_supervisor_cannot_mark_its_replacement_unhealthy() {
+    let active_generation = Arc::new(tokio::sync::Mutex::new(Some(1_u64)));
+    let healthy = Arc::new(AtomicBool::new(false));
+    let wake_stale_supervisor = Arc::new(tokio::sync::Notify::new());
+    let stale_state = Arc::clone(&active_generation);
+    let stale_health = Arc::clone(&healthy);
+    let stale_wake = Arc::clone(&wake_stale_supervisor);
+    let stale_supervisor = tokio::spawn(async move {
+        stale_wake.notified().await;
+        let mut generation = stale_state.lock().await;
+        if mark_unhealthy_if_current(*generation, 1, &stale_health) {
+            *generation = None;
+        }
+    });
+    *active_generation.lock().await = Some(2);
+    healthy.store(true, Ordering::Release);
+
+    wake_stale_supervisor.notify_one();
+    stale_supervisor.await.expect("stale supervisor task");
+
+    assert_eq!(
+        *active_generation.lock().await,
+        Some(2),
+        "the stale generation must not retire the replacement"
+    );
+    assert!(
+        healthy.load(Ordering::Acquire),
+        "the replacement must stay healthy when an old supervisor wakes"
+    );
+
+    let retired = mark_unhealthy_if_current(*active_generation.lock().await, 2, &healthy);
+
+    assert!(retired, "the current generation must be retired on controller loss");
+    assert!(
+        !healthy.load(Ordering::Acquire),
+        "the matching failed generation must mark the pool unhealthy"
+    );
+}
+
+#[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_chrome_args_flag_reaches_the_chrome_the_pool_starts() {
     const TEST_NAME: &str = "a_chrome_args_flag_reaches_the_chrome_the_pool_starts";
@@ -931,12 +971,15 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
         msedge: false,
         unstable: false,
     };
-    let chrome = match chromiumoxide::detection::default_executable(detection) {
-        Ok(chrome) => chrome,
-        Err(error) => {
-            eprintln!("skipping: no usable Chrome: {error}");
-            return;
-        }
+    let chrome = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        Some(path) => path.into(),
+        None => match chromiumoxide::detection::default_executable(detection) {
+            Ok(chrome) => chrome,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        },
     };
     let scripts = tempfile::tempdir().expect("the launcher directory must be creatable");
     let exec_launcher = scripts.path().join("exec-chrome");
@@ -1086,6 +1129,48 @@ async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
     path
 }
 
+/// Losing the CDP handler retires and reaps an owned Chrome without waiting for another checkout.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn controller_loss_immediately_reaps_the_owned_browser() {
+    const TEST_NAME: &str = "controller_loss_immediately_reaps_the_owned_browser";
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(Into::into),
+        ..BrowserPoolConfig::default()
+    });
+    if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
+        return;
+    }
+    let profile = pool_profile_dir(&pool).await;
+    let controller = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .expect("a warm pool must hold a browser")
+        .handler_handle
+        .abort_handle();
+
+    controller.abort();
+
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if pool.state.lock().await.is_none() && chrome_process_count_for_profile(&profile) == 0 && !profile.exists()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("controller loss must retire, kill, reap, and remove the owned browser without another acquire");
+    assert!(
+        !pool.is_healthy(),
+        "a pool with no security controller must be unhealthy"
+    );
+    pool.shutdown().await;
+}
+
 /// A pool whose Chrome was killed launches a new one for the next page, and still shuts down.
 ///
 /// ~keep chromiumoxide 0.9.1's handler stays pending after its websocket breaks, so a handler loop
@@ -1154,24 +1239,19 @@ async fn pool_whose_handler_ended_with_its_task_held(
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.hold_handler_end.send_replace(true);
     expect_chrome_or_skip(test_name, pool.warm().await)?;
+    let handler_end = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .expect("a warm pool must hold a browser")
+        .handler_end
+        .clone();
     let old = kill_pool_chrome(&pool).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
-        let (ended, finished) = pool
-            .state
-            .lock()
-            .await
-            .as_ref()
-            .map(|state| (state.handler_end.has_ended(), state.handler_handle.is_finished()))
-            .expect("a warm pool must hold a browser");
-        assert!(!finished, "{test_name}: the hold must keep the handler's task open");
-        if ended {
-            let cause = pool
-                .state
-                .lock()
-                .await
-                .as_ref()
-                .and_then(|state| state.handler_end.cause().map(str::to_owned));
+        if handler_end.has_ended() {
+            let cause = handler_end.cause().map(str::to_owned);
             assert!(
                 cause.as_deref().is_some_and(|cause| !cause.is_empty()),
                 "{test_name}: the handler of a killed Chrome must record the websocket error it stopped on"
@@ -1277,9 +1357,11 @@ async fn opening_a_page_replaces_a_dead_chrome_before_its_handler_task_finishes(
     let Some((pool, old)) = pool_whose_handler_ended_with_its_task_held(test_name).await else {
         return;
     };
-    let opened = match tokio::time::timeout(Duration::from_secs(60), pool.try_new_page(None, None)).await {
-        Ok(Ok((page, _))) => {
-            let _ = page.close().await;
+    let config = crate::types::CrawlConfig::default();
+    let opened = match tokio::time::timeout(Duration::from_secs(60), pool.try_new_page(None, &config)).await {
+        Ok(Ok((page, watch, _))) => {
+            drop(page);
+            watch.close().await;
             Ok(pool_profile_path(&pool).await)
         }
         Ok(Err(error)) => Err(error.to_string()),
@@ -1335,15 +1417,18 @@ async fn a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes() {
 async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_running() {
     use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
 
-    let executable = match default_executable(DetectionOptions::default()) {
-        Ok(executable) => executable,
-        Err(error) => {
-            eprintln!(
-                "skipping relaunching_an_external_pool_connection_leaves_the_callers_chrome_running: \
-                 no Chrome executable: {error}"
-            );
-            return;
-        }
+    let executable = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        Some(path) => path.into(),
+        None => match default_executable(DetectionOptions::default()) {
+            Ok(executable) => executable,
+            Err(error) => {
+                eprintln!(
+                    "skipping relaunching_an_external_pool_connection_leaves_the_callers_chrome_running: \
+                     no Chrome executable: {error}"
+                );
+                return;
+            }
+        },
     };
     let owner_dir = ScratchProfileDir::create("crawlberg-external-owner-test-", Some(&executable))
         .expect("the external Chrome's profile directory must be created");
@@ -2344,9 +2429,15 @@ async fn kill_browser_ends_a_process_the_browser_started() {
     if !cfg!(unix) {
         return;
     }
-    let Ok(chrome) = default_executable(DetectionOptions::default()) else {
-        eprintln!("skipping {test_name} because no usable Chrome was found");
-        return;
+    let chrome = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        Some(path) => path.into(),
+        None => {
+            let Ok(chrome) = default_executable(DetectionOptions::default()) else {
+                eprintln!("skipping {test_name} because no usable Chrome was found");
+                return;
+            };
+            chrome
+        }
     };
     let root = std::env::temp_dir().join(format!("crawlberg-wrapped-{}", std::process::id()));
     let profile = root.join("crawlberg-interact-0-0");

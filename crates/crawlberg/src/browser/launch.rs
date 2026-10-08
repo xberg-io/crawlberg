@@ -242,6 +242,7 @@ fn build_one_shot_launch_builder(
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
+        .manage_child_targets(false)
         .disable_default_args();
     // ~keep Mirror browser_pool's fork-safety env vars so one-shot and pooled Chrome launch paths match.
     builder = builder

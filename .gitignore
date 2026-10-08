@@ -223,7 +223,9 @@ output.txt
 *.pyd
 .gems/
 vendor/bundle/
-vendor/
+vendor/*
+!vendor/crawlberg-chromiumoxide/
+!vendor/crawlberg-chromiumoxide/**
 *.h.bak
 *.test
 *.class

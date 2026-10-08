@@ -44,12 +44,15 @@ impl ExternalChrome {
     /// Start Chrome with `--remote-debugging-port=0` and read the chosen port from the
     /// `DevToolsActivePort` file Chrome writes into its profile directory.
     fn start(test_name: &str) -> Option<Self> {
-        let executable = match chromiumoxide::detection::default_executable(Default::default()) {
-            Ok(path) => path,
-            Err(reason) => {
-                announce_chrome_skip(test_name, &reason);
-                return None;
-            }
+        let executable = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+            Some(path) => path.into(),
+            None => match chromiumoxide::detection::default_executable(Default::default()) {
+                Ok(path) => path,
+                Err(reason) => {
+                    announce_chrome_skip(test_name, &reason);
+                    return None;
+                }
+            },
         };
         let user_data_dir = tempfile::tempdir().expect("a temp profile directory must be created");
         let child = Command::new(executable)

@@ -469,9 +469,8 @@ async fn scrape_still_sends_allowed_requests_from_workers_frames_and_popups() {
     }
 }
 
-/// On an external browser reached through `browser.endpoint`, another client's tab keeps
-/// working while crawlberg scrapes: its requests are that client's and are continued, even to
-/// an address crawlberg's policy refuses. A popup crawlberg's page opens is still refused.
+/// On an external browser used without IP denials, another client's tab keeps working while
+/// crawlberg scrapes, and Crawlberg does not claim a socket-denial boundary it cannot own.
 #[tokio::test]
 async fn an_external_browser_keeps_other_clients_tabs_working() {
     let test_name = "an_external_browser_keeps_other_clients_tabs_working";
@@ -508,6 +507,7 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         .expect("the other client's tab must open");
     let (_site, seed) = seed_site(&format!("<p>start</p><script>window.open({d:?} + '?popup');</script>")).await;
     let mut config = config();
+    config.ssrf.deny_private = false;
     config.browser.endpoint = Some(other_client.websocket_address().clone());
     config.browser.extra_wait = Some(Duration::from_millis(1500));
 
@@ -549,10 +549,9 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         Some(0),
         "{test_name}: the check must refuse none of the other client's requests"
     );
-    assert_eq!(
-        count(&received, "popup"),
-        0,
-        "{test_name}: crawlberg's popup must be refused"
+    assert!(
+        count(&received, "popup") >= 1,
+        "{test_name}: the permissive endpoint policy must let crawlberg's popup run"
     );
 }
 
@@ -574,6 +573,7 @@ async fn an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out() {
         return;
     };
     let mut config = config();
+    config.ssrf.deny_private = false;
     config.browser.endpoint = Some(other_client.websocket_address().clone());
     let result = run(test_name, &seed, config).await;
     let received = site.received_requests().await.expect("recording");
@@ -716,7 +716,9 @@ async fn a_pooled_scrape_on_an_external_browser_starts_with_its_cookies() {
         browser_endpoint: Some(other_client.websocket_address().clone()),
         ..BrowserPoolConfig::default()
     });
-    let result = run(test_name, &seed, pooled_config(&pool)).await;
+    let mut config = pooled_config(&pool);
+    config.ssrf.deny_private = false;
+    let result = run(test_name, &seed, config).await;
     pool.shutdown().await;
     let received = site.received_requests().await.expect("recording");
     let sent = received

@@ -30,6 +30,7 @@ fn config_with_profile(name: &str, save_browser_profile: bool) -> CrawlConfig {
             backend: BrowserBackend::Chromiumoxide,
             mode: BrowserMode::Always,
             timeout: Duration::from_secs(20),
+            chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(Into::into),
             ..BrowserConfig::default()
         },
         browser_profile: Some(name.to_owned()),
@@ -80,6 +81,9 @@ async fn start_cookie_server() -> String {
 /// ~keep A launch failure is no reason to skip here: a Chrome that finds another Chrome on its
 /// ~keep profile exits before its websocket is up, the same launch failure a missing Chrome gives.
 fn chrome_or_skip(test_name: &str) -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        return Some(path.into());
+    }
     match chromiumoxide::detection::default_executable(Default::default()) {
         Ok(path) => Some(path),
         Err(message) => {

@@ -130,45 +130,21 @@ impl Egress {
     }
 }
 
-/// The policy the SSRF proxy applies to a Chrome at `endpoint`, or none when that Chrome is on
-/// another machine: it cannot reach a proxy on this machine's loopback. Under IP-level denial
-/// that case is logged once per `warned`, which the caller keeps for the browser's life.
+/// The policy the SSRF proxy applies to Crawlberg's Chrome.
+///
+/// ~keep A connected browser owns its process flags, including WebRTC's non-proxied UDP setting;
+/// ~keep accepting one under IP denials would claim coverage the context proxy cannot provide.
 pub(crate) fn socket_policy<'a>(
     policy: &'a SsrfPolicy,
     endpoint: Option<&str>,
-    warned: &std::sync::Once,
-) -> Option<&'a SsrfPolicy> {
-    match endpoint {
-        Some(endpoint) if !is_loopback_endpoint(endpoint) => {
-            if policy.enforces_ip_denials() {
-                warned.call_once(|| {
-                    let host = url::Url::parse(endpoint)
-                        .ok()
-                        .and_then(|url| url.host_str().map(str::to_owned));
-                    tracing::warn!(
-                        host = host.as_deref().unwrap_or_default(),
-                        "the SSRF network deny policy cannot check the WebSocket, WebRTC and WebTransport \
-                         connections of a browser.endpoint on another machine; its HTTP requests are still checked"
-                    );
-                });
-            }
-            None
-        }
-        _ => Some(policy),
+    _warned: &std::sync::Once,
+) -> Result<Option<&'a SsrfPolicy>, crate::error::CrawlError> {
+    if endpoint.is_some() && policy.enforces_ip_denials() {
+        return Err(crate::error::CrawlError::browser_error(
+            "browser.endpoint cannot be used when the SSRF policy enforces IP denials",
+        ));
     }
-}
-
-/// True when `url` names this machine: `localhost` or a loopback address.
-fn is_loopback_endpoint(url: &str) -> bool {
-    match url::Url::parse(url)
-        .ok()
-        .and_then(|url| url.host().map(|host| host.to_owned()))
-    {
-        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
+    Ok(endpoint.is_none().then_some(policy))
 }
 
 /// Add each `host:port` in `sockets` to `refused` once, unless a URL already listed names it:
@@ -879,20 +855,28 @@ mod tests {
     }
 
     #[test]
-    fn only_a_browser_on_this_machine_gets_the_socket_check() {
+    fn configured_browser_endpoint_is_rejected_when_ip_denials_are_active() {
         let on = policy(Vec::new());
-        for (endpoint, checked) in [
-            (None, true),
-            (Some("ws://localhost:9222/devtools/browser/x"), true),
-            (Some("ws://127.8.9.10:9222"), true),
-            (Some("ws://[::1]:9222"), true),
-            (Some("ws://chrome.internal:9222"), false),
-            (Some("ws://10.0.0.5:9222"), false),
-            (Some("wss://[2001:db8::1]:9222"), false),
+        for endpoint in [
+            "ws://localhost:9222/devtools/browser/x",
+            "ws://127.8.9.10:9222",
+            "ws://[::1]:9222",
+            "ws://chrome.internal:9222",
+            "ws://10.0.0.5:9222",
+            "wss://[2001:db8::1]:9222",
         ] {
-            let got = socket_policy(&on, endpoint, &std::sync::Once::new()).is_some();
-            assert_eq!(got, checked, "{endpoint:?}");
+            let error = socket_policy(&on, Some(endpoint), &std::sync::Once::new())
+                .expect_err("an externally configured browser cannot enforce socket denials");
+            assert_eq!(
+                error.to_string(),
+                "browser: browser.endpoint cannot be used when the SSRF policy enforces IP denials"
+            );
         }
+        assert!(
+            socket_policy(&on, None, &std::sync::Once::new())
+                .expect("Crawlberg's browser supports the socket check")
+                .is_some()
+        );
     }
 
     /// An upstream that records what each client asks it for, speaking `kind`.
@@ -1177,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_remote_browser_under_ip_level_denial_logs_the_warning() {
+    fn endpoint_without_ip_level_denial_needs_no_socket_proxy() {
         let off = SsrfPolicy {
             deny_private: false,
             ..Default::default()
@@ -1187,20 +1171,17 @@ mod tests {
             denylist: vec![HostMatcher::cidr("203.0.113.0/24").expect("valid CIDR")],
             ..Default::default()
         };
-        for (policy, endpoint, warns) in [
+        for (policy, endpoint, rejected) in [
             (policy(Vec::new()), "ws://10.0.0.5:9222", true),
-            (policy(Vec::new()), "ws://127.0.0.1:9222", false),
+            (policy(Vec::new()), "ws://127.0.0.1:9222", true),
             (custom_denial, "ws://10.0.0.5:9222", true),
             (off, "ws://10.0.0.5:9222", false),
         ] {
-            let warned = std::sync::Once::new();
-            let _ = socket_policy(&policy, Some(endpoint), &warned);
-            assert_eq!(
-                warned.is_completed(),
-                warns,
-                "{endpoint}, IP-level denial {}",
-                policy.enforces_ip_denials()
-            );
+            let result = socket_policy(&policy, Some(endpoint), &std::sync::Once::new());
+            assert_eq!(result.is_err(), rejected, "{endpoint}");
+            if !rejected {
+                assert!(result.expect("permissive endpoint policy").is_none());
+            }
         }
     }
 }

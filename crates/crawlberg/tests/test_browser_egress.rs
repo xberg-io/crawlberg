@@ -50,8 +50,6 @@ enum Via {
     Pooled,
     /// An `interact` session whose script runs as an action.
     Interact,
-    /// A one-shot scrape on a Chrome on this machine reached through `browser.endpoint`.
-    Endpoint,
 }
 
 fn config(allowlist: Vec<HostMatcher>) -> CrawlConfig {
@@ -63,6 +61,7 @@ fn config(allowlist: Vec<HostMatcher>) -> CrawlConfig {
         browser: BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
             mode: BrowserMode::Always,
+            chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(Into::into),
             timeout: Duration::from_secs(20),
             extra_wait: Some(Duration::from_millis(2500)),
             ..BrowserConfig::default()
@@ -239,6 +238,7 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     }
     let pool = matches!(via, Via::Pooled).then(|| {
         BrowserPool::new(BrowserPoolConfig {
+            chrome_path: config.browser.chrome_path.clone(),
             chrome_args: config.browser.chrome_args.clone(),
             ..BrowserPoolConfig::default()
         })
@@ -255,25 +255,6 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
         config.browser_profile = Some(name.clone());
         BrowserProfile::new(&name).expect("the profile name must be valid")
     });
-    let mut endpoint = None;
-    if matches!(via, Via::Endpoint) {
-        let dir = tempfile::tempdir().expect("a temp profile directory");
-        let launched = match chromiumoxide::BrowserConfig::builder()
-            .no_sandbox()
-            .new_headless_mode()
-            .user_data_dir(dir.path())
-            .build()
-        {
-            Ok(launch) => chromiumoxide::Browser::launch(launch)
-                .await
-                .map_err(|error| error.to_string()),
-            Err(error) => Err(error),
-        };
-        let (chrome, handler) = common::expect_chrome_or_skip(test_name, launched)?;
-        let handler = common::spawn_handler(handler);
-        config.browser.endpoint = Some(chrome.websocket_address().clone());
-        endpoint = Some((chrome, handler, dir));
-    }
     let policy_must_refuse = config.ssrf.deny_private;
     let engine = create_engine(Some(config)).expect("the engine must build");
     let outcome = match via {
@@ -343,10 +324,6 @@ async fn run(test_name: &str, via: Via, script: &str, mut config: CrawlConfig) -
     };
     if let Some(pool) = pool {
         pool.shutdown().await;
-    }
-    if let Some((mut chrome, handler, _dir)) = endpoint {
-        let _ = chrome.close().await;
-        handler.abort();
     }
     if let Some(profile) = profile {
         let _ = profile.delete();
@@ -512,13 +489,17 @@ async fn a_websocket_to_an_allowed_address_connects_in_interact() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_websocket_to_a_denied_address_is_refused_on_a_local_endpoint() {
-    websocket_row("ws_endpoint", Via::Endpoint, false, false).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_websocket_to_an_allowed_address_connects_on_a_local_endpoint() {
-    websocket_row("ws_endpoint_allowed", Via::Endpoint, false, true).await;
+async fn a_local_browser_endpoint_is_rejected_when_ip_denials_are_active() {
+    let mut config = config(Vec::new());
+    config.browser.endpoint = Some("ws://127.0.0.1:9/devtools/browser/test".to_owned());
+    let engine = create_engine(Some(config)).expect("the engine must build");
+    let error = scrape(&engine, "http://example.com/")
+        .await
+        .expect_err("the endpoint must be rejected before Crawlberg connects to it");
+    assert_eq!(
+        error.to_string(),
+        "browser: browser.endpoint cannot be used when the SSRF policy enforces IP denials"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -666,12 +647,15 @@ async fn default_one_shot_disables_non_proxied_udp_in_its_launched_profile() {
     use std::os::unix::fs::PermissionsExt;
 
     let test_name = "default_one_shot_disables_non_proxied_udp_in_its_launched_profile";
-    let real_chrome = match chromiumoxide::detection::default_executable(Default::default()) {
-        Ok(path) => path,
-        Err(message) => {
-            announce_chrome_skip(test_name, &message);
-            return;
-        }
+    let real_chrome = match std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+        Some(path) => path.into(),
+        None => match chromiumoxide::detection::default_executable(Default::default()) {
+            Ok(path) => path,
+            Err(message) => {
+                announce_chrome_skip(test_name, &message);
+                return;
+            }
+        },
     };
     let real_chrome_is_snap = is_snap_executable(&real_chrome);
     let dir = tempfile::tempdir().expect("a temp directory");

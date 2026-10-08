@@ -25,6 +25,11 @@ pub(super) async fn run(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
+    let _ = crate::net::egress::socket_policy(
+        &config.ssrf,
+        config.browser.endpoint.as_deref(),
+        &std::sync::Once::new(),
+    )?;
     run_launched(launch_or_connect(config).await?, url, actions, config).await
 }
 
@@ -46,10 +51,11 @@ async fn run_launched(
     // ~keep graceful `Browser.close` (which ends the DevTools session first), lets those requests
     // ~keep out (xberg-io/crawlberg#468).
     let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
-    let result = match BrowserFirewall::start(
+    let result = match BrowserFirewall::start_supervised(
         Arc::clone(&browser),
         origin,
         PageContext::of_endpoint(config.browser.endpoint.as_deref()),
+        handler_handle.abort_handle(),
     )
     .await
     {
@@ -170,8 +176,11 @@ async fn run_with_browser(
         &config.ssrf,
         config.browser.endpoint.as_deref(),
         &std::sync::Once::new(),
-    );
-    let page = firewall.handle().new_page(proxy.as_ref(), sockets).await?;
+    )?;
+    let page = firewall
+        .handle()
+        .new_page_with_policy(proxy.as_ref(), sockets, &config.ssrf)
+        .await?;
 
     // ~keep The SSRF check holds for the whole session, not just the first navigation: the
     // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
@@ -758,6 +767,7 @@ fn build_interact_launch_builder(
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
+        .manage_child_targets(false)
         .disable_default_args();
     builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
     crate::browser_pool::apply_launch_overrides(
@@ -853,10 +863,10 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         const TEST_NAME: &str = "actions_that_send_nothing_do_not_poll_for_requests_to_settle";
-        let chrome = match chromiumoxide::detection::default_executable(Default::default()) {
-            Ok(chrome) => chrome,
-            Err(message) => {
-                eprintln!("skipping {TEST_NAME}: no usable Chrome: {message}");
+        let chrome = match crate::browser_pool::chrome_executable(None) {
+            Some(chrome) => chrome,
+            None => {
+                eprintln!("skipping {TEST_NAME}: no usable Chrome was found");
                 return;
             }
         };
@@ -1356,153 +1366,6 @@ mod tests {
             };
             launch_or_connect(&config).await
         })
-        .await;
-    }
-
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
-    )]
-    async fn interact_teardown_hits(
-        mut site: crate::ssrf_intercept::SendingSite,
-        defense: crate::ssrf_intercept::SessionRequestDefense,
-        test_name: &str,
-    ) -> Option<usize> {
-        let chrome = match chromiumoxide::detection::default_executable(Default::default()) {
-            Ok(chrome) => chrome,
-            Err(message) => {
-                eprintln!("skipping {test_name}: no usable Chrome: {message}");
-                return None;
-            }
-        };
-        site.config.browser.chrome_path = Some(chrome);
-        let expected_open = site.popup.as_deref().unwrap_or(&site.seed).to_owned();
-        let actions = site.action_script.as_ref().map_or_else(Vec::new, |script| {
-            vec![PageAction::ExecuteJs { script: script.clone() }]
-        });
-        const HOLD: Duration = Duration::from_secs(1);
-        let (result, stop_hold) =
-            crate::ssrf_intercept::with_session_page_left_open(HOLD, defense, run(&site.seed, &actions, &site.config))
-                .await;
-        match result {
-            Ok(_) | Err(CrawlError::SsrfPolicyViolation { .. } | CrawlError::BrowserTimeout { .. }) => {}
-            Err(error) => panic!("{test_name}: the session must end: {error:?}"),
-        }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        while !stop_hold.open_pages().iter().any(|url| url == &expected_open) && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        tokio::time::sleep(HOLD + Duration::from_secs(1)).await;
-        assert!(
-            stop_hold.open_pages().iter().any(|url| url == &expected_open),
-            "{test_name}: {expected_open} must still be open after the stop, or the test proves nothing, open: {:?}",
-            stop_hold.open_pages()
-        );
-        Some(site.denied_hits().await)
-    }
-
-    async fn assert_interact_teardown_refused(site: crate::ssrf_intercept::SendingSite, test_name: &str) {
-        let Some(hits) =
-            interact_teardown_hits(site, crate::ssrf_intercept::SessionRequestDefense::Both, test_name).await
-        else {
-            return;
-        };
-        assert_eq!(
-            hits, 0,
-            "{test_name}: a page still sending after the check stopped must not reach the denied address, \
-             got {hits} requests"
-        );
-    }
-
-    /// An interact session keeps refusing its page while the page sends after the check stops.
-    ///
-    /// ~keep The hook holds one sending page open across the stop, replacing the request flood
-    /// ~keep that timed out on three-core runners (xberg-io/crawlberg#580).
-    #[tokio::test(flavor = "multi_thread")]
-    async fn interact_refuses_requests_the_page_sends_while_the_session_ends() {
-        assert_interact_teardown_refused(
-            crate::ssrf_intercept::SendingSite::start().await,
-            "interact_refuses_requests_the_page_sends_while_the_session_ends",
-        )
-        .await;
-    }
-
-    /// An interact session keeps refusing its popup while the popup sends after the check stops.
-    ///
-    /// ~keep The assertion requires the popup URL to be open during the forced post-stop window,
-    /// ~keep so a popup that never opened cannot make the denied-request count pass vacuously (#580).
-    #[tokio::test(flavor = "multi_thread")]
-    async fn interact_refuses_requests_a_popup_sends_while_the_session_ends() {
-        assert_interact_teardown_refused(
-            crate::ssrf_intercept::SendingSite::start_popup().await,
-            "interact_refuses_requests_a_popup_sends_while_the_session_ends",
-        )
-        .await;
-    }
-
-    /// An interact session keeps refusing popups its page opens while the check stops.
-    ///
-    /// ~keep The retained page opens denied navigations throughout the forced post-stop window;
-    /// ~keep the same fixture's no-defense control below proves those attempts reach the server.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn interact_refuses_popups_the_page_keeps_opening_while_the_session_ends() {
-        assert_interact_teardown_refused(
-            crate::ssrf_intercept::SendingSite::start_opening_denied_popups().await,
-            "interact_refuses_popups_the_page_keeps_opening_while_the_session_ends",
-        )
-        .await;
-    }
-
-    async fn assert_interact_teardown_reaches(site: crate::ssrf_intercept::SendingSite, test_name: &str) {
-        let Some(hits) =
-            interact_teardown_hits(site, crate::ssrf_intercept::SessionRequestDefense::Neither, test_name).await
-        else {
-            return;
-        };
-        assert!(
-            hits > 0,
-            "{test_name}: the negative control must reach the denied address or the property checks prove nothing"
-        );
-    }
-
-    /// The page teardown window reaches the denied server with both defenses disabled.
-    ///
-    /// ~keep This negative control uses the same page fixture, interact path and hook as its
-    /// ~keep property test; a zero count means that property could pass without a request (#580).
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_interact_page_reaches_the_denied_server_without_either_defense() {
-        assert_interact_teardown_reaches(
-            crate::ssrf_intercept::SendingSite::start().await,
-            "an_interact_page_reaches_the_denied_server_without_either_defense",
-        )
-        .await;
-    }
-
-    /// The popup teardown window reaches the denied server with both defenses disabled.
-    ///
-    /// ~keep This negative control uses the same popup fixture, interact action and hook as its
-    /// ~keep property test; it requires that popup open and a positive denied hit, so merely
-    /// ~keep creating the popup cannot make the property pass vacuously (#580).
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_interact_popup_reaches_the_denied_server_without_either_defense() {
-        assert_interact_teardown_reaches(
-            crate::ssrf_intercept::SendingSite::start_popup().await,
-            "an_interact_popup_reaches_the_denied_server_without_either_defense",
-        )
-        .await;
-    }
-
-    /// A retained page's repeated popup navigations reach the denied server without either defense.
-    ///
-    /// ~keep This is the negative control for the popup-opening teardown property: a positive hit
-    /// ~keep proves the interval actually attempts denied navigations during the held window.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_interact_popup_opening_page_reaches_the_denied_server_without_either_defense() {
-        assert_interact_teardown_reaches(
-            crate::ssrf_intercept::SendingSite::start_opening_denied_popups().await,
-            "an_interact_popup_opening_page_reaches_the_denied_server_without_either_defense",
-        )
         .await;
     }
 

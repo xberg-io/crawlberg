@@ -9,7 +9,7 @@
 //! ~keep the sanctioned in-file feature gates, not a precedent for adding more.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use chromiumoxide::Handler;
@@ -234,7 +234,13 @@ fn scratch_profile_parent(chrome_path: Option<&std::path::Path>) -> std::path::P
 pub(crate) fn chrome_executable(chrome_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     match chrome_path {
         Some(path) => Some(path.to_path_buf()),
-        None => chromiumoxide::detection::default_executable(Default::default()).ok(),
+        None => {
+            #[cfg(test)]
+            if let Some(path) = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH") {
+                return Some(path.into());
+            }
+            chromiumoxide::detection::default_executable(Default::default()).ok()
+        }
     }
 }
 
@@ -293,6 +299,10 @@ pub(crate) fn apply_launch_overrides(
     chrome_args: &[String],
     proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
+    #[cfg(test)]
+    let test_chrome_path = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(std::path::PathBuf::from);
+    #[cfg(test)]
+    let chrome_path = chrome_path.or(test_chrome_path.as_deref());
     crate::types::check_chrome_args(section, chrome_args).map_err(CrawlError::browser_error)?;
     if let Some(path) = chrome_path {
         crate::types::check_chrome_executable(section, path).map_err(CrawlError::browser_error)?;
@@ -731,6 +741,7 @@ fn build_pool_launch_builder(
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
+        .manage_child_targets(false)
         .disable_default_args();
     // ~keep Chrome helper forks can trip macOS fork-safety checks; disable the ObjC abort so helpers exec.
     // ~keep The env vars are harmless on older macOS and Linux and keep pooled launches consistent.
@@ -825,6 +836,7 @@ pub(crate) struct ExternalTabCleanup {
 }
 
 struct BrowserState {
+    generation: u64,
     browser: Arc<Browser>,
     /// The SSRF check every page of this browser runs under. It holds the other reference
     /// to `browser` until it is stopped.
@@ -870,6 +882,38 @@ impl BrowserState {
         }
         if let Some(user_data_dir) = self.user_data_dir {
             user_data_dir.teardown_and_wait().await;
+        }
+    }
+
+    /// Terminate a browser whose security controller disappeared. A launched Chrome is killed
+    /// rather than given a graceful CDP close, because the failed handler cannot acknowledge it. ~keep
+    async fn fail_closed(self) {
+        self.firewall.stop().await;
+        let Some(browser) = Arc::into_inner(self.browser) else {
+            self.handler_handle.abort();
+            if let Some(user_data_dir) = self.user_data_dir {
+                user_data_dir.teardown_and_wait().await;
+            }
+            return;
+        };
+        match self.user_data_dir {
+            Some(user_data_dir) => {
+                let profile = user_data_dir.path().to_path_buf();
+                kill_browser(browser, self.handler_handle, profile, HANDLER_SHUTDOWN_TIMEOUT).await;
+                drop(user_data_dir);
+            }
+            None => {
+                release_browser(
+                    browser,
+                    self.handler_handle,
+                    ExternalTabCleanup {
+                        pending_closes: Some(self.pending_closes),
+                        ..ExternalTabCleanup::default()
+                    },
+                    HANDLER_SHUTDOWN_TIMEOUT,
+                )
+                .await;
+            }
         }
     }
 }
@@ -962,12 +1006,25 @@ pub(crate) struct HandlerEnd(Arc<HandlerEndState>);
 #[derive(Debug, Default)]
 struct HandlerEndState {
     ended: AtomicBool,
+    notification: tokio::sync::Notify,
     cause: std::sync::OnceLock<String>,
 }
 
 impl HandlerEnd {
     pub(crate) fn has_ended(&self) -> bool {
         self.0.ended.load(Ordering::Acquire)
+    }
+
+    async fn ended(&self) {
+        loop {
+            let notified = self.0.notification.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.has_ended() {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// The websocket error the handler stopped on. `None` while it runs, and after an abort.
@@ -1009,6 +1066,7 @@ struct WatchedHandler {
 impl Drop for WatchedHandler {
     fn drop(&mut self) {
         self.end.0.ended.store(true, Ordering::Release);
+        self.end.0.notification.notify_waiters();
     }
 }
 
@@ -1063,10 +1121,16 @@ async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: Browser
 pub(crate) async fn connect_endpoint(endpoint: &str) -> Result<(Browser, chromiumoxide::Handler), CrawlError> {
     let normalized = crate::net::parse_websocket_url(endpoint);
     let address = normalized.as_ref().map_or(endpoint, url::Url::as_str);
-    Box::pin(Browser::connect(address)).await.map_err(|e| {
-        let redacted = crate::net::redact::redact_url_to_origin(endpoint);
-        CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
-    })
+    let handler_config = chromiumoxide::handler::HandlerConfig {
+        manage_child_targets: false,
+        ..chromiumoxide::handler::HandlerConfig::default()
+    };
+    Box::pin(Browser::connect_with_config(address, handler_config))
+        .await
+        .map_err(|e| {
+            let redacted = crate::net::redact::redact_url_to_origin(endpoint);
+            CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
+        })
 }
 
 /// Tear down `browser` and the task that runs its CDP handler.
@@ -1474,15 +1538,24 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 /// manage a pool themselves.
 pub struct BrowserPool {
     config: BrowserPoolConfig,
-    state: Mutex<Option<BrowserState>>,
+    state: Arc<Mutex<Option<BrowserState>>>,
     page_semaphore: Arc<Semaphore>,
-    shutdown: AtomicBool,
+    shutdown: Arc<AtomicBool>,
     /// Lock-free health signal updated whenever browser state changes.
-    healthy: AtomicBool,
+    healthy: Arc<AtomicBool>,
+    next_generation: AtomicU64,
     /// While `true`, the task of each handler this pool starts stays open after its handler
     /// has ended, so a test can ask for a page in that state.
     #[cfg(test)]
     hold_handler_end: tokio::sync::watch::Sender<bool>,
+}
+
+fn mark_unhealthy_if_current(current_generation: Option<u64>, failed_generation: u64, healthy: &AtomicBool) -> bool {
+    if current_generation != Some(failed_generation) {
+        return false;
+    }
+    healthy.store(false, Ordering::Release);
+    true
 }
 
 impl BrowserPool {
@@ -1492,10 +1565,11 @@ impl BrowserPool {
         let semaphore = Arc::new(Semaphore::new(config.max_pages));
         Arc::new(Self {
             config,
-            state: Mutex::new(None),
+            state: Arc::new(Mutex::new(None)),
             page_semaphore: semaphore,
-            shutdown: AtomicBool::new(false),
-            healthy: AtomicBool::new(false),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            healthy: Arc::new(AtomicBool::new(false)),
+            next_generation: AtomicU64::new(1),
             #[cfg(test)]
             hold_handler_end: tokio::sync::watch::Sender::new(false),
         })
@@ -1520,6 +1594,7 @@ impl BrowserPool {
             let bs = self.launch_browser().await?;
             *guard = Some(bs);
             self.healthy.store(true, Ordering::Release);
+            self.supervise_current(guard.as_ref().expect("browser state was just installed"));
         }
         Ok(())
     }
@@ -1530,7 +1605,14 @@ impl BrowserPool {
     /// should be closed via [`PooledPage::close`] when done; if dropped
     /// without calling `close`, a best-effort async cleanup is spawned.
     pub async fn acquire_page(&self) -> Result<PooledPage, CrawlError> {
-        self.acquire_page_through(None, None).await
+        self.acquire_page_with_config(&crate::types::CrawlConfig::default())
+            .await
+    }
+
+    /// Acquire a blank page protected by `config`'s SSRF policy.
+    pub async fn acquire_page_with_config(&self, config: &crate::types::CrawlConfig) -> Result<PooledPage, CrawlError> {
+        let proxy = crate::proxy::chrome_proxy_for(config)?;
+        self.acquire_page_through(proxy.as_ref(), config).await
     }
 
     /// Acquire a new blank page whose requests go through `proxy`: the page's own browser
@@ -1538,11 +1620,16 @@ impl BrowserPool {
     pub(crate) async fn acquire_page_through(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
-        policy: Option<&crate::net::ssrf::SsrfPolicy>,
+        config: &crate::types::CrawlConfig,
     ) -> Result<PooledPage, CrawlError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
+        let _ = crate::net::egress::socket_policy(
+            &config.ssrf,
+            self.config.browser_endpoint.as_deref(),
+            &std::sync::Once::new(),
+        )?;
 
         let permit = self
             .page_semaphore
@@ -1555,21 +1642,23 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        match self.try_new_page(proxy, policy).await {
-            Ok((page, pending_closes)) => Ok(PooledPage {
+        match self.try_new_page(proxy, config).await {
+            Ok((page, watch, pending_closes)) => Ok(PooledPage {
                 page: Some(page),
+                watch: Some(watch),
                 _permit: Some(permit),
                 pending_closes: Some(pending_closes),
             }),
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let (page, pending_closes) = self.try_new_page(proxy, policy).await.map_err(|e| {
+                let (page, watch, pending_closes) = self.try_new_page(proxy, config).await.map_err(|e| {
                     CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
                 })?;
                 Ok(PooledPage {
                     page: Some(page),
+                    watch: Some(watch),
                     _permit: Some(permit),
                     pending_closes: Some(pending_closes),
                 })
@@ -1617,11 +1706,15 @@ impl BrowserPool {
     async fn try_new_page(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
-        policy: Option<&crate::net::ssrf::SsrfPolicy>,
-    ) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
+        config: &crate::types::CrawlConfig,
+    ) -> Result<(chromiumoxide::Page, crate::ssrf_intercept::Watch, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
 
-        if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_end.has_ended()) {
+        if guard.is_none()
+            || guard
+                .as_ref()
+                .is_some_and(|bs| bs.handler_end.has_ended() || bs.firewall.has_failed())
+        {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
                 old.firewall.stop().await;
@@ -1630,16 +1723,23 @@ impl BrowserPool {
             let bs = self.launch_browser().await?;
             *guard = Some(bs);
             self.healthy.store(true, Ordering::Release);
+            self.supervise_current(guard.as_ref().expect("browser state was just installed"));
         }
 
         let bs = guard.as_ref().expect("browser state was just set above");
-        let sockets = policy.and_then(|policy| {
-            crate::net::egress::socket_policy(policy, self.config.browser_endpoint.as_deref(), &bs.remote_warned)
-        });
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page(proxy, sockets))
-            .await
-            .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
-        Ok((page, Arc::clone(&bs.pending_closes)))
+        let sockets = crate::net::egress::socket_policy(
+            &config.ssrf,
+            self.config.browser_endpoint.as_deref(),
+            &bs.remote_warned,
+        )?;
+        let page = tokio::time::timeout(
+            PAGE_OPEN_TIMEOUT,
+            bs.firewall.handle().new_page_with_policy(proxy, sockets, &config.ssrf),
+        )
+        .await
+        .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
+        let watch = bs.firewall.handle().watch(&page, config, config.max_redirects).await?;
+        Ok((page, watch, Arc::clone(&bs.pending_closes)))
     }
 
     /// Force-relaunch Chrome (used after a page-open failure).
@@ -1650,7 +1750,10 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        if guard.as_ref().is_some_and(|bs| !bs.handler_end.has_ended()) {
+        if guard
+            .as_ref()
+            .is_some_and(|bs| !bs.handler_end.has_ended() && !bs.firewall.has_failed())
+        {
             return Ok(());
         }
 
@@ -1662,7 +1765,35 @@ impl BrowserPool {
         let bs = self.launch_browser().await?;
         *guard = Some(bs);
         self.healthy.store(true, Ordering::Release);
+        self.supervise_current(guard.as_ref().expect("browser state was just installed"));
         Ok(())
+    }
+
+    /// Retire a browser as soon as either half of its security controller ends. The generation
+    /// check prevents an old supervisor from taking a replacement browser. ~keep
+    fn supervise_current(&self, current: &BrowserState) {
+        let generation = current.generation;
+        let handler_end = current.handler_end.clone();
+        let firewall = current.firewall.handle();
+        let state = Arc::clone(&self.state);
+        let healthy = Arc::clone(&self.healthy);
+        tokio::spawn(async move {
+            tokio::select! {
+                () = handler_end.ended() => {}
+                () = firewall.failed() => {}
+            }
+            let failed = {
+                let mut guard = state.lock().await;
+                if mark_unhealthy_if_current(guard.as_ref().map(|browser| browser.generation), generation, &healthy) {
+                    guard.take()
+                } else {
+                    None
+                }
+            };
+            if let Some(failed) = failed {
+                failed.fail_closed().await;
+            }
+        });
     }
 
     /// Launch (or connect to) a Chrome process according to the pool config.
@@ -1700,10 +1831,11 @@ impl BrowserPool {
             })
         };
         let browser = Arc::new(browser);
-        let firewall = match BrowserFirewall::start(
+        let firewall = match BrowserFirewall::start_supervised(
             Arc::clone(&browser),
             BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
             PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
+            handler_handle.abort_handle(),
         )
         .await
         {
@@ -1726,6 +1858,7 @@ impl BrowserPool {
         };
 
         Ok(BrowserState {
+            generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
             browser,
             firewall,
             handler_handle,
@@ -1754,6 +1887,7 @@ impl std::fmt::Debug for BrowserPool {
 /// deterministic async cleanup.
 pub struct PooledPage {
     page: Option<chromiumoxide::Page>,
+    watch: Option<crate::ssrf_intercept::Watch>,
     _permit: Option<OwnedSemaphorePermit>,
     /// Where `Drop` records the close it spawns, so pool teardown can await it.
     pending_closes: Option<PendingCloses>,
@@ -1769,7 +1903,10 @@ impl PooledPage {
     /// that Chrome tears down the tab immediately. The semaphore permit is
     /// released when `self` is dropped at the end of this call.
     pub async fn close(mut self) {
-        if let Some(page) = self.page.take() {
+        if let Some(watch) = self.watch.take() {
+            self.page.take();
+            watch.close().await;
+        } else if let Some(page) = self.page.take() {
             let _ = page.close().await;
         }
     }
@@ -1788,10 +1925,17 @@ impl PooledPage {
     // ~keep off to. This module is compiled under the narrower `browser-chromiumoxide`, where the
     // ~keep method has no caller and would be dead code.
     #[cfg(feature = "browser")]
-    pub(crate) fn into_parts(mut self) -> (chromiumoxide::Page, Option<OwnedSemaphorePermit>) {
+    pub(crate) fn into_parts(
+        mut self,
+    ) -> (
+        chromiumoxide::Page,
+        crate::ssrf_intercept::Watch,
+        Option<OwnedSemaphorePermit>,
+    ) {
         let page = self.page.take().expect("page already taken via close()");
+        let watch = self.watch.take().expect("watched page already taken via close()");
         let permit = self._permit.take();
-        (page, permit)
+        (page, watch, permit)
     }
 }
 
@@ -1801,10 +1945,16 @@ impl Drop for PooledPage {
     // ~keep spawn here turns a late drop into a panic that aborts the embedding process.
     fn drop(&mut self) {
         if let Some(page) = self.page.take() {
+            let watch = self.watch.take();
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     let close = handle.spawn(async move {
-                        let _ = page.close().await;
+                        if let Some(watch) = watch {
+                            drop(page);
+                            watch.close().await;
+                        } else {
+                            let _ = page.close().await;
+                        }
                     });
                     match self.pending_closes.take() {
                         // ~keep Recorded, not detached: pool teardown aborts the task owning the
