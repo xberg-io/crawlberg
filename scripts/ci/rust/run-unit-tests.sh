@@ -26,10 +26,14 @@ TEST_LOG="/tmp/cargo-test-$$.log"
 
 core_status=0
 echo "=== cargo test -p crawlberg --all-features ==="
-# ~keep The core suite launches many Chromium processes. On constrained ARM runners, libtest's
-# default CPU-wide parallelism makes unrelated lifecycle tests tear down each other's handlers.
-if ! RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" RUST_BACKTRACE=full \
-  cargo test -p crawlberg --all-features --no-fail-fast --verbose 2>&1 | tee -a "$TEST_LOG"; then
+core_test_env=(env RUST_BACKTRACE=full)
+# ~keep Constrained ARM runners opt into serial execution because CPU-wide parallelism makes
+# unrelated Chromium lifecycle tests tear down each other's handlers. Other runners stay parallel.
+if [ -n "${CRAWLBERG_TEST_THREADS:-}" ]; then
+  core_test_env+=(RUST_TEST_THREADS="$CRAWLBERG_TEST_THREADS")
+fi
+if ! "${core_test_env[@]}" cargo test \
+  -p crawlberg --all-features --no-fail-fast --verbose 2>&1 | tee -a "$TEST_LOG"; then
   core_status="${PIPESTATUS[0]}"
 fi
 
