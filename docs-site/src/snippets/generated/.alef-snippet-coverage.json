@@ -81,7 +81,7 @@
     "c/crawl/crawl-stay-on-domain.md",
     "c/crawl/crawl-subdomain-exclusion.md",
     "c/crawl/crawl-subdomain-inclusion.md",
-    "c/crawl/crawl-trailing-slash-dedup.md",
+    "c/crawl/crawl-trailing-slash-distinct.md",
     "c/crawl/crawl-url-deduplication.md",
     "c/download/download-basic-pdf.md",
     "c/download/download-filename-extraction.md",
@@ -345,7 +345,7 @@
     "csharp/crawl/crawl-stay-on-domain.md",
     "csharp/crawl/crawl-subdomain-exclusion.md",
     "csharp/crawl/crawl-subdomain-inclusion.md",
-    "csharp/crawl/crawl-trailing-slash-dedup.md",
+    "csharp/crawl/crawl-trailing-slash-distinct.md",
     "csharp/crawl/crawl-url-deduplication.md",
     "csharp/download/download-basic-pdf.md",
     "csharp/download/download-filename-extraction.md",
@@ -618,7 +618,7 @@
     "dart/crawl/crawl-stay-on-domain.md",
     "dart/crawl/crawl-subdomain-exclusion.md",
     "dart/crawl/crawl-subdomain-inclusion.md",
-    "dart/crawl/crawl-trailing-slash-dedup.md",
+    "dart/crawl/crawl-trailing-slash-distinct.md",
     "dart/crawl/crawl-url-deduplication.md",
     "dart/download/download-basic-pdf.md",
     "dart/download/download-filename-extraction.md",
@@ -883,7 +883,7 @@
     "elixir/crawl/crawl-stay-on-domain.md",
     "elixir/crawl/crawl-subdomain-exclusion.md",
     "elixir/crawl/crawl-subdomain-inclusion.md",
-    "elixir/crawl/crawl-trailing-slash-dedup.md",
+    "elixir/crawl/crawl-trailing-slash-distinct.md",
     "elixir/crawl/crawl-url-deduplication.md",
     "elixir/download/download-basic-pdf.md",
     "elixir/download/download-filename-extraction.md",
@@ -1153,7 +1153,7 @@
     "go/crawl/crawl-stay-on-domain.md",
     "go/crawl/crawl-subdomain-exclusion.md",
     "go/crawl/crawl-subdomain-inclusion.md",
-    "go/crawl/crawl-trailing-slash-dedup.md",
+    "go/crawl/crawl-trailing-slash-distinct.md",
     "go/crawl/crawl-url-deduplication.md",
     "go/download/download-basic-pdf.md",
     "go/download/download-filename-extraction.md",
@@ -1426,7 +1426,7 @@
     "java/crawl/crawl-stay-on-domain.md",
     "java/crawl/crawl-subdomain-exclusion.md",
     "java/crawl/crawl-subdomain-inclusion.md",
-    "java/crawl/crawl-trailing-slash-dedup.md",
+    "java/crawl/crawl-trailing-slash-distinct.md",
     "java/crawl/crawl-url-deduplication.md",
     "java/download/download-basic-pdf.md",
     "java/download/download-filename-extraction.md",
@@ -1699,7 +1699,7 @@
     "kotlin-android/crawl/crawl-stay-on-domain.md",
     "kotlin-android/crawl/crawl-subdomain-exclusion.md",
     "kotlin-android/crawl/crawl-subdomain-inclusion.md",
-    "kotlin-android/crawl/crawl-trailing-slash-dedup.md",
+    "kotlin-android/crawl/crawl-trailing-slash-distinct.md",
     "kotlin-android/crawl/crawl-url-deduplication.md",
     "kotlin-android/download/download-basic-pdf.md",
     "kotlin-android/download/download-filename-extraction.md",
@@ -1972,7 +1972,7 @@
     "php/crawl/crawl-stay-on-domain.md",
     "php/crawl/crawl-subdomain-exclusion.md",
     "php/crawl/crawl-subdomain-inclusion.md",
-    "php/crawl/crawl-trailing-slash-dedup.md",
+    "php/crawl/crawl-trailing-slash-distinct.md",
     "php/crawl/crawl-url-deduplication.md",
     "php/download/download-basic-pdf.md",
     "php/download/download-filename-extraction.md",
@@ -2245,7 +2245,7 @@
     "python/crawl/crawl-stay-on-domain.md",
     "python/crawl/crawl-subdomain-exclusion.md",
     "python/crawl/crawl-subdomain-inclusion.md",
-    "python/crawl/crawl-trailing-slash-dedup.md",
+    "python/crawl/crawl-trailing-slash-distinct.md",
     "python/crawl/crawl-url-deduplication.md",
     "python/download/download-basic-pdf.md",
     "python/download/download-filename-extraction.md",
@@ -2518,7 +2518,7 @@
     "ruby/crawl/crawl-stay-on-domain.md",
     "ruby/crawl/crawl-subdomain-exclusion.md",
     "ruby/crawl/crawl-subdomain-inclusion.md",
-    "ruby/crawl/crawl-trailing-slash-dedup.md",
+    "ruby/crawl/crawl-trailing-slash-distinct.md",
     "ruby/crawl/crawl-url-deduplication.md",
     "ruby/download/download-basic-pdf.md",
     "ruby/download/download-filename-extraction.md",
@@ -2791,7 +2791,7 @@
     "rust/crawl/crawl-stay-on-domain.md",
     "rust/crawl/crawl-subdomain-exclusion.md",
     "rust/crawl/crawl-subdomain-inclusion.md",
-    "rust/crawl/crawl-trailing-slash-dedup.md",
+    "rust/crawl/crawl-trailing-slash-distinct.md",
     "rust/crawl/crawl-url-deduplication.md",
     "rust/download/download-basic-pdf.md",
     "rust/download/download-filename-extraction.md",
@@ -3056,7 +3056,7 @@
     "swift/crawl/crawl-stay-on-domain.md",
     "swift/crawl/crawl-subdomain-exclusion.md",
     "swift/crawl/crawl-subdomain-inclusion.md",
-    "swift/crawl/crawl-trailing-slash-dedup.md",
+    "swift/crawl/crawl-trailing-slash-distinct.md",
     "swift/crawl/crawl-url-deduplication.md",
     "swift/download/download-basic-pdf.md",
     "swift/download/download-filename-extraction.md",
@@ -3326,7 +3326,7 @@
     "typescript/crawl/crawl-stay-on-domain.md",
     "typescript/crawl/crawl-subdomain-exclusion.md",
     "typescript/crawl/crawl-subdomain-inclusion.md",
-    "typescript/crawl/crawl-trailing-slash-dedup.md",
+    "typescript/crawl/crawl-trailing-slash-distinct.md",
     "typescript/crawl/crawl-url-deduplication.md",
     "typescript/download/download-basic-pdf.md",
     "typescript/download/download-filename-extraction.md",
@@ -3599,7 +3599,7 @@
     "wasm/crawl/crawl-stay-on-domain.md",
     "wasm/crawl/crawl-subdomain-exclusion.md",
     "wasm/crawl/crawl-subdomain-inclusion.md",
-    "wasm/crawl/crawl-trailing-slash-dedup.md",
+    "wasm/crawl/crawl-trailing-slash-distinct.md",
     "wasm/crawl/crawl-url-deduplication.md",
     "wasm/download/download-basic-pdf.md",
     "wasm/download/download-filename-extraction.md",
@@ -3855,7 +3855,7 @@
     "zig/crawl/crawl-stay-on-domain.md",
     "zig/crawl/crawl-subdomain-exclusion.md",
     "zig/crawl/crawl-subdomain-inclusion.md",
-    "zig/crawl/crawl-trailing-slash-dedup.md",
+    "zig/crawl/crawl-trailing-slash-distinct.md",
     "zig/crawl/crawl-url-deduplication.md",
     "zig/download/download-basic-pdf.md",
     "zig/download/download-filename-extraction.md",
@@ -5009,10 +5009,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "c"
       },
-      "path": "c/crawl/crawl-trailing-slash-dedup.md",
+      "path": "c/crawl/crawl-trailing-slash-distinct.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -8177,10 +8177,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "csharp"
       },
-      "path": "csharp/crawl/crawl-trailing-slash-dedup.md",
+      "path": "csharp/crawl/crawl-trailing-slash-distinct.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -11453,10 +11453,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "dart"
       },
-      "path": "dart/crawl/crawl-trailing-slash-dedup.md",
+      "path": "dart/crawl/crawl-trailing-slash-distinct.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -14633,10 +14633,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "elixir"
       },
-      "path": "elixir/crawl/crawl-trailing-slash-dedup.md",
+      "path": "elixir/crawl/crawl-trailing-slash-distinct.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -17873,10 +17873,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "go"
       },
-      "path": "go/crawl/crawl-trailing-slash-dedup.md",
+      "path": "go/crawl/crawl-trailing-slash-distinct.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21149,10 +21149,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "java"
       },
-      "path": "java/crawl/crawl-trailing-slash-dedup.md",
+      "path": "java/crawl/crawl-trailing-slash-distinct.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -24425,10 +24425,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "kotlin_android"
       },
-      "path": "kotlin-android/crawl/crawl-trailing-slash-dedup.md",
+      "path": "kotlin-android/crawl/crawl-trailing-slash-distinct.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -27701,10 +27701,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "php"
       },
-      "path": "php/crawl/crawl-trailing-slash-dedup.md",
+      "path": "php/crawl/crawl-trailing-slash-distinct.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -30977,10 +30977,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "python"
       },
-      "path": "python/crawl/crawl-trailing-slash-dedup.md",
+      "path": "python/crawl/crawl-trailing-slash-distinct.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -34253,10 +34253,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "ruby"
       },
-      "path": "ruby/crawl/crawl-trailing-slash-dedup.md",
+      "path": "ruby/crawl/crawl-trailing-slash-distinct.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -37760,10 +37760,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "rust"
       },
-      "path": "rust/crawl/crawl-trailing-slash-dedup.md",
+      "path": "rust/crawl/crawl-trailing-slash-distinct.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41465,10 +41465,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "swift"
       },
-      "path": "swift/crawl/crawl-trailing-slash-dedup.md",
+      "path": "swift/crawl/crawl-trailing-slash-distinct.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -44705,10 +44705,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "node"
       },
-      "path": "typescript/crawl/crawl-trailing-slash-dedup.md",
+      "path": "typescript/crawl/crawl-trailing-slash-distinct.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -47981,10 +47981,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "wasm"
       },
-      "path": "wasm/crawl/crawl-trailing-slash-dedup.md",
+      "path": "wasm/crawl/crawl-trailing-slash-distinct.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -51053,10 +51053,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_trailing_slash_dedup",
+        "fixture_id": "crawl_trailing_slash_distinct",
         "language": "zig"
       },
-      "path": "zig/crawl/crawl-trailing-slash-dedup.md",
+      "path": "zig/crawl/crawl-trailing-slash-distinct.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -58386,63 +58386,63 @@
       "language": "zig"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "c"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "csharp"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "dart"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "elixir"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "go"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "java"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "kotlin_android"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "node"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "php"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "python"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "ruby"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "rust"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "swift"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "wasm"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "zig"
     },
     {
@@ -74564,63 +74564,63 @@
       "language": "zig"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "c"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "csharp"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "dart"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "elixir"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "go"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "java"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "kotlin_android"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "node"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "php"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "python"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "ruby"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "rust"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "swift"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "wasm"
     },
     {
-      "fixture_id": "crawl_trailing_slash_dedup",
+      "fixture_id": "crawl_trailing_slash_distinct",
       "language": "zig"
     },
     {

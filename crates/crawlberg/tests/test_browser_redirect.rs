@@ -233,3 +233,49 @@ async fn scrape_reports_the_landed_url_with_and_without_a_screenshot() {
         );
     }
 }
+
+/// #629 in browser mode. A linked folder redirects to its slash form, and a linked page
+/// redirects to another percent-encoded spelling of its own address. Chrome follows both, and
+/// the landed address is this link's own page, not a page the crawl has from elsewhere.
+#[tokio::test]
+async fn a_link_that_lands_on_another_address_of_the_same_page_is_kept() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", r#"<a href="/docs">the docs</a><a href="/a-b">page</a>"#).await;
+    for (from, to) in [("/docs", "/docs/"), ("/a-b", "/a%2Db")] {
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(302).append_header("location", to))
+            .mount(&mock)
+            .await;
+    }
+    mount_html(&mock, "/docs/", r#"<p>docs index</p><a href="guide">the guide</a>"#).await;
+    mount_html(&mock, "/docs/guide", "<p>the guide</p>").await;
+    mount_html(&mock, "/a%2Db", "<p>the page</p>").await;
+
+    let Some(result) = crawl_in_browser(
+        "a_link_that_lands_on_another_address_of_the_same_page_is_kept",
+        browser_config(Vec::new()),
+        &format!("{}/", mock.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+
+    let mut landed: Vec<String> = result
+        .pages
+        .iter()
+        .map(|page| page.final_url.replace(&mock.uri(), ""))
+        .collect();
+    landed.sort();
+    assert_eq!(
+        landed,
+        ["/", "/a%2Db", "/docs/", "/docs/guide"],
+        "the folder page, the page behind it and the page at the other spelling are reported"
+    );
+    let requested = requested_paths(&mock).await;
+    assert!(
+        requested.iter().any(|p| p == "/docs/guide"),
+        "the link on the folder page must be followed, requested: {requested:?}"
+    );
+}

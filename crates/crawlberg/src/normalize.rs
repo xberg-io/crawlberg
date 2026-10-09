@@ -2,16 +2,55 @@
 
 use url::Url;
 
-/// Remove trailing slashes (except root) and collapse double slashes in a URL path.
-fn clean_url_path(u: &mut Url) {
-    let path = u.path().to_owned();
-    if path.len() > 1 && path.ends_with('/') {
-        u.set_path(&path[..path.len() - 1]);
-    }
-    let path = u.path().to_owned();
+/// Collapse double slashes in a URL path.
+fn collapse_double_slashes(u: &mut Url) {
+    let path = u.path();
     if path.contains("//") {
-        u.set_path(&path.replace("//", "/"));
+        let collapsed = path.replace("//", "/");
+        u.set_path(&collapsed);
     }
+}
+
+/// The octet that the percent-escape at the start of `escape` encodes, when its two digits are hex.
+fn escaped_octet(escape: &str) -> Option<u8> {
+    let digits = escape.as_bytes().get(1..3)?;
+    let high = char::from(digits[0]).to_digit(16)?;
+    let low = char::from(digits[1]).to_digit(16)?;
+    u8::try_from(high * 16 + low).ok()
+}
+
+/// Apply to `address` the two percent-encoding normalisations of RFC 3986 section 6.2.2: decode
+/// an escape of an unreserved character (a letter, a digit, `-`, `.`, `_` or `~`), and write
+/// the hex digits of every other escape in upper case. A `%` that does not start an escape
+/// stays as it is.
+///
+/// ~keep No other escape is decoded. An escaped reserved character such as `%2F` is not
+/// ~keep equivalent to the character, so decoding it would merge two different resources.
+fn normalize_percent_encoding(address: &str) -> String {
+    let mut out = String::with_capacity(address.len());
+    let mut rest = address;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let consumed = match escaped_octet(rest) {
+            Some(octet) if octet.is_ascii_alphanumeric() || matches!(octet, b'-' | b'.' | b'_' | b'~') => {
+                out.push(char::from(octet));
+                3
+            }
+            Some(_) => {
+                out.push('%');
+                out.extend(rest[1..3].chars().map(|digit| digit.to_ascii_uppercase()));
+                3
+            }
+            None => {
+                out.push('%');
+                1
+            }
+        };
+        rest = &rest[consumed..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Sort `u`'s query parameters by key, re-encoding with a proper x-www-form-urlencoded
@@ -34,23 +73,19 @@ fn sort_query(u: &mut Url) {
     u.set_query(Some(&serializer.finish()));
 }
 
-/// Normalize a URL by removing fragments, sorting query parameters,
-/// removing trailing slashes (except root), and fixing double slashes in the path.
+/// The address of a page as `CrawlPageResult.normalized_url` reports it: the frontier key of
+/// [`normalize_url_for_dedup`] with the query kept.
 pub(crate) fn normalize_url(raw: &str) -> String {
-    if let Ok(mut u) = Url::parse(raw) {
-        u.set_fragment(None);
-        sort_query(&mut u);
-        clean_url_path(&mut u);
-        u.to_string()
-    } else {
-        raw.to_owned()
-    }
+    normalize_url_for_dedup(raw, true)
 }
 
-/// Normalize a URL for deduplication during crawling.
+/// The key that decides whether two addresses are one page during crawling.
 ///
-/// Strips fragments, removes trailing slashes (except root), and fixes double slashes in
-/// the path. `include_query` decides whether the query string participates in the key too:
+/// Two addresses get one key only where a standard says they name one resource: the URL
+/// parser's own serialization, no fragment, and the percent-encoding rules of
+/// [`normalize_percent_encoding`]. A trailing slash is kept, because `/docs` and `/docs/` are
+/// two resources a server can answer differently. Doubled slashes in the path are collapsed.
+/// `include_query` decides whether the query string participates in the key too:
 /// `false` (the historical default) drops it entirely, so `?id=1` and `?id=2` collapse to one
 /// key; `true` keeps it, sorted, so they are treated as distinct pages.
 ///
@@ -65,8 +100,8 @@ pub(crate) fn normalize_url_for_dedup(raw: &str, include_query: bool) -> String 
         } else {
             u.set_query(None);
         }
-        clean_url_path(&mut u);
-        u.to_string()
+        collapse_double_slashes(&mut u);
+        normalize_percent_encoding(u.as_str())
     } else {
         raw.to_owned()
     }
@@ -248,24 +283,128 @@ mod tests {
     }
 
     #[test]
-    fn removes_fragment_and_trailing_slash() {
+    fn removes_the_fragment_and_keeps_a_trailing_slash() {
         let normalized = normalize_url("http://example.com/path/#section");
         assert_eq!(
-            normalized, "http://example.com/path",
-            "expected fragment removed and trailing slash trimmed, got {normalized:?}"
+            normalized, "http://example.com/path/",
+            "expected the fragment removed and the trailing slash kept, got {normalized:?}"
         );
+    }
+
+    #[test]
+    fn a_trailing_slash_makes_another_key() {
+        for include_query in [false, true] {
+            assert_ne!(
+                normalize_url_for_dedup("http://example.com/docs", include_query),
+                normalize_url_for_dedup("http://example.com/docs/", include_query),
+                "/docs and /docs/ are two resources (include_query={include_query})"
+            );
+        }
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com", false),
+            normalize_url_for_dedup("http://example.com/", false),
+            "the URL standard gives an address without a path the path `/`"
+        );
+    }
+
+    /// RFC 3986 section 6.2.2.2: an escape of an unreserved character is equivalent to the
+    /// character. Section 6.2.2.1: the hex digits of an escape are case-insensitive.
+    #[test]
+    fn percent_encoding_is_normalised_by_the_two_rfc_3986_rules_only() {
+        for (input, expected) in [
+            ("http://example.com/a%2db", "http://example.com/a-b"),
+            ("http://example.com/a%2Db", "http://example.com/a-b"),
+            ("http://example.com/a-b", "http://example.com/a-b"),
+            (
+                "http://example.com/%41%7a%30%2D%2e%5F%7Ex",
+                "http://example.com/Az0-._~x",
+            ),
+            ("http://example.com/a%2fb", "http://example.com/a%2Fb"),
+            ("http://example.com/a%2Fb", "http://example.com/a%2Fb"),
+            ("http://example.com/caf%c3%a9", "http://example.com/caf%C3%A9"),
+            ("http://example.com/a%20b%3f%23%25", "http://example.com/a%20b%3F%23%25"),
+            ("http://example.com/q%5cr", "http://example.com/q%5Cr"),
+            ("http://example.com/100%", "http://example.com/100%"),
+            ("http://example.com/a%2", "http://example.com/a%2"),
+            ("http://example.com/a%zzb%4", "http://example.com/a%zzb%4"),
+            ("http://example.com/a%%41", "http://example.com/a%A"),
+            ("http://example.com/a%252Db", "http://example.com/a%252Db"),
+        ] {
+            assert_eq!(normalize_url_for_dedup(input, false), expected, "for {input:?}");
+            assert_eq!(normalize_url(input), expected, "normalized_url for {input:?}");
+        }
+    }
+
+    #[test]
+    fn an_escaped_reserved_character_keeps_its_own_key() {
+        for (escaped, literal) in [
+            ("http://example.com/a%2Fb", "http://example.com/a/b"),
+            ("http://example.com/a%3Fb", "http://example.com/a?b"),
+            ("http://example.com/q%5Cr", "http://example.com/q/r"),
+            ("http://example.com/a%2Bb", "http://example.com/a+b"),
+            ("http://example.com/a%3Bb", "http://example.com/a;b"),
+            ("http://example.com/Page", "http://example.com/page"),
+        ] {
+            assert_ne!(
+                normalize_url(escaped),
+                normalize_url(literal),
+                "{escaped:?} and {literal:?} are two resources"
+            );
+        }
+    }
+
+    /// The URL parser reads an escaped dot segment as a dot segment, so decoding `%2e` after
+    /// it cannot make a new one.
+    #[test]
+    fn an_escaped_dot_segment_is_resolved_by_the_parser_before_the_escapes_are_decoded() {
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/a/%2e%2E/b/%2e/c", false),
+            "http://example.com/b/c"
+        );
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/a/x%2e%2e/b", false),
+            "http://example.com/a/x../b",
+            "dots inside a longer segment are plain characters"
+        );
+    }
+
+    #[test]
+    fn percent_encoding_of_a_kept_query_is_normalised_too() {
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?q=a%2db&t=%7euser", true),
+            normalize_url_for_dedup("http://example.com/s?q=a-b&t=~user", true),
+        );
+        assert_ne!(
+            normalize_url_for_dedup("http://example.com/s?q=a%26b", true),
+            normalize_url_for_dedup("http://example.com/s?q=a&b", true),
+            "an escaped separator in a query value is not the separator"
+        );
+    }
+
+    #[test]
+    fn an_address_that_does_not_parse_is_returned_as_written() {
+        assert_eq!(normalize_url_for_dedup("not a url/%2d/", false), "not a url/%2d/");
+        assert_eq!(normalize_url("not a url/%2d/"), "not a url/%2d/");
+    }
+
+    #[test]
+    fn normalized_url_is_the_frontier_key_with_the_query_kept() {
+        let address = "http://example.com/a//b/%7Euser/?b=2&a=1#top";
+        assert_eq!(normalize_url(address), "http://example.com/a/b/~user/?a=1&b=2");
+        assert_eq!(normalize_url(address), normalize_url_for_dedup(address, true));
+        assert_eq!(normalize_url_for_dedup(address, false), "http://example.com/a/b/~user/");
     }
 
     /// ~keep The wasm crawl loop used to carry its own dedup normalizer that did all of
     /// this *except* the `//` collapse, so the two targets disagreed on which URLs were
     /// duplicates. Both now call this function; this pins the contract they share.
     #[test]
-    fn dedup_key_collapses_double_slashes_alongside_query_fragment_and_trailing_slash() {
+    fn dedup_key_collapses_double_slashes_and_drops_the_query_and_the_fragment() {
         let normalized = normalize_url_for_dedup("http://example.com/a//b/?q=1#top", false);
         assert_eq!(
-            normalized, "http://example.com/a/b",
-            "expected query, fragment, trailing slash and doubled path separator all \
-             normalized away, got {normalized:?}"
+            normalized, "http://example.com/a/b/",
+            "expected the query, the fragment and the doubled path separator normalized \
+             away and the trailing slash kept, got {normalized:?}"
         );
     }
 

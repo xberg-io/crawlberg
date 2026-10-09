@@ -135,6 +135,9 @@ pub(crate) struct RedirectPolicy<'a> {
     /// actually goes out (including its retries and escalations, which re-send the same
     /// request rather than starting a new one) are the same agent (crawlberg#423).
     pub(super) pending_user_agent: Option<String>,
+    /// The frontier keys of the addresses this policy's one chain holds: its starting URL and
+    /// every hop it claimed. See [`Self::claim_redirect_target`].
+    chain_keys: HashSet<String>,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -154,6 +157,7 @@ impl<'a> RedirectPolicy<'a> {
             last_origin: None,
             urls_filtered: 0,
             pending_user_agent: None,
+            chain_keys: HashSet::new(),
         }
     }
 
@@ -191,7 +195,7 @@ impl<'a> RedirectPolicy<'a> {
             Err(refusal) => return Ok(Some(refusal)),
         };
 
-        if is_redirect_hop && let Some(refusal) = self.claim_redirect_target(url).await? {
+        if let Some(refusal) = self.claim_redirect_target(url, is_redirect_hop).await? {
             return Ok(Some(refusal));
         }
 
@@ -295,12 +299,30 @@ impl<'a> RedirectPolicy<'a> {
     /// ~keep policy: a page reachable both directly (its own frontier entry) and via a
     /// ~keep redirect must be requested once, and the frontier is the one place both paths
     /// ~keep already agree on what "seen" means.
-    async fn claim_redirect_target(&self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
+    ///
+    /// ~keep A hop whose key the chain already holds is the chain's own page under another
+    /// ~keep address, not a page claimed elsewhere: a server redirects `/docs` to `/docs#top`, or
+    /// ~keep to another percent-encoded spelling of `/docs`. The frontier has that key because
+    /// ~keep this chain's own entry put it there, so refusing the hop would drop the page the
+    /// ~keep chain is fetching, with every page behind it.
+    async fn claim_redirect_target(
+        &mut self,
+        url: &str,
+        is_redirect_hop: bool,
+    ) -> Result<Option<PolicyRefusal>, CrawlError> {
         let dedup_key = normalize_url_for_dedup(url, self.engine.config.dedup_include_query);
+        if !is_redirect_hop {
+            self.chain_keys.insert(dedup_key);
+            return Ok(None);
+        }
+        if self.chain_keys.contains(&dedup_key) {
+            return Ok(None);
+        }
         if self.engine.frontier.is_seen(&dedup_key).await? {
             return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
         }
         self.engine.frontier.mark_seen(&dedup_key).await?;
+        self.chain_keys.insert(dedup_key);
         Ok(None)
     }
 

@@ -1387,3 +1387,155 @@ async fn wasm_page_fetch_does_not_follow_a_meta_refresh() {
         .count();
     assert_eq!(next, 0, "the wasm page fetch followed a refresh; final_url={final_url}");
 }
+
+/// A body of [`exact_path_site`] that starts with this is a 302 to the rest of the body.
+const REDIRECT: &str = "302 ";
+
+/// A server that answers each listed path, compared byte for byte with the request path.
+///
+/// ~keep One responder that reads the raw request path: a path matcher that normalises the
+/// ~keep path would hide the difference between two spellings of an address.
+async fn exact_path_site(pages: &[(&'static str, &'static str)]) -> MockServer {
+    let mock = MockServer::start().await;
+    let pages: std::collections::HashMap<&'static str, &'static str> = pages.iter().copied().collect();
+    Mock::given(method("GET"))
+        .respond_with(move |request: &wiremock::Request| match pages.get(request.url.path()) {
+            Some(body) if body.starts_with(REDIRECT) => {
+                ResponseTemplate::new(302).append_header("location", &body[REDIRECT.len()..])
+            }
+            Some(body) => ResponseTemplate::new(200)
+                .set_body_string(*body)
+                .append_header("content-type", "text/html"),
+            None => ResponseTemplate::new(404),
+        })
+        .mount(&mock)
+        .await;
+    mock
+}
+
+/// Run the sequential crawl from `seed_path` at depth 1 and return the page paths the server
+/// was asked for, sorted.
+async fn sequential_requests(mock: &MockServer, seed_path: &str) -> Vec<String> {
+    sequential_requests_to_depth(mock, seed_path, 1).await
+}
+
+/// Run the sequential crawl from `seed_path` to `depth` and return the page paths the server
+/// was asked for, sorted.
+async fn sequential_requests_to_depth(mock: &MockServer, seed_path: &str, depth: usize) -> Vec<String> {
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(depth),
+        max_pages: Some(20),
+        respect_robots_txt: false,
+        ..CrawlConfig::default()
+    }));
+    crawl_admitted(&engine, &format!("{}{seed_path}", mock.uri()))
+        .await
+        .expect("crawl must succeed");
+    let mut paths: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .filter(|path| path != "/robots.txt")
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// #607 on the sequential loop: the link key and the seed key keep a trailing slash.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_fetches_both_trailing_slash_twins() {
+    let mock = exact_path_site(&[
+        (
+            "/docs/",
+            r#"<html><body><a href="guide">file</a><a href="guide/">folder</a><a href="/docs">seed twin</a></body></html>"#,
+        ),
+        ("/docs", "<html><body>the file named docs</body></html>"),
+        ("/docs/guide", "<html><body>without the slash</body></html>"),
+        ("/docs/guide/", "<html><body>with the slash</body></html>"),
+    ])
+    .await;
+
+    assert_eq!(
+        sequential_requests(&mock, "/docs/").await,
+        ["/docs", "/docs/", "/docs/guide", "/docs/guide/"],
+        "the seed, its twin without the slash and both spellings of the link are four pages"
+    );
+}
+
+/// #615 on the sequential loop: three spellings of one escape are one page, also when the seed
+/// is one of the spellings.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_fetches_one_page_for_equivalent_escapes() {
+    let index = r#"<html><body><a href="/a-b">plain</a><a href="/a%2db">lower</a><a href="/a%2Db">upper</a><a href="/s-t">seed, plain</a></body></html>"#;
+    let mock = exact_path_site(&[
+        ("/s%2Dt", index),
+        ("/s-t", index),
+        ("/a-b", "<html><body>the same page</body></html>"),
+        ("/a%2db", "<html><body>the same page</body></html>"),
+        ("/a%2Db", "<html><body>the same page</body></html>"),
+    ])
+    .await;
+
+    assert_eq!(
+        sequential_requests(&mock, "/s%2Dt").await,
+        ["/a-b", "/s%2Dt"],
+        "the seed and the page are each requested once, with the first spelling"
+    );
+}
+
+/// #616 on the sequential loop: a fragment link on a page with a base address is followed.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_a_fragment_link_on_a_page_with_a_base_address() {
+    let mock = exact_path_site(&[
+        (
+            "/start/",
+            r##"<html><head><base href="/other/"></head><body><a href="#part">fragment</a><a href="leaf">leaf</a></body></html>"##,
+        ),
+        ("/other/", "<html><body>the page at /other/</body></html>"),
+        ("/other/leaf", "<html><body>the page at /other/leaf</body></html>"),
+    ])
+    .await;
+
+    assert_eq!(
+        sequential_requests(&mock, "/start/").await,
+        ["/other/", "/other/leaf", "/start/"],
+        "the fragment link points at the base address, which is another page"
+    );
+}
+
+/// The site of #629 on the sequential loop: a linked folder that redirects to its slash form,
+/// and a link that redirects to another spelling of its own address.
+///
+/// ~keep GUARD: the sequential loop follows a redirect with no policy, so it never asks the
+/// ~keep frontier about a redirect target and this passes at the base too. It pins that the
+/// ~keep loop keeps following these redirects.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_a_redirect_to_another_address_of_the_linked_page() {
+    let mock = exact_path_site(&[
+        (
+            "/",
+            r#"<html><body><a href="/docs">the docs</a><a href="/a-b">page</a></body></html>"#,
+        ),
+        ("/docs", "302 /docs/"),
+        (
+            "/docs/",
+            r#"<html><body>docs index <a href="guide">the guide</a></body></html>"#,
+        ),
+        ("/docs/guide", "<html><body>guide</body></html>"),
+        ("/a-b", "302 /a%2Db"),
+        ("/a%2Db", "<html><body>the page</body></html>"),
+    ])
+    .await;
+
+    assert_eq!(
+        sequential_requests_to_depth(&mock, "/", 2).await,
+        ["/", "/a%2Db", "/a-b", "/docs", "/docs/", "/docs/guide"],
+        "both redirects are followed, and the link on the folder page too"
+    );
+}
