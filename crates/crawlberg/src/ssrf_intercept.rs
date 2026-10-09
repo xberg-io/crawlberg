@@ -2994,6 +2994,11 @@ fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) -> Result<(),
 /// ~keep frame only as `openerFrameId` (measured on Chrome 154), so the opener is found among
 /// ~keep the targets as before.
 fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
+    // ~keep Chrome headless shell reports a structural tab before its page exists. Closing
+    // ~keep that container closes the page too; its context-bearing page is adopted separately.
+    if info.r#type == "tab" {
+        return None;
+    }
     let mut registry = lock(&shared.registry);
     let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
@@ -4925,6 +4930,24 @@ mod tests {
     /// The ids of the targets the registry holds for watched pages, in order.
     fn owned(registry: &Registry) -> Vec<&str> {
         registry.targets.iter().map(|(id, _)| id.inner().as_str()).collect()
+    }
+
+    #[test]
+    fn should_keep_a_structural_tab_out_of_the_pages_popup_close_set() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("CONTEXT");
+        lock(&shared.registry).register_context(context.clone(), None);
+        lock(&shared.registry)
+            .opened
+            .insert(page.root.clone(), Some(context.clone()));
+        let tab_event = in_context(target_created("TAB", "tab", None, None, None), &context);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        install_watch(&mut lock(&shared.registry), &page).expect("watch installs");
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
+        page.ending.store(true, Ordering::Release);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
     }
 
     /// A frame of a watched page that Chrome hosts in a target of its own is one of the page's
@@ -6980,19 +7003,6 @@ mod race_tests {
         close(browser).await;
     }
 
-    /// The id of the frame target whose URL starts with `prefix`, if `browser` has one.
-    async fn frame_target_of(browser: &Browser, prefix: &str) -> Option<TargetId> {
-        browser
-            .execute(GetTargetsParams::default())
-            .await
-            .ok()?
-            .result
-            .target_infos
-            .into_iter()
-            .find(|info| info.r#type == "iframe" && info.url.starts_with(prefix))
-            .map(|info| info.target_id)
-    }
-
     /// A loopback server on `a.localhost` answering every request with `body` as HTML, counting
     /// the requests for `/ok`.
     async fn frame_site(body: String) -> (String, Arc<AtomicUsize>) {
@@ -7025,13 +7035,14 @@ mod race_tests {
         (url, ok_hits)
     }
 
-    /// A page keeps a cross-site frame Chrome hosts in a target of its own: the frame's requests
+    /// A page keeps a cross-site frame: the frame's requests
     /// are judged by the page's policy, the park closes the page's popups and not the frame, and
     /// a stop of an external browser does not wait for it. The parked page is still open after
     /// the park.
     ///
     /// ~keep The frame is on `a.localhost`, a different site from the page's `localhost`, so
-    /// ~keep Chrome gives it a target of its own. Closing that target closes the page (measured on
+    /// ~keep Full Chrome can give it a target of its own; headless shell can keep it in-process.
+    /// ~keep Closing a frame target closes the page (measured on
     /// ~keep Chrome 154), which is what the park did to the page it was keeping.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_parked_page_keeps_its_cross_site_frame_and_stays_open() {
@@ -7071,18 +7082,28 @@ mod race_tests {
                  document.body.appendChild(frame); 1"
             ))
             .await;
-        let mut frame_target = None;
-        for _ in 0..50 {
-            frame_target = frame_target_of(&browser, "http://a.localhost").await;
-            if frame_target.is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
         let frame_allowed = served(&ok_hits).await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
+        let refused = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let refused = watch.refused_urls().await;
+                if refused.iter().any(|url| url == &denied) {
+                    break refused;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the frame must attempt its denied request");
         watch.park().await;
+        let frame_state = page
+            .evaluate("JSON.stringify({frame: document.querySelector('iframe') !== null, count: window.frames.length})")
+            .await;
+        let frame_kept = frame_state
+            .as_ref()
+            .ok()
+            .and_then(|value| value.clone().into_value::<String>().ok())
+            .is_some_and(|value| value.contains("\"frame\":true") && value.contains("\"count\":1"));
+        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
         let open_after_park = open_targets(&browser).await.contains(&root);
         let stopped = tokio::time::timeout(Duration::from_secs(15), firewall.stop())
             .await
@@ -7092,16 +7113,20 @@ mod race_tests {
         }
 
         assert!(
-            frame_target.is_some(),
-            "{test_name}: the cross-site frame must get a target of its own"
-        );
-        assert!(
             frame_allowed,
             "{test_name}: the frame's request to its own site must be allowed through"
         );
         assert!(
             frame_refused,
             "{test_name}: the frame's request to the denied address must be refused"
+        );
+        assert!(
+            refused.iter().any(|url| url == &denied),
+            "{test_name}: the policy must have checked and refused the frame's request, got {refused:?}"
+        );
+        assert!(
+            frame_kept,
+            "{test_name}: parking must keep the frame in the open page, got {frame_state:?}, page open {open_after_park}"
         );
         assert!(open_after_park, "{test_name}: parking must leave the page open");
         assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");
