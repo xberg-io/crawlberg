@@ -29,7 +29,9 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
 };
-use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
+use chromiumoxide::cdp::browser_protocol::page::{
+    ClientNavigationReason, EventFrameNavigated, EventFrameRequestedNavigation, EventFrameStoppedLoading, FrameId,
+};
 use chromiumoxide::cdp::browser_protocol::storage::{
     GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
 };
@@ -51,6 +53,28 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::net::userinfo;
 use crate::normalize::resolve_redirect;
 use crate::types::CrawlConfig;
+
+// ~keep Chrome still emits this deprecated event, but the generated CDP schema omits it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshScheduled {
+    frame_id: FrameId,
+    delay: f64,
+    reason: ClientNavigationReason,
+    url: String,
+}
+
+enum RefreshNavigation {
+    Scheduled(Arc<RefreshScheduled>),
+    Requested(Arc<EventFrameRequestedNavigation>),
+}
+
+impl chromiumoxide::types::MethodType for RefreshScheduled {
+    fn method_id() -> chromiumoxide::types::MethodId {
+        "Page.frameScheduledNavigation".into()
+    }
+}
+impl chromiumoxide::cdp::CustomEvent for RefreshScheduled {}
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
@@ -123,6 +147,7 @@ pub(crate) struct InterceptOutcome {
     redirects_followed: usize,
     /// Whether the main frame has sent the request of its first navigation.
     navigation_started: bool,
+    pending_refresh: Option<url::Url>,
     /// Set once the requested navigation is over: later navigations are not counted.
     navigation_ended: bool,
     /// ~keep Whether the check has dropped a main-frame navigation past the redirect limit or one
@@ -838,6 +863,7 @@ enum Command {
         Arc<WatchedPage>,
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
+        BoxStream<'static, Arc<RefreshNavigation>>,
         oneshot::Sender<Result<(), String>>,
     ),
     /// Cancellation cannot run async cleanup, so it hands disposal to the listener. ~keep
@@ -1457,6 +1483,18 @@ impl FirewallHandle {
             .event_listener::<EventLoadingFailed>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+        let scheduled = page
+            .event_listener::<RefreshScheduled>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register refresh listener: {e}")))?;
+        let requested = page
+            .event_listener::<EventFrameRequestedNavigation>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register requested navigation listener: {e}")))?;
+        let requested = Box::pin(futures::stream::select(
+            scheduled.map(|event| Arc::new(RefreshNavigation::Scheduled(event))),
+            requested.map(|event| Arc::new(RefreshNavigation::Requested(event))),
+        ));
         #[cfg(test)]
         if let Some(gate) = &self.shared.delays.watch_handoff_gate {
             lock(&gate.held).push(page.target_id().inner().clone());
@@ -1480,7 +1518,13 @@ impl FirewallHandle {
         });
         let (ack, enabled) = oneshot::channel();
         self.commands
-            .send(Command::Watch(Arc::clone(&watched), navigations, failures, ack))
+            .send(Command::Watch(
+                Arc::clone(&watched),
+                navigations,
+                failures,
+                requested,
+                ack,
+            ))
             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
         let watch = Watch {
             commands: self.commands.clone(),
@@ -2554,6 +2598,7 @@ async fn serve(
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
     let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
+    let mut refreshes: SelectAll<BoxStream<'static, (Arc<WatchedPage>, Arc<RefreshNavigation>)>> = SelectAll::new();
     // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
     // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
     let mut lifecycles: FuturesOrdered<BoxFuture<'_, ReconciledLifecycle>> = FuturesOrdered::new();
@@ -2623,10 +2668,10 @@ async fn serve(
                         }
                     }
                 }
-                Some(Command::Watch(_, _, _, ack)) if stopping.is_some() => {
+                Some(Command::Watch(_, _, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
-                Some(Command::Watch(page, navigated, failed, ack)) => {
+                Some(Command::Watch(page, navigated, failed, requested, ack)) => {
                     let mut registry = lock(&shared.registry);
                     if !registry.opened.contains_key(&page.root) {
                         drop(registry);
@@ -2643,6 +2688,7 @@ async fn serve(
                     drop(registry);
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
+                    refreshes.push(events_of(&page, requested));
                     let _ = ack.send(Ok(()));
                 }
                 Some(Command::End { page, close_page, done }) => {
@@ -2671,6 +2717,9 @@ async fn serve(
             Some((page, navigated)) = navigations.next(), if !navigations.is_empty() => {
                 record_commit(&page, &navigated);
             }
+            Some((page, requested)) = refreshes.next(), if !refreshes.is_empty() => {
+                record_refresh_request(&page, &requested);
+            }
             event = events.paused.next() => match event {
                 Some(event) => {
                     // ~keep Chrome sends a commit before any later paused response, and chromiumoxide
@@ -2678,6 +2727,9 @@ async fn serve(
                     // ~keep first and the committed loader is current when a response is recorded.
                     while let Some(Some((page, navigated))) = navigations.next().now_or_never() {
                         record_commit(&page, &navigated);
+                    }
+                    while let Some(Some((page, requested))) = refreshes.next().now_or_never() {
+                        record_refresh_request(&page, &requested);
                     }
                     #[cfg(test)]
                     {
@@ -3304,7 +3356,11 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
         Some(Owner::Watched(page)) => {
             let in_flight = paused.matched(page);
             let page = &in_flight.0;
-            let verdict = judge(shared, page, event, paused_at).await;
+            let verdict = if should_preserve_refresh_page(page, event) {
+                Verdict::Abort
+            } else {
+                judge(shared, page, event, paused_at).await
+            };
             let verdict = if page.ending.load(Ordering::Acquire) {
                 Verdict::Refuse
             } else {
@@ -3431,6 +3487,49 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         self.0.in_flight.fetch_sub(1, Ordering::AcqRel);
     }
+}
+
+fn record_refresh_request(page: &WatchedPage, navigation: &RefreshNavigation) {
+    let mut state = lock(&page.outcome);
+    match navigation {
+        RefreshNavigation::Scheduled(event) if event.frame_id == page.main_frame => {
+            state.pending_refresh = matches!(
+                event.reason,
+                ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+            )
+            .then_some(event.delay)
+            .filter(|delay| *delay >= 1.0)
+            .and_then(|_| refresh_request_key(&event.url));
+        }
+        RefreshNavigation::Requested(event)
+            if event.frame_id == page.main_frame
+                && !matches!(
+                    event.reason,
+                    ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+                ) =>
+        {
+            state.pending_refresh = None;
+        }
+        _ => {}
+    }
+}
+
+fn should_preserve_refresh_page(page: &WatchedPage, event: &EventRequestPaused) -> bool {
+    if is_response_stage(event) || event.frame_id != page.main_frame || event.resource_type != ResourceType::Document {
+        return false;
+    }
+    lock(&page.outcome)
+        .pending_refresh
+        .take()
+        .is_some_and(|target| Some(target) == refresh_request_key(&event.request.url))
+}
+
+// ~keep CDP scheduling includes fragments and userinfo; Fetch pauses the network URL without them.
+fn refresh_request_key(raw: &str) -> Option<url::Url> {
+    userinfo::parse(raw).map(|mut url| {
+        url.set_fragment(None);
+        url
+    })
 }
 
 async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> Verdict {

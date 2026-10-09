@@ -104,6 +104,20 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
             });
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if super::immediate_meta_refresh(&dom).is_none()
+        && let Some(target) = super::detect_meta_refresh(&dom)
+        && let Some(resolved) = fetchable_address(&target, base_url)
+        && !links.iter().any(|link| link.url == resolved.as_str())
+    {
+        links.push(LinkInfo {
+            url: resolved.into(),
+            text: String::new(),
+            link_type: classify_link(&target, base_url),
+            rel: None,
+            nofollow: false,
+        });
+    }
     links
 }
 

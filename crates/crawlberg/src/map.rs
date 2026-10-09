@@ -1357,7 +1357,7 @@ mod tests {
 
     #[tokio::test]
     async fn map_follows_a_meta_refresh_and_resolves_links_against_the_page_it_lands_on() {
-        // ~keep The crawl has no delay cap: it follows a refresh whatever its delay, so map does too.
+        // ~keep Delayed refreshes are discovered as links; only an immediate one replaces the page.
         for delay in ["0", "300"] {
             let mock = MockServer::start().await;
             let base = mock.uri();
@@ -1369,8 +1369,11 @@ mod tests {
 
             assert_eq!(
                 urls,
-                vec![format!("{base}/dir/x.html")],
-                "a meta refresh with delay {delay} must be followed, and the link resolved against the page it lands on"
+                vec![format!(
+                    "{base}/dir/{}",
+                    if delay == "0" { "x.html" } else { "page.html" }
+                )],
+                "only an immediate refresh replaces the mapped page"
             );
         }
     }
