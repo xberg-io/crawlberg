@@ -1102,10 +1102,6 @@ pub(crate) async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
     path
 }
 
-#[cfg_attr(
-    not(feature = "browser"),
-    expect(dead_code, reason = "the binding shutdown test requires the browser feature")
-)]
 pub(crate) fn chrome_process_count_for_profile(path: &std::path::Path) -> usize {
     processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)).len()
 }
