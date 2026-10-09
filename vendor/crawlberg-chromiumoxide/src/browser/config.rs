@@ -39,6 +39,7 @@ pub struct BrowserConfig {
 
     /// Launch the browser with a specific debugging port.
     pub(crate) port: u16,
+    pub(crate) private_pipe: bool,
 
     /// Path for Chrome or Chromium.
     ///
@@ -108,6 +109,7 @@ pub struct BrowserConfigBuilder {
     sandbox: bool,
     window_size: Option<(u32, u32)>,
     port: u16,
+    private_pipe: bool,
     executable: Option<PathBuf>,
     executation_detection: DetectionOptions,
     extensions: Vec<String>,
@@ -145,6 +147,7 @@ impl Default for BrowserConfigBuilder {
             sandbox: true,
             window_size: None,
             port: 0,
+            private_pipe: cfg!(unix),
             executable: None,
             executation_detection: DetectionOptions::default(),
             extensions: Vec::new(),
@@ -212,6 +215,13 @@ impl BrowserConfigBuilder {
 
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
+        self
+    }
+
+    /// Explicitly launch a WebSocket endpoint for a browser shared with external clients.
+    /// Launched Unix browsers otherwise use a private debugging pipe.
+    pub fn websocket_transport(mut self) -> Self {
+        self.private_pipe = false;
         self
     }
 
@@ -360,6 +370,7 @@ impl BrowserConfigBuilder {
             sandbox: self.sandbox,
             window_size: self.window_size,
             port: self.port,
+            private_pipe: self.private_pipe,
             executable,
             extensions: self.extensions,
             process_envs: self.process_envs,
@@ -388,7 +399,13 @@ impl BrowserConfig {
 
     /// The command that [`Self::launch`] spawns. A caller that stops the browser process itself
     /// changes the command first, with [`async_process::Command::kill_on_drop`].
+    ///
+    /// On Unix the command starts the browser on a private debugging pipe, unless the config asks
+    /// for a debugging port or for the WebSocket transport. The child that the command spawns
+    /// holds the caller's end of the pipe, and [`Browser::launch_with`](crate::Browser::launch_with)
+    /// speaks the protocol over it.
     pub fn command(&self) -> async_process::Command {
+        let pipe = self.private_pipe && self.port == 0;
         let mut builder = ArgsBuilder::new();
 
         if self.disable_default_args {
@@ -397,7 +414,10 @@ impl BrowserConfig {
             builder.args(DEFAULT_ARGS.clone()).args(self.args.clone());
         }
 
-        if !builder.has("remote-debugging-port") {
+        if pipe {
+            builder.remove("remote-debugging-port");
+            builder.arg(Arg::key("remote-debugging-pipe"));
+        } else if !builder.has("remote-debugging-port") {
             builder.arg(Arg::value("remote-debugging-port", self.port));
         }
 
@@ -471,6 +491,10 @@ impl BrowserConfig {
         // The browser gets no standard handle of the caller: it would hold a caller's pipe open
         // for as long as it runs.
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+        #[cfg(unix)]
+        if pipe {
+            cmd.debugging_pipe();
+        }
         cmd
     }
 }

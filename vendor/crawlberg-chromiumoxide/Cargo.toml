@@ -44,6 +44,9 @@ features = [
     "Win32_System_Threading",
 ]
 
+[target."cfg(unix)".dependencies.libc]
+version = "=0.2.189"
+
 [dependencies.async-tungstenite]
 version = "0.32"
 features = ["tokio-runtime"]
@@ -98,7 +101,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process"]
+features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process", "net", "io-util"]
 
 [dependencies.tracing]
 version = "0.1"

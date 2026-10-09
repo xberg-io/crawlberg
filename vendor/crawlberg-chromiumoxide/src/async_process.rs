@@ -11,6 +11,8 @@ use tokio::process;
 pub struct Command {
     inner: process::Command,
     kill_on_drop: bool,
+    #[cfg(unix)]
+    debugging_pipe: bool,
 }
 
 impl Command {
@@ -25,6 +27,8 @@ impl Command {
         Self {
             inner,
             kill_on_drop: true,
+            #[cfg(unix)]
+            debugging_pipe: false,
         }
     }
 
@@ -75,9 +79,54 @@ impl Command {
         self
     }
 
+    /// Give the child a private debugging pipe on the descriptors 3 and 4, where a browser started
+    /// with `--remote-debugging-pipe` reads and writes the protocol. The spawned [`Child`] holds
+    /// this end of the pipe.
+    #[cfg(unix)]
+    pub(crate) fn debugging_pipe(&mut self) -> &mut Self {
+        self.debugging_pipe = true;
+        self
+    }
+
     pub fn spawn(&mut self) -> std::io::Result<Child> {
+        #[cfg(unix)]
+        let pipe = if self.debugging_pipe {
+            Some(self.attach_debugging_pipe()?)
+        } else {
+            None
+        };
         let (inner, tree) = spawn_in_tree(&mut self.inner)?;
-        Ok(Child::new(inner, tree, self.kill_on_drop))
+        Ok(Child::new(
+            inner,
+            tree,
+            self.kill_on_drop,
+            #[cfg(unix)]
+            pipe,
+        ))
+    }
+
+    /// Make the pipe of the next child and return this end of it.
+    #[cfg(unix)]
+    fn attach_debugging_pipe(&mut self) -> std::io::Result<std::os::unix::net::UnixStream> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let (parent, child) = std::os::unix::net::UnixStream::pair()?;
+        // SAFETY: duplicating above Chrome's reserved fds avoids collisions during pre_exec. ~keep
+        let fd = unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fcntl returned a new descriptor whose sole owner is this value. ~keep
+        let descriptor = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: only async-signal-safe descriptor operations run between fork and exec. ~keep
+        unsafe {
+            self.inner.pre_exec(move || {
+                if libc::dup2(descriptor.as_raw_fd(), 3) < 0 || libc::dup2(descriptor.as_raw_fd(), 4) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        Ok(parent)
     }
 }
 
@@ -90,11 +139,19 @@ pub struct Child {
     spawner: u32,
     /// Whether the runtime kills the child when this handle is dropped.
     killed_on_drop: bool,
+    /// This end of the private debugging pipe, for a child that was started on one.
+    #[cfg(unix)]
+    debugging_pipe: Option<std::os::unix::net::UnixStream>,
 }
 
 /// Wrapper for an async child process.
 impl Child {
-    fn new(mut inner: process::Child, tree: Option<ProcessTree>, killed_on_drop: bool) -> Self {
+    fn new(
+        mut inner: process::Child,
+        tree: Option<ProcessTree>,
+        killed_on_drop: bool,
+        #[cfg(unix)] debugging_pipe: Option<std::os::unix::net::UnixStream>,
+    ) -> Self {
         let stderr = inner.stderr.take();
         Self {
             inner,
@@ -102,7 +159,16 @@ impl Child {
             tree,
             spawner: std::process::id(),
             killed_on_drop,
+            #[cfg(unix)]
+            debugging_pipe,
         }
+    }
+
+    /// Take this end of the private debugging pipe. `None` for a child that was started with a
+    /// debugging port, and after the first call.
+    #[cfg(unix)]
+    pub(crate) fn take_debugging_pipe(&mut self) -> Option<std::os::unix::net::UnixStream> {
+        self.debugging_pipe.take()
     }
 
     /// Whether the runtime kills the child when this handle is dropped. `false` when the caller
