@@ -42,32 +42,34 @@ fn build_browser_config(
     }
 }
 
-/// Merge a JSON config string (or @file.json reference) into a CrawlConfig.
-/// JSON values override defaults but do not override CLI flags that were explicitly set.
+fn merge_json_value(config: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (config, overlay) {
+        (serde_json::Value::Object(config), serde_json::Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                if let Some(existing) = config.get_mut(&key) {
+                    merge_json_value(existing, value);
+                } else {
+                    config.insert(key, value);
+                }
+            }
+        }
+        (config, overlay) => *config = overlay,
+    }
+}
+
+// ~keep Preserve the raw overlay: deserializing it first fills defaults that erase CLI flags.
 fn merge_json_config(config: &mut CrawlConfig, config_str: &str) -> Result<(), Box<dyn std::error::Error>> {
     let json_text = if let Some(path) = config_str.strip_prefix('@') {
         std::fs::read_to_string(path)?
     } else {
         config_str.to_string()
     };
-
-    let json: serde_json::Value = serde_json::from_str(&json_text)?;
-
-    let partial: CrawlConfig = serde_json::from_value(json)?;
-
-    let mut config_json = serde_json::to_value(config.clone())?;
-    let partial_json = serde_json::to_value(partial)?;
-
-    if let (serde_json::Value::Object(config_map), serde_json::Value::Object(partial_map)) =
-        (&mut config_json, partial_json)
-    {
-        for (k, v) in partial_map {
-            if !v.is_null() {
-                config_map.insert(k, v);
-            }
-        }
+    let overlay: serde_json::Value = serde_json::from_str(&json_text)?;
+    if !overlay.is_object() {
+        return Err("config must be a JSON object".into());
     }
-
+    let mut config_json = serde_json::to_value(config.clone())?;
+    merge_json_value(&mut config_json, overlay);
     *config = serde_json::from_value(config_json)?;
     Ok(())
 }
@@ -551,6 +553,38 @@ mod tests {
         merge_json_config(&mut config, r#"{"max_depth": 1}"#).expect("valid config");
         assert_eq!(config.max_concurrent, Some(4));
         assert_eq!(config.max_depth, Some(1));
+    }
+
+    #[test]
+    fn merge_json_config_preserves_browser_flags_and_nested_settings() {
+        let mut config = CrawlConfig {
+            browser: build_browser_config(
+                CliBrowserMode::Always,
+                Some("ws://localhost/browser".into()),
+                DEFAULT_TIMEOUT,
+            ),
+            ..Default::default()
+        };
+        merge_json_config(
+            &mut config,
+            r#"{"ssrf":{"deny_private":false},"browser":{"timeout":1200}}"#,
+        )
+        .expect("valid partial config");
+        assert_eq!(config.browser.mode, BrowserMode::Always);
+        assert_eq!(config.browser.endpoint.as_deref(), Some("ws://localhost/browser"));
+        assert_eq!(config.browser.timeout, Duration::from_millis(1200));
+        assert!(!config.ssrf.deny_private);
+    }
+
+    #[test]
+    fn merge_json_config_applies_explicit_null_and_rejects_non_object() {
+        let mut config = CrawlConfig {
+            max_depth: Some(2),
+            ..Default::default()
+        };
+        merge_json_config(&mut config, r#"{"max_depth":null}"#).expect("valid null override");
+        assert_eq!(config.max_depth, None);
+        assert!(merge_json_config(&mut config, "[]").is_err());
     }
 
     #[test]
