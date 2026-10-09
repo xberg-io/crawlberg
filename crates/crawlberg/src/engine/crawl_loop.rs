@@ -103,6 +103,7 @@ impl CrawlEngine {
         seed: &super::SeedUrl,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
+        let original_url = seed.as_str().to_owned();
         let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, seed.as_str());
         let client = build_client(&self.config)?;
         let bounds = CrawlBounds::resolve(&self.config, &seed_url)?;
@@ -156,7 +157,7 @@ impl CrawlEngine {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         };
 
-        self.seed_frontier(&final_url, &mut state).await?;
+        self.seed_frontier(&final_url, &original_url, &mut state).await?;
 
         // ~keep The seed keeps flowing through the frontier and the loop so that budget,
         // streaming, max_pages and filter accounting stay in exactly one place; only its
@@ -194,12 +195,18 @@ impl CrawlEngine {
     }
 
     /// Put the resolved seed on the frontier as the depth-0 entry, marking it seen first.
-    async fn seed_frontier(&self, final_url: &str, state: &mut CrawlState) -> Result<(), CrawlError> {
+    async fn seed_frontier(
+        &self,
+        final_url: &str,
+        original_url: &str,
+        state: &mut CrawlState,
+    ) -> Result<(), CrawlError> {
         let dedup_key = normalize_url_for_dedup(final_url, self.config.dedup_include_query);
         self.frontier.mark_seen(&dedup_key).await?;
         self.push_to_frontier(
             FrontierEntry {
                 url: final_url.to_owned(),
+                original_url: Some(original_url.to_owned()),
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,

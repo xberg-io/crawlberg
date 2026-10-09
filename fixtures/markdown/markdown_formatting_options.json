@@ -1,0 +1,64 @@
+{
+	"id": "markdown_formatting_options",
+	"description": "Content settings control paragraph lines, list markers, emphasis, tables, and inline heading images",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-formatting-options",
+		"title": "Configure Markdown formatting"
+	},
+	"tags": [
+		"markdown",
+		"regression"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<p>line one\nline two</p><ul><li>a<ul><li>b</li></ul></li></ul><p><em>em</em> <strong>strong</strong></p><table><tr><th>Name</th><th>Id</th></tr><tr><td>Cobalt</td><td>4217</td></tr></table><h2>Chart <img src=\"https://images.example/icon.png\" alt=\"icon\"></h2>"
+			}
+		],
+		"config": {
+			"content": {
+				"extract_metadata": false,
+				"strip_newlines": true,
+				"bullets": "*",
+				"list_indent_width": 4,
+				"strong_em_symbol": "_",
+				"compact_tables": true,
+				"keep_inline_images_in": [
+					"h2"
+				]
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "line one line two"
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "* a\n    * b"
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "_em_ __strong__"
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "| Name | Id |\n| --- | --- |\n| Cobalt | 4217 |"
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "## Chart ![icon](https://images.example/icon.png)"
+		}
+	]
+}

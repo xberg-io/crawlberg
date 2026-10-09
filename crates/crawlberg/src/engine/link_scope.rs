@@ -124,6 +124,7 @@ mod tests {
     fn link(link_type: LinkType) -> LinkInfo {
         LinkInfo {
             url: String::new(),
+            original_url: String::new(),
             text: String::new(),
             link_type,
             rel: None,

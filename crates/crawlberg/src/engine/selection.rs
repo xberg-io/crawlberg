@@ -31,6 +31,7 @@ mod take_selected_tests {
     fn entry(url: &str) -> FrontierEntry {
         FrontierEntry {
             url: url.to_owned(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,

@@ -14,9 +14,9 @@ use crate::telemetry::attributes::{CRAWL_DEPTH, CRAWL_LINK_TYPE, CRAWL_PARENT_UR
 use crate::traits::*;
 use crate::types::*;
 
-/// Outcome of validating one discovered link: `(url, is_document_link, depth)` when it may be
+/// Outcome of validating one discovered link: `(url, original_url, is_document_link, depth)` when it may be
 /// enqueued, or `(url, reason)` when it was rejected.
-type ValidatedLink = Result<(String, bool, usize), (String, String)>;
+type ValidatedLink = Result<(String, String, bool, usize), (String, String)>;
 
 impl CrawlEngine {
     /// Discover links from a page and add unseen ones to the working set.
@@ -53,7 +53,7 @@ impl CrawlEngine {
         links: &[LinkInfo],
         parent: &ParentPage<'_>,
         context: &LoopContext<'_>,
-    ) -> Result<Vec<(String, bool, usize)>, CrawlError> {
+    ) -> Result<Vec<(String, String, bool, usize)>, CrawlError> {
         let parent_doc_depth = parent.doc_depth;
         let mut candidates = Vec::new();
         let link_cap = self.config.max_links_per_page.unwrap_or(DEFAULT_MAX_LINKS_PER_PAGE);
@@ -97,7 +97,7 @@ impl CrawlEngine {
             // ~keep Mark seen before SSRF validation so concurrent discovery cannot enqueue dedup-equivalent URLs.
             if !self.frontier.is_seen(&dedup_key).await? {
                 self.frontier.mark_seen(&dedup_key).await?;
-                candidates.push((link_url, is_doc_link, child_depth));
+                candidates.push((link_url, link.original_url.clone(), is_doc_link, child_depth));
             }
         }
 
@@ -115,7 +115,7 @@ impl CrawlEngine {
 
         for result in validated {
             match result {
-                Ok((link_url, is_doc_link, child_depth)) => {
+                Ok((link_url, original_url, is_doc_link, child_depth)) => {
                     let child_doc_depth: u32 = if is_doc_link { parent_doc_depth + 1 } else { 0 };
                     let priority = self.strategy.score_url(&link_url, child_depth);
 
@@ -138,6 +138,7 @@ impl CrawlEngine {
                     self.push_to_frontier(
                         FrontierEntry {
                             url: link_url.clone(),
+                            original_url: Some(original_url),
                             depth: child_depth,
                             doc_depth: child_doc_depth,
                             priority,
@@ -173,20 +174,27 @@ const SSRF_VALIDATION_CONCURRENCY: usize = 16;
 /// nondeterministic and the documented breadth-first traversal unreproducible.
 /// Validation is not spawned: `validate_url` awaits `tokio::net::lookup_host`, which
 /// offloads the resolver itself, so the loop thread is never blocked.
-async fn validate_link_candidates(policy: &SsrfPolicy, candidates: Vec<(String, bool, usize)>) -> Vec<ValidatedLink> {
-    futures::stream::iter(candidates.into_iter().map(|(link_url, is_doc_link, child_depth)| {
-        let ssrf_policy = policy.clone();
-        async move {
-            let Ok(url_obj) = url::Url::parse(&link_url) else {
-                return Err((link_url, "invalid URL format".to_owned()));
-            };
+async fn validate_link_candidates(
+    policy: &SsrfPolicy,
+    candidates: Vec<(String, String, bool, usize)>,
+) -> Vec<ValidatedLink> {
+    futures::stream::iter(
+        candidates
+            .into_iter()
+            .map(|(link_url, original_url, is_doc_link, child_depth)| {
+                let ssrf_policy = policy.clone();
+                async move {
+                    let Ok(url_obj) = url::Url::parse(&link_url) else {
+                        return Err((link_url, "invalid URL format".to_owned()));
+                    };
 
-            match validate_url(&url_obj, &ssrf_policy).await {
-                Ok(_) => Ok((link_url, is_doc_link, child_depth)),
-                Err(e) => Err((link_url, e.to_string())),
-            }
-        }
-    }))
+                    match validate_url(&url_obj, &ssrf_policy).await {
+                        Ok(_) => Ok((link_url, original_url, is_doc_link, child_depth)),
+                        Err(e) => Err((link_url, e.to_string())),
+                    }
+                }
+            }),
+    )
     .buffered(SSRF_VALIDATION_CONCURRENCY)
     .collect()
     .await
