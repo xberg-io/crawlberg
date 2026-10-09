@@ -32,6 +32,9 @@ pub fn is_saved_profile_refusal(message: &str) -> bool {
 /// ~keep Classify both Snap binaries and distro launcher scripts that delegate to Snap.
 #[cfg(unix)]
 pub fn is_snap_executable(executable: &std::path::Path) -> bool {
+    if executable.starts_with("/snap") {
+        return true;
+    }
     let resolved = std::fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
     if resolved.starts_with("/snap") {
         return true;
