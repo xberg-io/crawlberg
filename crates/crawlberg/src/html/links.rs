@@ -128,14 +128,16 @@ fn resolve_original_url(href: &str, base: &Url, resolved: &Url) -> String {
     use url::Position;
     let reference = href
         .split_once(':')
-        .filter(|(scheme, rest)| scheme.eq_ignore_ascii_case(base.scheme()) && !rest.starts_with("//"))
+        .filter(|(scheme, rest)| scheme.eq_ignore_ascii_case(base.scheme()) && !starts_with_authority(rest))
         .map_or(href, |(_, rest)| rest);
     let origin = &base[..Position::BeforePath];
-    let original = if reference.starts_with("//") {
+    let original = if reference.is_empty() {
+        base[..Position::BeforeFragment].to_owned()
+    } else if starts_with_authority(reference) {
         format!("{}:{reference}", base.scheme())
     } else if Url::parse(reference).is_ok_and(|url| url.has_host()) {
         reference.to_owned()
-    } else if reference.starts_with('/') {
+    } else if reference.starts_with(['/', '\\']) {
         format!("{origin}{reference}")
     } else if reference.starts_with('?') {
         format!("{}{reference}", &base[..Position::AfterPath])
@@ -153,6 +155,13 @@ fn resolve_original_url(href: &str, base: &Url, resolved: &Url) -> String {
     } else {
         original
     }
+}
+
+fn starts_with_authority(reference: &str) -> bool {
+    reference
+        .as_bytes()
+        .get(..2)
+        .is_some_and(|prefix| prefix.iter().all(|byte| matches!(byte, b'/' | b'\\')))
 }
 
 fn remove_original_userinfo(original: &str) -> Option<String> {
@@ -213,9 +222,18 @@ mod tests {
             ("../next", "https://example.com/docs/../next"),
             ("https:child", "https://example.com/docs/child"),
             ("https:/child", "https://example.com/child"),
+            (r"https:\child", r"https://example.com\child"),
+            (r"\child", r"https://example.com\child"),
+            ("https:", "https://example.com/docs/page?old=1"),
+            (r"https:\\other.test/path", r"https:\\other.test/path"),
+            (r"https:/\other.test/path", r"https:/\other.test/path"),
+            (r"https:\/other.test/path", r"https:\/other.test/path"),
             ("?q=raw space", "https://example.com/docs/page?q=raw space"),
             ("#part", "https://example.com/docs/page?old=1#part"),
             ("//other.test/raw space", "https://other.test/raw space"),
+            (r"\\other.test/path", r"https:\\other.test/path"),
+            (r"/\other.test/path", r"https:/\other.test/path"),
+            (r"\/other.test/path", r"https:\/other.test/path"),
             ("https://user:secret@other.test/naïve", "https://other.test/naïve"),
         ];
         for (href, expected) in cases {
