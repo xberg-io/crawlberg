@@ -19,6 +19,12 @@ title: "Changelog"
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+### Added
+
+- Add the `ConversionFailed` error for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Every binding has it as its own error
+  class, the API server reports it as `CONVERSION_FAILED` with status 500, and the MCP server
+  returns it as a tool error.
 
 ### Changed
 
@@ -91,6 +97,12 @@ title: "Changelog"
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl.
+- Do not convert a binary or PDF response in a scrape. Its `markdown` is empty and `was_skipped`
+  is set, as in a crawl.
 
 ## [1.10.2] - 2026-10-06
 

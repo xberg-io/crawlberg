@@ -150,7 +150,7 @@ async fn convert_on_blocking_task(
 /// The error for a page that has no Markdown because its conversion failed.
 fn conversion_failure(document_url: &Url, cause: impl std::error::Error + Send + Sync + 'static) -> CrawlError {
     let page = crate::net::redact_url_credentials(document_url.as_str());
-    CrawlError::other_with_source(format!("could not convert {page} to Markdown: {cause}"), cause)
+    CrawlError::conversion_failed_with_source(format!("could not convert {page} to Markdown: {cause}"), cause)
 }
 
 #[cfg(test)]
@@ -243,7 +243,7 @@ mod tests {
             .await
             .expect_err("a page the converter refuses has no Markdown");
 
-        assert!(matches!(error, CrawlError::Other { .. }), "got: {error:?}");
+        assert!(matches!(error, CrawlError::ConversionFailed { .. }), "got: {error:?}");
         let message = error.to_string();
         assert!(
             message.contains("example.com/docs/page to Markdown") && message.contains("zip archive"),
@@ -268,7 +268,7 @@ mod tests {
             .await
             .expect_err("a conversion that panics has no Markdown");
 
-        assert!(matches!(error, CrawlError::Other { .. }), "got: {error:?}");
+        assert!(matches!(error, CrawlError::ConversionFailed { .. }), "got: {error:?}");
         let message = error.to_string();
         assert!(
             message.contains("could not convert https://example.com/ to Markdown") && message.contains("panicked"),
