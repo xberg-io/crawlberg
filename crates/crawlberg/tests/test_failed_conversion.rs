@@ -175,7 +175,10 @@ async fn a_batch_crawl_reports_the_seed_that_cannot_be_converted() {
     assert_eq!(of(&good).pages.len(), 1, "the converted seed is a page");
     assert!(of(&good).error.is_none(), "the converted seed has no error");
     assert!(of(&refused).pages.is_empty(), "the refused seed is not a page");
-    let error = of(&refused).error.as_deref().expect("the refused seed is the error of its crawl");
+    let error = of(&refused)
+        .error
+        .as_deref()
+        .expect("the refused seed is the error of its crawl");
     assert_failed_conversion(error, &refused);
 }
 
@@ -289,6 +292,9 @@ async fn a_crawl_whose_seed_cannot_be_converted_reports_it_as_its_error() {
     let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
 
     assert!(result.pages.is_empty(), "a refused seed is not a page");
-    let error = result.error.as_deref().expect("a refused seed is the error of the crawl");
+    let error = result
+        .error
+        .as_deref()
+        .expect("a refused seed is the error of the crawl");
     assert_failed_conversion(error, &mock.uri());
 }

@@ -614,7 +614,9 @@ async fn sequential_crawl_reports_a_page_that_cannot_be_converted() {
         .await
         .expect("a seed that cannot be converted is still a completed crawl");
     assert!(result.pages.is_empty(), "a seed that cannot be converted is not a page");
-    let error = result.error.expect("a depth-0 failure must surface as CrawlResult::error");
+    let error = result
+        .error
+        .expect("a depth-0 failure must surface as CrawlResult::error");
     assert!(
         error.starts_with("conversion_failed: could not convert ") && error.contains("zip archive"),
         "the error starts with the tag of a failed conversion and says why, got: {error}"
