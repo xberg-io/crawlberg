@@ -1938,6 +1938,12 @@ const _: fn() = || {
         let _: Option<i64> = ContentConfig.max_depth;
         let _: bool = ContentConfig.wrap;
         let _: i64 = ContentConfig.wrap_width;
+        let _: bool = ContentConfig.strip_newlines;
+        let _: String = ContentConfig.bullets;
+        let _: i64 = ContentConfig.list_indent_width;
+        let _: String = ContentConfig.strong_em_symbol;
+        let _: bool = ContentConfig.compact_tables;
+        let _: Vec<String> = ContentConfig.keep_inline_images_in;
         let _: bool = ContentConfig.include_document_structure;
         let _: bool = ContentConfig.extract_metadata;
     }
@@ -2085,6 +2091,7 @@ const _: fn() = || {
     {
         let CrawlPageResult = None::<crate::CrawlPageResult>.unwrap();
         let _: String = CrawlPageResult.url;
+        let _: String = CrawlPageResult.original_url;
         let _: String = CrawlPageResult.normalized_url;
         let _: i64 = CrawlPageResult.status_code;
         let _: String = CrawlPageResult.content_type;
@@ -2214,6 +2221,7 @@ const _: fn() = || {
     {
         let LinkInfo = None::<crate::LinkInfo>.unwrap();
         let _: String = LinkInfo.url;
+        let _: String = LinkInfo.original_url;
         let _: String = LinkInfo.text;
         let _: crate::LinkType = LinkInfo.link_type;
         let _: Option<String> = LinkInfo.rel;
@@ -2752,6 +2760,12 @@ impl SseDecode for crate::ContentConfig {
         let mut var_maxDepth = <Option<i64>>::sse_decode(deserializer);
         let mut var_wrap = <bool>::sse_decode(deserializer);
         let mut var_wrapWidth = <i64>::sse_decode(deserializer);
+        let mut var_stripNewlines = <bool>::sse_decode(deserializer);
+        let mut var_bullets = <String>::sse_decode(deserializer);
+        let mut var_listIndentWidth = <i64>::sse_decode(deserializer);
+        let mut var_strongEmSymbol = <String>::sse_decode(deserializer);
+        let mut var_compactTables = <bool>::sse_decode(deserializer);
+        let mut var_keepInlineImagesIn = <Vec<String>>::sse_decode(deserializer);
         let mut var_includeDocumentStructure = <bool>::sse_decode(deserializer);
         let mut var_extractMetadata = <bool>::sse_decode(deserializer);
         return crate::ContentConfig {
@@ -2766,6 +2780,12 @@ impl SseDecode for crate::ContentConfig {
             max_depth: var_maxDepth,
             wrap: var_wrap,
             wrap_width: var_wrapWidth,
+            strip_newlines: var_stripNewlines,
+            bullets: var_bullets,
+            list_indent_width: var_listIndentWidth,
+            strong_em_symbol: var_strongEmSymbol,
+            compact_tables: var_compactTables,
+            keep_inline_images_in: var_keepInlineImagesIn,
             include_document_structure: var_includeDocumentStructure,
             extract_metadata: var_extractMetadata,
         };
@@ -3051,6 +3071,7 @@ impl SseDecode for crate::CrawlPageResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_url = <String>::sse_decode(deserializer);
+        let mut var_originalUrl = <String>::sse_decode(deserializer);
         let mut var_normalizedUrl = <String>::sse_decode(deserializer);
         let mut var_statusCode = <i64>::sse_decode(deserializer);
         let mut var_contentType = <String>::sse_decode(deserializer);
@@ -3078,6 +3099,7 @@ impl SseDecode for crate::CrawlPageResult {
         let mut var_ssrfRefusedUrls = <Vec<String>>::sse_decode(deserializer);
         return crate::CrawlPageResult {
             url: var_url,
+            original_url: var_originalUrl,
             normalized_url: var_normalizedUrl,
             status_code: var_statusCode,
             content_type: var_contentType,
@@ -3408,12 +3430,14 @@ impl SseDecode for crate::LinkInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_url = <String>::sse_decode(deserializer);
+        let mut var_originalUrl = <String>::sse_decode(deserializer);
         let mut var_text = <String>::sse_decode(deserializer);
         let mut var_linkType = <crate::LinkType>::sse_decode(deserializer);
         let mut var_rel = <Option<String>>::sse_decode(deserializer);
         let mut var_nofollow = <bool>::sse_decode(deserializer);
         return crate::LinkInfo {
             url: var_url,
+            original_url: var_originalUrl,
             text: var_text,
             link_type: var_linkType,
             rel: var_rel,
@@ -4765,6 +4789,12 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.max_depth.into_into_dart().into_dart(),
             self.0.wrap.into_into_dart().into_dart(),
             self.0.wrap_width.into_into_dart().into_dart(),
+            self.0.strip_newlines.into_into_dart().into_dart(),
+            self.0.bullets.into_into_dart().into_dart(),
+            self.0.list_indent_width.into_into_dart().into_dart(),
+            self.0.strong_em_symbol.into_into_dart().into_dart(),
+            self.0.compact_tables.into_into_dart().into_dart(),
+            self.0.keep_inline_images_in.into_into_dart().into_dart(),
             self.0.include_document_structure.into_into_dart().into_dart(),
             self.0.extract_metadata.into_into_dart().into_dart(),
         ]
@@ -4982,6 +5012,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlPageResult> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.0.url.into_into_dart().into_dart(),
+            self.0.original_url.into_into_dart().into_dart(),
             self.0.normalized_url.into_into_dart().into_dart(),
             self.0.status_code.into_into_dart().into_dart(),
             self.0.content_type.into_into_dart().into_dart(),
@@ -5327,6 +5358,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::LinkInfo> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.0.url.into_into_dart().into_dart(),
+            self.0.original_url.into_into_dart().into_dart(),
             self.0.text.into_into_dart().into_dart(),
             self.0.link_type.into_into_dart().into_dart(),
             self.0.rel.into_into_dart().into_dart(),
@@ -5945,6 +5977,12 @@ impl SseEncode for crate::ContentConfig {
         <Option<i64>>::sse_encode(self.max_depth, serializer);
         <bool>::sse_encode(self.wrap, serializer);
         <i64>::sse_encode(self.wrap_width, serializer);
+        <bool>::sse_encode(self.strip_newlines, serializer);
+        <String>::sse_encode(self.bullets, serializer);
+        <i64>::sse_encode(self.list_indent_width, serializer);
+        <String>::sse_encode(self.strong_em_symbol, serializer);
+        <bool>::sse_encode(self.compact_tables, serializer);
+        <Vec<String>>::sse_encode(self.keep_inline_images_in, serializer);
         <bool>::sse_encode(self.include_document_structure, serializer);
         <bool>::sse_encode(self.extract_metadata, serializer);
     }
@@ -6157,6 +6195,7 @@ impl SseEncode for crate::CrawlPageResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.url, serializer);
+        <String>::sse_encode(self.original_url, serializer);
         <String>::sse_encode(self.normalized_url, serializer);
         <i64>::sse_encode(self.status_code, serializer);
         <String>::sse_encode(self.content_type, serializer);
@@ -6426,6 +6465,7 @@ impl SseEncode for crate::LinkInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.url, serializer);
+        <String>::sse_encode(self.original_url, serializer);
         <String>::sse_encode(self.text, serializer);
         <crate::LinkType>::sse_encode(self.link_type, serializer);
         <Option<String>>::sse_encode(self.rel, serializer);

@@ -22,7 +22,13 @@ use crate::types::*;
 /// strategy logic sequentially using `.await` only — no concurrency primitives.
 impl CrawlEngine {
     /// Convert a `ScrapeResult` into a `CrawlPageResult` at the given depth.
-    fn scrape_to_crawl_page(scrape: ScrapeResult, url: &str, depth: usize, base_host: &str) -> CrawlPageResult {
+    fn scrape_to_crawl_page(
+        scrape: ScrapeResult,
+        url: &str,
+        original_url: &str,
+        depth: usize,
+        base_host: &str,
+    ) -> CrawlPageResult {
         let domain = url::Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(|h| h.to_owned()))
@@ -30,6 +36,7 @@ impl CrawlEngine {
         let stayed_on_domain = domain == base_host;
         CrawlPageResult {
             url: url.to_owned(),
+            original_url: original_url.to_owned(),
             normalized_url: crate::normalize::normalize_url(url),
             status_code: scrape.status_code,
             content_type: scrape.content_type,
@@ -86,7 +93,7 @@ impl CrawlEngine {
         self.config.validate()?;
 
         let plan = SequentialPlan::new(url, &self.config)?;
-        self.seed_sequential_frontier(url).await?;
+        self.seed_sequential_frontier(url, seed.as_str()).await?;
 
         let mut state = SequentialState::new(url);
         if let Some(blocked) = self.drive_sequential_loop(&plan, &mut state).await? {
@@ -167,12 +174,13 @@ impl CrawlEngine {
     }
 
     /// Put the seed on the frontier as the depth-0 entry, marking it seen first.
-    async fn seed_sequential_frontier(&self, url: &str) -> Result<(), CrawlError> {
+    async fn seed_sequential_frontier(&self, url: &str, original_url: &str) -> Result<(), CrawlError> {
         let seed_dedup = crate::normalize::normalize_url_for_dedup(url, self.config.dedup_include_query);
         self.frontier.mark_seen(&seed_dedup).await?;
         self.frontier
             .push(FrontierEntry {
                 url: url.to_owned(),
+                original_url: Some(original_url.to_owned()),
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
@@ -257,7 +265,13 @@ impl CrawlEngine {
             }
 
             let page_url = scrape.final_url.clone();
-            let page = Self::scrape_to_crawl_page(scrape, &page_url, entry.depth, &plan.base_host);
+            let page = Self::scrape_to_crawl_page(
+                scrape,
+                &page_url,
+                entry.original_url.as_deref().unwrap_or(&entry.url),
+                entry.depth,
+                &plan.base_host,
+            );
 
             let Some(page) = self.content_filter.filter(page).await? else {
                 state.urls_filtered += 1;
@@ -416,7 +430,7 @@ impl CrawlEngine {
 
             let is_doc_link = link.link_type == LinkType::Document;
             if self
-                .enqueue_discovered_link(&link_url, is_doc_link, entry, state)
+                .enqueue_discovered_link(&link_url, &link.original_url, is_doc_link, entry, state)
                 .await?
             {
                 enqueued_from_page += 1;
@@ -430,6 +444,7 @@ impl CrawlEngine {
     async fn enqueue_discovered_link(
         &self,
         link_url: &str,
+        original_url: &str,
         is_doc_link: bool,
         entry: &FrontierEntry,
         state: &mut SequentialState,
@@ -449,6 +464,7 @@ impl CrawlEngine {
         self.frontier
             .push(FrontierEntry {
                 url: link_url.to_owned(),
+                original_url: Some(original_url.to_owned()),
                 depth: child_depth,
                 doc_depth: child_doc_depth,
                 priority,
@@ -667,3 +683,7 @@ fn passes_robots(entry: &FrontierEntry, robots: &crate::helpers::RobotsOutcome, 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "wasm_crawl_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "original_url_tests.rs"]
+mod original_url_tests;

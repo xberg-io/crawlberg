@@ -30,6 +30,10 @@ title: "Changelog"
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- Content conversion options for paragraph newlines, list bullets and indentation, emphasis
+  markers, compact tables, and inline images in headings. (#612)
+- `original_url` preserves the resolved link spelling on crawl pages and discovered links,
+  separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
 
 ### Changed
 
