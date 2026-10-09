@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@xberg-io/crawlberg-wasm':
-        specifier: ^1.7.1
-        version: 1.7.1
+        specifier: ^1.10.3
+        version: 1.10.3
       rollup:
         specifier: ^4.53.3
         version: 4.61.1
@@ -313,8 +313,8 @@ packages:
   '@vitest/spy@5.0.1':
     resolution: {integrity: sha512-rbto/mF/SGERxEgYOek7Xm6B9b+y+mVoo+f4b2LymYO8zM1b7uB5nHuhVMTP2hxdzgxvGiZYGxGIaMvL5y180Q==}
 
-  '@xberg-io/crawlberg-wasm@1.7.1':
-    resolution: {integrity: sha512-GJQ25A3XD6SXm05fcBDX1EOlbio4Da0ZBXepBInDP1KE6hVU0/vV+vluG5b6uykDkYxRE9vLfzovJO9MogOyKA==}
+  '@xberg-io/crawlberg-wasm@1.10.3':
+    resolution: {integrity: sha512-DEyp9y34QIUDIVmlO5vekewo9D+G6MmtSeIpYEAA/WlBUfa8IMXhdyA4ZIVq9d8M7Imj56jhYJmrD9HJ+CpoKw==}
     engines: {node: '>= 22'}
 
   assertion-error@2.0.1:
@@ -770,7 +770,7 @@ snapshots:
 
   '@vitest/spy@5.0.1': {}
 
-  '@xberg-io/crawlberg-wasm@1.7.1': {}
+  '@xberg-io/crawlberg-wasm@1.10.3': {}
 
   assertion-error@2.0.1: {}
 
@@ -937,7 +937,7 @@ snapshots:
   vite@8.0.16:
     dependencies:
       lightningcss: 1.32.0
-      picomatch: 4.0.4
+      picomatch: 4.0.7
       postcss: 8.5.15
       rolldown: 1.0.3
       tinyglobby: 0.2.17

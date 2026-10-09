@@ -22,15 +22,15 @@ wheels = [
 
 [[package]]
 name = "crawlberg"
-version = "1.9.0"
+version = "1.10.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/60/5d/29449d533103f4bf6ac34c64725a9645cd674e5de431784511995013a5e3/crawlberg-1.9.0.tar.gz", hash = "sha256:98de42091853a35af29301b2e32a791267145a0fdb92df36be59c89379236bf4", size = 118703, upload-time = "2026-10-03T21:18:43.508Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/49/c535c643dd94e7cb3b20532d4d08a283e8569dfc21d70bb18bd1f2d54895/crawlberg-1.10.3.tar.gz", hash = "sha256:c261c20d21d6be50474e4108dd632cc1b8dcc23e4ffce4fc24bc42f21beef013", size = 118152, upload-time = "2026-10-09T00:05:32.367Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/0c/13279317659310de2b886177c6a237a19ad61ff92951b46fd02ab9bca7b8/crawlberg-1.9.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:d516a317e7f76e595ae11cad5bd12b2702d6c24f492d97a27680819f09b29ccf", size = 11265187, upload-time = "2026-10-03T21:18:33.099Z" },
-    { url = "https://files.pythonhosted.org/packages/50/56/a95fa09d138f9597916c2db6cb32066c5ec205f7bdd9314492938f263a26/crawlberg-1.9.0-cp310-abi3-macosx_11_0_x86_64.whl", hash = "sha256:fcb76c7a96000c5cb190ddba636d654b93ab29f70f451cf9163ea00947b3b1f1", size = 11717811, upload-time = "2026-10-03T21:18:35.119Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/8e/fe5c6520bd37a84311196a6834288805ee9c63696cab1cc8545a3bd3d1b3/crawlberg-1.9.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:30eb73895949eb913383940c4682aed5bae98dc7f0c438ca208f3edc372ba97e", size = 12366780, upload-time = "2026-10-03T21:18:37.137Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/0f/576d295fbb84d20f89711f7cd2a1467341ec32f6ee4d61328d9582fb8413/crawlberg-1.9.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d76bee35404e27ffe3709e1d6a8a00743f40ddd072f910c58724f3790aabc2cc", size = 12311735, upload-time = "2026-10-03T21:18:39.332Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/80/86eabee4b67393e93ab288becb0df682dd8f82670be45776b69058cd729a/crawlberg-1.9.0-cp310-abi3-win_amd64.whl", hash = "sha256:e658efa7fc1001080247e32fdced3f66ae9e7683c38882ac895e7cace59b81f3", size = 18514349, upload-time = "2026-10-03T21:18:41.57Z" },
+    { url = "https://files.pythonhosted.org/packages/49/53/1c364db3d4639e45a0e3e23f2e35d52e1661365e075718de02bfd6075f4e/crawlberg-1.10.3-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:516f813adba9426df239b9f29f564d7ef0600cc36e25c679c14ce204a27ab921", size = 11553687, upload-time = "2026-10-09T00:05:19.448Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/cd/45ced1604eb905c6289ca411f24430e366cea5a5bd441f1cb01d18cef754/crawlberg-1.10.3-cp310-abi3-macosx_11_0_x86_64.whl", hash = "sha256:20481088865a68a877f5a8406837b230fe3b9c4eca87a26d90f286fa3001b6c0", size = 12036653, upload-time = "2026-10-09T00:05:22.212Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/13/2ffcefc2c1308cddc410adadd1b8ed258ee0c21d99d2a7d76eac34e15989/crawlberg-1.10.3-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:90c8c98d580890febf2965446f867861177fbade07462c1a0afe15ba29066a52", size = 12678307, upload-time = "2026-10-09T00:05:24.849Z" },
+    { url = "https://files.pythonhosted.org/packages/da/aa/65385c547cdc9372c1f62424d2df46ce92f2db849dc36d08dd9de6abb4f9/crawlberg-1.10.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4fd0f7c2649f788772ba7ddc254bff6190549284259f611610637024d0bec6fa", size = 12583742, upload-time = "2026-10-09T00:05:27.532Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/21/7391979cc45ba14fc5ffab2ba7a53a64267a046e322882283fb8022c3dfa/crawlberg-1.10.3-cp310-abi3-win_amd64.whl", hash = "sha256:559e2b97f41c7afd763e4a5895cceb34067493ca9b0456dcdb1787d82c7d6b31", size = 18874360, upload-time = "2026-10-09T00:05:30.547Z" },
 ]
 
 [[package]]
@@ -46,7 +46,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crawlberg", specifier = ">=1.9.0" },
+    { name = "crawlberg", specifier = ">=1.10.3" },
     { name = "pytest", specifier = ">=7.4" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-timeout", specifier = ">=2.1" },
