@@ -22,7 +22,8 @@
 //!   where Chrome names the encoding it fell back to.
 //! - The detector names `koi8-u` where Chrome names `koi8-r`. The two decode Russian text to the
 //!   same letters.
-//! - The detector reads at most [`DETECTION_LIMIT`] bytes of a body.
+//! - The `<meta>` scan reads at most [`META_SCAN_LIMIT`] bytes of a body, and the detector at
+//!   most [`DETECTION_LIMIT`]. Chrome reads on while the document is in its head.
 
 use std::cell::{Cell, RefCell};
 
@@ -38,9 +39,16 @@ use crate::tower::BodyText;
 /// the document is still in its head.
 ///
 /// ~keep The standard asks for a scan of the first 1024 bytes and lets a browser read further.
-/// ~keep Chrome reads on for as long as the document stays in its head, and so does this scan:
-/// ~keep its bound is the end of the head, or the end of the body, which `max_body_size` bounds.
+/// ~keep Chrome reads on for as long as the document stays in its head, and so does this scan,
+/// ~keep up to [`META_SCAN_LIMIT`].
 const META_SCAN_MINIMUM: usize = 1024;
+
+/// The bytes of a body the `<meta>` scan reads at most.
+///
+/// ~keep A head has no end the scan can rely on. A server chooses the size of a body, and a
+/// ~keep head, a comment or a tag that never closes holds the scan for all of it, at 30 to 75
+/// ~keep milliseconds for each megabyte.
+const META_SCAN_LIMIT: usize = 1024 * 1024;
 
 /// The bytes the `<meta>` scan feeds to the tokenizer at a time once it is past
 /// [`META_SCAN_MINIMUM`] with the document still in its head.
@@ -297,8 +305,9 @@ fn xml_declaration(body_bytes: &[u8]) -> Option<Charset> {
 
 /// The character set the first `<meta>` tag that declares one names, read as Chrome reads it:
 /// a tag that starts in the first [`META_SCAN_MINIMUM`] bytes wherever it stands, and a later
-/// tag while the document is still in its head.
+/// tag while the document is still in its head, up to [`META_SCAN_LIMIT`].
 fn meta_declaration(body_bytes: &[u8]) -> Option<Charset> {
+    let body_bytes = &body_bytes[..body_bytes.len().min(META_SCAN_LIMIT)];
     let tokenizer = Tokenizer::new(MetaScan::default(), TokenizerOpts::default());
     let scan = &tokenizer.sink;
     let input = BufferQueue::default();
@@ -437,12 +446,47 @@ fn content_charset(content: &str) -> Option<&str> {
 ///
 /// ~keep The top-level domain of `url` is a hint, as it is in Firefox: a short page under `.jp`
 /// ~keep is more likely Japanese than a short page under `.de`.
+///
+/// ~keep At the end of its input the detector drops every encoding that the input ends inside
+/// ~keep a character of. A body read up to a size limit ends wherever the limit falls. So the
+/// ~keep guess from before the end stands when its encoding reads all but a last character
+/// ~keep that is cut short, and the detector makes the same guess for the body without it.
 fn detect(url: &str, body_bytes: &[u8]) -> &'static Encoding {
     let sample = &body_bytes[..body_bytes.len().min(DETECTION_LIMIT)];
-    let mut detector = chardetng::EncodingDetector::new();
-    detector.feed(sample, sample.len() == body_bytes.len());
     let top_level_domain = top_level_domain(url);
-    detector.guess(top_level_domain.as_deref().map(str::as_bytes), false)
+    let hint = top_level_domain.as_deref().map(str::as_bytes);
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(sample, false);
+    let unfinished = detector.guess(hint, false);
+    if sample.len() < body_bytes.len() {
+        return unfinished;
+    }
+    detector.feed(&[], true);
+    let finished = detector.guess(hint, false);
+    let stands = finished != unfinished
+        && before_a_cut_character(unfinished, sample).is_some_and(|complete| {
+            let mut detector = chardetng::EncodingDetector::new();
+            detector.feed(complete, true);
+            detector.guess(hint, false) == unfinished
+        });
+    if stands { unfinished } else { finished }
+}
+
+/// `bytes` without their last character, when they are text in `encoding` but for a last
+/// character that their end cuts short.
+fn before_a_cut_character<'a>(encoding: &'static Encoding, bytes: &'a [u8]) -> Option<&'a [u8]> {
+    let reads = |bytes: &[u8]| {
+        encoding
+            .decode_without_bom_handling_and_without_replacement(bytes)
+            .is_some()
+    };
+    if reads(bytes) {
+        return None;
+    }
+    (1..=3)
+        .filter_map(|cut| bytes.len().checked_sub(cut))
+        .map(|end| &bytes[..end])
+        .find(|complete| reads(complete))
 }
 
 /// The last label of the host name of `url`, in lowercase, when the host is a domain name.
@@ -873,6 +917,72 @@ mod tests {
         );
     }
 
+    /// `before` and `after` two-byte UTF-8 sequences around `bad` bytes that are never UTF-8.
+    fn utf_8_with_bad_bytes(before: usize, bad: usize, after: usize) -> Vec<u8> {
+        let mut page = "\u{e9}".repeat(before).into_bytes();
+        for _ in 0..bad {
+            page.extend_from_slice(b"\xffx");
+        }
+        page.extend_from_slice("\u{e9}".repeat(after).as_bytes());
+        page
+    }
+
+    #[test]
+    fn utf_8_needs_four_good_sequences_for_each_bad_one() {
+        for (before, bad, after, expected) in [
+            (4, 1, 0, true),
+            (0, 1, 4, true),
+            (2, 1, 2, true),
+            (3, 1, 0, false),
+            (0, 1, 3, false),
+            (4, 2, 4, true),
+            (4, 2, 3, false),
+            (3, 2, 4, false),
+            (0, 1, 0, false),
+            (5, 0, 0, true),
+        ] {
+            let page = utf_8_with_bad_bytes(before, bad, after);
+            assert_eq!(
+                is_utf_8_but_for_a_few_sequences(&page),
+                expected,
+                "for {before} good sequences, {bad} bad bytes, {after} good sequences"
+            );
+            assert_eq!(
+                decided("text/plain", &page).0 == "UTF-8",
+                expected,
+                "the decision must follow the rule for {before}, {bad}, {after}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_legacy_page_with_a_few_pairs_that_are_utf_8_is_not_utf_8() {
+        // ~keep Windows-1252 with three pairs that happen to be UTF-8 sequences ("Ã©", "Â°",
+        // ~keep "Ã¼") beside eight letters that are not.
+        let latin = b"caf\xe9 d\xe9j\xe0 vu \xc3\xa9 na\xefve 20\xc2\xb0 \xfcber stra\xdfe \xc3\xbc cr\xe8me se\xf1or";
+        assert!(!is_utf_8_but_for_a_few_sequences(latin));
+        assert_eq!(decided("text/html", latin), ("windows-1252", label("windows-1252")));
+    }
+
+    #[test]
+    fn nothing_is_read_after_the_scan_is_done() {
+        // ~keep Past the first kilobyte of a head the scan reads in chunks, so the tags below
+        // ~keep reach the tokenizer together.
+        let padding = "x".repeat(2 * META_SCAN_MINIMUM);
+        let two = format!("<html><head><!-- {padding} --><meta charset=shift_jis><meta charset=euc-kr>");
+        assert_eq!(
+            decided("text/html", two.as_bytes()),
+            ("Shift_JIS", label("shift_jis")),
+            "the first declaration must stay"
+        );
+        let after_the_head = format!("<html><head><!-- {padding} --></head><body><meta charset=shift_jis>");
+        assert_eq!(
+            decided("text/html", after_the_head.as_bytes()),
+            ("UTF-8", None),
+            "a tag after the end of the head must not count past the first kilobyte"
+        );
+    }
+
     #[test]
     fn json_is_utf_8_whatever_it_holds() {
         let cut = "{\"text\": \"日本語のテキスト".as_bytes();
@@ -983,6 +1093,84 @@ mod tests {
             decided("text/html", early).0,
             "Shift_JIS",
             "the same text inside the limit decides"
+        );
+    }
+
+    #[test]
+    fn a_legacy_page_cut_inside_its_last_character_keeps_its_encoding() {
+        for (encoding, text) in [
+            (encoding_rs::SHIFT_JIS, "日本語のテキストです。これは文章です"),
+            (encoding_rs::EUC_JP, "日本語のテキストです。これは文章です"),
+            (encoding_rs::EUC_KR, "한국어로 쓴 웹 페이지입니다"),
+            (encoding_rs::GBK, "这是一个用中文写的网页"),
+            (encoding_rs::BIG5, "這是一個用中文寫的網頁"),
+        ] {
+            let mut page = b"<p>".to_vec();
+            page.extend_from_slice(&encoding.encode(text).0);
+            let cut = &page[..page.len() - 1];
+            assert_eq!(
+                decided("text/html", &page).0,
+                encoding.name(),
+                "the whole page in {}",
+                encoding.name()
+            );
+            assert_eq!(
+                decided("text/html", cut).0,
+                encoding.name(),
+                "the page in {} without its last byte",
+                encoding.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_end_of_a_whole_body_ends_its_last_word_for_the_detector() {
+        // ~keep Russian in KOI8-R. Before the end of the input the detector takes these bytes
+        // ~keep for GBK: six bytes are three characters, five are two and one that is cut short.
+        let russian = encoding_rs::KOI8_R.encode("Библио").0.into_owned();
+        assert_eq!(decided("text/plain", &russian).0, "KOI8-U");
+        assert!(
+            before_a_cut_character(encoding_rs::GBK, &russian[..5]).is_some(),
+            "the fixture must read as GBK but for its end"
+        );
+        assert_eq!(
+            decided("text/plain", &russian[..5]).0,
+            "KOI8-U",
+            "a guess the detector does not make for the body without its last byte must not stand"
+        );
+    }
+
+    #[test]
+    fn only_a_last_character_that_is_cut_short_is_set_aside() {
+        let japanese = encoding_rs::SHIFT_JIS.encode("日本語").0.into_owned();
+        assert_eq!(before_a_cut_character(encoding_rs::SHIFT_JIS, &japanese), None);
+        assert_eq!(
+            before_a_cut_character(encoding_rs::SHIFT_JIS, &japanese[..5]),
+            Some(&japanese[..4])
+        );
+        assert_eq!(
+            before_a_cut_character(encoding_rs::SHIFT_JIS, b"\x93\xfa\xff\xff\xff\xff\x93"),
+            None,
+            "bytes the encoding cannot read before the end are not a cut"
+        );
+        assert_eq!(before_a_cut_character(encoding_rs::SHIFT_JIS, b"\x93"), Some(&b""[..]));
+    }
+
+    #[test]
+    fn the_meta_scan_reads_the_start_of_a_long_head() {
+        const TAG: &str = "<meta charset=shift_jis>";
+        let head = |padding: usize| format!("<html><head><!-- {} -->{TAG}", "x".repeat(padding));
+        let inside = head(META_SCAN_LIMIT - 21 - TAG.len());
+        assert_eq!(inside.len(), META_SCAN_LIMIT, "the tag must end at the limit");
+        assert_eq!(
+            decided("text/html", inside.as_bytes()),
+            ("Shift_JIS", label("shift_jis"))
+        );
+        let outside = head(META_SCAN_LIMIT - 20 - TAG.len());
+        assert_eq!(
+            decided("text/html", outside.as_bytes()),
+            ("UTF-8", None),
+            "a tag that ends past the limit must not be read"
         );
     }
 
