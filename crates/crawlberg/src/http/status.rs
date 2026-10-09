@@ -15,18 +15,23 @@ pub(crate) struct HttpStatus(pub(crate) u16);
 /// error by itself. 403 is not here: telling a WAF block from a plain 403 needs the body.
 pub(crate) fn status_error(status: u16, url: &str) -> Option<CrawlError> {
     let source = HttpStatus(status);
+    let message = || status_message(status, url);
     Some(match status {
-        401 => CrawlError::unauthorized_with_source("unauthorized", source),
-        404 => CrawlError::not_found_with_source(url.to_owned(), source),
-        408 => CrawlError::timeout_with_source("timeout", source),
-        410 => CrawlError::gone_with_source("gone", source),
-        429 => CrawlError::rate_limited_with_source("rate_limited", source),
-        500 => CrawlError::server_error_with_source("server_error", source),
-        502 => CrawlError::bad_gateway_with_source("bad_gateway", source),
-        503 => CrawlError::server_error_with_source("service unavailable", source),
-        504 => CrawlError::server_error_with_source("gateway timeout", source),
+        401 => CrawlError::unauthorized_with_source(message(), source),
+        404 => CrawlError::not_found_with_source(message(), source),
+        408 => CrawlError::timeout_with_source(message(), source),
+        410 => CrawlError::gone_with_source(message(), source),
+        429 => CrawlError::rate_limited_with_source(message(), source),
+        500 => CrawlError::server_error_with_source(message(), source),
+        502 => CrawlError::bad_gateway_with_source(message(), source),
+        503 => CrawlError::server_error_with_source(format!("{}: service unavailable", message()), source),
+        504 => CrawlError::server_error_with_source(format!("{}: gateway timeout", message()), source),
         _ => return None,
     })
+}
+
+pub(crate) fn status_message(status: u16, url: &str) -> String {
+    format!("HTTP {status} for {}", crate::net::redact_url_credentials(url))
 }
 
 /// The status of the response `error` was raised for, or `None` when no response caused it.
@@ -44,6 +49,30 @@ pub(crate) fn error_status(error: &CrawlError) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_status_error_should_name_status_and_redacted_address() {
+        for status in [401, 403, 404, 408, 410, 429, 500, 502, 503, 504] {
+            let error = if status == 403 {
+                crate::http::challenge::challenge_body_error(
+                    status,
+                    "https://user:secret@example.com/page",
+                    "",
+                    &std::collections::HashMap::new(),
+                )
+            } else {
+                status_error(status, "https://user:secret@example.com/page").expect("status error")
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("HTTP {status} for https://***:***@example.com/page")),
+                "{error}"
+            );
+            assert!(!error.to_string().contains("secret"), "{error}");
+            assert!(!error.to_string().contains("user"), "{error}");
+        }
+    }
 
     #[test]
     fn each_error_status_maps_to_its_own_variant() {
@@ -78,7 +107,7 @@ mod tests {
     fn a_404_names_the_requested_url() {
         let error = status_error(404, "https://example.com/missing").expect("404 is an error");
         assert!(
-            matches!(&error, CrawlError::NotFound { message, .. } if message == "https://example.com/missing"),
+            matches!(&error, CrawlError::NotFound { message, .. } if message == "HTTP 404 for https://example.com/missing"),
             "got {error:?}"
         );
     }
@@ -86,7 +115,7 @@ mod tests {
     #[test]
     fn a_404_error_displays_its_not_found_prefix_exactly_once() {
         let error = status_error(404, "https://example.com/missing").expect("404 is an error");
-        assert_eq!(error.to_string(), "not_found: https://example.com/missing");
+        assert_eq!(error.to_string(), "not_found: HTTP 404 for https://example.com/missing");
     }
 
     #[test]

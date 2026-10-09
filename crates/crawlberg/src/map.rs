@@ -1924,8 +1924,7 @@ mod tests {
         assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
-    /// Where the crawl's own redirect chain stops for `url`: the final URL without `base`, and
-    /// its status. The crawl never fails on these chains, so neither may map.
+    /// The crawl's successful final address and status, for comparison with map. ~keep
     async fn crawl_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
         let engine = crate::CrawlEngine::builder()
             .config(config.clone())
@@ -1933,6 +1932,15 @@ mod tests {
             .expect("engine builds");
         let page = engine.scrape(url).await.expect("the crawl does not fail on this chain");
         (page.final_url.replace(base, ""), page.status_code)
+    }
+
+    async fn assert_crawl_redirect_error(url: &str, config: &CrawlConfig) {
+        let engine = crate::CrawlEngine::builder()
+            .config(config.clone())
+            .build()
+            .expect("engine");
+        let error = engine.scrape(url).await.expect_err("invalid redirect chain");
+        assert!(matches!(error, CrawlError::SsrfPolicyViolation { .. }), "{error}");
     }
 
     #[tokio::test]
@@ -1961,7 +1969,7 @@ mod tests {
         let mock = MockServer::start().await;
         let base = mock.uri();
         // ~keep /r0 -meta-> /r1 -meta-> /r2 -301-> /r3 with a limit of 2: both refresh hops are
-        // ~keep taken, so the 301 is the page the chain stops on.
+        // ~keep taken, so the 301 exceeds the remaining redirect budget.
         mount_body(&mock, "/r0", "text/html", meta_refresh_page("0; url=/r1")).await;
         let r1 = r#"<html><head><meta http-equiv="refresh" content="0; url=/r2"></head>
             <body><a href="/from-r1">l</a></body></html>"#;
@@ -1976,18 +1984,15 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
-            "map must stop on the 301 without failing, got {result:?}"
+            matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
             request_count(&mock, "/r3").await,
             0,
             "a hop past the limit is not requested"
         );
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
-            ("/r2".to_owned(), 301)
-        );
+        assert_crawl_redirect_error(&format!("{base}/r0"), &config).await;
     }
 
     #[tokio::test]
@@ -1995,21 +2000,18 @@ mod tests {
         let mock = MockServer::start().await;
         let base = mock.uri();
         // ~keep /a -meta-> /b -301-> /a: the 301 leads back to a URL already requested, so the
-        // ~keep chain stops on /b as the crawl does.
+        // ~keep chain fails on /b without requesting /a again.
         let a = r#"<html><head><meta http-equiv="refresh" content="0; url=/b"></head>
             <body><a href="/from-a">a</a></body></html>"#;
         mount_body(&mock, "/a", "text/html", a.to_owned()).await;
         mount_redirect(&mock, "/b", "/a").await;
         let config = local_test_config();
 
-        let urls = map_urls(&format!("{base}/a"), &config).await;
+        let result = map(&format!("{base}/a"), &config).await;
 
         assert_eq!(request_count(&mock, "/a").await, 1, "/a must be requested once");
-        assert_eq!(urls, Vec::<String>::new(), "map stops on /b, which has no links");
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/a"), &config).await,
-            ("/b".to_owned(), 301)
-        );
+        assert!(matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })));
+        assert_crawl_redirect_error(&format!("{base}/a"), &config).await;
     }
 
     #[tokio::test]
@@ -2115,18 +2117,15 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
-            "map must stop on the second 301 without failing, got {result:?}"
+            matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
             request_count(&mock, "/r2").await,
             0,
             "a hop past the limit is not requested"
         );
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
-            ("/r1".to_owned(), 301)
-        );
+        assert_crawl_redirect_error(&format!("{base}/r0"), &config).await;
     }
 
     #[tokio::test]
