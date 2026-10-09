@@ -56,8 +56,16 @@ async fn should_keep_delayed_refresh_content_and_discover_its_link() {
         .mount(&server)
         .await;
     for delay in [0, 5, 600] {
+        let target = if delay == 0 {
+            "/target".to_owned()
+        } else {
+            format!(
+                "{}/folder/../ta%72get?view=%2f#section",
+                server.uri().replacen("http://", "http://username:placeholder@", 1)
+            )
+        };
         Mock::given(path(format!("/source-{delay}"))).respond_with(ResponseTemplate::new(200).insert_header("Content-Type", "text/html")
-            .set_body_string(format!("<html><head><meta http-equiv=\"refresh\" content=\"{delay}; url=/target\"></head><body><p>source page words</p></body></html>"))).mount(&server).await;
+            .set_body_string(format!("<html><head><meta http-equiv=\"refresh\" content=\"{delay}; url={target}\"></head><body><p>source page words</p></body></html>"))).mount(&server).await;
     }
     let engine = create_engine(Some(config())).expect("engine");
     for delay in [0, 5, 600] {
@@ -85,7 +93,11 @@ async fn should_keep_delayed_refresh_content_and_discover_its_link() {
             );
             assert_eq!(
                 result.links.iter().map(|link| link.url.as_str()).collect::<Vec<_>>(),
-                [format!("{}/target", server.uri())]
+                [format!("{}/ta%72get?view=%2f#section", server.uri())]
+            );
+            assert_eq!(
+                result.links[0].original_url,
+                format!("{}/folder/../ta%72get?view=%2f#section", server.uri())
             );
         }
     }
