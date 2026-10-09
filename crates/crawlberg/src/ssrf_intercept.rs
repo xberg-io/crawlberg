@@ -4125,6 +4125,54 @@ mod tests {
         (server, commands, controller)
     }
 
+    /// The browser driver passes a browser-level event to its subscriber while it tracks no
+    /// target.
+    ///
+    /// ~keep chromiumoxide 0.9.1 polled its handler's subscribers only inside its loop over the
+    /// ~keep targets it tracked, so the `targetDestroyed` of a browser's last page stayed queued
+    /// ~keep until the next page opened (xberg-io/crawlberg#595). The browser here is a socket
+    /// ~keep of this test that announces no target, so the handler tracks none.
+    #[tokio::test]
+    async fn the_driver_passes_on_a_browser_event_while_it_tracks_no_target() {
+        use futures::SinkExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind the test browser socket");
+        let address = listener.local_addr().expect("test socket address");
+        let accepted = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept the driver");
+            async_tungstenite::tokio::accept_async(stream)
+                .await
+                .expect("accept WebSocket")
+        });
+        let (browser, handler) = chromiumoxide::Browser::connect(format!("ws://{address}"))
+            .await
+            .expect("the driver must connect to the test browser socket");
+        let handler = crate::browser_pool::spawn_handler(handler);
+        let mut server: TestChildSocket = accepted.await.expect("WebSocket accept task");
+        let mut destroyed = browser
+            .event_listener::<super::EventTargetDestroyed>()
+            .await
+            .expect("the driver must take a subscriber");
+        server
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "method": "Target.targetDestroyed", "params": { "targetId": "LAST" } })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("the test browser socket must send the event");
+
+        let event = tokio::time::timeout(Duration::from_secs(5), destroyed.next()).await;
+        handler.abort();
+
+        let event = event
+            .expect("the subscriber must get the event within five seconds, with no target tracked")
+            .expect("the subscription must stay open");
+        assert_eq!(event.target_id.inner(), "LAST");
+    }
+
     async fn next_child_message(socket: &mut TestChildSocket) -> serde_json::Value {
         let message = tokio::time::timeout(Duration::from_secs(1), socket.next())
             .await
@@ -7993,13 +8041,12 @@ mod race_tests {
     /// A page of the check that its owner closes without a watch, as the session pool closes a
     /// parked page it evicts, takes its browser context with it.
     ///
-    /// ~keep chromiumoxide 0.9.1 flushes a browser-level event to its subscribers only while its
-    /// ~keep handler iterates a live target (`Handler::poll_next` polls the event listeners inside
-    /// ~keep the per-target loop), so on an otherwise idle browser the `targetDestroyed` of the
-    /// ~keep closed page can sit undelivered until the next target activity (measured: 0 events in
-    /// ~keep 1 of 12 loaded runs, and the dispose always runs when the event arrives). A second
-    /// ~keep page, evaluated on each poll, keeps a target active so the event is delivered; in
-    /// ~keep production a launched browser's other pages, or the check's stop, do the same.
+    /// ~keep A second page stays open and is never touched. The driver's delivery of an event
+    /// ~keep while it tracks no target has a test of its own,
+    /// ~keep `the_driver_passes_on_a_browser_event_while_it_tracks_no_target`.
+    /// ~keep Google Chrome 155 started without a window can exit by itself, with status 0, about
+    /// ~keep a second after the page closes, with the second page open too. The test then fails
+    /// ~keep with `ChannelSendError`. Seen on a loaded host, at the tree before this change too.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_closed_pages_context_is_disposed() {
         let test_name = "a_closed_pages_context_is_disposed";
@@ -8015,7 +8062,7 @@ mod race_tests {
         .await
         .expect("the listener must start");
         let before = context_count(&browser).await;
-        let keepalive = firewall
+        let open_window = firewall
             .handle()
             .new_page(None, None)
             .await
@@ -8033,8 +8080,6 @@ mod race_tests {
         let mut after = with_page;
         let mut disposed_after = None;
         for _ in 0..200 {
-            // ~keep Keep a target active so chromiumoxide delivers the closed page's destroy event.
-            let _ = keepalive.evaluate("1").await;
             page_open = target_is_open(&browser, &target)
                 .await
                 .expect("the browser must answer while the page closes");
@@ -8047,7 +8092,7 @@ mod race_tests {
         }
         firewall.stop().await;
         let after_stop = context_count(&browser).await;
-        drop(keepalive);
+        drop(open_window);
         close(browser).await;
         assert_eq!(
             with_page,
@@ -8062,12 +8107,12 @@ mod race_tests {
             after,
             before + 1,
             "{test_name}: the closed page's browser context must be disposed within twenty seconds, \
-             leaving only the keepalive page's (disposed after {disposed_after:?}; \
+             leaving only the open page's (disposed after {disposed_after:?}; \
              {after_stop} contexts after the stop, {before} before the pages)"
         );
         assert_eq!(
             after_stop, before,
-            "{test_name}: the stop must dispose the keepalive page's context too"
+            "{test_name}: the stop must dispose the open page's context too"
         );
     }
 

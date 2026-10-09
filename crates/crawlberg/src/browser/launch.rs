@@ -29,6 +29,15 @@ pub(super) enum UserDataDir {
 }
 
 impl UserDataDir {
+    /// Write the WebRTC preference into the directory. A scratch directory refuses it once the
+    /// process is exiting.
+    fn disable_non_proxied_udp(&self) -> Result<(), CrawlError> {
+        match self {
+            Self::Persistent(path) => crate::browser_pool::disable_non_proxied_udp(path),
+            Self::Scratch(dir) => dir.disable_non_proxied_udp(),
+        }
+    }
+
     fn path(&self) -> &std::path::Path {
         match self {
             Self::Persistent(path) => path,
@@ -202,7 +211,7 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
         // ~keep Inside the caller's launch deadline, so a wait for the profile ends with it.
         let (user_data, hold) = claim_user_data_dir(config).await?;
         if config.ssrf.enforces_ip_denials() {
-            crate::browser_pool::disable_non_proxied_udp(user_data.path())?;
+            user_data.disable_non_proxied_udp()?;
         }
 
         let browser_config = build_one_shot_launch_builder(user_data.path(), &config.browser, proxy.as_ref())?

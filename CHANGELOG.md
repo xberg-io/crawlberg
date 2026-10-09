@@ -93,11 +93,17 @@ All notable changes to crawlberg are documented here.
   letters. The entry now holds the decoded text and its character set.
 - An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
   profile directory is removed, when the last clone of the engine handle is dropped, and when the
-  process exits through the C runtime with an engine still alive. No new call is needed. A process
-  that is killed by a signal or aborts still leaves its Chrome. (#594)
-- A browser fetch no longer takes five seconds longer on a Chrome that has no tab of its own, such
-  as the Chromium headless shell that Playwright installs. The request check waited for an event
-  that `chromiumoxide` holds back for the last page of a browser. (#595)
+  process exits through the C runtime with an engine still alive or with its Chrome still
+  launching. No new call is needed. On Linux and macOS a process that is killed by a signal or
+  aborts still leaves its Chrome. On Windows the Chrome and its helper processes run in a job
+  object, and the system ends them when the process ends in any way. (#594)
+- On Windows a program that captures the output of a crawling child process returns when that
+  child has exited. A Chrome the child left running kept the output pipes open.
+- Chrome no longer gets the standard input of the process that launched it.
+- The browser driver now reports the close of a browser's last page at once. It held that event
+  back until the next page opened, so a page closed outside the request check kept its browser
+  context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
+  already ended for pooled pages. (#595)
 
 ## [1.10.3] - 2026-10-09
 

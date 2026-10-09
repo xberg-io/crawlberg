@@ -142,12 +142,23 @@ impl Browser {
     /// This fails if no web socket url could be detected from the child
     /// processes stderr for more than the configured `launch_timeout`
     /// (20 seconds by default).
-    pub async fn launch(mut config: BrowserConfig) -> Result<(Self, Handler)> {
+    pub async fn launch(config: BrowserConfig) -> Result<(Self, Handler)> {
+        Self::launch_with(config, BrowserConfig::launch).await
+    }
+
+    /// Like [`Self::launch`], with the child process started by `spawn`.
+    ///
+    /// `spawn` gets the final config and runs once, before the wait for the web socket url. A
+    /// caller that must know the process from the moment it exists records it there.
+    pub async fn launch_with(
+        mut config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<Child>,
+    ) -> Result<(Self, Handler)> {
         // Canonalize paths to reduce issues with sandboxing
         config.executable = utils::canonicalize_except_snap(config.executable).await?;
 
         // Launch a new chromium instance
-        let mut child = config.launch()?;
+        let mut child = spawn(&config)?;
 
         /// Faillible initialization to run once the child process is created.
         ///
