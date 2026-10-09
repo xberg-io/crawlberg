@@ -2160,7 +2160,8 @@ impl BrowserPool {
         }
 
         match self.try_new_page(proxy, config).await {
-            Ok((page, watch, pending_closes)) => Ok(PooledPage {
+            Ok((page, watch, pending_closes, handler_end)) => Ok(PooledPage {
+                handler_end,
                 page: Some(page),
                 watch: Some(watch),
                 _permit: Some(permit),
@@ -2168,12 +2169,14 @@ impl BrowserPool {
             }),
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let (page, watch, pending_closes) = self.try_new_page(proxy, config).await.map_err(|e| {
-                    CrawlError::browser_error(format!(
-                        "failed to open page after relaunch: {e} (original: {first_err})"
-                    ))
-                })?;
+                let (page, watch, pending_closes, handler_end) =
+                    self.try_new_page(proxy, config).await.map_err(|e| {
+                        CrawlError::browser_error(format!(
+                            "failed to open page after relaunch: {e} (original: {first_err})"
+                        ))
+                    })?;
                 Ok(PooledPage {
+                    handler_end,
                     page: Some(page),
                     watch: Some(watch),
                     _permit: Some(permit),
@@ -2224,7 +2227,15 @@ impl BrowserPool {
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
         config: &crate::types::CrawlConfig,
-    ) -> Result<(chromiumoxide::Page, crate::ssrf_intercept::Watch, PendingCloses), CrawlError> {
+    ) -> Result<
+        (
+            chromiumoxide::Page,
+            crate::ssrf_intercept::Watch,
+            PendingCloses,
+            HandlerEnd,
+        ),
+        CrawlError,
+    > {
         let mut guard = self.state.lock().await;
 
         if guard.is_none()
@@ -2256,7 +2267,7 @@ impl BrowserPool {
         .await
         .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         let watch = bs.firewall.handle().watch(&page, config, config.max_redirects).await?;
-        Ok((page, watch, Arc::clone(&bs.pending_closes)))
+        Ok((page, watch, Arc::clone(&bs.pending_closes), bs.handler_end.clone()))
     }
 
     /// Force-relaunch Chrome (used after a page-open failure).
@@ -2409,6 +2420,7 @@ impl std::fmt::Debug for BrowserPool {
 /// another caller to open a page. Prefer calling [`close`](Self::close) for
 /// deterministic async cleanup.
 pub struct PooledPage {
+    handler_end: HandlerEnd,
     page: Option<chromiumoxide::Page>,
     watch: Option<crate::ssrf_intercept::Watch>,
     _permit: Option<OwnedSemaphorePermit>,
@@ -2454,11 +2466,12 @@ impl PooledPage {
         chromiumoxide::Page,
         crate::ssrf_intercept::Watch,
         Option<OwnedSemaphorePermit>,
+        HandlerEnd,
     ) {
         let page = self.page.take().expect("page already taken via close()");
         let watch = self.watch.take().expect("watched page already taken via close()");
         let permit = self._permit.take();
-        (page, watch, permit)
+        (page, watch, permit, self.handler_end.clone())
     }
 }
 

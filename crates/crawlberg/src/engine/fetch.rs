@@ -301,11 +301,20 @@ impl CrawlEngine {
                 browser_cookies,
                 pool,
                 false,
+                self.rate_limiter.as_ref(),
                 self.native_browser_executor.as_deref(),
             )
             .await?;
             #[cfg(not(feature = "browser-native"))]
-            let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
+            let page = crate::browser::browser_fetch(
+                url,
+                &self.config,
+                browser_cookies,
+                pool,
+                false,
+                self.rate_limiter.as_ref(),
+            )
+            .await?;
             let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
             return Ok((crawl_resp, true));
         }
