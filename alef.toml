@@ -916,6 +916,7 @@ features = ["interact", "browser-chromiumoxide"]
 
 [crates.python]
 module_name = "_crawlberg"
+async_runtime = "managed"
 
 [crates.python.stubs]
 output = "packages/python/crawlberg/"
