@@ -1880,10 +1880,15 @@ fn ok_response(content_type: &str, body: &str) -> String {
 
 /// Runs `script` in a page served from `base_routes`, then returns the JSON its fetch stored.
 async fn fetch_result(page: &mut Page, base: &str) -> serde_json::Value {
-    let raw = global(page, "globalThis.fr");
-    let raw = raw.as_str().unwrap_or("<<missing>>");
     let _ = base;
-    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), page.evaluate_for_cdp(
+        "new Promise(resolve => { const poll = () => { if (globalThis.fr !== '\"pending\"') resolve(globalThis.fr); else setTimeout(poll, 10); }; poll(); })",
+        true,
+        true,
+    )).await.expect("the fetch must settle before its deadline");
+    let raw = result.value.expect("the settled fetch must return a value");
+    let raw = raw.as_str().expect("the fetch stores its result as JSON");
+    serde_json::from_str(raw).expect("the settled fetch must return JSON")
 }
 
 /// Script body that stores the outcome of one `fetch` into `globalThis.fr` as JSON.
