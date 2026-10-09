@@ -13,11 +13,12 @@ use super::BrowserPage;
 use super::cookies::{apply_prior_cookies, page_cookies};
 use super::launch::resolve_default_user_agent;
 use crate::chrome_frame::{
-    committed_document, error_page_error, page_content, read_one_document_within, wait_for_selector,
+    committed_document, document_charset, error_page_error, page_content, read_one_document_within, wait_for_selector,
 };
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
+use crate::tower::BodyText;
 use crate::types::{BrowserCookie, BrowserWait, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -161,12 +162,15 @@ async fn render(
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
-    let ((html, screenshot), document) = read_one_document_within(
+    // ~keep The character set is read inside the read too: it is the one Chrome decoded this
+    // ~keep document with, and the HTML is that decoded text (crawlberg#606).
+    let ((html, charset, screenshot), document) = read_one_document_within(
         timeout,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
-            Ok((html, capture_screenshot(page, config, want_screenshot).await))
+            let charset = document_charset(page).await;
+            Ok((html, charset, capture_screenshot(page, config, want_screenshot).await))
         },
     )
     .await?;
@@ -203,6 +207,7 @@ async fn render(
         redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        text: BodyText::Decoded { charset },
     })
 }
 
@@ -214,6 +219,7 @@ fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
         redirected: redirects > 0,
         refused: Vec::new(),
         cookies: Vec::new(),
+        text: BodyText::Undecoded,
     }
 }
 
@@ -291,6 +297,7 @@ fn error_page_outcome(
         redirected: recorded.redirects > 0,
         refused: Vec::new(),
         cookies: Vec::new(),
+        text: BodyText::Undecoded,
     })
 }
 

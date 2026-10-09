@@ -7,7 +7,7 @@ use crate::browser_detect;
 use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    MaskedHtml, PageScan, detect_charset, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
+    MaskedHtml, PageScan, decode_page, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
@@ -243,8 +243,8 @@ async fn resolve_robots_status(
 /// truncated to `max_body_size`, together with the content verdicts derived from it.
 struct DecodedBody {
     body: String,
-    /// The redirect check's read of the response body, dropped when the charset re-decode
-    /// replaces the body. A body cut to `max_body_size` is read again (see [`PageScan::attach`]).
+    /// The redirect check's read of the response body, dropped when the decode with the page's
+    /// character set replaces the body. A body cut to `max_body_size` is read again (see [`PageScan::attach`]).
     page_scan: Option<PageScan>,
     body_size: usize,
     detected_charset: Option<String>,
@@ -265,15 +265,14 @@ fn decode_response_body(
     parsed_url: &Url,
     config: &CrawlConfig,
 ) -> DecodedBody {
-    let mut body = resp.body.clone();
-    let detected_charset = detect_charset(content_type, &resp.body_bytes);
-
-    if let Some(ref charset) = detected_charset
-        && let Some(decoded) = crate::http::redecode_with_charset(charset, &resp.body_bytes)
-    {
-        body = decoded;
-        page_scan = None;
-    }
+    let (text, detected_charset) = decode_page(&resp.text, content_type, parsed_url.as_str(), &resp.body_bytes);
+    let mut body = match text {
+        Some(text) => {
+            page_scan = None;
+            text
+        }
+        None => resp.body.clone(),
+    };
     let is_pdf = is_pdf_content(content_type, &body);
 
     let mut body_size = body.len();
@@ -461,6 +460,7 @@ mod tests {
             landed: None,
             sent_user_agent: None,
             soft_error: false,
+            text: crate::tower::BodyText::Undecoded,
         }
     }
 
@@ -521,6 +521,7 @@ mod tests {
             landed: None,
             sent_user_agent: None,
             soft_error: false,
+            text: crate::tower::BodyText::Undecoded,
         }
     }
 

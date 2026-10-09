@@ -535,7 +535,7 @@ pub struct CachedPage {
     pub status_code: u16,
     /// `Content-Type` header captured from the original response.
     pub content_type: String,
-    /// Raw response body stored verbatim in the cache.
+    /// The response body as text, decoded with the character set of the page.
     pub body: String,
     /// `ETag` header value, if any. Sent back as `If-None-Match` to revalidate this entry.
     pub etag: Option<String>,
@@ -557,6 +557,12 @@ pub struct CachedPage {
     /// never be served without first revalidating it against the origin.
     #[serde(default)]
     pub must_revalidate: bool,
+    /// The character set `body` was decoded with, as `detected_charset` reports it.
+    ///
+    /// `None` for a page that declares no character set and is UTF-8, and for an entry stored
+    /// before this field existed.
+    #[serde(default)]
+    pub charset: Option<String>,
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tower::{Layer, Service};
 
-use super::types::{CrawlRequest, CrawlResponse};
+use super::types::{BodyText, CrawlRequest, CrawlResponse};
 use crate::error::CrawlError;
 use crate::traits::CrawlCache;
 use crate::types::{CachedPage, CrawlConfig};
@@ -124,6 +124,11 @@ fn response_from_cache(cached: CachedPage, sent_user_agent: Option<String>) -> C
         landed: None,
         sent_user_agent,
         soft_error: false,
+        // ~keep The entry holds the text of the page. Its `Content-Type` and its `<meta>` tag still
+        // ~keep name the character set of the bytes it came from, so it must not be decoded again.
+        text: BodyText::Decoded {
+            charset: cached.charset,
+        },
     }
 }
 
@@ -253,6 +258,12 @@ where
                 );
 
                 if directives.may_store() {
+                    // ~keep The cache holds text, not bytes, so the entry gets the text of the page:
+                    // ~keep the bytes decoded with the character set decided for them. A hit replays
+                    // ~keep that text, where a lossy UTF-8 read of the bytes lost every letter of a
+                    // ~keep page in another character set.
+                    let (text, charset) =
+                        crate::html::decode_page(&resp.text, &resp.content_type, &url, &resp.body_bytes);
                     let _ = cache
                         .set(
                             &url,
@@ -260,12 +271,13 @@ where
                                 url: url.clone(),
                                 status_code: resp.status,
                                 content_type: resp.content_type.clone(),
-                                body: resp.body.clone(),
+                                body: text.unwrap_or_else(|| resp.body.clone()),
                                 etag: resp.headers.get("etag").and_then(|v| v.first().cloned()),
                                 last_modified: resp.headers.get("last-modified").and_then(|v| v.first().cloned()),
                                 cached_at: now_secs(),
                                 max_age_secs: directives.max_age_secs,
                                 must_revalidate: directives.no_cache,
+                                charset,
                             },
                         )
                         .await;
@@ -290,6 +302,49 @@ mod tests {
     use crate::defaults::NoopCache;
     use tower::Service;
 
+    /// An entry stored before `charset` existed still loads. Its text is replayed as it is: the
+    /// header and the `<meta>` tag it still carries do not decode it again.
+    #[test]
+    fn an_entry_stored_without_a_charset_still_loads_and_is_not_decoded_again() {
+        let stored = r#"{"url":"http://example.com/","status_code":200,
+            "content_type":"text/html; charset=iso-8859-1",
+            "body":"<meta charset=\"iso-8859-1\"><p>café</p>",
+            "etag":null,"last_modified":null,"cached_at":1}"#;
+        let entry: CachedPage = serde_json::from_str(stored).expect("an entry without `charset` must load");
+        assert_eq!(entry.charset, None);
+
+        let response = response_from_cache(entry, None);
+        assert_eq!(response.body, "<meta charset=\"iso-8859-1\"><p>café</p>");
+        assert_eq!(response.text, BodyText::Decoded { charset: None });
+        assert_eq!(
+            crate::html::decode_page(
+                &response.text,
+                &response.content_type,
+                "http://example.com/",
+                &response.body_bytes
+            ),
+            (None, None),
+            "the text of the entry must stay as it is"
+        );
+    }
+
+    #[test]
+    fn a_hit_reports_the_character_set_of_its_entry() {
+        let entry = CachedPage {
+            body: "<p>café</p>".to_owned(),
+            charset: Some("shift_jis".to_owned()),
+            ..CachedPage::default()
+        };
+        let stored = serde_json::to_string(&entry).expect("an entry must serialize");
+        let loaded: CachedPage = serde_json::from_str(&stored).expect("an entry must load");
+        assert_eq!(
+            response_from_cache(loaded, None).text,
+            BodyText::Decoded {
+                charset: Some("shift_jis".to_owned()),
+            }
+        );
+    }
+
     #[derive(Clone)]
     struct CountingService(std::sync::Arc<std::sync::atomic::AtomicUsize>);
     impl Service<CrawlRequest> for CountingService {
@@ -311,6 +366,7 @@ mod tests {
                     landed: None,
                     sent_user_agent: None,
                     soft_error: false,
+                    text: crate::tower::BodyText::Undecoded,
                 })
             })
         }
@@ -401,6 +457,7 @@ mod tests {
                     landed: None,
                     sent_user_agent,
                     soft_error: false,
+                    text: crate::tower::BodyText::Undecoded,
                 })
             })
         }
@@ -504,6 +561,7 @@ mod tests {
                 cached_at: now_secs(),
                 max_age_secs: Some(600),
                 must_revalidate: false,
+                charset: None,
             },
         );
         let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache));
@@ -538,6 +596,7 @@ mod tests {
                 cached_at: now_secs(),
                 max_age_secs: None,
                 must_revalidate: true,
+                charset: None,
             },
         );
         let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache));
@@ -581,6 +640,7 @@ mod tests {
                 cached_at: now_secs(),
                 max_age_secs: None,
                 must_revalidate: true,
+                charset: None,
             },
         );
         let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache.clone()));
@@ -617,6 +677,7 @@ mod tests {
             cached_at: 1,
             max_age_secs: None,
             must_revalidate: false,
+            charset: None,
         };
         cache
             .stale
@@ -670,6 +731,7 @@ mod tests {
                 cached_at: now_secs().saturating_sub(100),
                 max_age_secs: Some(10),
                 must_revalidate: false,
+                charset: None,
             },
         );
         let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache.clone()));
@@ -698,6 +760,7 @@ mod tests {
                 cached_at: now_secs(),
                 max_age_secs: Some(600),
                 must_revalidate: false,
+                charset: None,
             },
         );
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));

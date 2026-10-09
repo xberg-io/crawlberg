@@ -81,6 +81,7 @@ mod tests {
             landed: None,
             sent_user_agent: None,
             soft_error: false,
+            text: crate::tower::BodyText::Undecoded,
         };
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
@@ -152,6 +153,29 @@ pub struct CrawlResponse {
     /// Whether `soft_http_errors` built this response in place of an error. Only the engine's
     /// soft error path sets it, so a scrape can tell its page from a real response with the same status.
     pub soft_error: bool,
+    /// Whether `body` is the text of the page already, or a lossy UTF-8 read of `body_bytes`
+    /// whose character set is still to be decided.
+    pub text: BodyText,
+}
+
+/// How the `body` of a [`CrawlResponse`] relates to the bytes the server sent.
+///
+/// ~keep The fetcher states it, because the body cannot: text a browser decoded still holds the
+/// ~keep `<meta charset>` of the page, and decoding it by that tag a second time turns every
+/// ~keep non-ASCII letter into two wrong ones (xberg-io/crawlberg#606).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum BodyText {
+    /// `body_bytes` is what the server sent and `body` is a lossy UTF-8 read of it. The character
+    /// set of the page is decided from `body_bytes` when the page is read.
+    #[default]
+    Undecoded,
+    /// `body` is the text of the page, decoded once already: by a browser, or before the page went
+    /// into the cache. `charset` is the character set it was decoded with, when that is known.
+    /// It is never decoded again.
+    ///
+    /// ~keep wasm has no browser tier and no cache layer, so nothing builds one there.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Decoded { charset: Option<String> },
 }
 
 impl std::fmt::Debug for CrawlResponse {
@@ -167,6 +191,7 @@ impl std::fmt::Debug for CrawlResponse {
             landed,
             sent_user_agent,
             soft_error,
+            text,
         } = self;
         f.debug_struct("CrawlResponse")
             .field("status", status)
@@ -177,6 +202,7 @@ impl std::fmt::Debug for CrawlResponse {
             .field("landed", landed)
             .field("sent_user_agent", sent_user_agent)
             .field("soft_error", soft_error)
+            .field("text", text)
             .finish()
     }
 }

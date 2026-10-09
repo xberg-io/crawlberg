@@ -326,6 +326,7 @@ impl CrawlEngine {
                     landed: None,
                     sent_user_agent: None,
                     soft_error: false,
+                    text: crate::tower::BodyText::Undecoded,
                 },
                 false,
             ));

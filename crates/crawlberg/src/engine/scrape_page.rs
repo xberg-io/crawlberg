@@ -183,7 +183,7 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let (response, refused, redirects) =
+        let (response, refused, redirects, charset) =
             crate::native_browser::native_browser_render(url, &self.config, state, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
         let crawl_resp = crate::tower::CrawlResponse {
@@ -202,6 +202,8 @@ impl CrawlEngine {
             // ~keep The native browser backend never reads `config.user_agents`.
             sent_user_agent: None,
             soft_error: false,
+            // ~keep The native backend decoded the document, with the character set it reports.
+            text: crate::tower::BodyText::Decoded { charset },
         };
         Ok((crawl_resp, true))
     }
@@ -325,6 +327,7 @@ impl CrawlEngine {
             landed: None,
             sent_user_agent: forced_user_agent.map(str::to_owned),
             soft_error: false,
+            text: crate::tower::BodyText::Undecoded,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

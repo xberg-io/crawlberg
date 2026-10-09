@@ -124,6 +124,7 @@ impl CrawlEngine {
                         // layer; it does not report which agent it sent, if any.
                         sent_user_agent: None,
                         soft_error: false,
+                        text: crate::tower::BodyText::Undecoded,
                     },
                     false,
                 ))
@@ -184,6 +185,7 @@ impl CrawlEngine {
         page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
         let cookies = page.cookies;
+        let text = page.text;
         let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
@@ -222,6 +224,7 @@ impl CrawlEngine {
                 // single configured agent, so callers fall back to the configured default.
                 sent_user_agent: None,
                 soft_error: false,
+                text,
             },
             extras,
         )
@@ -242,6 +245,7 @@ impl CrawlEngine {
             landed: None,
             sent_user_agent: None,
             soft_error: true,
+            text: crate::tower::BodyText::Undecoded,
         }
     }
 
@@ -452,6 +456,9 @@ mod tests {
             redirected: false,
             refused: vec!["http://127.0.0.1/secret".to_owned()],
             cookies: Vec::new(),
+            text: crate::tower::BodyText::Decoded {
+                charset: Some("windows-1252".to_owned()),
+            },
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
@@ -460,6 +467,13 @@ mod tests {
             "the dispatch conversion must retain the complete browser response header map"
         );
         assert_eq!(crawl.status, 304, "the status must survive the conversion too");
+        assert_eq!(
+            crawl.text,
+            crate::tower::BodyText::Decoded {
+                charset: Some("windows-1252".to_owned()),
+            },
+            "the response must still say that a browser decoded its text"
+        );
         assert_eq!(
             crawl.landed.map(|landed| landed.refused),
             Some(vec!["http://127.0.0.1/secret".to_owned()]),

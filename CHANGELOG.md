@@ -28,6 +28,9 @@ All notable changes to crawlberg are documented here.
   `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
   `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
   way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
+- `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
+  declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
+  longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
 
 ### Fixed
 
@@ -51,6 +54,22 @@ All notable changes to crawlberg are documented here.
   unsendable, but is being dropped on another thread` on stderr after an async call, and the
   engine was then never freed: its connections and its browser stayed until the process ended.
   The engine handle is now a class that any thread can release. (#641)
+- Read a page with the character set a browser uses for it. In HTTP mode a page that declares no
+  character set and is not UTF-8 came back with replacement characters; its encoding is now detected
+  from its bytes. The sources are read in the order of the HTML standard: a byte-order mark, the
+  `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
+  comment or in the text of the page no longer counts as a declaration, an unknown label no longer
+  stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+- Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
+  other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
+  decoded text was decoded again by that tag. `detected_charset` now reports the character set the
+  browser used.
+- Read a page with its character set on the native browser backend. It read every document as
+  UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
+  mode. `NativeBrowserConfig` has a new `document_decoder` field and `RenderedPage` a new `charset`
+  field in `crawlberg-browser`.
+- Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
+  letters. `CachedPage` has a new `charset` field for the character set of its text.
 
 ## [1.10.3] - 2026-10-09
 

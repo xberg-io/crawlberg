@@ -76,6 +76,7 @@ axum = { workspace = true, optional = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
 bytes = { version = "1", optional = true }
+chardetng = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }

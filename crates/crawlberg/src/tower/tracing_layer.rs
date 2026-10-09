@@ -195,6 +195,7 @@ mod tests {
                 landed: None,
                 sent_user_agent: None,
                 soft_error: false,
+                text: crate::tower::BodyText::Undecoded,
             })
         });
         let svc = CrawlTracingLayer::new().layer(inner);

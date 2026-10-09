@@ -674,6 +674,7 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         landed: None,
         sent_user_agent: None,
         soft_error: false,
+        text: crate::tower::BodyText::Undecoded,
     }
 }
 
@@ -1102,6 +1103,7 @@ mod tests {
             landed: None,
             sent_user_agent: None,
             soft_error: false,
+            text: crate::tower::BodyText::Undecoded,
         }
     }
 
