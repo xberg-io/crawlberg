@@ -272,6 +272,9 @@ pub enum CrawlError {
         source: Option<ErrorSource>,
     },
     /// The page was fetched but could not be converted to Markdown.
+    ///
+    /// A crawl event and a batch item carry an error as text only. There, the text starts with
+    /// `conversion_failed:`, and that tag is stable.
     #[error("conversion_failed: {message}")]
     ConversionFailed {
         /// Human-readable description of the failure. It names the page and the cause.
