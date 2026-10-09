@@ -124,6 +124,7 @@ impl PoolEntryKey {
 
 /// A pooled session with its associated Page + last-used timestamp.
 struct PooledSession {
+    handler_end: Option<crate::browser_pool::HandlerEnd>,
     /// The chromiumoxide Page from the browser pool. This is what carries
     /// cookies, fingerprint, and any solved challenge state across requests.
     page: Option<chromiumoxide::Page>,
@@ -204,23 +205,36 @@ impl BrowserSessionPool {
     /// was inserted with (if any), so the caller keeps holding the same
     /// concurrency slot across reuse instead of re-acquiring a fresh one.
     pub async fn acquire(&self, key: &SessionKey) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
-        self.acquire_entry(PoolEntryKey::public(key.clone())).await
+        self.acquire_entry(PoolEntryKey::public(key.clone()))
+            .await
+            .map(|(page, permit, _)| (page, permit))
     }
 
     pub(crate) async fn acquire_with_policy(
         &self,
         key: &SessionKey,
         policy: &SsrfPolicy,
-    ) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
+    ) -> Option<(
+        chromiumoxide::Page,
+        Option<OwnedSemaphorePermit>,
+        Option<crate::browser_pool::HandlerEnd>,
+    )> {
         self.acquire_entry(PoolEntryKey::with_policy(key.clone(), policy)).await
     }
 
-    async fn acquire_entry(&self, key: PoolEntryKey) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
+    async fn acquire_entry(
+        &self,
+        key: PoolEntryKey,
+    ) -> Option<(
+        chromiumoxide::Page,
+        Option<OwnedSemaphorePermit>,
+        Option<crate::browser_pool::HandlerEnd>,
+    )> {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
         let mut entry = sessions.remove(&key)?;
         let page = entry.page.take().expect("acquired session always has a page");
-        Some((page, entry.permit.take()))
+        Some((page, entry.permit.take(), entry.handler_end.take()))
     }
 
     /// Insert a page into the pool for the given key, along with the
@@ -228,7 +242,7 @@ impl BrowserSessionPool {
     /// pool is over capacity, evicts the least-recently-used session,
     /// closing its page and releasing its permit.
     pub async fn insert(&self, key: SessionKey, page: chromiumoxide::Page, permit: Option<OwnedSemaphorePermit>) {
-        self.insert_entry(PoolEntryKey::public(key), page, permit).await;
+        self.insert_entry(PoolEntryKey::public(key), page, permit, None).await;
     }
 
     pub(crate) async fn insert_with_policy(
@@ -237,12 +251,19 @@ impl BrowserSessionPool {
         policy: &SsrfPolicy,
         page: chromiumoxide::Page,
         permit: Option<OwnedSemaphorePermit>,
+        handler_end: Option<crate::browser_pool::HandlerEnd>,
     ) {
-        self.insert_entry(PoolEntryKey::with_policy(key, policy), page, permit)
+        self.insert_entry(PoolEntryKey::with_policy(key, policy), page, permit, handler_end)
             .await;
     }
 
-    async fn insert_entry(&self, key: PoolEntryKey, page: chromiumoxide::Page, permit: Option<OwnedSemaphorePermit>) {
+    async fn insert_entry(
+        &self,
+        key: PoolEntryKey,
+        page: chromiumoxide::Page,
+        permit: Option<OwnedSemaphorePermit>,
+        handler_end: Option<crate::browser_pool::HandlerEnd>,
+    ) {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
 
@@ -258,6 +279,7 @@ impl BrowserSessionPool {
         sessions.insert(
             key,
             PooledSession {
+                handler_end,
                 page: Some(page),
                 permit,
                 last_used: Instant::now(),
@@ -322,6 +344,7 @@ mod tests {
     /// eviction worked at all.
     fn parked_session(age: Duration) -> PooledSession {
         PooledSession {
+            handler_end: None,
             page: None,
             permit: None,
             last_used: Instant::now().checked_sub(age).expect("test clock underflow"),

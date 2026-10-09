@@ -33,6 +33,23 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
+// ~keep The generated CDP schema exposes newer URLPattern syntax only; the browser config
+// ~keep promises the legacy '*' glob syntax, which Chrome's deprecated `urls` field accepts.
+#[derive(serde::Serialize)]
+struct BlockedUrls {
+    urls: Vec<String>,
+}
+
+impl chromiumoxide::Method for BlockedUrls {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Network.setBlockedURLs".into()
+    }
+}
+
+impl chromiumoxide::Command for BlockedUrls {
+    type Response = chromiumoxide::cdp::browser_protocol::network::SetBlockedUrLsReturns;
+}
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -53,6 +70,7 @@ pub(super) async fn page_fetch(
     watch: &Watch,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
@@ -61,6 +79,11 @@ pub(super) async fn page_fetch(
     }
 
     apply_user_agent(page, config, stealth).await?;
+    page.execute(BlockedUrls {
+        urls: config.browser.block_url_patterns.clone(),
+    })
+    .await
+    .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
 
     if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
@@ -68,6 +91,12 @@ pub(super) async fn page_fetch(
 
     apply_prior_cookies(watch, prior_cookies).await?;
 
+    if let Some(domain) = url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    {
+        rate_limiter.acquire(&domain).await?;
+    }
     let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
     // ~keep of `extra_wait` is not missed while its DNS lookup runs.
@@ -327,7 +356,9 @@ async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stea
     if resolved_ua.is_empty() {
         return Ok(());
     }
-    page.set_user_agent(&resolved_ua)
+    let mut params = chromiumoxide::cdp::browser_protocol::emulation::SetUserAgentOverrideParams::new(&resolved_ua);
+    params.user_agent_metadata = super::user_agent::metadata(&resolved_ua);
+    page.execute(params)
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     Ok(())

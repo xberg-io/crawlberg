@@ -134,7 +134,7 @@ pub struct BrowserConfig {
     pub proxy: Option<ProxyConfig>,
     /// URL patterns to block before the network request fires. Supports `*`
     /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-    /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+    /// both browser backends.
     #[serde(default)]
     pub block_url_patterns: Vec<String>,
     /// JavaScript snippet evaluated after navigation completes.

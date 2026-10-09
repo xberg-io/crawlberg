@@ -31,6 +31,7 @@ use crate::types::{BrowserBackend, BrowserCookie, CrawlConfig};
 mod cookies;
 mod launch;
 mod navigation;
+mod user_agent;
 
 /// ~keep A cancelled caller leaves its supervised launch running to completion. This global cap
 /// ~keep deliberately applies backpressure across profile-lock waits, launches and endpoint
@@ -140,11 +141,72 @@ pub(crate) async fn browser_fetch(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
+    #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
+) -> Result<BrowserPage, CrawlError> {
+    for attempt in 0..=config.retry_count {
+        // ~keep Bound the retry future's layout: generated Dart wrappers otherwise exceed
+        // ~keep Rust's default recursion limit when this attempt is inlined into their future.
+        let result = Box::pin(browser_fetch_once(
+            url,
+            config,
+            prior_cookies,
+            pool,
+            want_screenshot,
+            rate_limiter,
+            #[cfg(feature = "browser-native")]
+            native_executor,
+        ))
+        .await;
+        match result {
+            Err(error) if attempt < config.retry_count && browser_error_is_retryable(&error, config) => {
+                let delay = crate::defaults::dispatch::compute_backoff_ms(
+                    u32::try_from(attempt).unwrap_or(u32::MAX),
+                    config.retry_initial_delay_ms,
+                    config.retry_max_delay_ms,
+                );
+                tracing::debug!(attempt, delay_ms = delay, "retrying browser fetch");
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
+            outcome => return outcome,
+        }
+    }
+    Err(CrawlError::other("browser retry exhausted"))
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the browser's CDP connection closed")]
+struct BrowserConnectionClosed {
+    #[source]
+    source: Option<crate::error::ErrorSource>,
+}
+
+fn browser_error_is_retryable(error: &CrawlError, config: &CrawlConfig) -> bool {
+    crate::http::should_retry_error(error, &config.retry_codes)
+        || matches!(error, CrawlError::BrowserError { source: Some(source), .. }
+            if std::error::Error::source(source).is_some_and(|cause| cause.is::<BrowserConnectionClosed>()))
+}
+
+async fn browser_fetch_once(
+    url: &str,
+    config: &CrawlConfig,
+    prior_cookies: Option<&[BrowserCookie]>,
+    pool: Option<&BrowserPool>,
+    want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
     let page = match config.browser.backend {
-        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await?,
+        BrowserBackend::Chromiumoxide => {
+            chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot, rate_limiter).await?
+        }
         BrowserBackend::Native => {
+            if let Some(host) = url::Url::parse(url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+            {
+                rate_limiter.acquire(&host).await?;
+            }
             // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
             // ~keep (`page_fetch`, in `browser/navigation.rs`); the native backend lives in the
             // ~keep off-limits `crawlberg-browser` crate. Warn instead of silently dropping the
@@ -183,6 +245,7 @@ async fn chromiumoxide_fetch(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let session_id = BROWSER_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
@@ -203,7 +266,7 @@ async fn chromiumoxide_fetch(
     }
     let _guard = SessionGuard;
 
-    chromiumoxide_fetch_inner(url, config, prior_cookies, pool, want_screenshot)
+    chromiumoxide_fetch_inner(url, config, prior_cookies, pool, want_screenshot, rate_limiter)
         .instrument(span)
         .await
 }
@@ -214,6 +277,7 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
     validate_url(&target, &config.ssrf)
@@ -221,8 +285,8 @@ async fn chromiumoxide_fetch_inner(
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
     match pool {
-        Some(pool) => pooled_fetch(url, config, prior_cookies, pool, want_screenshot).await,
-        None => one_shot_fetch(url, config, prior_cookies, want_screenshot).await,
+        Some(pool) => pooled_fetch(url, config, prior_cookies, pool, want_screenshot, rate_limiter).await,
+        None => one_shot_fetch(url, config, prior_cookies, want_screenshot, rate_limiter).await,
     }
 }
 
@@ -247,6 +311,7 @@ async fn pooled_fetch(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: &BrowserPool,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
@@ -270,7 +335,7 @@ async fn pooled_fetch(
         );
     }
 
-    let (page, permit, acquired_watch) =
+    let (page, permit, acquired_watch, handler_end) =
         match tokio::time::timeout_at(deadline, acquire_pooled_page(url, config, pool)).await {
             Ok(acquired) => acquired?,
             Err(_) => return Err(overall_deadline_error(overall_timeout)),
@@ -294,12 +359,15 @@ async fn pooled_fetch(
         Err(error) => {
             let _ = tokio::time::timeout(config.browser.shutdown_timeout, page.close()).await;
             drop(permit);
-            return Err(error);
+            return Err(match handler_end.as_ref() {
+                Some(end) => connection_closed_error(error, end),
+                None => error,
+            });
         }
     };
     let result = match tokio::time::timeout_at(
         deadline,
-        page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot),
+        page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter),
     )
     .await
     {
@@ -307,8 +375,12 @@ async fn pooled_fetch(
         Err(_) => Err(overall_deadline_error(overall_timeout)),
     };
 
+    let result = result.map_err(|error| match handler_end.as_ref() {
+        Some(end) => connection_closed_error(error, end),
+        None => error,
+    });
     let reusable = result.is_ok() && watch.page_reusable();
-    release_pooled_page(url, config, page, watch, permit, reusable).await;
+    release_pooled_page(url, config, page, watch, permit, handler_end, reusable).await;
 
     result
 }
@@ -324,7 +396,15 @@ async fn acquire_pooled_page(
     url: &str,
     config: &CrawlConfig,
     pool: &BrowserPool,
-) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>, Option<Watch>), CrawlError> {
+) -> Result<
+    (
+        chromiumoxide::Page,
+        Option<OwnedSemaphorePermit>,
+        Option<Watch>,
+        Option<HandlerEnd>,
+    ),
+    CrawlError,
+> {
     let proxy = crate::proxy::chrome_proxy_for(config)?;
     if config.browser.session_affinity {
         let session_key = session_key(url, proxy.as_ref())?;
@@ -333,13 +413,17 @@ async fn acquire_pooled_page(
             .as_deref()
             .ok_or_else(|| CrawlError::browser_error("session_affinity enabled but session pool is not configured"))?;
 
-        if let Some(reused) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
-            return Ok((reused.0, reused.1, None));
+        if let Some((page, permit, handler_end)) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
+            if !handler_end.as_ref().is_some_and(HandlerEnd::has_ended) {
+                return Ok((page, permit, None, handler_end));
+            }
+            drop(page);
+            drop(permit);
         }
     }
 
-    let (page, watch, permit) = pool.acquire_page_through(proxy.as_ref(), config).await?.into_parts();
-    Ok((page, permit, Some(watch)))
+    let (page, watch, permit, handler_end) = pool.acquire_page_through(proxy.as_ref(), config).await?.into_parts();
+    Ok((page, permit, Some(watch), Some(handler_end)))
 }
 
 /// The session-affinity key of a page for `url` opened through `proxy`.
@@ -377,6 +461,7 @@ async fn release_pooled_page(
     page: chromiumoxide::Page,
     watch: Watch,
     permit: Option<OwnedSemaphorePermit>,
+    handler_end: Option<HandlerEnd>,
     reusable: bool,
 ) {
     if config.browser.session_affinity
@@ -388,7 +473,7 @@ async fn release_pooled_page(
         tracing::debug!("parking a pooled browser page for session reuse");
         watch.park().await;
         session_pool
-            .insert_with_policy(session_key, &config.ssrf, page, permit)
+            .insert_with_policy(session_key, &config.ssrf, page, permit, handler_end)
             .await;
         return;
     }
@@ -511,6 +596,7 @@ async fn one_shot_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
@@ -525,7 +611,16 @@ async fn one_shot_fetch(
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(overall_deadline_error(overall_timeout)),
     };
-    fetch_launched(launched, deadline, url, config, prior_cookies, want_screenshot).await
+    fetch_launched(
+        launched,
+        deadline,
+        url,
+        config,
+        prior_cookies,
+        want_screenshot,
+        rate_limiter,
+    )
+    .await
 }
 
 /// Fetch `url` in a browser [`launch_or_connect`] returned, before `deadline`, then tear the
@@ -537,6 +632,7 @@ async fn fetch_launched(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
+    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let (handler_handle, handler_end) = spawn_watched_handler(handler);
@@ -559,7 +655,7 @@ async fn fetch_launched(
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     let fetch_outcome = tokio::time::timeout(remaining, async {
         let (page, watch) = session.open_watched_page(config).await?;
-        let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot).await;
+        let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter).await;
         watch.close().await;
         let mut result = result?;
         crate::net::egress::add_refused(&mut result.refused, session.egress_refused().await);
@@ -594,7 +690,7 @@ fn connection_closed_error(error: CrawlError, handler_end: &HandlerEnd) -> Crawl
                 Some(cause) => format!("the browser's CDP connection closed ({cause}): {message}"),
                 None => format!("the browser's CDP connection closed: {message}"),
             };
-            CrawlError::BrowserError { message, source }
+            CrawlError::browser_error_with_source(message, BrowserConnectionClosed { source })
         }
         other => other,
     }
@@ -807,6 +903,7 @@ mod tests {
             None,
             None,
             false,
+            &crate::defaults::NoopRateLimiter,
             Some(executor),
         )
         .await
@@ -869,7 +966,9 @@ mod launch_supervision_tests {
             },
             ..Default::default()
         };
-        let fetch = tokio::spawn(async move { one_shot_fetch("about:blank", &config, None, false).await });
+        let fetch = tokio::spawn(async move {
+            one_shot_fetch("about:blank", &config, None, false, &crate::defaults::NoopRateLimiter).await
+        });
         let completed = tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, completed_rx)
             .await
             .expect("the supervised Chrome launch must finish within the process-test bound")
@@ -898,5 +997,31 @@ mod launch_supervision_tests {
             0,
             "no Chrome process may keep using the cancelled fetch's profile"
         );
+    }
+}
+
+#[cfg(test)]
+mod retry_policy_tests {
+    use super::{BrowserConnectionClosed, browser_error_is_retryable};
+    use crate::{CrawlConfig, CrawlError};
+
+    #[test]
+    fn should_retry_disconnected_browser_but_not_other_browser_errors() {
+        let config = CrawlConfig {
+            retry_codes: vec![429],
+            ..CrawlConfig::default()
+        };
+        assert!(browser_error_is_retryable(
+            &CrawlError::browser_error_with_source("navigation failed", BrowserConnectionClosed { source: None }),
+            &config
+        ));
+        assert!(!browser_error_is_retryable(
+            &CrawlError::browser_error("the browser's CDP connection closed: text without a real disconnect"),
+            &config
+        ));
+        assert!(!browser_error_is_retryable(
+            &CrawlError::ssrf_violation("http://localhost", "denied"),
+            &config
+        ));
     }
 }
