@@ -180,6 +180,37 @@ impl CrawlEngine {
         url: &str,
         state: &mut crawlberg_browser::adapter::NativeRenderState,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+        let domain = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned));
+        for attempt in 0..=self.config.retry_count {
+            if let Some(domain) = domain.as_deref() {
+                self.rate_limiter.acquire(domain).await?;
+            }
+            match self.native_render_once(url, state).await {
+                Err(error)
+                    if attempt < self.config.retry_count
+                        && crate::http::should_retry_error(&error, &self.config.retry_codes) =>
+                {
+                    let delay = crate::defaults::dispatch::compute_backoff_ms(
+                        u32::try_from(attempt).unwrap_or(u32::MAX),
+                        self.config.retry_initial_delay_ms,
+                        self.config.retry_max_delay_ms,
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+                outcome => return outcome,
+            }
+        }
+        Err(CrawlError::other("native browser retry exhausted"))
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
+    async fn native_render_once(
+        &self,
+        url: &str,
+        state: &mut crawlberg_browser::adapter::NativeRenderState,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
@@ -217,11 +248,13 @@ impl CrawlEngine {
             None,
             pool,
             true,
+            self.rate_limiter.as_ref(),
             self.native_browser_executor.as_deref(),
         )
         .await?;
         #[cfg(not(feature = "browser-native"))]
-        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page =
+            crate::browser::browser_fetch(url, &self.config, None, pool, true, self.rate_limiter.as_ref()).await?;
 
         let screenshot = page.response.screenshot.take();
         let final_url = page.response.final_url.clone();
