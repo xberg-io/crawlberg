@@ -286,7 +286,12 @@ async fn a_link_that_lands_on_another_address_of_the_same_page_is_kept() {
 #[tokio::test]
 async fn a_link_that_lands_on_a_page_another_link_holds_is_reported_once() {
     let mock = MockServer::start().await;
-    mount_html(&mock, "/", r#"<a href="/docs/">the docs</a><a href="/docs">the docs again</a>"#).await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<a href="/docs/">the docs</a><a href="/docs">the docs again</a>"#,
+    )
+    .await;
     Mock::given(method("GET"))
         .and(path("/docs"))
         .respond_with(ResponseTemplate::new(302).append_header("location", "/docs/"))
