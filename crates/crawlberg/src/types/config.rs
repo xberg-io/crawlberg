@@ -485,8 +485,11 @@ impl CrawlConfig {
                 "content.bullets must contain only Markdown list markers (-, *, +)",
             ));
         }
-        if self.content.list_indent_width == 0 {
-            return Err(CrawlError::invalid_config("content.list_indent_width must be > 0"));
+        const MAX_LIST_INDENT_WIDTH: usize = 256;
+        if !(1..=MAX_LIST_INDENT_WIDTH).contains(&self.content.list_indent_width) {
+            return Err(CrawlError::invalid_config(
+                "content.list_indent_width must be between 1 and 256",
+            ));
         }
         if !matches!(self.content.strong_em_symbol.as_str(), "*" | "_") {
             return Err(CrawlError::invalid_config("content.strong_em_symbol must be * or _"));
