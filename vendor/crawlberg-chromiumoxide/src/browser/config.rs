@@ -39,6 +39,7 @@ pub struct BrowserConfig {
 
     /// Launch the browser with a specific debugging port.
     pub(crate) port: u16,
+    pub(crate) private_pipe: bool,
 
     /// Path for Chrome or Chromium.
     ///
@@ -108,6 +109,7 @@ pub struct BrowserConfigBuilder {
     sandbox: bool,
     window_size: Option<(u32, u32)>,
     port: u16,
+    private_pipe: bool,
     executable: Option<PathBuf>,
     executation_detection: DetectionOptions,
     extensions: Vec<String>,
@@ -145,6 +147,7 @@ impl Default for BrowserConfigBuilder {
             sandbox: true,
             window_size: None,
             port: 0,
+            private_pipe: cfg!(unix),
             executable: None,
             executation_detection: DetectionOptions::default(),
             extensions: Vec::new(),
@@ -212,6 +215,13 @@ impl BrowserConfigBuilder {
 
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
+        self
+    }
+
+    /// Explicitly launch a WebSocket endpoint for a browser shared with external clients.
+    /// Launched Unix browsers otherwise use a private debugging pipe.
+    pub fn websocket_transport(mut self) -> Self {
+        self.private_pipe = false;
         self
     }
 
@@ -360,6 +370,7 @@ impl BrowserConfigBuilder {
             sandbox: self.sandbox,
             window_size: self.window_size,
             port: self.port,
+            private_pipe: self.private_pipe,
             executable,
             extensions: self.extensions,
             process_envs: self.process_envs,
@@ -383,6 +394,15 @@ impl BrowserConfigBuilder {
 
 impl BrowserConfig {
     pub fn launch(&self) -> io::Result<Child> {
+        self.launch_command(false).spawn()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn launch_pipe(&self) -> io::Result<(Child, std::os::unix::net::UnixStream)> {
+        self.launch_command(true).spawn_pipe()
+    }
+
+    fn launch_command(&self, pipe: bool) -> async_process::Command {
         let mut builder = ArgsBuilder::new();
 
         if self.disable_default_args {
@@ -391,7 +411,10 @@ impl BrowserConfig {
             builder.args(DEFAULT_ARGS.clone()).args(self.args.clone());
         }
 
-        if !builder.has("remote-debugging-port") {
+        if pipe {
+            builder.remove("remote-debugging-port");
+            builder.arg(Arg::key("remote-debugging-pipe"));
+        } else if !builder.has("remote-debugging-port") {
             builder.arg(Arg::value("remote-debugging-port", self.port));
         }
 
@@ -462,7 +485,8 @@ impl BrowserConfig {
         if let Some(ref envs) = self.process_envs {
             cmd.envs(envs);
         }
-        cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
+        cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+        cmd
     }
 }
 

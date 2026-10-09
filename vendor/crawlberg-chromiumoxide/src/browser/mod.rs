@@ -30,6 +30,8 @@ use crate::utils;
 
 mod argument;
 mod config;
+#[cfg(unix)]
+mod pipe;
 
 /// A [`Browser`] is created when chromiumoxide connects to a Chromium instance.
 #[derive(Debug)]
@@ -45,6 +47,15 @@ pub struct Browser {
     debug_ws_url: String,
     /// The context of the browser
     browser_context: BrowserContext,
+    #[cfg(unix)]
+    pipe_hub: Option<crate::pipe::PipeHub>,
+}
+
+struct LaunchConnection {
+    address: String,
+    connection: Connection<CdpEventMessage>,
+    #[cfg(unix)]
+    hub: Option<crate::pipe::PipeHub>,
 }
 
 /// Browser connection information.
@@ -129,6 +140,8 @@ impl Browser {
             config: None,
             child: None,
             debug_ws_url,
+            #[cfg(unix)]
+            pipe_hub: None,
             browser_context,
         };
         Ok((browser, fut))
@@ -147,6 +160,14 @@ impl Browser {
         config.executable = utils::canonicalize_except_snap(config.executable).await?;
 
         // Launch a new chromium instance
+        #[cfg(unix)]
+        let (mut child, pipe) = if config.private_pipe && config.port == 0 {
+            let (child, pipe) = config.launch_pipe()?;
+            (child, Some(pipe))
+        } else {
+            (config.launch()?, None)
+        };
+        #[cfg(not(unix))]
         let mut child = config.launch()?;
 
         /// Faillible initialization to run once the child process is created.
@@ -156,17 +177,34 @@ impl Browser {
         async fn with_child(
             config: &BrowserConfig,
             child: &mut Child,
-        ) -> Result<(String, Connection<CdpEventMessage>)> {
+            #[cfg(unix)] pipe: Option<std::os::unix::net::UnixStream>,
+        ) -> Result<LaunchConnection> {
+            #[cfg(unix)]
+            if let Some(pipe) = pipe {
+                return self::pipe::initialize(pipe, child, config.launch_timeout).await;
+            }
             let dur = config.launch_timeout;
             let timeout_fut = Box::pin(tokio::time::sleep(dur));
 
             // extract the ws:
             let debug_ws_url = ws_url_from_output(child, timeout_fut).await?;
             let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
-            Ok((debug_ws_url, conn))
+            Ok(LaunchConnection {
+                address: debug_ws_url,
+                connection: conn,
+                #[cfg(unix)]
+                hub: None,
+            })
         }
 
-        let (debug_ws_url, conn) = match with_child(&config, &mut child).await {
+        let launch = match with_child(
+            &config,
+            &mut child,
+            #[cfg(unix)]
+            pipe,
+        )
+        .await
+        {
             Ok(conn) => conn,
             Err(e) => {
                 // An initialization error occurred, clean up the process
@@ -203,14 +241,16 @@ impl Browser {
             manage_child_targets: config.manage_child_targets,
         };
 
-        let fut = Handler::new(conn, rx, handler_config);
+        let fut = Handler::new(launch.connection, rx, handler_config);
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
             sender: tx,
             config: Some(config),
             child: Some(child),
-            debug_ws_url,
+            debug_ws_url: launch.address,
+            #[cfg(unix)]
+            pipe_hub: launch.hub,
             browser_context,
         };
 
@@ -355,6 +395,15 @@ impl Browser {
     /// Returns the address of the websocket this browser is attached to
     pub fn websocket_address(&self) -> &String {
         &self.debug_ws_url
+    }
+
+    /// Open an independent CDP client without exposing a listening TCP socket.
+    pub async fn raw_connection(&self) -> Result<crate::raw_connection::RawConnection> {
+        #[cfg(unix)]
+        if let Some(hub) = &self.pipe_hub {
+            return hub.open_client().await;
+        }
+        crate::raw_connection::RawConnection::connect(&self.debug_ws_url).await
     }
 
     /// Whether the BrowserContext is incognito.

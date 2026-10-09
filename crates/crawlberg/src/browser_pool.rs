@@ -24,6 +24,8 @@ use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
+mod profile_confirmation;
+
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -169,14 +171,15 @@ pub(crate) fn disable_non_proxied_udp(user_data_dir: &std::path::Path) -> Result
     std::fs::write(&path, preferences.to_string()).map_err(|e| failed(&e))
 }
 
-/// How long [`confirm_profile_in_use`] waits for Chrome's `DevToolsActivePort` file.
+/// How long [`confirm_profile_in_use`] waits for Chrome to confirm the prepared profile.
 const PROFILE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Confirm that `browser`, just launched on `user_data_dir`, opened that directory, so the
 /// WebRTC preference [`disable_non_proxied_udp`] wrote there is in effect. If it did not, kill
 /// the browser and return an error: the crawl never runs with the policy off.
 ///
-/// ~keep Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
+/// ~keep Pipe launches prove the profile namespace with a local blob download before policy setup.
+/// ~keep Legacy Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
 /// ~keep path into `<user-data-dir>/DevToolsActivePort` as it prints them on stderr, where
 /// ~keep chromiumoxide reads the websocket address. A sandboxed Chrome, such as a strictly
 /// ~keep confined snap with a private /tmp, opens another directory at the same path and writes
@@ -186,6 +189,14 @@ pub(crate) async fn confirm_profile_in_use(
     browser: &mut Browser,
     user_data_dir: &std::path::Path,
 ) -> Result<(), CrawlError> {
+    if browser.websocket_address() == "pipe" {
+        // ~keep Keep this launch-only protocol exchange out of generated bindings' inline future layout.
+        let result = Box::pin(profile_confirmation::confirm(browser, user_data_dir)).await;
+        if result.is_err() {
+            let _ = browser.kill().await;
+        }
+        return result;
+    }
     let deadline = tokio::time::Instant::now() + PROFILE_CONFIRM_TIMEOUT;
     while !wrote_devtools_port(user_data_dir, browser.websocket_address()) {
         if tokio::time::Instant::now() >= deadline {
@@ -979,9 +990,19 @@ fn spawn_handler_then(
             let Some(event) = event else {
                 break;
             };
-            if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
-                let cause = websocket_error_text(error);
-                tracing::warn!(error = %cause, "the browser's CDP websocket failed; its CDP handler ends");
+            if let Err(error) = &event
+                && matches!(
+                    error,
+                    chromiumoxide::error::CdpError::Ws(_)
+                        | chromiumoxide::error::CdpError::Io(_)
+                        | chromiumoxide::error::CdpError::NoResponse
+                )
+            {
+                let cause = match error {
+                    chromiumoxide::error::CdpError::Ws(error) => websocket_error_text(error),
+                    _ => format!("the browser's CDP pipe connection closed: {error}"),
+                };
+                tracing::warn!(error = %cause, "the browser's CDP transport failed; its CDP handler ends");
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }

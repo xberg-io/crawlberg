@@ -969,13 +969,10 @@ impl BrowserFirewall {
             .execute(fetch_enable_params())
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
-        let (child_socket, _) = tokio::time::timeout(
-            CONTROLLER_TEARDOWN_TIMEOUT,
-            async_tungstenite::tokio::connect_async(browser.websocket_address().as_str()),
-        )
-        .await
-        .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
-        .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
+        let child_socket = tokio::time::timeout(CONTROLLER_TEARDOWN_TIMEOUT, browser.raw_connection())
+            .await
+            .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
+            .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
         let mut registry = Registry {
             shared_context: context == PageContext::Shared,
             ..Registry::default()
@@ -1996,26 +1993,28 @@ fn take_ready_structural(
     }
 }
 
-async fn child_socket_write<S>(
-    socket: &mut async_tungstenite::WebSocketStream<S>,
+async fn child_socket_write<S, E>(
+    socket: &mut S,
     message: async_tungstenite::tungstenite::Message,
     command_timeout: Duration,
 ) -> Result<(), String>
 where
-    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E> + Unpin,
+    E: std::fmt::Display,
 {
-    match tokio::time::timeout(command_timeout, socket.send(message)).await {
+    match tokio::time::timeout(command_timeout, futures::SinkExt::send(socket, message)).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(format!("failed to write child-target controller command: {error}")),
         Err(_) => Err("timed out writing child-target controller command".to_owned()),
     }
 }
 
-async fn close_child_socket<S>(socket: &mut async_tungstenite::WebSocketStream<S>, command_timeout: Duration) -> bool
+async fn close_child_socket<S, E>(socket: &mut S, command_timeout: Duration) -> bool
 where
-    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E> + Unpin,
+    E: std::fmt::Display,
 {
-    tokio::time::timeout(command_timeout, socket.close(None))
+    tokio::time::timeout(command_timeout, futures::SinkExt::close(socket))
         .await
         .is_ok_and(|closed| closed.is_ok())
 }
@@ -2049,21 +2048,24 @@ fn child_policy_boundary_exists(registry: &Registry, target: &TargetId) -> bool 
 /// Hold every related target at `waitForDebugger` until its authoritative context has selected
 /// an immutable policy and any competing chromiumoxide page auto-attach has been disabled. ~keep
 async fn serve_child_targets(
-    socket: async_tungstenite::WebSocketStream<async_tungstenite::tokio::ConnectStream>,
+    socket: chromiumoxide::raw_connection::RawConnection,
     mut commands: mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
 ) -> bool {
     serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
 }
 
-async fn serve_child_targets_with_timeout<S>(
-    mut socket: async_tungstenite::WebSocketStream<S>,
+async fn serve_child_targets_with_timeout<S, E>(
+    mut socket: S,
     commands: &mut mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
     command_timeout: Duration,
 ) -> bool
 where
-    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E>
+        + futures::Stream<Item = Result<async_tungstenite::tungstenite::Message, E>>
+        + Unpin,
+    E: std::fmt::Display,
 {
     let mut next_id = 1_u64;
     let mut pending = HashMap::<u64, ChildPending>::new();

@@ -128,6 +128,7 @@ pub async fn launch_external_chrome_with_cookie(test_name: &str, seed: &str) -> 
             .no_sandbox()
             .new_headless_mode()
             .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+            .websocket_transport()
             .build(),
     )?;
     let (browser, handler) = expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(config).await)?;
