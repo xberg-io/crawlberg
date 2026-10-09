@@ -1,7 +1,9 @@
 //! HTML-to-Markdown conversion -- always active.
 
+use html_to_markdown_rs::error::ConversionError;
 use url::Url;
 
+use crate::error::CrawlError;
 use crate::html::PageScan;
 use crate::types::{ContentConfig, MarkdownResult};
 
@@ -32,7 +34,7 @@ fn convert_html_to_markdown(
     page_scan: Option<PageScan>,
     document_url: &Url,
     config: &ContentConfig,
-) -> Option<MarkdownResult> {
+) -> Result<MarkdownResult, ConversionError> {
     let (html, effective_base) = crate::html::sanitize_url_attributes(html, page_scan, document_url);
     let structure_base = effective_base.as_ref().unwrap_or(document_url);
     let preset = html_to_markdown_rs::options::PreprocessingPreset::parse(&config.preprocessing_preset);
@@ -66,35 +68,31 @@ fn convert_html_to_markdown(
         ..Default::default()
     };
 
-    match html_to_markdown_rs::convert(&html, Some(options)) {
-        Ok(mut result) => {
-            let content = result.content.unwrap_or_default();
-            let document_structure = result.document.as_mut().and_then(|document| {
-                sanitize_document_structure(document, structure_base);
-                serde_json::to_value(document).ok()
-            });
-            let tables = result
-                .tables
-                .iter()
-                .filter_map(|t| serde_json::to_value(t).ok())
-                .collect();
-            let warnings = result.warnings.iter().map(|w| format!("{:?}", w)).collect();
+    let mut result = html_to_markdown_rs::convert(&html, Some(options))?;
+    let content = result.content.unwrap_or_default();
+    let document_structure = result.document.as_mut().and_then(|document| {
+        sanitize_document_structure(document, structure_base);
+        serde_json::to_value(document).ok()
+    });
+    let tables = result
+        .tables
+        .iter()
+        .filter_map(|t| serde_json::to_value(t).ok())
+        .collect();
+    let warnings = result.warnings.iter().map(|w| format!("{:?}", w)).collect();
 
-            let citation_result = crate::citations::generate_citations(&content);
-            let citations = !citation_result.references.is_empty();
-            let fit_content = Some(crate::pruning::generate_fit_markdown(&content));
+    let citation_result = crate::citations::generate_citations(&content);
+    let citations = !citation_result.references.is_empty();
+    let fit_content = Some(crate::pruning::generate_fit_markdown(&content));
 
-            Some(MarkdownResult {
-                content,
-                document_structure,
-                tables,
-                warnings,
-                citations,
-                fit_content,
-            })
-        }
-        Err(_) => None,
-    }
+    Ok(MarkdownResult {
+        content,
+        document_structure,
+        tables,
+        warnings,
+        citations,
+        fit_content,
+    })
 }
 
 /// Convert an HTML string to the configured output format, returning a rich result.
@@ -105,27 +103,54 @@ fn convert_html_to_markdown(
 ///
 /// On native targets, delegates to a blocking task so the conversion
 /// does not block the async runtime. On wasm, runs synchronously.
+///
+/// # Errors
+///
+/// A page the converter refuses, or whose conversion stops, is an error that names the page
+/// and the cause. A page is never reported as converted without its result.
 pub(crate) async fn convert_to_markdown(
     html: &str,
     page_scan: Option<PageScan>,
     document_url: &Url,
     config: &ContentConfig,
-) -> Option<MarkdownResult> {
+) -> Result<MarkdownResult, CrawlError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let html = html.to_owned();
-        let document_url = document_url.clone();
+        let page_url = document_url.clone();
         let config = config.clone();
-        tokio::task::spawn_blocking(move || convert_html_to_markdown(&html, page_scan, &document_url, &config))
-            .await
-            .ok()
-            .flatten()
+        convert_on_blocking_task(document_url, move || {
+            convert_html_to_markdown(&html, page_scan, &page_url, &config)
+        })
+        .await
     }
 
     #[cfg(target_arch = "wasm32")]
     {
         convert_html_to_markdown(html, page_scan, document_url, config)
+            .map_err(|refused| conversion_failure(document_url, refused))
     }
+}
+
+/// Run `conversion` on a blocking task and report its failure as the page's error.
+///
+/// ~keep A conversion that panics ends its task, and the join error is all that is left of
+/// ~keep it. It is the page's error exactly as a refusal by the converter is.
+#[cfg(not(target_arch = "wasm32"))]
+async fn convert_on_blocking_task(
+    document_url: &Url,
+    conversion: impl FnOnce() -> Result<MarkdownResult, ConversionError> + Send + 'static,
+) -> Result<MarkdownResult, CrawlError> {
+    match tokio::task::spawn_blocking(conversion).await {
+        Ok(converted) => converted.map_err(|refused| conversion_failure(document_url, refused)),
+        Err(stopped) => Err(conversion_failure(document_url, stopped)),
+    }
+}
+
+/// The error for a page that has no Markdown because its conversion failed.
+fn conversion_failure(document_url: &Url, cause: impl std::error::Error + Send + Sync + 'static) -> CrawlError {
+    let page = crate::net::redact_url_credentials(document_url.as_str());
+    CrawlError::other_with_source(format!("could not convert {page} to Markdown: {cause}"), cause)
 }
 
 #[cfg(test)]
@@ -202,9 +227,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_html_returns_some() {
+    async fn an_empty_page_is_converted() {
         let result = convert_to_markdown("", None, &page(), &ContentConfig::default()).await;
-        assert!(result.is_some(), "empty html should still return Some");
+        assert!(result.is_ok(), "an empty page is a valid page, got: {result:?}");
+    }
+
+    /// The converter refuses this input by its own check, for its zip signature.
+    const REFUSED_PAGE: &str = "PK\u{3}\u{4}<p>not a page</p>";
+
+    #[tokio::test]
+    async fn a_refused_page_is_an_error_that_names_the_page_and_the_cause() {
+        let with_credentials = Url::parse("https://reader:hunter2@example.com/docs/page").expect("valid page URL");
+
+        let error = convert_to_markdown(REFUSED_PAGE, None, &with_credentials, &ContentConfig::default())
+            .await
+            .expect_err("a page the converter refuses has no Markdown");
+
+        assert!(matches!(error, CrawlError::Other { .. }), "got: {error:?}");
+        let message = error.to_string();
+        assert!(
+            message.contains("example.com/docs/page to Markdown") && message.contains("zip archive"),
+            "the error names the page and the cause, got: {message}"
+        );
+        assert!(
+            !message.contains("hunter2") && !message.contains("reader"),
+            "the error hides the credentials of the page URL, got: {message}"
+        );
+        let cause = std::error::Error::source(&error)
+            .and_then(|wrapper| wrapper.source())
+            .expect("the converter's error stays in the chain");
+        assert!(
+            cause.downcast_ref::<ConversionError>().is_some(),
+            "the cause is the converter's own error, got: {cause:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_conversion_that_panics_is_an_error_for_the_page() {
+        let error = convert_on_blocking_task(&page(), || panic!("the converter stopped"))
+            .await
+            .expect_err("a conversion that panics has no Markdown");
+
+        assert!(matches!(error, CrawlError::Other { .. }), "got: {error:?}");
+        let message = error.to_string();
+        assert!(
+            message.contains("could not convert https://example.com/ to Markdown") && message.contains("panicked"),
+            "the error names the page and says the conversion stopped, got: {message}"
+        );
     }
 
     #[tokio::test]

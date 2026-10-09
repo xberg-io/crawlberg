@@ -83,13 +83,16 @@ pub(crate) async fn scrape_from_crawl_response(
     let extraction = body.extraction;
     let js_render_hint = body.js_render_hint;
     let downloaded_assets = download_discovered_assets(body.asset_refs, config, &client).await;
-    let markdown = crate::markdown::convert_to_markdown(
-        &decoded.body,
-        Some(body.page_scan),
-        &parsed_url,
-        &merged_content_config(config),
-    )
-    .await;
+    // ~keep A binary or PDF body is not a page to convert, as in the crawl (`engine::page_result`).
+    let markdown = if decoded.was_skipped {
+        None
+    } else {
+        let content_config = merged_content_config(config);
+        Some(
+            crate::markdown::convert_to_markdown(&decoded.body, Some(body.page_scan), &parsed_url, &content_config)
+                .await?,
+        )
+    };
 
     Ok(ScrapeResult {
         status_code: resp.status,
@@ -932,6 +935,21 @@ mod tests {
 
         assert!(result.is_pdf, "a PDF content type must be recognised");
         assert!(result.was_skipped, "a PDF must be flagged as skipped for extraction");
+        assert!(result.markdown.is_none(), "a skipped page is not converted");
+    }
+
+    #[tokio::test]
+    async fn scrape_of_a_page_the_converter_refuses_is_an_error() {
+        let resp = response("text/html", "PK\u{3}\u{4}<p>not a page</p>");
+        let error = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
+            .await
+            .expect_err("a page that cannot be converted is not a result");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("could not convert https://example.com/page to Markdown"),
+            "the error names the page, got: {message}"
+        );
     }
 
     fn urls<T>(items: &[T], url: impl Fn(&T) -> &str) -> Vec<String> {
