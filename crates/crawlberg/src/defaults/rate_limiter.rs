@@ -199,16 +199,16 @@ impl RateLimiter for PerDomainThrottle {
                 (None, None) => self.default_delay,
             };
 
-            let elapsed = now.duration_since(domain_state.last_request);
-
-            if elapsed < effective {
-                let duration = self.jitter(effective - elapsed, domain);
-                domain_state.last_request = now + duration;
-                Some(duration)
+            let scheduled = if now.duration_since(domain_state.last_request) >= effective {
+                now
             } else {
-                domain_state.last_request = now;
-                None
-            }
+                let interval = self
+                    .jitter(effective, domain)
+                    .max(domain_state.robots_delay.unwrap_or(Duration::ZERO));
+                (domain_state.last_request + interval).max(now)
+            };
+            domain_state.last_request = scheduled;
+            Some(scheduled.duration_since(now))
         };
 
         if let Some(duration) = sleep_duration {
@@ -249,6 +249,46 @@ impl RateLimiter for PerDomainThrottle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn concurrent_requests_should_keep_each_reserved_domain_gap() {
+        let throttle = std::sync::Arc::new(PerDomainThrottle::new(Duration::from_millis(80)));
+        throttle.acquire("example.com").await.expect("first slot");
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let throttle = throttle.clone();
+            tasks.push(tokio::spawn(async move {
+                throttle.acquire("example.com").await.expect("reserved slot");
+                Instant::now()
+            }));
+        }
+        let mut starts = Vec::new();
+        for task in tasks {
+            starts.push(task.await.expect("acquire task"));
+        }
+        starts.sort();
+        assert_eq!(starts.len(), 3);
+        for gap in starts.windows(2) {
+            assert!(gap[1].duration_since(gap[0]) >= Duration::from_millis(65));
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_jitter_should_respect_a_robots_crawl_delay_floor() {
+        let throttle = PerDomainThrottle::with_jitter_ratio(Duration::ZERO, 1.0);
+        let floor = Duration::from_millis(60);
+        throttle
+            .set_crawl_delay("example.com", floor)
+            .await
+            .expect("robots delay");
+        let mut previous = Instant::now();
+        for _ in 0..16 {
+            throttle.acquire("example.com").await.expect("robots slot");
+            let started = Instant::now();
+            assert!(started.duration_since(previous) >= Duration::from_millis(50));
+            previous = started;
+        }
+    }
 
     fn state_with(last_request: Instant) -> DomainState {
         DomainState {
