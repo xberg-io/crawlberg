@@ -26,7 +26,10 @@ TEST_LOG="/tmp/cargo-test-$$.log"
 
 core_status=0
 echo "=== cargo test -p crawlberg --all-features ==="
-if ! RUST_BACKTRACE=full cargo test -p crawlberg --all-features --no-fail-fast --verbose 2>&1 | tee -a "$TEST_LOG"; then
+# ~keep The core suite launches many Chromium processes. On constrained ARM runners, libtest's
+# default CPU-wide parallelism makes unrelated lifecycle tests tear down each other's handlers.
+if ! RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" RUST_BACKTRACE=full \
+  cargo test -p crawlberg --all-features --no-fail-fast --verbose 2>&1 | tee -a "$TEST_LOG"; then
   core_status="${PIPESTATUS[0]}"
 fi
 
