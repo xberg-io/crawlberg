@@ -324,6 +324,7 @@ mod tests {
             max_age_secs: None,
             must_revalidate: false,
             charset: None,
+            decoded: true,
         }
     }
 

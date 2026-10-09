@@ -33,5 +33,5 @@ pub use types::CrawlRequest;
     any(feature = "browser", feature = "browser-native", test)
 ))]
 pub use types::Landing;
-pub use types::{BodyText, CrawlResponse};
+pub use types::{BodyText, CrawlResponse, ResponseBody};
 pub use ua_rotation::UaRotation;

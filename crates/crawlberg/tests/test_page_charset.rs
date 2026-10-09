@@ -134,6 +134,7 @@ fn cases() -> Vec<Case> {
         body.extend_from_slice(b"</p></body></html>");
         body
     };
+    let one_bad_byte = [UNDECLARED.as_bytes(), &b", and one byte \xe9 that is not UTF-8"[..]].concat();
     let mut cases = vec![
         case(
             "no-declaration-latin1",
@@ -180,6 +181,14 @@ fn cases() -> Vec<Case> {
             "text/html",
             page("", "", UNDECLARED.as_bytes()),
             UNDECLARED,
+            None,
+            "utf-8",
+        ),
+        odd(
+            "no-declaration-utf-8-with-one-bad-byte",
+            "text/html",
+            not_utf8(page("", "", &one_bad_byte)),
+            String::from_utf8_lossy(&one_bad_byte).into_owned(),
             None,
             "utf-8",
         ),
@@ -353,7 +362,9 @@ fn cases() -> Vec<Case> {
         if undeclared {
             case.browser_charset = None;
         }
-        if std::str::from_utf8(&case.body).is_ok() && undeclared {
+        if case.name == "no-declaration-utf-8-with-one-bad-byte" {
+            case.browser_text = Some(decoded_as(WINDOWS_1252, &one_bad_byte));
+        } else if std::str::from_utf8(&case.body).is_ok() && undeclared {
             case.browser_text = Some(decoded_as(WINDOWS_1252, case.text.as_bytes()));
         }
     }
@@ -542,6 +553,62 @@ mod cache {
         }
     }
 
+    /// An entry the previous release stored holds the lossy UTF-8 read of the page. It is not
+    /// served: the page is fetched again and reads right, and the second scrape is a hit.
+    #[tokio::test]
+    async fn an_entry_stored_before_the_upgrade_is_replaced_by_the_page() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/old"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(not_utf8(page("", "", &latin1(LATIN))), "text/html; charset=iso-8859-1")
+                    .append_header("cache-control", "max-age=600")
+                    .append_header("etag", "\"v1\""),
+            )
+            .mount(&site)
+            .await;
+        let url = format!("{}/old", site.uri());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is past 1970")
+            .as_secs();
+        let lossy = String::from_utf8_lossy(&page("", "", &latin1(LATIN))).into_owned();
+        let stored = serde_json::json!({
+            "url": url, "status_code": 200, "content_type": "text/html; charset=iso-8859-1",
+            "body": lossy, "etag": "\"v1\"", "last_modified": null, "cached_at": now,
+            "max_age_secs": 600, "must_revalidate": false,
+        });
+        let entry: CachedPage = serde_json::from_value(stored).expect("an entry of the previous release must load");
+        let cache = MemoryCache::default();
+        cache.0.lock().expect("lock").insert(url.clone(), entry);
+
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.browser.mode = BrowserMode::Never;
+        config.respect_robots_txt = false;
+        let engine = CrawlEngine::builder()
+            .config(config)
+            .cache(cache.clone())
+            .build()
+            .expect("engine must build");
+
+        let first = engine.scrape(&url).await.expect("the first scrape must succeed");
+        assert_eq!(paragraph(&first.html), LATIN, "the old entry must not be served");
+        let second = engine.scrape(&url).await.expect("the second scrape must succeed");
+        assert_eq!(paragraph(&second.html), LATIN, "the new entry must read right");
+        let requests = site.received_requests().await.expect("the server records its requests");
+        assert_eq!(requests.len(), 1, "the page is fetched once, then the cache answers");
+        assert!(
+            !requests[0].headers.contains_key("if-none-match"),
+            "the old entry must not be revalidated: a 304 would keep its lost text"
+        );
+        let replaced = cache.0.lock().expect("lock")[&url].clone();
+        assert!(
+            replaced.decoded,
+            "the entry under the key of the old one must be the new one"
+        );
+    }
+
     /// A page the cache answers reads as the page the server sent.
     #[tokio::test]
     async fn a_page_from_the_cache_reads_as_the_page_from_the_server() {
@@ -633,19 +700,127 @@ mod cache {
     }
 }
 
+mod cut {
+    use std::time::Duration;
+
+    use crawlberg::{BrowserMode, CrawlConfig, crawl, create_engine, scrape};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::JAPANESE;
+
+    /// The bytes the server sends first. The read of the body stops after them, because they
+    /// are more than [`BODY_LIMIT`].
+    const FIRST_WRITE: usize = 6000;
+    const BODY_LIMIT: usize = 4096;
+
+    /// A UTF-8 body that starts with `start` and whose byte [`FIRST_WRITE`] is inside a character.
+    fn body_cut_inside_a_character(start: &str) -> Vec<u8> {
+        let mut body = start.to_owned();
+        while (FIRST_WRITE - body.len()) % 3 != 1 {
+            body.push(' ');
+        }
+        while body.len() < 60_000 {
+            body.push_str(JAPANESE);
+        }
+        let body = body.into_bytes();
+        assert!(
+            std::str::from_utf8(&body[..FIRST_WRITE]).is_err(),
+            "the first write must end inside a character"
+        );
+        assert!(std::str::from_utf8(&body).is_ok(), "the whole body must be UTF-8");
+        body
+    }
+
+    /// Serve `body` as `content_type` to every request: [`FIRST_WRITE`] bytes, a pause, the rest.
+    async fn serve_in_two_writes(content_type: &'static str, body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("the server must bind");
+        let address = listener.local_addr().expect("the server has an address");
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(&body[..FIRST_WRITE]).await;
+                    let _ = socket.flush().await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let _ = socket.write_all(&body[FIRST_WRITE..]).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        format!("http://{address}/page")
+    }
+
+    /// A UTF-8 body that `max_body_size` cuts inside a character is still read as UTF-8: the
+    /// cut is the end of what was read, not a sign of another character set.
+    #[tokio::test]
+    async fn a_utf_8_body_cut_by_the_size_limit_is_still_read_as_utf_8() {
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.browser.mode = BrowserMode::Never;
+        config.respect_robots_txt = false;
+        config.max_body_size = Some(BODY_LIMIT);
+        let engine = create_engine(Some(config)).expect("engine must build");
+
+        for (content_type, start) in [
+            (
+                "text/html",
+                "<!doctype html><html><head><title>t</title></head><body><p>",
+            ),
+            ("application/json", "{\"text\": \""),
+        ] {
+            let url = serve_in_two_writes(content_type, body_cut_inside_a_character(start)).await;
+            let expected = format!("{}{}", start.trim_end(), &JAPANESE[..30]);
+
+            let scraped = scrape(&engine, &url).await.expect("the scrape must succeed");
+            assert!(
+                scraped.html.replace(' ', "").starts_with(&expected.replace(' ', "")),
+                "{content_type}: the scrape must read the page as UTF-8, got {:?}",
+                scraped.html.chars().take(90).collect::<String>()
+            );
+            assert_eq!(scraped.detected_charset, None, "{content_type}: scrape");
+            assert!(scraped.html.len() <= BODY_LIMIT, "the body must be cut to the limit");
+
+            let crawled = crawl(&engine, &url).await.expect("the crawl must succeed");
+            assert_eq!(crawled.pages.len(), 1, "{content_type}: the crawl must return one page");
+            assert!(
+                crawled.pages[0]
+                    .html
+                    .replace(' ', "")
+                    .starts_with(&expected.replace(' ', "")),
+                "{content_type}: the crawl must read the page as UTF-8, got {:?}",
+                crawled.pages[0].html.chars().take(90).collect::<String>()
+            );
+            assert_eq!(crawled.pages[0].detected_charset, None, "{content_type}: crawl");
+        }
+    }
+}
+
 mod bypass {
     use std::sync::Arc;
 
     use async_trait::async_trait;
     use crawlberg::{
-        BypassProvider, BypassResponse, CrawlConfig, CrawlEngine, CrawlError, DispatchProfile, EscalationStrategy,
+        BypassBody, BypassProvider, BypassResponse, CrawlConfig, CrawlEngine, CrawlError, DispatchProfile,
+        EscalationStrategy,
     };
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{JAPANESE, SHIFT_JIS, encode, not_utf8, page, paragraph};
+    use super::{JAPANESE, LATIN, SHIFT_JIS, encode, not_utf8, page, paragraph};
 
-    /// A provider that answers with the bytes of one page and a lossy UTF-8 read of them.
+    /// A provider that answers with one page, as bytes or as text.
     #[derive(Debug)]
-    struct OnePage(Vec<u8>);
+    struct OnePage {
+        body_bytes: Vec<u8>,
+        body_kind: BypassBody,
+    }
 
     #[async_trait]
     impl BypassProvider for OnePage {
@@ -653,8 +828,9 @@ mod bypass {
             Ok(BypassResponse {
                 status: 200,
                 content_type: "text/html".to_owned(),
-                body: String::from_utf8_lossy(&self.0).into_owned(),
-                body_bytes: self.0.clone(),
+                body: String::from_utf8_lossy(&self.body_bytes).into_owned(),
+                body_bytes: self.body_bytes.clone(),
+                body_kind: self.body_kind,
                 headers: std::collections::HashMap::new(),
                 final_url: String::new(),
                 cost_usd: None,
@@ -667,30 +843,116 @@ mod bypass {
         }
     }
 
+    /// Scrape through `provider`: with it as the first tier, and as the tier an HTTP block
+    /// escalates to. Returns the paragraph and the reported character set of each.
+    async fn through_both_tiers(body_bytes: &[u8], body_kind: BypassBody) -> Vec<(String, Option<String>)> {
+        let blocked = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .insert_header("server", "cloudflare")
+                    .set_body_string("<html><head><title>Just a moment...</title></head></html>"),
+            )
+            .mount(&blocked)
+            .await;
+        let mut seen = Vec::new();
+        for strategy in [EscalationStrategy::BypassFirst, EscalationStrategy::BypassOnly] {
+            let provider = OnePage {
+                body_bytes: body_bytes.to_vec(),
+                body_kind,
+            };
+            let config = CrawlConfig {
+                dispatch: Some(DispatchProfile {
+                    strategy,
+                    bypass: Some(Arc::new(provider) as _),
+                    ..DispatchProfile::default()
+                }),
+                respect_robots_txt: false,
+                ..CrawlConfig::builder().allow_private_networks(true).build()
+            };
+            let engine = CrawlEngine::builder()
+                .config(config)
+                .build()
+                .expect("engine must build");
+            let result = engine
+                .scrape(&format!("{}/page", blocked.uri()))
+                .await
+                .expect("the scrape must succeed");
+            seen.push((paragraph(&result.html).to_owned(), result.detected_charset));
+        }
+        assert_eq!(seen.len(), 2, "both tiers must run");
+        seen
+    }
+
     /// The bytes a bypass provider returns are read with their character set, as the bytes of
     /// the HTTP tier are.
     #[tokio::test]
-    async fn a_page_from_a_bypass_provider_is_read_with_its_character_set() {
+    async fn bytes_from_a_bypass_provider_are_read_with_their_character_set() {
         let body = not_utf8(page("", "", &encode(SHIFT_JIS, JAPANESE)));
-        let config = CrawlConfig {
-            dispatch: Some(DispatchProfile {
-                strategy: EscalationStrategy::BypassFirst,
-                bypass: Some(Arc::new(OnePage(body)) as _),
-                ..DispatchProfile::default()
-            }),
-            respect_robots_txt: false,
-            ..CrawlConfig::builder().allow_private_networks(true).build()
-        };
-        let engine = CrawlEngine::builder()
-            .config(config)
-            .build()
-            .expect("engine must build");
-        let result = engine
-            .scrape("http://127.0.0.1:9/page")
+        for (tier, (text, charset)) in through_both_tiers(&body, BypassBody::Bytes)
+            .await
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(text, JAPANESE, "tier {tier}");
+            assert_eq!(charset.as_deref(), Some("shift_jis"), "tier {tier}");
+        }
+    }
+
+    /// Text a bypass provider returns (the HTML a vendor's browser rendered) is not decoded
+    /// again by the `<meta>` tag it still holds.
+    #[tokio::test]
+    async fn text_from_a_bypass_provider_is_not_decoded_again() {
+        for (meta, text) in [
+            (r#"<meta charset="shift_jis">"#, JAPANESE),
+            (r#"<meta charset="iso-8859-1">"#, LATIN),
+        ] {
+            let body = page("", meta, text.as_bytes());
+            for (tier, (seen, charset)) in through_both_tiers(&body, BypassBody::Text)
+                .await
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(seen, text, "tier {tier}, {meta}");
+                assert_eq!(
+                    charset, None,
+                    "tier {tier}, {meta}: a provider reports no character set"
+                );
+            }
+        }
+    }
+}
+
+mod redirect_response {
+    use crawlberg::{BrowserMode, CrawlConfig, create_engine, scrape};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::{LATIN, latin1, not_utf8, page, paragraph};
+
+    /// A redirect that is not followed is the page. Its body is read with its character set.
+    #[tokio::test]
+    async fn a_redirect_response_that_is_the_page_is_read_with_its_character_set() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .append_header("location", "mailto:someone@example.com")
+                    .set_body_raw(not_utf8(page("", "", &latin1(LATIN))), "text/html; charset=iso-8859-1"),
+            )
+            .mount(&site)
+            .await;
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.browser.mode = BrowserMode::Never;
+        config.respect_robots_txt = false;
+        let engine = create_engine(Some(config)).expect("engine must build");
+
+        let result = scrape(&engine, &format!("{}/moved", site.uri()))
             .await
             .expect("the scrape must succeed");
-        assert_eq!(paragraph(&result.html), JAPANESE);
-        assert_eq!(result.detected_charset.as_deref(), Some("shift_jis"));
+        assert_eq!(result.status_code, 302);
+        assert_eq!(paragraph(&result.html), LATIN);
+        assert_eq!(result.detected_charset.as_deref(), Some("iso-8859-1"));
     }
 }
 
@@ -770,6 +1032,43 @@ mod browser {
             Read::Scrape,
         )
         .await;
+    }
+
+    /// A navigation that stops on a redirect past `max_redirects` shows no document. The
+    /// response is the server's own, so the character set its header names is reported.
+    #[tokio::test]
+    async fn a_stopped_navigation_reports_the_character_set_of_its_header() {
+        let test_name = "a_stopped_navigation_reports_the_character_set_of_its_header";
+        let site = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/moved"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302)
+                    .append_header("location", "/next")
+                    .append_header("content-type", "text/html; charset=shift_jis"),
+            )
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(20),
+                ..BrowserConfig::default()
+            },
+            respect_robots_txt: false,
+            max_redirects: 0,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let engine = create_engine(Some(config)).expect("engine must build");
+        let result = match crawlberg::scrape(&engine, &format!("{}/moved", site.uri())).await {
+            Ok(result) => result,
+            Err(error) if chrome_missing(test_name, &error) => return,
+            Err(error) => panic!("the scrape must succeed: {error}"),
+        };
+        assert_eq!(result.status_code, 302);
+        assert_eq!(result.html, "", "a stopped navigation has no document");
+        assert_eq!(result.detected_charset.as_deref(), Some("shift_jis"));
     }
 
     #[tokio::test]

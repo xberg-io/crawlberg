@@ -665,17 +665,12 @@ impl RedirectChain {
 
 /// The response a 404 further down a redirect chain is reported as.
 fn synthetic_not_found() -> crate::tower::CrawlResponse {
-    crate::tower::CrawlResponse {
-        status: 404,
-        content_type: String::new(),
-        body: String::new(),
-        body_bytes: Vec::new(),
-        headers: HashMap::new(),
-        landed: None,
-        sent_user_agent: None,
-        soft_error: false,
-        text: crate::tower::BodyText::Undecoded,
-    }
+    crate::tower::CrawlResponse::new(
+        404,
+        String::new(),
+        HashMap::new(),
+        crate::tower::ResponseBody::Bytes(Vec::new()),
+    )
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
@@ -1090,21 +1085,16 @@ mod tests {
         for (name, value) in headers {
             map.entry((*name).to_owned()).or_default().push((*value).to_owned());
         }
-        crate::tower::CrawlResponse {
+        crate::tower::CrawlResponse::new(
             status,
-            content_type: if body.is_empty() {
+            if body.is_empty() {
                 String::new()
             } else {
                 "text/html".to_owned()
             },
-            body: body.to_owned(),
-            body_bytes: body.as_bytes().to_vec(),
-            headers: map,
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-            text: crate::tower::BodyText::Undecoded,
-        }
+            map,
+            crate::tower::ResponseBody::Bytes(body.as_bytes().to_vec()),
+        )
     }
 
     fn chain_at(current: &str, already_seen: &[&str]) -> RedirectChain {

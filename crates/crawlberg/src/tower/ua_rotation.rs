@@ -110,17 +110,12 @@ mod tests {
         fn call(&mut self, req: CrawlRequest) -> Self::Future {
             let ua = req.headers.get("user-agent").cloned().unwrap_or_default();
             Box::pin(async move {
-                Ok(CrawlResponse {
-                    status: 200,
-                    content_type: "text/html".into(),
-                    body: ua,
-                    body_bytes: vec![],
-                    headers: std::collections::HashMap::new(),
-                    landed: None,
-                    sent_user_agent: None,
-                    soft_error: false,
-                    text: crate::tower::BodyText::Undecoded,
-                })
+                Ok(CrawlResponse::new(
+                    200,
+                    "text/html".into(),
+                    std::collections::HashMap::new(),
+                    crate::tower::ResponseBody::Bytes(ua.into_bytes()),
+                ))
             })
         }
     }

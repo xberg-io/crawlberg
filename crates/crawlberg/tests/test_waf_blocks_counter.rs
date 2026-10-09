@@ -129,6 +129,7 @@ impl BypassProvider for FixedBypass {
             content_type: "text/html".to_owned(),
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
+            body_kind: crawlberg::BypassBody::Bytes,
             headers: Default::default(),
             final_url: String::new(),
             cost_usd: Some(0.0),

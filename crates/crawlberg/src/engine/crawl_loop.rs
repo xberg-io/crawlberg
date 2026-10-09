@@ -898,6 +898,7 @@ async fn fetch_and_extract(
         page_scan,
         ..
     } = outcome;
+    let body_text = resp.body_text().clone();
     let ssrf_refused_urls = resp.landed.map(|landed| landed.refused).unwrap_or_default();
     let status_code = resp.status;
     let content_type = resp.content_type;
@@ -905,7 +906,7 @@ async fn fetch_and_extract(
     let fetched = FetchedBody {
         body: resp.body,
         body_bytes: resp.body_bytes,
-        body_text: resp.text,
+        body_text,
     };
     // ~keep The agent this page's request actually sent (rotation-aware); falls back to the
     // ~keep configured default when unset, exactly matching the previous behaviour when no

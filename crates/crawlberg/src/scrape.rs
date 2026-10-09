@@ -265,7 +265,7 @@ fn decode_response_body(
     parsed_url: &Url,
     config: &CrawlConfig,
 ) -> DecodedBody {
-    let (text, detected_charset) = decode_page(&resp.text, content_type, parsed_url.as_str(), &resp.body_bytes);
+    let (text, detected_charset) = decode_page(resp.body_text(), content_type, parsed_url.as_str(), &resp.body_bytes);
     let mut body = match text {
         Some(text) => {
             page_scan = None;
@@ -451,17 +451,12 @@ mod tests {
     }
 
     fn response(content_type: &str, body: &str) -> crate::tower::CrawlResponse {
-        crate::tower::CrawlResponse {
-            status: 200,
-            content_type: content_type.to_owned(),
-            body: body.to_owned(),
-            body_bytes: body.as_bytes().to_vec(),
-            headers: HashMap::new(),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-            text: crate::tower::BodyText::Undecoded,
-        }
+        crate::tower::CrawlResponse::new(
+            200,
+            content_type.to_owned(),
+            HashMap::new(),
+            crate::tower::ResponseBody::Bytes(body.as_bytes().to_vec()),
+        )
     }
 
     #[tokio::test]
@@ -512,17 +507,12 @@ mod tests {
     }
 
     fn response_with_bytes(content_type: &str, body_bytes: Vec<u8>) -> crate::tower::CrawlResponse {
-        crate::tower::CrawlResponse {
-            status: 200,
-            content_type: content_type.to_owned(),
-            body: String::from_utf8_lossy(&body_bytes).into_owned(),
-            body_bytes,
-            headers: HashMap::new(),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-            text: crate::tower::BodyText::Undecoded,
-        }
+        crate::tower::CrawlResponse::new(
+            200,
+            content_type.to_owned(),
+            HashMap::new(),
+            crate::tower::ResponseBody::Bytes(body_bytes),
+        )
     }
 
     #[tokio::test]

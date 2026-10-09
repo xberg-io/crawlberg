@@ -186,25 +186,21 @@ impl CrawlEngine {
         let (response, refused, redirects, charset) =
             crate::native_browser::native_browser_render(url, &self.config, state, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: response.status,
-            content_type: response.content_type,
-            body: response.body,
-            body_bytes: response.body_bytes,
-            headers: response.headers,
-            landed: Some(Box::new(crate::tower::Landing {
-                url: response.final_url,
-                redirects,
-                refused,
-                extras: response.browser_extras,
-                cookies: Vec::new(),
-            })),
-            // ~keep The native browser backend never reads `config.user_agents`.
-            sent_user_agent: None,
-            soft_error: false,
-            // ~keep The native backend decoded the document, with the character set it reports.
-            text: crate::tower::BodyText::Decoded { charset },
+        // ~keep The native backend decoded the document, with the character set it reports. It
+        // ~keep never reads `config.user_agents`, so `sent_user_agent` stays unset.
+        let body = crate::tower::ResponseBody::Text {
+            text: response.body,
+            charset,
         };
+        let crawl_resp =
+            crate::tower::CrawlResponse::new(response.status, response.content_type, response.headers, body)
+                .with_landed(Some(Box::new(crate::tower::Landing {
+                    url: response.final_url,
+                    redirects,
+                    refused,
+                    extras: response.browser_extras,
+                    cookies: Vec::new(),
+                })));
         Ok((crawl_resp, true))
     }
 
@@ -318,17 +314,13 @@ impl CrawlEngine {
         .response;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: resp.status,
-            content_type: resp.content_type,
-            body: resp.body,
-            body_bytes: resp.body_bytes,
-            headers: resp.headers,
-            landed: None,
-            sent_user_agent: forced_user_agent.map(str::to_owned),
-            soft_error: false,
-            text: crate::tower::BodyText::Undecoded,
-        };
+        let crawl_resp = crate::tower::CrawlResponse::new(
+            resp.status,
+            resp.content_type,
+            resp.headers,
+            crate::tower::ResponseBody::Bytes(resp.body_bytes),
+        )
+        .with_sent_user_agent(forced_user_agent.map(str::to_owned));
         Ok((post_redirect_url, crawl_resp, false))
     }
 }

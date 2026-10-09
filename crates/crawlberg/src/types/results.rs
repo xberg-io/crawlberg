@@ -559,10 +559,15 @@ pub struct CachedPage {
     pub must_revalidate: bool,
     /// The character set `body` was decoded with, as `detected_charset` reports it.
     ///
-    /// `None` for a page that declares no character set and is UTF-8, and for an entry stored
-    /// before this field existed.
-    #[serde(default)]
+    /// `None` for a page that declares no character set and is UTF-8.
     pub charset: Option<String>,
+    /// Whether `body` is the text of the page, decoded with the character set of the page.
+    ///
+    /// False for an entry that an earlier release stored. The body of such an entry is a lossy UTF-8 read
+    /// of the bytes, so a page in another character set has lost its letters. The cache layer
+    /// does not serve an entry that is not decoded; it fetches the page again and replaces it.
+    #[serde(default)]
+    pub decoded: bool,
 }
 
 #[cfg(test)]

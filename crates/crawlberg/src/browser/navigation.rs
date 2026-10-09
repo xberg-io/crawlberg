@@ -213,10 +213,16 @@ async fn render(
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
     let redirects = watch.redirects_followed();
+    undecoded_page(stop, redirects, redirects > 0)
+}
+
+/// The page for a response the navigation did not show as a document. Its body, if it has
+/// one, is the bytes the server sent, so its character set is still to be decided.
+fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> BrowserPage {
     BrowserPage {
         response: stopped_response(stop),
         redirects,
-        redirected: redirects > 0,
+        redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
         text: BodyText::Undecoded,
@@ -282,23 +288,18 @@ fn error_page_outcome(
             crate::net::redact_url_credentials(&failed_url)
         )));
     }
-    Ok(BrowserPage {
-        response: stopped_response(StoppedResponse {
-            url: failed_url,
-            status: recorded.status,
-            headers: recorded.headers,
-            body: String::new(),
-            body_bytes: Vec::new(),
-            request_id: None,
-            terminal_intercepted: false,
-            ready: true,
-        }),
-        redirects,
-        redirected: recorded.redirects > 0,
-        refused: Vec::new(),
-        cookies: Vec::new(),
-        text: BodyText::Undecoded,
-    })
+    let redirected = recorded.redirects > 0;
+    let response = StoppedResponse {
+        url: failed_url,
+        status: recorded.status,
+        headers: recorded.headers,
+        body: String::new(),
+        body_bytes: Vec::new(),
+        request_id: None,
+        terminal_intercepted: false,
+        ready: true,
+    };
+    Ok(undecoded_page(response, redirects, redirected))
 }
 
 /// The response a navigation stopped on, as the HTTP fetch path reports it.

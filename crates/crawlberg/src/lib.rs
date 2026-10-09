@@ -115,7 +115,7 @@ pub use telemetry::{current_traceparent, with_traceparent};
 pub use types::antibot::{AntibotError, AntibotStrategy, Decision, DefaultAntibotStrategy, DynAntibotStrategy};
 pub use types::{
     ActionResult, ArticleMetadata, AssetCategory, AttemptOutcome, AuthConfig, BrowserBackend, BrowserConfig,
-    BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassProvider, BypassResponse, CachedPage,
+    BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassBody, BypassProvider, BypassResponse, CachedPage,
     ContentConfig, ContentFilterKind, CookieInfo, CrawlConfig, CrawlConfigBuilder, CrawlPageResult, CrawlResult,
     CrawlStrategyKind, DispatchProfile, DispatchProfileBuilder, DocumentContentEncoding, DomainObservation,
     DomainRecommendation, DomainStatePort, DownloadedAsset, DownloadedDocument, DynBypassProvider, DynDomainStatePort,

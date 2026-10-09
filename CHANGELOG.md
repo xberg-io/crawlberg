@@ -4,6 +4,20 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
+  `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
+  `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
+  browser rendered. A `BypassResponse { .. }` literal does not compile until it sets the field.
+- **`crawlberg-browser`: `NativeBrowserConfig` and `RenderedPage` each have a new public field**,
+  `document_decoder` and `charset`, and the crate has a new public type, `DocumentDecoder`. A
+  struct literal that names every field must add the new one; `..NativeBrowserConfig::default()`
+  needs no change.
+- **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
+  the entry as it gets it needs no change. A cache entry that an earlier release stored is not
+  served: the page is fetched again and the entry is replaced.
+
 ### Changed
 
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
@@ -60,16 +74,20 @@ All notable changes to crawlberg are documented here.
   `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
   comment or in the text of the page no longer counts as a declaration, an unknown label no longer
   stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+  Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
+  holds a few bytes that are not UTF-8. JSON is read as UTF-8. Only HTML is searched for a `<meta>`
+  tag.
 - Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
   other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
   decoded text was decoded again by that tag. `detected_charset` now reports the character set the
   browser used.
+- Keep the text a bypass vendor decoded. A provider that reads the page from a JSON field (Zyte's
+  `browserHtml`) returns text; it was decoded again by the `<meta>` tag of the page.
 - Read a page with its character set on the native browser backend. It read every document as
   UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
-  mode. `NativeBrowserConfig` has a new `document_decoder` field and `RenderedPage` a new `charset`
-  field in `crawlberg-browser`.
+  mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
-  letters. `CachedPage` has a new `charset` field for the character set of its text.
+  letters. The entry now holds the decoded text and its character set.
 
 ## [1.10.3] - 2026-10-09
 

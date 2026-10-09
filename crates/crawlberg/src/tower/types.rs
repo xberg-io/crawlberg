@@ -68,21 +68,16 @@ mod tests {
             ("Cookie".to_owned(), format!("sid={SECRET}")),
             ("accept".to_owned(), "text/html".to_owned()),
         ]);
-        let response = CrawlResponse {
-            status: 200,
-            content_type: "text/html".into(),
-            body: String::new(),
-            body_bytes: Vec::new(),
-            headers: HashMap::from([
+        let response = CrawlResponse::new(
+            200,
+            "text/html".into(),
+            HashMap::from([
                 ("set-cookie".to_owned(), vec![format!("sid={SECRET}")]),
                 ("proxy-authorization".to_owned(), vec![format!("Basic {SECRET}")]),
                 ("server".to_owned(), vec!["nginx".to_owned()]),
             ]),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-            text: crate::tower::BodyText::Undecoded,
-        };
+            ResponseBody::Bytes(Vec::new()),
+        );
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
             assert!(text.contains("***"), "placeholder missing: {text}");
@@ -155,7 +150,80 @@ pub struct CrawlResponse {
     pub soft_error: bool,
     /// Whether `body` is the text of the page already, or a lossy UTF-8 read of `body_bytes`
     /// whose character set is still to be decided.
-    pub text: BodyText,
+    ///
+    /// ~keep Private, so that [`CrawlResponse::new`] is the only way to make a response: a fetch
+    /// ~keep path that does not say whether it holds bytes or text does not compile.
+    text: BodyText,
+}
+
+/// The body of a response, as the fetcher that made the response holds it.
+///
+/// ~keep A fetcher must say which of the two it holds, because the body cannot: text a browser
+/// ~keep decoded still holds the `<meta charset>` of the page, and decoding it by that tag a
+/// ~keep second time turns every non-ASCII letter into two wrong ones (xberg-io/crawlberg#606).
+pub enum ResponseBody {
+    /// The bytes the server sent. The character set of the page is decided from them when the
+    /// page is read.
+    Bytes(Vec<u8>),
+    /// Text that is decoded already: by a browser, by a bypass vendor, or before the page went
+    /// into the cache. `charset` is the character set it was decoded with, when that is known.
+    /// It is never decoded again.
+    ///
+    /// ~keep wasm has no browser tier, no bypass tier and no cache layer, so nothing builds one there.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Text { text: String, charset: Option<String> },
+}
+
+impl CrawlResponse {
+    /// A response with `body`. `landed` and `sent_user_agent` are unset and `soft_error` is false.
+    pub fn new(status: u16, content_type: String, headers: HashMap<String, Vec<String>>, body: ResponseBody) -> Self {
+        let (body, body_bytes, text) = match body {
+            ResponseBody::Bytes(bytes) => (String::from_utf8_lossy(&bytes).into_owned(), bytes, BodyText::Undecoded),
+            ResponseBody::Text { text, charset } => {
+                let bytes = text.as_bytes().to_vec();
+                (text, bytes, BodyText::Decoded { charset })
+            }
+        };
+        Self {
+            status,
+            content_type,
+            body,
+            body_bytes,
+            headers,
+            landed: None,
+            sent_user_agent: None,
+            soft_error: false,
+            text,
+        }
+    }
+
+    /// This response, from a fetcher that followed redirects itself.
+    #[cfg_attr(
+        any(target_arch = "wasm32", not(any(feature = "browser", feature = "browser-native"))),
+        allow(dead_code)
+    )]
+    pub fn with_landed(mut self, landed: Option<Box<Landing>>) -> Self {
+        self.landed = landed;
+        self
+    }
+
+    /// This response, for a request that sent `sent_user_agent`.
+    pub fn with_sent_user_agent(mut self, sent_user_agent: Option<String>) -> Self {
+        self.sent_user_agent = sent_user_agent;
+        self
+    }
+
+    /// This response, built in place of an error when `soft_error` is true.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn with_soft_error(mut self, soft_error: bool) -> Self {
+        self.soft_error = soft_error;
+        self
+    }
+
+    /// Whether `body` is the text of the page already.
+    pub fn body_text(&self) -> &BodyText {
+        &self.text
+    }
 }
 
 /// How the `body` of a [`CrawlResponse`] relates to the bytes the server sent.
@@ -163,11 +231,10 @@ pub struct CrawlResponse {
 /// ~keep The fetcher states it, because the body cannot: text a browser decoded still holds the
 /// ~keep `<meta charset>` of the page, and decoding it by that tag a second time turns every
 /// ~keep non-ASCII letter into two wrong ones (xberg-io/crawlberg#606).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BodyText {
     /// `body_bytes` is what the server sent and `body` is a lossy UTF-8 read of it. The character
     /// set of the page is decided from `body_bytes` when the page is read.
-    #[default]
     Undecoded,
     /// `body` is the text of the page, decoded once already: by a browser, or before the page went
     /// into the cache. `charset` is the character set it was decoded with, when that is known.
