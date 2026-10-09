@@ -4,6 +4,18 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Content conversion options for paragraph newlines, list bullets and indentation, emphasis
+  markers, compact tables, and inline images in headings. (#612)
+- `original_url` preserves the resolved link spelling on crawl pages and discovered links,
+  separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
+
+### Fixed
+
+- CLI JSON config overlays only explicitly provided fields, including nested sections,
+  preserving unrelated command-line settings. Explicit `null` clears optional fields. (#600)
+
 ## [1.10.3] - 2026-10-09
 
 ### Security

@@ -176,12 +176,14 @@ mod adaptive_tests {
         let candidates = vec![
             FrontierEntry {
                 url: "a".into(),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
             },
             FrontierEntry {
                 url: "b".into(),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 0.5,
@@ -256,12 +258,14 @@ mod adaptive_tests {
         let candidates = vec![
             FrontierEntry {
                 url: "a".into(),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
             },
             FrontierEntry {
                 url: "b".into(),
+                original_url: None,
                 depth: 1,
                 doc_depth: 0,
                 priority: 0.5,
@@ -282,18 +286,21 @@ mod adaptive_tests {
         let candidates = vec![
             FrontierEntry {
                 url: "a".into(),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
             },
             FrontierEntry {
                 url: "b".into(),
+                original_url: None,
                 depth: 1,
                 doc_depth: 0,
                 priority: 0.5,
             },
             FrontierEntry {
                 url: "c".into(),
+                original_url: None,
                 depth: 2,
                 doc_depth: 0,
                 priority: 0.3,
@@ -314,18 +321,21 @@ mod adaptive_tests {
         let candidates = vec![
             FrontierEntry {
                 url: "a".into(),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 0.3,
             },
             FrontierEntry {
                 url: "b".into(),
+                original_url: None,
                 depth: 1,
                 doc_depth: 0,
                 priority: 0.9,
             },
             FrontierEntry {
                 url: "c".into(),
+                original_url: None,
                 depth: 2,
                 doc_depth: 0,
                 priority: 0.5,

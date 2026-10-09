@@ -17,6 +17,10 @@ use serde::{Deserialize, Serialize};
 pub struct FrontierEntry {
     /// URL waiting to be crawled.
     pub url: String,
+    /// Resolved source link spelling, retained across persistent frontier round trips.
+    /// `None` supports older stored entries, which report `url` as their source address. <!-- ~keep -->
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_url: Option<String>,
     /// Crawl depth at which this URL was discovered.
     pub depth: usize,
     /// Document-only depth: number of consecutive `LinkType::Document` hops from
@@ -287,6 +291,7 @@ mod tests {
     fn sample() -> FrontierEntry {
         FrontierEntry {
             url: "https://example.com/page".to_owned(),
+            original_url: None,
             depth: 3,
             doc_depth: 1,
             priority: 0.25,
@@ -308,6 +313,17 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_original_url_through_persistent_frontier_serialization() {
+        let json = serde_json::json!({
+            "url": "https://example.com/na%C3%AFve",
+            "original_url": "https://example.com/naïve",
+            "depth": 1, "doc_depth": 0, "priority": 0.5
+        });
+        let entry: FrontierEntry = serde_json::from_value(json.clone()).expect("frontier entry");
+        assert_eq!(serde_json::to_value(entry).expect("serialized entry"), json);
+    }
+
+    #[test]
     fn should_round_trip_frontier_entry_through_json() {
         let original = sample();
         let encoded = serde_json::to_string(&original).expect("FrontierEntry must serialize");
@@ -323,6 +339,7 @@ mod tests {
     fn should_round_trip_seed_entry_at_depth_zero() {
         let seed = FrontierEntry {
             url: "https://example.com/".to_owned(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,

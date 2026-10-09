@@ -61,6 +61,7 @@ impl CrawlEngine {
 
         let page = CrawlPageResult {
             url: page_url.clone(),
+            original_url: fetch.entry.original_url.clone().unwrap_or_else(|| page_url.clone()),
             normalized_url: norm_url,
             status_code: fetch.status_code,
             content_type: fetch.content_type,

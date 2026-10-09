@@ -38,6 +38,11 @@ impl std::fmt::Display for LinkType {
 pub struct LinkInfo {
     /// The resolved URL of the link.
     pub url: String,
+    /// Link address resolved against the page's base without changing path spelling.
+    /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+    /// URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
     /// The visible text of the link.
     pub text: String,
     /// The classification of the link.
