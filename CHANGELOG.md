@@ -11,7 +11,9 @@ All notable changes to crawlberg are documented here.
   both. Before, it requested the one it met first and never requested the other.
   `CrawlPageResult.normalized_url` keeps the trailing slash of the address, and `map` lists both
   addresses. A site that serves the same content at both addresses now gives two pages where it
-  gave one. To merge them, compare the pages in your own code. (#607)
+  gave one, and each of the two counts against `max_pages`. When one form redirects to the other,
+  the crawl reports one page and sends one more request, or two more in browser mode. To merge
+  two pages, compare them in your own code. (#607)
 - `CrawlPageResult.normalized_url` writes percent-encoding in one form, as RFC 3986 section 6.2.2
   states it: an escape of a letter, a digit, `-`, `.`, `_` or `~` is decoded, and the hex digits of
   every other escape are in upper case. `/a%2db` is reported as `/a-b`, and `/caf%c3%a9` as
@@ -19,6 +21,12 @@ All notable changes to crawlberg are documented here.
 - `LinkInfo.link_type` is decided against the address of the page, not against its `<base>`
   address. `anchor` is a link that has a fragment and names the page it is on, however the link
   is written. `external` is a link to another host than the page's host.
+- With `dedup_include_query`, a crawl keeps each query parameter as it is written. It sorts the
+  parameters by name and keeps the order of the values of one name. Before, it decoded each
+  parameter and encoded it again, so `?a=1&a=2` and `?a=2&a=1`, `?a` and `?a=`, and `?q=a+b` and
+  `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
+  `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
+  way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
 
 ### Fixed
 
@@ -34,6 +42,10 @@ All notable changes to crawlberg are documented here.
   lands on, in HTTP mode and in browser mode. The same holds for a redirect to another
   percent-encoded spelling of the address, and for a redirect that adds a query. A redirect to
   a page the crawl already has from another link is still not requested again. (#629)
+- The sequential crawl loop of the wasm build reported a page two times when a link and a
+  redirect both reached it, for example a folder linked as `/docs` and as `/docs/` where the
+  first redirects to the second. It now reports the page one time, and it does not request a
+  page again that it first reached through a redirect.
 
 ## [1.10.3] - 2026-10-09
 

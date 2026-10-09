@@ -531,6 +531,79 @@ async fn map_keeps_trailing_slash_twins_and_merges_equivalent_escapes() {
 }
 
 // ---------------------------------------------------------------------------------------
+// The kept query (`dedup_include_query`): sorted by parameter name, otherwise as written
+// ---------------------------------------------------------------------------------------
+
+/// With the query kept, two addresses are one page only by the documented sort of parameter
+/// names. The order of the values of one name, a missing `=`, and `+` against `%20` each make
+/// another address, and the crawl requests it.
+#[tokio::test]
+async fn a_kept_query_merges_by_parameter_name_order_and_by_nothing_else() {
+    const PAGE: Answer = Answer::Html("<p>page</p>");
+    let mock = site(&[
+        (
+            "/",
+            Answer::Html(concat!(
+                r#"<a href="/p?a=1&amp;a=2">1</a><a href="/p?a=2&amp;a=1">2</a>"#,
+                r#"<a href="/p?x">3</a><a href="/p?x=">4</a>"#,
+                r#"<a href="/p?q=a+b">5</a><a href="/p?q=a%20b">6</a>"#,
+                r#"<a href="/p?m=1&amp;n=2">7</a><a href="/p?n=2&amp;m=1">the same as 7</a>"#,
+                r#"<a href="/p?e=%7e">8</a><a href="/p?e=~">the same as 8</a>"#,
+            )),
+        ),
+        ("/p?a=1&a=2", PAGE),
+        ("/p?a=2&a=1", PAGE),
+        ("/p?x", PAGE),
+        ("/p?x=", PAGE),
+        ("/p?q=a+b", PAGE),
+        ("/p?q=a%20b", PAGE),
+        ("/p?m=1&n=2", PAGE),
+        ("/p?n=2&m=1", PAGE),
+        ("/p?e=%7e", PAGE),
+        ("/p?e=~", PAGE),
+    ])
+    .await;
+    let config = CrawlConfig {
+        dedup_include_query: true,
+        ..config()
+    };
+    let engine = create_engine(Some(config)).expect("engine builds");
+
+    let result = crawl(&engine, &format!("{}/", mock.uri())).await.expect("crawl runs");
+
+    assert_eq!(
+        sorted(requested_paths(&mock).await),
+        [
+            "/",
+            "/p?a=1&a=2",
+            "/p?a=2&a=1",
+            "/p?e=%7e",
+            "/p?m=1&n=2",
+            "/p?q=a%20b",
+            "/p?q=a+b",
+            "/p?x",
+            "/p?x="
+        ],
+        "eight pages behind the index: only the two documented merges are one request"
+    );
+    assert_eq!(
+        normalized_paths(&mock, &result),
+        [
+            "/",
+            "/p?a=1&a=2",
+            "/p?a=2&a=1",
+            "/p?e=~",
+            "/p?m=1&n=2",
+            "/p?q=a%20b",
+            "/p?q=a+b",
+            "/p?x",
+            "/p?x="
+        ],
+        "normalized_url keeps each query as it is written, sorted by name, with RFC 3986 escapes"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
 // #629: a redirect of a linked page to another address of the same page
 // ---------------------------------------------------------------------------------------
 
@@ -606,6 +679,26 @@ async fn a_redirect_chain_through_the_slash_form_to_an_index_file_is_followed() 
         ["/", "/docs", "/docs/", "/docs/index.html", "/docs/guide"]
     );
     assert_eq!(final_paths(&mock, &result), ["/", "/docs/guide", "/docs/index.html"]);
+}
+
+/// A page the crawl reaches only through a redirect is marked seen by the chain that claims it,
+/// so a later link to it is not requested again.
+#[tokio::test]
+async fn a_page_reached_only_through_a_redirect_is_not_requested_again_from_a_later_link() {
+    let mock = site(&[
+        ("/", Answer::Html(r#"<a href="/go">go</a>"#)),
+        ("/go", Answer::RedirectTo("/landed")),
+        (
+            "/landed",
+            Answer::Html(r#"<h1>Landed</h1><a href="/behind">behind</a>"#),
+        ),
+        ("/behind", Answer::Html(r#"<h1>Behind</h1><a href="/landed">back</a>"#)),
+    ])
+    .await;
+
+    crawl_to_depth(&format!("{}/", mock.uri()), 3).await;
+
+    assert_eq!(requested_paths(&mock).await, ["/", "/go", "/landed", "/behind"]);
 }
 
 /// A redirect to another spelling of the requested address is the same page under RFC 3986,

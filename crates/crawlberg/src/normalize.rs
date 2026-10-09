@@ -53,24 +53,27 @@ fn normalize_percent_encoding(address: &str) -> String {
     out
 }
 
-/// Sort `u`'s query parameters by key, re-encoding with a proper x-www-form-urlencoded
-/// serializer instead of `format!("{k}={v}")`.
+/// The name of one `&`-separated query parameter: the text before its first `=`, or all of it.
+fn parameter_name(parameter: &str) -> &str {
+    parameter.split_once('=').map_or(parameter, |(name, _)| name)
+}
+
+/// Sort the query parameters of `address`, a serialized URL with no fragment, by name. Each
+/// parameter stays as it is written, and parameters with one name keep their order.
 ///
-/// ~keep The decoded pairs may contain '&' or '=' (e.g. from a percent-encoded value), and
-/// writing them back unescaped would collapse two genuinely different URLs onto the same
-/// normalized string.
-fn sort_query(u: &mut Url) {
-    let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
-    if pairs.is_empty() {
-        return;
-    }
-    let mut sorted = pairs;
-    sorted.sort();
-    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-    for (k, v) in &sorted {
-        serializer.append_pair(k, v);
-    }
-    u.set_query(Some(&serializer.finish()));
+/// ~keep The sort by name is the documented behaviour of `dedup_include_query` (crawlberg#65),
+/// ~keep not a rule of a standard: a server may read `?a=1&b=2` and `?b=2&a=1` differently.
+/// ~keep Nothing else is merged. The order of the values of ONE name carries meaning
+/// ~keep (`?tag=a&tag=b`), so the sort is stable and compares the name only. A parameter is
+/// ~keep not decoded and encoded again: that would make `?a` equal to `?a=` and `+` equal to
+/// ~keep `%20`, which no standard says of a URL.
+fn sort_query_parameters(address: String) -> String {
+    let Some((before, query)) = address.split_once('?') else {
+        return address;
+    };
+    let mut parameters: Vec<&str> = query.split('&').collect();
+    parameters.sort_by(|a, b| parameter_name(a).cmp(parameter_name(b)));
+    format!("{before}?{}", parameters.join("&"))
 }
 
 /// The address of a page as `CrawlPageResult.normalized_url` reports it: the frontier key of
@@ -87,7 +90,8 @@ pub(crate) fn normalize_url(raw: &str) -> String {
 /// two resources a server can answer differently. Doubled slashes in the path are collapsed.
 /// `include_query` decides whether the query string participates in the key too:
 /// `false` (the historical default) drops it entirely, so `?id=1` and `?id=2` collapse to one
-/// key; `true` keeps it, sorted, so they are treated as distinct pages.
+/// key; `true` keeps it, with its parameters sorted by name ([`sort_query_parameters`]) and
+/// its escapes in the same form as the path's, so they are treated as distinct pages.
 ///
 /// ~keep Shared by the native and wasm crawl loops. The wasm loop used to carry its own
 /// copy that omitted the `//` collapse, so the two targets disagreed on which URLs were
@@ -95,13 +99,13 @@ pub(crate) fn normalize_url(raw: &str) -> String {
 pub(crate) fn normalize_url_for_dedup(raw: &str, include_query: bool) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
-        if include_query {
-            sort_query(&mut u);
-        } else {
+        if !include_query {
             u.set_query(None);
         }
         collapse_double_slashes(&mut u);
-        normalize_percent_encoding(u.as_str())
+        // ~keep Escapes first, the sort second: `%61` and `a` are one name and must sort as one.
+        let key = normalize_percent_encoding(u.as_str());
+        if include_query { sort_query_parameters(key) } else { key }
     } else {
         raw.to_owned()
     }
@@ -264,8 +268,8 @@ mod tests {
              normalize to the same string, but both produced {escaped:?}"
         );
         assert_eq!(
-            escaped, "http://example.com/?x=A%26y%3DB",
-            "expected the single-pair value 'A&y=B' to round-trip fully percent-encoded, got {escaped:?}"
+            escaped, "http://example.com/?x=A%26y=B",
+            "expected the one parameter kept as it is written, got {escaped:?}"
         );
         assert_eq!(
             literal, "http://example.com/?x=A&y=B",
@@ -379,6 +383,58 @@ mod tests {
             normalize_url_for_dedup("http://example.com/s?q=a&b", true),
             "an escaped separator in a query value is not the separator"
         );
+        assert_eq!(
+            normalize_url("http://example.com/s?%7a=1&b=%c3%a9&y=%2d"),
+            "http://example.com/s?b=%C3%A9&y=-&z=1",
+            "an escaped name sorts as the name it encodes, and the two RFC 3986 rules apply to the query"
+        );
+    }
+
+    /// The kept query merges by the documented sort of parameter names and by nothing else.
+    #[test]
+    fn a_kept_query_is_sorted_by_name_and_otherwise_kept_as_written() {
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?b=2&a=1", true),
+            normalize_url_for_dedup("http://example.com/s?a=1&b=2", true),
+            "the documented sort: the order of parameters with different names is not kept"
+        );
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?tag=b&z=9&tag=a&a=0", true),
+            "http://example.com/s?a=0&tag=b&tag=a&z=9",
+            "the values of one name keep their order"
+        );
+        for (one, other) in [
+            ("http://example.com/s?a=1&a=2", "http://example.com/s?a=2&a=1"),
+            ("http://example.com/s?a", "http://example.com/s?a="),
+            ("http://example.com/s?q=a+b", "http://example.com/s?q=a%20b"),
+            ("http://example.com/s?a=1&", "http://example.com/s?a=1"),
+            ("http://example.com/s?", "http://example.com/s"),
+            ("http://example.com/s?a=1&b", "http://example.com/s?a=1%26b"),
+            ("http://example.com/s?a=b=c", "http://example.com/s?a=b%3Dc"),
+        ] {
+            assert_ne!(
+                normalize_url_for_dedup(one, true),
+                normalize_url_for_dedup(other, true),
+                "{one:?} and {other:?} are two addresses"
+            );
+            assert_eq!(
+                normalize_url_for_dedup(one, false),
+                normalize_url_for_dedup(other, false),
+                "the default key drops the query of {one:?} and {other:?}"
+            );
+        }
+        for kept in [
+            "http://example.com/s?a",
+            "http://example.com/s?a=",
+            "http://example.com/s?q=a+b",
+            "http://example.com/s?",
+        ] {
+            assert_eq!(
+                normalize_url(kept),
+                kept,
+                "nothing is added to or removed from {kept:?}"
+            );
+        }
     }
 
     #[test]

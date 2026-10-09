@@ -1539,3 +1539,123 @@ async fn sequential_crawl_follows_a_redirect_to_another_address_of_the_linked_pa
         "both redirects are followed, and the link on the folder page too"
     );
 }
+
+/// Run the sequential crawl from `/` to depth 3. Returns the page paths the server was asked
+/// for, sorted, and `(url, normalized_url)` of each reported page without the origin, sorted.
+async fn sequential_requests_and_pages(mock: &MockServer) -> (Vec<String>, Vec<(String, String)>) {
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(3),
+        max_pages: Some(40),
+        respect_robots_txt: false,
+        ..CrawlConfig::default()
+    }));
+    let result = crawl_admitted(&engine, &format!("{}/", mock.uri()))
+        .await
+        .expect("crawl must succeed");
+    let mut requests: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .filter(|path| path != "/robots.txt")
+        .collect();
+    requests.sort();
+    let mut pages: Vec<(String, String)> = result
+        .pages
+        .iter()
+        .map(|page| {
+            (
+                page.url.replace(&mock.uri(), ""),
+                page.normalized_url.replace(&mock.uri(), ""),
+            )
+        })
+        .collect();
+    pages.sort();
+    (requests, pages)
+}
+
+fn same(path: &str) -> (String, String) {
+    (path.to_owned(), path.to_owned())
+}
+
+/// A folder linked with and without its slash, where the form without it redirects to the
+/// other: the page the redirect lands on is the page of the other link, reported once.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_reports_a_redirecting_folder_linked_both_ways_once() {
+    let mock = exact_path_site(&[
+        (
+            "/",
+            concat!(
+                r#"<html><body><a href="/s0/">0</a><a href="/s0">0</a><a href="/s1/">1</a><a href="/s1">1</a>"#,
+                r#"<a href="/s2">2</a><a href="/s2/">2</a><a href="/s3">3</a><a href="/s3/">3</a></body></html>"#,
+            ),
+        ),
+        ("/s0", "302 /s0/"),
+        ("/s1", "302 /s1/"),
+        ("/s2", "302 /s2/"),
+        ("/s3", "302 /s3/"),
+        ("/s0/", "<html><body>folder 0</body></html>"),
+        ("/s1/", "<html><body>folder 1</body></html>"),
+        ("/s2/", "<html><body>folder 2</body></html>"),
+        ("/s3/", "<html><body>folder 3</body></html>"),
+    ])
+    .await;
+
+    let (_, pages) = sequential_requests_and_pages(&mock).await;
+
+    assert_eq!(
+        pages,
+        [same("/"), same("/s0/"), same("/s1/"), same("/s2/"), same("/s3/")],
+        "each folder is one page, whichever of its two links comes first"
+    );
+}
+
+/// A page reachable only through a redirect is claimed by the entry that lands on it: it is
+/// reported, and a later link to it is not fetched again.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_claims_a_page_it_reaches_only_through_a_redirect() {
+    let mock = exact_path_site(&[
+        ("/", r#"<html><body><a href="/go">go</a></body></html>"#),
+        ("/go", "302 /landed/"),
+        (
+            "/landed/",
+            r#"<html><body>landed <a href="/behind">behind</a></body></html>"#,
+        ),
+        (
+            "/behind",
+            r#"<html><body>behind <a href="/landed/">back</a></body></html>"#,
+        ),
+    ])
+    .await;
+
+    let (requests, pages) = sequential_requests_and_pages(&mock).await;
+
+    assert_eq!(
+        requests,
+        ["/", "/behind", "/go", "/landed/"],
+        "the link back to the landed page is not fetched: the redirect claimed it"
+    );
+    assert_eq!(pages, [same("/"), same("/behind"), same("/landed/")]);
+}
+
+/// `normalized_url` of the sequential loop is the key with the query kept, as in the native loop.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_reports_normalized_url_in_the_one_form() {
+    let mock = exact_path_site(&[
+        ("/", r#"<html><body><a href="/a%2db/%7euser/">page</a></body></html>"#),
+        ("/a%2db/%7euser/", "<html><body>the page</body></html>"),
+    ])
+    .await;
+
+    let (_, pages) = sequential_requests_and_pages(&mock).await;
+
+    assert_eq!(
+        pages,
+        [same("/"), ("/a%2db/%7euser/".to_owned(), "/a-b/~user/".to_owned())],
+        "the address is reported as requested, and normalized_url in the one RFC 3986 form with its slash"
+    );
+}

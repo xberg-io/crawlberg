@@ -4,6 +4,7 @@ mod admission;
 #[cfg(not(target_arch = "wasm32"))]
 mod batch;
 mod builder;
+mod chain_claim;
 #[cfg(not(target_arch = "wasm32"))]
 mod crawl_loop;
 #[cfg(not(target_arch = "wasm32"))]
