@@ -76,7 +76,9 @@ pub(crate) fn challenge_body_error(
     // because telling a WAF block from a plain forbidden needs exactly the body just read and
     // rejected above. The status is attached here instead, so a custom retry policy reading
     // `AttemptOutcome::status` sees a 403 like any other response status (crawlberg#133).
-    status_error(status, url).unwrap_or_else(|| CrawlError::forbidden_with_source("forbidden", HttpStatus(status)))
+    status_error(status, url).unwrap_or_else(|| {
+        CrawlError::forbidden_with_source(super::status::status_message(status, url), HttpStatus(status))
+    })
 }
 
 /// The WAF block error for a fingerprinted challenge `status`.

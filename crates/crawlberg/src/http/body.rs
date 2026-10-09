@@ -132,6 +132,23 @@ pub(crate) async fn read_body_bounded(
     Ok((resp.bytes().await?.to_vec(), false))
 }
 
+pub(crate) fn validate_content_encoding(headers: &reqwest::header::HeaderMap) -> Result<(), crate::error::CrawlError> {
+    for encoding in headers.get_all(reqwest::header::CONTENT_ENCODING) {
+        let encoding = encoding
+            .to_str()
+            .map_err(|_| crate::error::CrawlError::unsupported("invalid Content-Encoding"))?;
+        if encoding
+            .split(',')
+            .any(|token| !token.trim().eq_ignore_ascii_case("identity"))
+        {
+            return Err(crate::error::CrawlError::unsupported(format!(
+                "undecoded Content-Encoding: {encoding}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Read a response body via [`read_body_bounded`] and lossily decode it as UTF-8,
 /// returning an empty string on any read error.
 ///

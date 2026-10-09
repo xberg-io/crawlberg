@@ -528,6 +528,13 @@ pub(crate) async fn follow_redirects(
             }
         }
 
+        if let Some(target) = http_redirect_target(&resp, &chain.current_url) {
+            crate::http::reject_redirect(
+                &target,
+                chain.unseen_key(target.as_str()).is_some(),
+                chain.redirect_count < max_redirects,
+            )?;
+        }
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
             prepend_refused(&mut resp, refused_on_earlier_hops);
