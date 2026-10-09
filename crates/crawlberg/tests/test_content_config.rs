@@ -26,6 +26,30 @@ const PAGE: &str = r#"<!doctype html>
 	</body>
 </html>"#;
 
+#[test]
+fn should_bound_list_indentation_before_constructing_an_engine() {
+    for list_indent_width in [usize::MAX, 257, 0] {
+        let result = create_engine(Some(config_with(ContentConfig {
+            list_indent_width,
+            ..ContentConfig::default()
+        })));
+        let error = result.err().expect("unsafe indentation is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid_config: content.list_indent_width must be between 1 and 256"
+        );
+    }
+    for list_indent_width in [1, 256] {
+        assert!(
+            create_engine(Some(config_with(ContentConfig {
+                list_indent_width,
+                ..ContentConfig::default()
+            })))
+            .is_ok()
+        );
+    }
+}
+
 async fn serve_page() -> MockServer {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))

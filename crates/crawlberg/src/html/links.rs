@@ -125,20 +125,24 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
 // ~keep Url::join normalizes the source spelling that this provenance field must preserve.
 fn resolve_original_url(href: &str, base: &Url, resolved: &Url) -> String {
     use url::Position;
+    let reference = href
+        .split_once(':')
+        .filter(|(scheme, rest)| scheme.eq_ignore_ascii_case(base.scheme()) && !rest.starts_with("//"))
+        .map_or(href, |(_, rest)| rest);
     let origin = &base[..Position::BeforePath];
-    let original = if href.starts_with("//") {
-        format!("{}:{href}", base.scheme())
-    } else if Url::parse(href).is_ok_and(|url| url.has_host()) {
-        href.to_owned()
-    } else if href.starts_with('/') {
-        format!("{origin}{href}")
-    } else if href.starts_with('?') {
-        format!("{}{href}", &base[..Position::AfterPath])
-    } else if href.starts_with('#') {
-        format!("{}{href}", &base[..Position::BeforeFragment])
+    let original = if reference.starts_with("//") {
+        format!("{}:{reference}", base.scheme())
+    } else if Url::parse(reference).is_ok_and(|url| url.has_host()) {
+        reference.to_owned()
+    } else if reference.starts_with('/') {
+        format!("{origin}{reference}")
+    } else if reference.starts_with('?') {
+        format!("{}{reference}", &base[..Position::AfterPath])
+    } else if reference.starts_with('#') {
+        format!("{}{reference}", &base[..Position::BeforeFragment])
     } else {
         let directory = base.path().rsplit_once('/').map_or("", |(directory, _)| directory);
-        format!("{origin}{directory}/{href}")
+        format!("{origin}{directory}/{reference}")
     };
     if base
         .join(href)
@@ -206,6 +210,8 @@ mod tests {
             ("/t/b\\s", "https://example.com/t/b\\s"),
             ("/t/d/%2e%2e/up", "https://example.com/t/d/%2e%2e/up"),
             ("../next", "https://example.com/docs/../next"),
+            ("https:child", "https://example.com/docs/child"),
+            ("https:/child", "https://example.com/child"),
             ("?q=raw space", "https://example.com/docs/page?q=raw space"),
             ("#part", "https://example.com/docs/page?old=1#part"),
             ("//other.test/raw space", "https://other.test/raw space"),
