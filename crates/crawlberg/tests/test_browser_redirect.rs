@@ -279,3 +279,41 @@ async fn a_link_that_lands_on_another_address_of_the_same_page_is_kept() {
         "the link on the folder page must be followed, requested: {requested:?}"
     );
 }
+
+/// A folder linked as `/docs/` and as `/docs`, where the second redirects to the first. Chrome
+/// follows the redirect, and the address it lands on is a page the other link already holds, so
+/// the crawl reports the folder once.
+#[tokio::test]
+async fn a_link_that_lands_on_a_page_another_link_holds_is_reported_once() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", r#"<a href="/docs/">the docs</a><a href="/docs">the docs again</a>"#).await;
+    Mock::given(method("GET"))
+        .and(path("/docs"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/docs/"))
+        .mount(&mock)
+        .await;
+    mount_html(&mock, "/docs/", "<p>docs index</p>").await;
+
+    let Some(result) = crawl_in_browser(
+        "a_link_that_lands_on_a_page_another_link_holds_is_reported_once",
+        browser_config(Vec::new()),
+        &format!("{}/", mock.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+
+    let requested = requested_paths(&mock).await;
+    assert!(
+        requested.iter().any(|p| p == "/docs"),
+        "the redirecting link must be requested, requested: {requested:?}"
+    );
+    let mut landed: Vec<String> = result
+        .pages
+        .iter()
+        .map(|page| page.final_url.replace(&mock.uri(), ""))
+        .collect();
+    landed.sort();
+    assert_eq!(landed, ["/", "/docs/"], "the folder is one page of the result");
+}
