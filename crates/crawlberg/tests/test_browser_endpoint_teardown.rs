@@ -436,9 +436,10 @@ async fn pool_shutdown_leaves_the_external_chrome_running() {
         browser_endpoint: Some(chrome.ws_url.clone()),
         ..BrowserPoolConfig::default()
     });
+    let config = CrawlConfig::builder().allow_private_networks(true).build();
 
     let page = pool
-        .acquire_page()
+        .acquire_page_with_config(&config)
         .await
         .expect("the pool must connect to the external Chrome");
     page.close().await;
@@ -468,9 +469,10 @@ async fn pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close() 
         browser_endpoint: Some(chrome.ws_url.clone()),
         ..BrowserPoolConfig::default()
     });
+    let config = CrawlConfig::builder().allow_private_networks(true).build();
 
     let page = pool
-        .acquire_page()
+        .acquire_page_with_config(&config)
         .await
         .expect("the pool must connect to the external Chrome");
     assert_eq!(
@@ -618,14 +620,16 @@ async fn a_proxied_render_leaves_no_browser_context_in_the_external_chrome() {
             ..BrowserConfig::default()
         },
         browser_pool: Some(std::sync::Arc::clone(&pool)),
-        ..CrawlConfig::default()
+        ..CrawlConfig::builder().allow_private_networks(true).build()
     };
     config
         .ssrf
         .allowlist
         .push(crawlberg::HostMatcher::exact("render-target.test"));
     let engine = create_engine(Some(config)).expect("engine must build");
-    let _ = crawlberg::scrape(&engine, "http://render-target.test/").await;
+    crawlberg::scrape(&engine, "http://render-target.test/")
+        .await
+        .expect_err("the unreachable proxy must make the render fail");
     let opened = watch.opened_contexts().await;
     assert!(
         !opened.is_empty(),

@@ -358,6 +358,7 @@ async fn interact_on_an_external_browser_starts_with_its_cookies() {
         return;
     };
     let mut config = config();
+    config.ssrf.deny_private = false;
     config.browser.endpoint = Some(other_client.websocket_address().clone());
     let engine = create_engine(Some(config)).expect("engine must build");
     let result = interact(&engine, &seed, vec![execute_js("return 1")]).await;

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
-    CrawlError, HostMatcher, PageAction, ProxyConfig, ScrapeResult, SessionKey, create_engine, interact, scrape,
+    CrawlError, HostMatcher, PageAction, ProxyConfig, ScrapeResult, create_engine, interact, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -288,7 +288,6 @@ async fn a_parked_page_is_not_reused_for_a_crawl_with_another_proxy() {
         config
     };
     let name = "a_parked_page_is_not_reused_for_a_crawl_with_another_proxy";
-    let key_a = SessionKey::from_url(TARGET, Some(&format!("http://{address_a}"))).expect("a session key");
     let Some(first) = render_url(name, affine(address_a), TARGET, &seen_a).await else {
         return;
     };
@@ -296,12 +295,11 @@ async fn a_parked_page_is_not_reused_for_a_crawl_with_another_proxy() {
     let Some(second) = render_url(name, affine(address_b), TARGET, &seen_b).await else {
         return;
     };
-    let parked_a = sessions.acquire(&key_a).await;
-    assert!(
-        parked_a.is_some(),
-        "the first crawl's page must stay parked under proxy A's address"
+    assert_eq!(
+        sessions.size().await,
+        2,
+        "each proxy must keep its own policy-scoped parked page"
     );
-    drop(parked_a);
     sessions.shutdown().await;
     pool.shutdown().await;
     assert!(
@@ -336,6 +334,7 @@ async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_p
     let handler = common::spawn_handler(handler);
     let (address, seen) = spawn_proxy().await;
     let mut config = render_config(proxy_at(address, None, None));
+    config.ssrf.deny_private = false;
     config.browser.endpoint = Some(chrome.websocket_address().clone());
     let engine = create_engine(Some(config)).expect("engine must build");
 
@@ -500,9 +499,9 @@ fn assert_refused_in_the_proxy_context(
         seen.lock().expect("record")
     );
     assert_eq!(
-        refused,
-        [denied.to_owned()],
-        "{label}: the SSRF check must refuse the image at the denied address"
+        refused.iter().filter(|url| url.as_str() == denied).count(),
+        1,
+        "{label}: the SSRF check must list the denied image exactly once, got {refused:?}"
     );
     assert!(
         requests_for(seen, denied).is_empty(),
@@ -536,47 +535,35 @@ async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_pooled_proxy_context(
     assert_refused_in_the_proxy_context(name, &result.html, &result.ssrf_refused_urls, &denied, &seen, &accepted);
 }
 
-/// On a browser reached through `browser.endpoint`, the page opens in a browser context made
-/// with the crawl's proxy, and the SSRF check still refuses its requests to a denied address.
+/// ~keep A browser reached through `browser.endpoint` is rejected before its proxy or a denied
+/// ~keep address receives a request when the SSRF policy requires IP-level enforcement.
 #[tokio::test]
-async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context() {
-    let name = "the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context";
-    let profile = tempfile::tempdir().expect("a temp profile directory");
-    let launched = chromiumoxide::BrowserConfig::builder()
-        .no_sandbox()
-        .new_headless_mode()
-        .user_data_dir(profile.path())
-        .build()
-        .map_err(|e| e.to_string());
-    let launched = match launched {
-        Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
-        Err(e) => Err(e),
-    };
-    let Some((mut chrome, handler)) = common::expect_chrome_or_skip(name, launched) else {
-        return;
-    };
-    let handler = common::spawn_handler(handler);
+async fn the_ssrf_check_rejects_a_connected_proxy_context_that_cannot_enforce_ip_denials() {
     let (denied, accepted) = denied_listener().await;
     let (address, seen) = spawn_proxy_with_image(denied.clone()).await;
     let mut config = render_config(proxy_at(address, None, None));
     config.browser.extra_wait = Some(Duration::from_millis(500));
-    config.browser.endpoint = Some(chrome.websocket_address().clone());
+    config.browser.endpoint = Some("ws://127.0.0.1:9/devtools/browser/unreachable".to_owned());
     let engine = create_engine(Some(config)).expect("engine must build");
 
-    let rendered = tokio::time::timeout(Duration::from_secs(60), scrape(&engine, TARGET))
+    let error = tokio::time::timeout(Duration::from_secs(60), scrape(&engine, TARGET))
         .await
-        .expect("the render must finish within 60s");
-    let _ = chrome.close().await;
-    handler.abort();
+        .expect("the render must finish within 60s")
+        .expect_err("an external browser cannot enforce IP-level denials");
 
-    let rendered = rendered.unwrap_or_else(|e| panic!("{name}: the render must go through the proxy: {e:?}"));
-    assert_refused_in_the_proxy_context(
-        name,
-        &rendered.html,
-        &rendered.ssrf_refused_urls,
-        &denied,
-        &seen,
-        &accepted,
+    assert_eq!(
+        error.to_string(),
+        "browser: browser.endpoint cannot be used when the SSRF policy enforces IP denials"
+    );
+    assert_eq!(
+        seen.lock().expect("record").len(),
+        0,
+        "the configured proxy must receive no request"
+    );
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the denied server must receive no connection"
     );
 }
 
@@ -649,6 +636,7 @@ async fn a_caller_proxy_flag_never_replaces_the_configured_proxy() {
                         return;
                     };
                     config.browser.endpoint = Some(chrome.websocket_address().clone());
+                    config.ssrf.deny_private = false;
                     endpoint = Some((chrome, handler));
                 }
                 let engine = create_engine(Some(config)).expect("engine must build");
