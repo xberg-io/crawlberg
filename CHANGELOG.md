@@ -47,6 +47,10 @@ All notable changes to crawlberg are documented here.
   redirect both reached it, for example a folder linked as `/docs` and as `/docs/` where the
   first redirects to the second. It now reports the page one time, and it does not request a
   page again that it first reached through a redirect.
+- The Python package sometimes printed `RuntimeError: _crawlberg::CrawlEngineHandle is
+  unsendable, but is being dropped on another thread` on stderr after an async call, and the
+  engine was then never freed: its connections and its browser stayed until the process ended.
+  The engine handle is now a class that any thread can release.
 
 ## [1.10.3] - 2026-10-09
 
