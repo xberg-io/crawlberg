@@ -27,3 +27,6 @@ More changes against upstream:
   `async_process::Command::kill_on_drop` lets a caller keep the browser process running when its
   handle is dropped. A caller that stops the whole process family itself needs the main process
   alive until it has found the helpers.
+- A `Child` records the process that spawned it. In a process forked from that one, `Browser`
+  hands out no child, waits for none and kills none, and its drop leaks the copied handle. Upstream
+  kills the browser of the parent when the forked process drops its copy.

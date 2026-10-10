@@ -532,6 +532,7 @@ fn the_teardown_removes_the_profile_only_after_every_thread_of_a_killed_process_
         let dir = path.clone();
         std::thread::spawn(move || {
             drop(ProfileTeardown {
+                owner: std::process::id(),
                 dir,
                 launched: None,
                 tree: None,
@@ -3815,4 +3816,269 @@ fn a_chrome_that_is_not_a_snap_gets_its_scratch_profile_in_the_temp_directory() 
         "a scratch profile for a Chrome that is not a snap must be in the temp directory: {}",
         dir.path().display()
     );
+}
+
+/// Run `in_child` in a forked copy of this process and return the wait status of that copy: 0
+/// when `in_child` returned. A copy that has not left within [`PROCESS_TEST_WAIT`] is killed, and
+/// the status is the one of that kill.
+///
+/// ~keep The copy has the one thread that forked, and leaves through `_exit`, so it never returns
+/// ~keep into the test harness and runs no exit function. The functions are declared here as
+/// ~keep `atexit` is in `list_live_profile`: the `libc` crate is no dependency on every unix.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn in_a_forked_process(in_child: impl FnOnce()) -> i32 {
+    unsafe extern "C" {
+        fn fork() -> i32;
+        fn _exit(code: i32) -> !;
+        fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    const NO_HANG: i32 = 1;
+    const KILL: i32 = 9;
+    // ~keep SAFETY: the forked copy runs `in_child` on its one thread and then leaves.
+    let forked = unsafe { fork() };
+    assert!(forked >= 0, "fork must work");
+    if forked == 0 {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(in_child));
+        // ~keep SAFETY: ends the forked copy at once.
+        unsafe { _exit(if outcome.is_ok() { 0 } else { 64 }) }
+    }
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    let mut status = 0;
+    // ~keep SAFETY: `forked` is a child of this process, not yet reaped, and `status` is writable.
+    while unsafe { waitpid(forked, &raw mut status, NO_HANG) } == 0 {
+        if std::time::Instant::now() >= deadline {
+            // ~keep SAFETY: as above.
+            unsafe {
+                kill(forked, KILL);
+                waitpid(forked, &raw mut status, 0);
+            }
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    status
+}
+
+/// A process forked from the one that created a profile directory holds a copy of the directory's
+/// teardown, and of the one the exit hook makes from the list. Dropping both there leaves the
+/// parent's Chrome running and the directory in place, and the parent's own drop still removes it.
+///
+/// ~keep A `cat` blocked on its stdin stands in for the Chrome, as in
+/// ~keep `the_teardown_made_from_the_list_stops_the_recorded_chrome`.
+#[cfg(unix)]
+#[test]
+fn a_teardown_dropped_in_a_forked_process_leaves_its_parents_chrome_and_directory() {
+    let mut dir =
+        ScratchProfileDir::create("crawlberg-forked-teardown-test-", None).expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    let mut chrome = std::process::Command::new("cat")
+        .args(["--", "-", &user_data_dir_flag(&path)])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let flag = user_data_dir_flag(&path);
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    while processes_naming(&mut sysinfo::System::new(), &flag).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    dir.record_chrome(chrome.id());
+    dir.0.as_mut().expect("the teardown is there").launched = Some(chrome.id());
+    let recorded = dir.teardown().chrome.is_some();
+    let (mut from_list, others): (Vec<_>, Vec<_>) = live_profile_teardowns_of(&live_profiles(), std::process::id())
+        .into_iter()
+        .partition(|teardown| teardown.dir == path);
+    // ~keep Forgotten, not dropped: a drop would tear down every live profile of this process.
+    others.into_iter().for_each(std::mem::forget);
+    let listed = from_list.len();
+
+    let status = in_a_forked_process(|| {
+        from_list.clear();
+        drop(dir.0.take());
+    });
+
+    let chrome_runs = chrome.try_wait().expect("the status must be readable").is_none();
+    let directory_there = path.is_dir();
+    from_list.into_iter().for_each(std::mem::forget);
+    let _ = chrome.kill();
+    let _ = chrome.wait();
+    drop(dir);
+    assert!(recorded, "the stand-in must be recorded as the directory's Chrome");
+    assert_eq!(listed, 1, "the listed directory must get one teardown");
+    assert_eq!(status, 0, "the forked process must drop both teardowns and leave");
+    assert!(
+        chrome_runs,
+        "a teardown dropped in a forked process must leave the Chrome of the parent running"
+    );
+    assert!(
+        directory_there,
+        "a teardown dropped in a forked process must leave the profile directory of the parent"
+    );
+    assert!(
+        wait_for_removal(&path),
+        "the process that created the directory must still remove it"
+    );
+}
+
+/// The teardown stops the launched process only while that process is a child of this one. A
+/// process with the recorded pid that this process did not start keeps running, and is not
+/// stopped by a signal on the way.
+///
+/// ~keep The stranger is a `sleep` that a shell started and left, so its parent is not this
+/// ~keep process. It stands for the process that got the pid of a Chrome that was reaped.
+#[cfg(unix)]
+#[test]
+fn the_teardown_leaves_a_launched_pid_that_is_no_child_of_this_process() {
+    let shell = std::process::Command::new("sh")
+        .args(["-c", "sleep 300 >/dev/null 2>&1 </dev/null & echo $!"])
+        .output()
+        .expect("sh must run");
+    let stranger: u32 = String::from_utf8_lossy(&shell.stdout)
+        .trim()
+        .parse()
+        .expect("sh must print the pid of its sleep");
+    let stranger_pid = Pid::from_u32(stranger);
+    let ran_before = ChromeFamily::running(&[stranger_pid], |_| {}) == 1;
+    let mut dir =
+        ScratchProfileDir::create("crawlberg-stranger-pid-test-", None).expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    dir.0.as_mut().expect("the teardown is there").launched = Some(stranger);
+
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(dir.0.take());
+
+    let runs_after = ChromeFamily::running(&[stranger_pid], |_| {});
+    let stopped_after = stopped_count(stranger_pid);
+    let mut system = System::new();
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[stranger_pid]));
+    if let Some(process) = system.process(stranger_pid) {
+        process.kill();
+    }
+    assert!(
+        ran_before,
+        "the stranger must run before the teardown, or the test shows nothing"
+    );
+    assert_eq!(
+        (runs_after, stopped_after),
+        (1, 0),
+        "the teardown must not stop or kill a process that is no child of this process"
+    );
+    assert!(!path.exists(), "the teardown must still remove the directory");
+}
+
+/// A pool dropped in a process forked from the one that launched its Chrome leaves that Chrome
+/// running on its profile directory, and the parent's pool still shuts both down.
+#[cfg(unix)]
+#[test]
+fn a_pool_dropped_in_a_forked_process_leaves_its_parents_chrome_and_profile_directory() {
+    const TEST_NAME: &str = "a_pool_dropped_in_a_forked_process_leaves_its_parents_chrome_and_profile_directory";
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime must build");
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if expect_chrome_or_skip(TEST_NAME, runtime.block_on(pool.warm())).is_none() {
+        return;
+    }
+    let path = runtime.block_on(pool_profile_dir(&pool));
+    let mut copy = Some(Arc::clone(&pool));
+
+    // ~keep The forked copy holds the only two references of its own memory: both go here. The
+    // ~keep wait is for the thread that the profile directory hands its teardown to.
+    let status = in_a_forked_process(|| {
+        drop(copy.take());
+        drop(pool);
+        std::thread::sleep(Duration::from_secs(2));
+    });
+
+    let chrome_processes = chrome_process_count_for_profile(&path);
+    let directory_there = path.is_dir();
+    if let Some(pool) = copy {
+        runtime.block_on(pool.shutdown());
+    }
+    assert_eq!(status, 0, "the forked process must drop its copy of the pool and leave");
+    assert!(
+        chrome_processes > 0,
+        "a pool dropped in a forked process must leave the Chrome of the parent running"
+    );
+    assert!(
+        directory_there,
+        "a pool dropped in a forked process must leave the profile directory of the parent"
+    );
+    assert_profile_directory_is_gone_for_good(&path);
+    drop(runtime);
+}
+
+/// A kill of the browser in a process forked from the one that launched it leaves the Chrome
+/// running and the profile directory whole, and the parent's own kill still ends both.
+#[cfg(unix)]
+#[test]
+fn a_browser_killed_in_a_forked_process_leaves_its_parents_chrome_and_profile_directory() {
+    const TEST_NAME: &str = "a_browser_killed_in_a_forked_process_leaves_its_parents_chrome_and_profile_directory";
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime must build");
+    let dir = ScratchProfileDir::create("crawlberg-forked-kill-test-", None).expect("the directory must be creatable");
+    let config = build_pool_launch_builder(dir.path(), &BrowserPoolConfig::default()).and_then(|builder| {
+        builder
+            .build()
+            .map_err(|error| CrawlError::browser_error(format!("invalid browser config: {error}")))
+    });
+    let Some(config) = expect_chrome_or_skip(TEST_NAME, config) else {
+        return;
+    };
+    let (browser, handler_handle, dir) = runtime
+        .block_on(async {
+            let (browser, handler, dir) = dir.launch(config).await?;
+            Ok::<_, chromiumoxide::error::CdpError>((browser, spawn_handler(handler), dir))
+        })
+        .expect("the Chrome must launch");
+    let path = dir.path().to_path_buf();
+    // ~keep A removal that loses to a Chrome that still writes can leave the directory: the
+    // ~keep marker shows that one was tried.
+    let marker = path.join("crawlberg-forked-kill-test-marker");
+    std::fs::write(&marker, b"").expect("the marker must be writable");
+    let mut launched = Some((browser, handler_handle));
+
+    let status = in_a_forked_process(|| {
+        let (browser, handler_handle) = launched.take().expect("the copy holds the browser");
+        let own = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("the runtime of the forked process must build");
+        own.block_on(kill_browser(
+            browser,
+            handler_handle,
+            path.clone(),
+            Duration::from_secs(2),
+        ));
+    });
+
+    let chrome_processes = chrome_process_count_for_profile(&path);
+    let marker_there = marker.is_file();
+    if let Some((browser, handler_handle)) = launched {
+        runtime.block_on(kill_browser(
+            browser,
+            handler_handle,
+            path.clone(),
+            HANDLER_SHUTDOWN_TIMEOUT,
+        ));
+    }
+    drop(dir);
+    assert_eq!(
+        status, 0,
+        "the forked process must let go of its copy of the browser and leave"
+    );
+    assert!(
+        chrome_processes > 0,
+        "a kill in a forked process must leave the Chrome of the parent running"
+    );
+    assert!(
+        marker_there,
+        "a kill in a forked process must leave the profile directory of the parent whole"
+    );
+    assert_profile_directory_is_gone_for_good(&path);
+    drop(runtime);
 }

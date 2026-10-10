@@ -486,6 +486,7 @@ fn live_profile_teardowns_of(
         .iter()
         .filter(|(_, profile)| profile.owner == owner)
         .map(|(dir, profile)| ProfileTeardown {
+            owner: profile.owner,
             dir: dir.clone(),
             launched: profile.launched,
             tree: profile.tree.clone(),
@@ -531,6 +532,7 @@ impl ScratchProfileDir {
             ));
         }
         Ok(Self(Some(ProfileTeardown {
+            owner: std::process::id(),
             dir: dir.keep(),
             launched: None,
             tree: None,
@@ -658,8 +660,15 @@ impl Drop for ScratchProfileDir {
 /// ~keep closure holding it is dropped: tokio drops a blocking task queued as the runtime shuts
 /// ~keep down without running it, and `std::thread::Builder::spawn` drops its closure when the OS
 /// ~keep refuses a thread.
+///
+/// ~keep It does that work only in the process that created the directory. A process forked from
+/// ~keep that one holds a copy of every teardown and of [`LIVE_PROFILES`]. Dropped there, a copy
+/// ~keep killed the Chrome of the parent by the directory's flag and removed the directory under
+/// ~keep it, so in any other process the drop does nothing.
 #[derive(Debug)]
 struct ProfileTeardown {
+    /// The process that created `dir`, as [`LiveProfile::owner`].
+    owner: u32,
     dir: std::path::PathBuf,
     /// The process a launch started on `dir`, from the moment it exists. While it runs, the
     /// teardown stops it and every process below it.
@@ -698,6 +707,9 @@ impl Drop for ProfileTeardown {
     fn drop(&mut self) {
         #[cfg(test)]
         tests::PROFILE_TEARDOWNS_HERE.with(|count| count.set(count.get() + 1));
+        if self.owner != std::process::id() {
+            return;
+        }
         // ~keep With a tree the system knows every process of the launch, and stopping them
         // ~keep starts no process and searches for none. The other arms find them by the
         // ~keep directory, which on Windows meant a `taskkill.exe` child for each one: started
@@ -1528,6 +1540,13 @@ pub(crate) async fn kill_browser(
     shutdown_timeout: Duration,
 ) {
     let deadline = tokio::time::Instant::now() + shutdown_timeout;
+    // ~keep The driver hands out the process only where it was launched. A process forked from
+    // ~keep that one holds a copy of the browser: it lets go of the copy and leaves the Chrome
+    // ~keep and the profile to its parent.
+    if browser.get_mut_child().is_none() {
+        release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+        return;
+    }
     let main = browser.get_mut_child().and_then(|child| child.as_mut_inner().id());
     let family = match main {
         Some(main) => tokio::task::spawn_blocking(move || {

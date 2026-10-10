@@ -81,6 +81,8 @@ pub struct Child {
     pub stderr: Option<ChildStderr>,
     pub inner: process::Child,
     tree: Option<ProcessTree>,
+    /// The process that spawned this child.
+    spawner: u32,
 }
 
 /// Wrapper for an async child process.
@@ -91,7 +93,14 @@ impl Child {
             inner,
             stderr: stderr.map(|inner| ChildStderr { inner }),
             tree,
+            spawner: std::process::id(),
         }
+    }
+
+    /// Whether this process spawned the child. `false` in a process forked from the one that did:
+    /// it holds a copy of this handle, and the child is not its own to wait for or to end.
+    pub fn spawned_here(&self) -> bool {
+        self.spawner == std::process::id()
     }
 
     /// The tree of processes this child is the root of, where the operating system keeps one.

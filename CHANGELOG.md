@@ -94,8 +94,12 @@ All notable changes to crawlberg are documented here.
 - An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
   profile directory is removed, when the last clone of the engine handle is dropped, and when the
   process exits through the C runtime with an engine still alive or with its Chrome still
-  launching. No new call is needed. On Linux and macOS a process that is killed by a signal or
-  aborts still leaves its Chrome. On Windows the Chrome and its helper processes run in a job
+  launching. No new call is needed. Only the process that launched a Chrome stops it: a process
+  forked from that one, such as a `multiprocessing` worker, holds a copy of the engine, and
+  dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
+  and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
+  `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
+  nothing ends that Chrome for it. On Windows the Chrome and its helper processes run in a job
   object, and the system ends them when the process ends in any way. (#594)
 - On Windows a program that captures the output of a crawling child process returns when that
   child has exited. A Chrome the child left running kept the output pipes open.

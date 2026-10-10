@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The browser process gets the null device as its standard input
 - On Windows a launch fails when the browser process cannot join its job object
+- Only the process that spawned the browser waits for it or ends it. In a process forked from
+  that one, `Browser::get_mut_child`, `wait`, `try_wait` and `kill` answer as for a connected
+  browser, and a dropped `Browser` leaves the browser process running. `Child::spawned_here`
+  tells the two apart
 
 ### Fixed
 
