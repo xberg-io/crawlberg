@@ -13,6 +13,8 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Python async runtime shuts down automatically at interpreter exit and rejects inherited
+  runtime work after a process fork. Explicit shutdown remains restartable.
 - CLI JSON config overlays only explicitly provided fields, including nested sections,
   preserving unrelated command-line settings. Explicit `null` clears optional fields. (#600)
 
