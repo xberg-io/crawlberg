@@ -174,7 +174,7 @@ jobs:
             swift-version: "6.0"
             test-cmd: "task swift:e2e:test"
           - lang: zig
-            zig-version: "0.16.0"
+            zig-version: "0.17.0"
             test-cmd: "task zig:e2e:test"
           - lang: kotlin_android
             gradle: true
