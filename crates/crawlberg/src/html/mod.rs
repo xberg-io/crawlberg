@@ -133,8 +133,9 @@ pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
 /// without the ASCII whitespace around it.
 ///
 /// ~keep A media type has no case, and its parameters (`; charset=...`) say nothing about what the
-/// ~keep content is. Every decision on a type reads this value, never the text of the header or
-/// ~keep of the attribute.
+/// ~keep content is. Every decision this crate makes on the type of a response or of a `type`
+/// ~keep attribute reads this value, never the text of the header or of the attribute. The
+/// ~keep `mime_type` of a downloaded document is this value too.
 pub(crate) fn media_type_essence(value: &str) -> String {
     let essence = value.split(';').next().unwrap_or_default();
     essence.trim_ascii().to_ascii_lowercase()

@@ -18,11 +18,9 @@ static BINARY_EXTENSIONS: &[&str] = &[
     ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", ".exe", ".dll", ".so", ".bin",
 ];
 
-/// Content-Type prefixes (already lowercase) that mark a response as binary.
+/// Prefixes (already lowercase) of the essence of a Content-Type that mark a response as binary.
 ///
-/// Anchored at the start because these are whole type/subtype names: a `contains` test would
-/// misread `application/vnd.ms-word.document+xml`-style parameters and, more importantly,
-/// `text/rtf` must not match a `charset=` parameter that merely mentions it.
+/// Anchored at the start because these are whole type/subtype names.
 const BINARY_CONTENT_TYPE_PREFIXES: &[&str] = &[
     "image/",
     "video/",
@@ -37,7 +35,7 @@ const BINARY_CONTENT_TYPE_PREFIXES: &[&str] = &[
 
 /// Substrings (already lowercase) that mark a Content-Type as a binary document or archive.
 ///
-/// These are matched anywhere because the formats they identify appear inside long vendor
+/// These are matched anywhere in the essence because the formats they identify appear inside long vendor
 /// types -- `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and
 /// `application/x-7z-compressed` among them -- rather than at a fixed position.
 const BINARY_CONTENT_TYPE_MARKERS: &[&str] = &[
@@ -145,12 +143,17 @@ pub(crate) fn is_page_content(content_type: &str, body: &str) -> bool {
 /// This function only decides `is_binary`/markdown-skip classification; it does not
 /// gate document *downloading* — a non-empty `document_mime_types` allowlist governs
 /// that decision independently in `document::build_downloaded_document`.
+///
+/// ~keep The lists are matched against the essence of the type: a parameter that happens to hold
+/// ~keep a marker (`text/plain; name=startup.txt` holds `tar`) does not make a response binary.
 pub(crate) fn is_binary_content_type(ct: &str) -> bool {
-    let lower = ct.to_lowercase();
+    let essence = media_type_essence(ct);
     BINARY_CONTENT_TYPE_PREFIXES
         .iter()
-        .any(|prefix| lower.starts_with(prefix))
-        || BINARY_CONTENT_TYPE_MARKERS.iter().any(|marker| lower.contains(marker))
+        .any(|prefix| essence.starts_with(prefix))
+        || BINARY_CONTENT_TYPE_MARKERS
+            .iter()
+            .any(|marker| essence.contains(marker))
 }
 
 /// Check whether a URL has a binary file extension.
@@ -163,7 +166,7 @@ pub(crate) fn is_binary_url(url: &str) -> bool {
 
 /// Check whether content is a PDF based on Content-Type or body magic bytes.
 pub(crate) fn is_pdf_content(ct: &str, body: &str) -> bool {
-    ct.to_lowercase().contains("application/pdf") || body.starts_with("%PDF")
+    media_type_essence(ct).contains("application/pdf") || body.starts_with("%PDF")
 }
 
 /// Check whether a URL has a `.pdf` extension.
@@ -307,6 +310,33 @@ mod tests {
         ] {
             assert!(!is_binary_content_type(ct), "expected non-binary: {ct}");
         }
+    }
+
+    #[test]
+    fn a_binary_format_named_only_in_a_parameter_is_not_a_binary_type() {
+        for ct in [
+            "text/plain; name=startup.txt",
+            "text/plain; name=archive.zip",
+            "text/html; charset=utf-8; title=image/png",
+        ] {
+            assert!(!is_binary_content_type(ct), "a parameter is not the type: {ct}");
+        }
+        for ct in ["Application/X-Tar; name=notes.txt", " APPLICATION/ZIP ;x=1"] {
+            assert!(is_binary_content_type(ct), "the type has no case: {ct}");
+        }
+    }
+
+    #[test]
+    fn a_pdf_named_only_in_a_parameter_is_not_a_pdf_type() {
+        assert!(
+            !is_pdf_content("text/plain; name=application/pdf", "plain text"),
+            "a parameter is not the type"
+        );
+        assert!(
+            is_pdf_content("Application/PDF; charset=binary", ""),
+            "the type has no case"
+        );
+        assert!(is_pdf_content("text/plain", "%PDF-1.7"), "the body decides too");
     }
 
     #[test]

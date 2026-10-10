@@ -112,7 +112,9 @@ All notable changes to crawlberg are documented here.
   whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
   read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
   change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
-  is a sitemap. A body that
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
   starts as HTML is a page with any declared type, `application/json` included. A response of
   another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
   and a response that `download_documents` keeps as a document, is a result with no `markdown`
@@ -120,6 +122,12 @@ All notable changes to crawlberg are documented here.
 - Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
   `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
   Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
 
 ## [1.10.3] - 2026-10-09
 

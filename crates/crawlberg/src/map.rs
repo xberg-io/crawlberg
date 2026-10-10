@@ -443,6 +443,55 @@ mod tests {
         );
     }
 
+    /// The direct fetch of a URL that is not well-known reads a body with no XML prologue as a
+    /// sitemap only when its type says XML. The well-known `/sitemap.xml` is a sitemap by its
+    /// name, so there the body decides and the type is not read.
+    #[tokio::test]
+    async fn a_sitemap_with_no_prologue_is_read_by_its_type_at_a_direct_url_and_by_its_body_at_the_well_known_url() {
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        let bare = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        let none: Vec<String> = Vec::new();
+        for (route, content_type, expected, why) in [
+            (
+                "/feeds/main.xml",
+                "text/plain; name=sitemap.xml",
+                &none,
+                "a parameter that names xml is not the type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/octet-stream",
+                &none,
+                "the direct fetch reads a sitemap with no prologue only by its type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/xml; name=notes.txt",
+                &locs,
+                "the type says XML, whatever its parameters say",
+            ),
+            (
+                "/sitemap.xml",
+                "text/plain; name=sitemap.xml",
+                &locs,
+                "the well-known sitemap is read by its body",
+            ),
+        ] {
+            let mock = MockServer::start().await;
+            mount_bytes(&mock, route, content_type, bare.clone().into_bytes()).await;
+
+            let result = map(&format!("{}{route}", mock.uri()), &local_test_config())
+                .await
+                .expect("map should succeed");
+
+            assert_eq!(
+                &result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+                expected,
+                "{route} served as {content_type}: {why}"
+            );
+        }
+    }
+
     fn page_urls(base: &str, count: usize) -> Vec<String> {
         (0..count).map(|i| format!("{base}/page-{i}")).collect()
     }
