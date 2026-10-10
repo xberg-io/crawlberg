@@ -103,6 +103,9 @@ impl CrawlEngine {
     ) -> tower::util::BoxCloneService<CrawlRequest, crate::tower::CrawlResponse, CrawlError> {
         use tower::ServiceBuilder;
 
+        let fetch = crate::tower::HttpFetchService::new(client.clone(), self.config.clone());
+        #[cfg(feature = "browser")]
+        let fetch = fetch.for_crawl(self.crawl_cookies.clone());
         let service = ServiceBuilder::new()
             .layer(crate::tower::PerDomainRateLimitLayer::new(self.rate_limiter.clone()))
             .layer(
@@ -110,7 +113,7 @@ impl CrawlEngine {
                     .bypassing_credentials(Arc::new(self.config.clone())),
             )
             .layer(self.ua_rotation.clone())
-            .service(crate::tower::HttpFetchService::new(client.clone(), self.config.clone()));
+            .service(fetch);
 
         let service = tower::ServiceBuilder::new()
             .layer(crate::tower::CrawlTracingLayer::new())

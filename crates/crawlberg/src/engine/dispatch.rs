@@ -136,6 +136,18 @@ impl CrawlEngine {
                         CrawlError::invalid_config("escalation to Bypass tier but no bypass provider configured")
                     })?;
                 let bypass_resp = provider.fetch(url).await?;
+                // ~keep A provider's response does not pass the HTTP fetch service, so this is the
+                // ~keep second place a response fetched without the browser arrives. It reports
+                // ~keep the cookies the target set before anything can read the crawl's cookies.
+                #[cfg(feature = "browser")]
+                if let Some(crawl_cookies) = self.crawl_cookies.as_deref() {
+                    let landed = [bypass_resp.final_url.as_str(), url]
+                        .into_iter()
+                        .map(super::redirect::url_host)
+                        .find(|host| !host.is_empty())
+                        .unwrap_or_default();
+                    crawl_cookies.forget_set_without_browser(&landed, &bypass_resp.headers);
+                }
                 Ok((
                     crate::tower::CrawlResponse {
                         status: bypass_resp.status,

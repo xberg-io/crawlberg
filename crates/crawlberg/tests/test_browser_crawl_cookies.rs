@@ -6,11 +6,15 @@
 
 #![cfg(feature = "browser")]
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlEngineHandle, CrawlResult, batch_crawl, crawl,
-    create_engine,
+    BrowserBackend, BrowserConfig, BrowserMode, BypassProvider, BypassResponse, CrawlConfig, CrawlEngineHandle,
+    CrawlError, CrawlResult, DispatchProfile, DynBypassProvider, EscalationStrategy, batch_crawl, crawl, create_engine,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -484,13 +488,25 @@ fn from_the_browser(request: &Request) -> bool {
 /// A page only the browser gets: the HTTP fetch gets a 403, which automatic mode answers with
 /// the browser.
 async fn browser_only_route(site: &MockServer, at: &'static str, page: ResponseTemplate) {
+    route_by_fetch(site, at, page, |_| ResponseTemplate::new(403)).await;
+}
+
+/// An address that answers the browser with `page`, and the HTTP fetch with what `over_http`
+/// makes for the number of HTTP fetches before this one.
+async fn route_by_fetch(
+    site: &MockServer,
+    at: &'static str,
+    page: ResponseTemplate,
+    over_http: impl Fn(usize) -> ResponseTemplate + Send + Sync + 'static,
+) {
+    let earlier = AtomicUsize::new(0);
     Mock::given(method("GET"))
         .and(path(at))
         .respond_with(move |request: &Request| {
             if from_the_browser(request) {
                 page.clone()
             } else {
-                ResponseTemplate::new(403)
+                over_http(earlier.fetch_add(1, Ordering::SeqCst))
             }
         })
         .mount(site)
@@ -611,5 +627,188 @@ async fn a_page_that_ends_later_does_not_undo_a_deletion_over_http() {
         "the slow page must start with the cookie"
     );
     assert!(cookies_sent_by(&site, "/deleter", true).await.is_empty());
+    assert_eq!(cookies_sent_by(&site, "/last", true).await, [["keep=1"]]);
+}
+
+/// A response with `status` that deletes the cookie `c`.
+fn deletes_the_cookie(status: u16) -> ResponseTemplate {
+    ResponseTemplate::new(status).append_header("set-cookie", "c=; Path=/; Max-Age=0")
+}
+
+/// A start page only the browser gets, which sets `c=1` and `keep=1` and links to `/next`.
+async fn start_that_sets_and_links(site: &MockServer) {
+    let start = html(r#"<a href="/next">next</a>"#)
+        .append_header("set-cookie", "c=1; Path=/")
+        .append_header("set-cookie", "keep=1; Path=/");
+    browser_only_route(site, "/start", start).await;
+}
+
+/// Crawl `/start` (browser) to `/next` in automatic mode, where the HTTP fetch of `/next` gets
+/// `refusal` and the browser then fetches the same address. Return the cookies the browser sent.
+async fn same_address_cookies_after_a_refusal_over_http(
+    test_name: &str,
+    refusal: ResponseTemplate,
+) -> Option<Vec<String>> {
+    let site = MockServer::start().await;
+    start_that_sets_and_links(&site).await;
+    route_by_fetch(&site, "/next", html("next"), move |_| refusal.clone()).await;
+    let engine = create_engine(Some(config(BrowserMode::Auto, true))).expect("engine must build");
+
+    let pages = pages(test_name, crawl(&engine, &format!("{}/start", site.uri())).await)?;
+
+    assert_eq!(pages, owned(&[("/next", 200), ("/start", 200)]));
+    assert_eq!(
+        cookies_sent_by(&site, "/next", false).await.len(),
+        1,
+        "the HTTP fetch must try the address once"
+    );
+    let sent = cookies_sent_by(&site, "/next", true).await;
+    let [sent] = sent.as_slice() else {
+        panic!("the browser must fetch the address once: {sent:?}");
+    };
+    Some(sent.clone())
+}
+
+/// A browser page sets a cookie. The HTTP fetch of the next address gets a 403 that deletes
+/// the cookie, and the browser fetches the same address: it sends `keep=1` only.
+#[tokio::test]
+async fn a_browser_fetch_does_not_send_a_cookie_that_the_http_attempt_at_its_address_deleted() {
+    let test_name = "a_browser_fetch_does_not_send_a_cookie_that_the_http_attempt_at_its_address_deleted";
+    let Some(sent) = same_address_cookies_after_a_refusal_over_http(test_name, deletes_the_cookie(403)).await else {
+        return;
+    };
+
+    assert_eq!(sent, ["keep=1"], "the deleted cookie must not come back");
+}
+
+/// The same with a challenge the HTTP fetch knows from a response header alone, which it
+/// reports as a block by a vendor.
+#[tokio::test]
+async fn a_browser_fetch_does_not_send_a_cookie_that_a_challenge_over_http_deleted() {
+    let test_name = "a_browser_fetch_does_not_send_a_cookie_that_a_challenge_over_http_deleted";
+    let challenge = deletes_the_cookie(429).append_header("x-datadome", "blocked");
+    let Some(sent) = same_address_cookies_after_a_refusal_over_http(test_name, challenge).await else {
+        return;
+    };
+
+    assert_eq!(sent, ["keep=1"], "the deleted cookie must not come back");
+}
+
+/// A browser page sets a cookie. The HTTP fetch of the next page gets a 503 that deletes the
+/// cookie, tries again and gets the page. The browser page after it gets `keep=1` only.
+#[tokio::test]
+async fn a_browser_page_does_not_get_a_cookie_that_a_retried_http_response_deleted() {
+    let test_name = "a_browser_page_does_not_get_a_cookie_that_a_retried_http_response_deleted";
+    let site = MockServer::start().await;
+    start_that_sets_and_links(&site).await;
+    let next = html(r#"<a href="/last">last</a>"#);
+    let over_http = next.clone();
+    route_by_fetch(&site, "/next", next, move |earlier| {
+        if earlier == 0 {
+            deletes_the_cookie(503)
+        } else {
+            over_http.clone()
+        }
+    })
+    .await;
+    browser_only_route(&site, "/last", html("last")).await;
+    let retrying = CrawlConfig {
+        retry_count: 1,
+        retry_codes: vec![503],
+        retry_initial_delay_ms: 1,
+        retry_max_delay_ms: 5,
+        ..config(BrowserMode::Auto, true)
+    };
+    let engine = create_engine(Some(retrying)).expect("engine must build");
+
+    let Some(pages) = pages(test_name, crawl(&engine, &format!("{}/start", site.uri())).await) else {
+        return;
+    };
+
+    assert_eq!(pages, owned(&[("/last", 200), ("/next", 200), ("/start", 200)]));
+    assert_eq!(
+        cookies_sent_by(&site, "/next", false).await.len(),
+        2,
+        "the HTTP fetch must try the page again"
+    );
+    assert!(
+        cookies_sent_by(&site, "/next", true).await.is_empty(),
+        "the page must be fetched over HTTP only"
+    );
+    assert_eq!(cookies_sent_by(&site, "/last", true).await, [["keep=1"]]);
+}
+
+/// A bypass provider that fetches `/next` only: the target's answer there deletes the cookie
+/// `c` and links to `/last`. It refuses every other address, which sends the fetch on to the
+/// browser.
+#[derive(Debug, Default)]
+struct ProviderOfNext {
+    fetched: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl BypassProvider for ProviderOfNext {
+    async fn fetch(&self, url: &str) -> Result<BypassResponse, CrawlError> {
+        let at = url::Url::parse(url)
+            .map(|url| url.path().to_owned())
+            .unwrap_or_default();
+        if at != "/next" {
+            return Err(CrawlError::waf_blocked("stub", "the provider fetches /next only"));
+        }
+        self.fetched.lock().expect("fetched mutex").push(at);
+        let body = r#"<html><body><a href="/last">last</a></body></html>"#;
+        let set_cookie = vec!["c=; Path=/; Max-Age=0".to_owned()];
+        Ok(BypassResponse {
+            status: 200,
+            content_type: "text/html".to_owned(),
+            body: body.to_owned(),
+            body_bytes: body.as_bytes().to_vec(),
+            headers: HashMap::from([("set-cookie".to_owned(), set_cookie)]),
+            final_url: String::new(),
+            cost_usd: None,
+            vendor_request_id: None,
+        })
+    }
+
+    fn vendor_name(&self) -> &'static str {
+        "stub"
+    }
+}
+
+/// A browser page sets a cookie. The HTTP fetch of the next page is refused and a bypass
+/// provider fetches it: the target's answer deletes the cookie. The browser page after it
+/// gets `keep=1` only.
+#[tokio::test]
+async fn a_browser_page_does_not_get_a_cookie_that_a_bypass_response_deleted() {
+    let test_name = "a_browser_page_does_not_get_a_cookie_that_a_bypass_response_deleted";
+    let site = MockServer::start().await;
+    start_that_sets_and_links(&site).await;
+    browser_only_route(&site, "/next", html("next")).await;
+    browser_only_route(&site, "/last", html("last")).await;
+    let provider = Arc::new(ProviderOfNext::default());
+    let through_provider = CrawlConfig {
+        dispatch: Some(DispatchProfile {
+            bypass: Some(provider.clone() as DynBypassProvider),
+            strategy: EscalationStrategy::BypassThenBrowser,
+            ..DispatchProfile::default()
+        }),
+        ..config(BrowserMode::Auto, true)
+    };
+    let engine = create_engine(Some(through_provider)).expect("engine must build");
+
+    let Some(pages) = pages(test_name, crawl(&engine, &format!("{}/start", site.uri())).await) else {
+        return;
+    };
+
+    assert_eq!(pages, owned(&[("/last", 200), ("/next", 200), ("/start", 200)]));
+    assert_eq!(
+        *provider.fetched.lock().expect("fetched mutex"),
+        ["/next"],
+        "the provider must fetch the page once"
+    );
+    assert!(
+        cookies_sent_by(&site, "/next", true).await.is_empty(),
+        "the browser must not fetch the page the provider fetched"
+    );
     assert_eq!(cookies_sent_by(&site, "/last", true).await, [["keep=1"]]);
 }

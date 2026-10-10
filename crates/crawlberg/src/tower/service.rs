@@ -19,6 +19,9 @@ use crate::types::CrawlConfig;
 pub struct HttpFetchService {
     client: reqwest::Client,
     config: Arc<CrawlConfig>,
+    /// The cookies of the crawl this service fetches for, when that crawl keeps cookies.
+    #[cfg(feature = "browser")]
+    crawl_cookies: Option<Arc<crate::browser::CrawlCookies>>,
 }
 
 impl HttpFetchService {
@@ -26,7 +29,17 @@ impl HttpFetchService {
         Self {
             client,
             config: Arc::new(config),
+            #[cfg(feature = "browser")]
+            crawl_cookies: None,
         }
+    }
+
+    /// Fetch for the crawl that has `crawl_cookies`: each response reports the cookies it set
+    /// there as soon as its headers arrive.
+    #[cfg(feature = "browser")]
+    pub(crate) fn for_crawl(mut self, crawl_cookies: Option<Arc<crate::browser::CrawlCookies>>) -> Self {
+        self.crawl_cookies = crawl_cookies;
+        self
     }
 }
 
@@ -187,11 +200,8 @@ fn content_length_shortfall_error(
 /// validation of redirect targets is performed by `follow_redirects` before it
 /// calls `fetch_response` with the next hop URL (which re-enters `do_fetch` and
 /// re-validates the new URL here).
-async fn do_fetch(
-    client: &reqwest::Client,
-    config: &CrawlConfig,
-    req: &CrawlRequest,
-) -> Result<CrawlResponse, CrawlError> {
+async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<CrawlResponse, CrawlError> {
+    let (client, config) = (&service.client, &*service.config);
     let url =
         url::Url::parse(&req.url).map_err(|e| CrawlError::ssrf_violation(&req.url, format!("invalid URL: {e}")))?;
 
@@ -210,6 +220,15 @@ async fn do_fetch(
     let status = resp.status().as_u16();
     let content_type = content_type_of(&resp);
     let headers = crate::http::build_headers_map(resp.headers());
+
+    // ~keep The crawl's cookies are the one source a browser page reads, and this is the one place
+    // ~keep a response fetched without the browser arrives. It reports the cookies it set here,
+    // ~keep before its status can turn it into an error, a redirect, a retry or a browser fetch
+    // ~keep of the same address: none of those can read the crawl's cookies first.
+    #[cfg(feature = "browser")]
+    if let Some(crawl_cookies) = service.crawl_cookies.as_deref() {
+        crawl_cookies.forget_set_without_browser(url.host_str().unwrap_or_default(), &headers);
+    }
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if is_redirect_status(status) {
@@ -273,8 +292,7 @@ impl Service<CrawlRequest> for HttpFetchService {
     }
 
     fn call(&mut self, req: CrawlRequest) -> Self::Future {
-        let client = self.client.clone();
-        let config = self.config.clone();
+        let service = self.clone();
 
         // ~keep A single fetch attempt only: retries are owned by the dispatch loop
         // ~keep (`engine::fetch::run_dispatch_loop`, via `SimpleRetryPolicy::from_config`), which
@@ -285,7 +303,7 @@ impl Service<CrawlRequest> for HttpFetchService {
         // ~keep `tower::Service` consumer of `HttpFetchService` that bypasses the dispatch loop
         // ~keep now gets no retries at all; wrap it in its own retry middleware (e.g. a
         // ~keep `tower::retry::Retry` layer) if it needs them.
-        Box::pin(async move { do_fetch(&client, &config, &req).await })
+        Box::pin(async move { do_fetch(&service, &req).await })
     }
 }
 
@@ -347,13 +365,14 @@ mod tests {
             .await;
         let config = CrawlConfig::builder().allow_private_networks(true).build();
         let client = crate::http::build_client(&config).expect("client must build");
+        let service = HttpFetchService::new(client, config);
 
         let credentialed = CrawlRequest {
             url: mock.uri().replacen("http://", "http://user:TOWER-PW-8b2c@", 1) + "/in",
             headers: std::collections::HashMap::new(),
             tier: None,
         };
-        let error = do_fetch(&client, &config, &credentialed)
+        let error = do_fetch(&service, &credentialed)
             .await
             .map(|_| ())
             .expect_err("a URL with userinfo must be refused");
@@ -363,7 +382,7 @@ mod tests {
             "the error must not print the password: {text}"
         );
 
-        do_fetch(&client, &config, &CrawlRequest::new(format!("{}/out", mock.uri())))
+        do_fetch(&service, &CrawlRequest::new(format!("{}/out", mock.uri())))
             .await
             .expect("the same URL without userinfo must be fetched");
         let paths: Vec<String> = mock
