@@ -485,6 +485,68 @@ async fn a_body_that_starts_as_html_is_a_page_whatever_type_it_is_served_with() 
     assert!(result.error.is_none(), "a failed child is not the error of the crawl");
 }
 
+/// A text body that does not start with a tag and holds a link.
+const TEXT_WITH_A_LINK: &str = r#"Read on: <a href="/child">child</a>"#;
+
+/// A parameter is not the type: `text/plain; name=page.html` is text, so its links are not read.
+/// The same body served as `text/html` is read for links, which makes the test discriminate.
+#[tokio::test]
+async fn a_scrape_does_not_read_links_from_a_type_that_names_html_only_in_a_parameter() {
+    let mock = MockServer::start().await;
+    for (at, mime) in [("/param", "text/plain; name=page.html"), ("/html", "text/html")] {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(TEXT_WITH_A_LINK, mime))
+            .mount(&mock)
+            .await;
+    }
+    let engine = create_engine(Some(config(0))).expect("the engine builds");
+
+    let html = scrape(&engine, &format!("{}/html", mock.uri()))
+        .await
+        .expect("the HTML page scrapes");
+    assert_eq!(
+        html.links.len(),
+        1,
+        "the control, served as text/html, has its link read"
+    );
+
+    let text = scrape(&engine, &format!("{}/param", mock.uri()))
+        .await
+        .expect("the text page scrapes");
+    assert!(
+        text.links.is_empty(),
+        "a parameter that says html does not make the type html, got: {:?}",
+        text.links
+    );
+}
+
+#[tokio::test]
+async fn a_crawl_does_not_follow_links_of_a_type_that_names_html_only_in_a_parameter() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TEXT_WITH_A_LINK, "text/plain; name=page.html"))
+        .mount(&mock)
+        .await;
+    let engine = create_engine(Some(config(1))).expect("the engine builds");
+
+    let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+
+    assert_eq!(result.pages.len(), 1, "the seed is the one page of the crawl");
+    let requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("the mock records requests")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    assert!(
+        !requested.iter().any(|at| at == "/child"),
+        "the link of a text page is not followed, requested: {requested:?}"
+    );
+}
+
 /// A body the converter refuses: the signature of a zip archive, then bytes that are not text.
 fn archive_bytes() -> Vec<u8> {
     let mut bytes = b"PK\x03\x04".to_vec();

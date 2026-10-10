@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
-use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup};
+use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup, media_type_essence};
 use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
@@ -181,7 +181,7 @@ async fn urls_from_direct_response(
     config: &CrawlConfig,
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
-    let is_xml = resp.content_type.contains("xml") || resp.body.trim_start().starts_with("<?xml");
+    let is_xml = media_type_essence(&resp.content_type).contains("xml") || resp.body.trim_start().starts_with("<?xml");
 
     if is_gzip(&resp.body_bytes)
         && let Ok(decompressed) = decompress_gzip(&resp.body_bytes)
@@ -413,6 +413,34 @@ mod tests {
             .respond_with(response)
             .mount(mock)
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_sitemap_served_with_its_type_in_any_case_and_with_parameters_is_read() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        // No XML prologue: only the declared type says this body is a sitemap.
+        let body = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        // Not a well-known path: the well-known probe would read it without the direct fetch.
+        // Sent as bytes: a string body makes the mock replace the declared type with text/plain.
+        mount_bytes(
+            &mock,
+            "/feeds/main.xml",
+            "Application/XML; charset=utf-8",
+            body.into_bytes(),
+        )
+        .await;
+
+        let result = map(&format!("{base}/feeds/main.xml"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            locs,
+            "a media type has no case: Application/XML is a sitemap type"
+        );
     }
 
     fn page_urls(base: &str, count: usize) -> Vec<String> {

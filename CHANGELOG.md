@@ -28,8 +28,8 @@ All notable changes to crawlberg are documented here.
   Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
   and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
   interface have no class for any error case: read the text there. In PHP the text starts with
-  `[ConversionFailed] `, not with `conversion_failed:`. The API server reports it as
-  `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
 
 ### Changed
 
@@ -109,8 +109,10 @@ All notable changes to crawlberg are documented here.
   that is HTML or has a `text/` type. The type is read without case and without its parameters,
   so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
   counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
-  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and whether
-  links and metadata are read from a response, so these change in the same way. A body that
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A body that
   starts as HTML is a page with any declared type, `application/json` included. A response of
   another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
   and a response that `download_documents` keeps as a document, is a result with no `markdown`
