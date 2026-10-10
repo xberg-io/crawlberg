@@ -123,6 +123,9 @@ pub(crate) struct BrowserPage {
     pub(crate) refused: Vec<String>,
     /// Cookies in Chromium's jar after this page finished rendering. ~keep
     pub(crate) cookies: Vec<BrowserCookie>,
+    /// Whether the body of `response` is text the backend decoded, or the bytes of a response
+    /// the navigation stopped on.
+    pub(crate) text: crate::tower::BodyText,
 }
 
 /// Fetch a URL using a headless Chrome browser via CDP.
@@ -156,15 +159,18 @@ pub(crate) async fn browser_fetch(
                 );
             }
             #[cfg(feature = "browser-native")]
-            let (response, refused, redirects) = native_fetch(url, config, prior_cookies, native_executor).await?;
+            let (response, refused, redirects, charset) =
+                native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
-            let (response, refused, redirects) = native_fetch(url, config, prior_cookies).await?;
+            let (response, refused, redirects, charset) = native_fetch(url, config, prior_cookies).await?;
             BrowserPage {
                 redirected: response.final_url != url,
                 response,
                 refused,
                 redirects,
                 cookies: Vec::new(),
+                // ~keep The native backend decoded the document, with the character set it reports.
+                text: crate::tower::BodyText::Decoded { charset },
             }
         }
     };
@@ -174,6 +180,7 @@ pub(crate) async fn browser_fetch(
         redirected: page.redirected,
         refused: page.refused,
         cookies: page.cookies,
+        text: page.text,
     })
 }
 
@@ -746,7 +753,7 @@ async fn native_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
-) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     let native_executor = native_executor.ok_or_else(|| {
         CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
@@ -769,7 +776,7 @@ async fn native_fetch(
     _url: &str,
     _config: &CrawlConfig,
     _prior_cookies: Option<&[BrowserCookie]>,
-) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
     ))
@@ -838,6 +845,35 @@ mod tests {
         );
         let direct = native_fetch_route(&site, "/missing", &executor).await;
         assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
+    }
+
+    /// A native fetch reads a page with the character set of the page, and says that its text is
+    /// decoded, so nothing decodes it a second time.
+    #[tokio::test]
+    async fn a_native_fetch_decodes_the_page_and_says_which_character_set_it_used() {
+        let body = b"<html><head><meta charset=\"iso-8859-1\"></head><body><p>caf\xe9</p></body></html>";
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latin1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_vec(), "text/html"))
+            .mount(&site)
+            .await;
+        let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
+            .expect("single-worker executor should start");
+        let page = native_fetch_route(&site, "/latin1", &executor)
+            .await
+            .expect("the page must load");
+        assert!(
+            page.response.body.contains("<p>caf\u{e9}</p>"),
+            "the Latin-1 letter must be read: {}",
+            page.response.body
+        );
+        assert_eq!(
+            page.text,
+            crate::tower::BodyText::Decoded {
+                charset: Some("iso-8859-1".to_owned()),
+            }
+        );
     }
 }
 

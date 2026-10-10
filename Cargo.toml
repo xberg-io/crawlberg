@@ -54,6 +54,7 @@ axum = "0.8"
 base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
+chardetng = "0.1.17"
 chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.2", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }

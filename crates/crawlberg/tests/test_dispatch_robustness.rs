@@ -40,6 +40,7 @@ impl CountingMockProvider {
                 content_type: "text/html".into(),
                 body: html.clone(),
                 body_bytes: html.into_bytes(),
+                body_kind: crawlberg::BypassBody::Bytes,
                 headers: Default::default(),
                 final_url: String::new(),
                 cost_usd: Some(0.0015),
