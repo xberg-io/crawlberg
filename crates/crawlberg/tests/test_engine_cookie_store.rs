@@ -3,12 +3,12 @@
 //! One engine sends the cookies it received on its later requests. A second engine starts with no
 //! cookie, whether its configuration equals the first engine's or not.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crawlberg::{
-    BrowserConfig, BrowserMode, CrawlConfig, CrawlEngineHandle, batch_crawl, batch_crawl_stream, batch_scrape, crawl,
-    crawl_stream, create_engine, map_urls, scrape,
+    AuthConfig, BrowserConfig, BrowserMode, CrawlConfig, CrawlEngineHandle, batch_crawl, batch_crawl_stream,
+    batch_scrape, crawl, crawl_stream, create_engine, map_urls, scrape,
 };
 use futures::StreamExt as _;
 use wiremock::matchers::{method, path};
@@ -138,17 +138,20 @@ async fn a_cookie_header_of_the_caller_is_sent_in_place_of_the_stored_cookies() 
     assert_eq!(crawl_cookies(&engine, &site, "/page").await, ["mine=1"]);
 }
 
-/// A keep-alive HTTP server on a local port that answers every request with a page and counts the
-/// connections it accepts.
-async fn counting_site() -> (String, Arc<AtomicUsize>) {
+/// A keep-alive HTTP server on a local port that answers every request with a page, counts the
+/// connections it accepts, and keeps the head of each request it reads.
+async fn counting_site() -> (String, Arc<AtomicUsize>, Arc<Mutex<Vec<String>>>) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = format!("http://{}", listener.local_addr().expect("local address"));
     let accepted = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&accepted);
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&heads);
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener.accept().await {
             counter.fetch_add(1, Ordering::SeqCst);
+            let seen = Arc::clone(&seen);
             tokio::spawn(async move {
                 let body = "<html><body>page</body></html>";
                 let reply = format!(
@@ -160,6 +163,8 @@ async fn counting_site() -> (String, Arc<AtomicUsize>) {
                 while let Ok(read @ 1..) = stream.read(&mut buf).await {
                     request.extend_from_slice(&buf[..read]);
                     if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                        seen.lock().expect("the list of heads").push(head);
                         request.clear();
                         if stream.write_all(reply.as_bytes()).await.is_err() {
                             return;
@@ -169,12 +174,12 @@ async fn counting_site() -> (String, Arc<AtomicUsize>) {
             });
         }
     });
-    (address, accepted)
+    (address, accepted, heads)
 }
 
 #[tokio::test]
 async fn the_second_request_of_an_engine_and_a_second_engine_reuse_the_open_connection() {
-    let (address, accepted) = counting_site().await;
+    let (address, accepted, _) = counting_site().await;
     let first = engine();
     for at in ["/one", "/two"] {
         scrape(&first, &format!("{address}{at}"))
@@ -195,6 +200,67 @@ async fn the_second_request_of_an_engine_and_a_second_engine_reuse_the_open_conn
         accepted.load(Ordering::SeqCst),
         1,
         "an engine with the same configuration must reuse the open connection"
+    );
+}
+
+#[tokio::test]
+async fn engines_that_differ_in_credentials_or_cookies_send_only_their_own_on_one_connection() {
+    let (address, accepted, heads) = counting_site().await;
+    let credentials = [
+        Some(AuthConfig::Bearer {
+            token: "secret-one".to_owned(),
+        }),
+        Some(AuthConfig::Bearer {
+            token: "secret-two".to_owned(),
+        }),
+        Some(AuthConfig::Header {
+            name: "X-Api-Key".to_owned(),
+            value: "secret-three".to_owned(),
+        }),
+        None,
+    ];
+    let mut engines: Vec<_> = credentials
+        .into_iter()
+        .map(|auth| create_engine(Some(CrawlConfig { auth, ..config(true) })).expect("the engine must build"))
+        .collect();
+    engines.push(create_engine(Some(config(false))).expect("the engine must build"));
+    // ~keep Two rounds: in the second, each engine sends on a connection that the requests of
+    // ~keep the other engines used.
+    for round in ["first", "second"] {
+        for (number, engine) in engines.iter().enumerate() {
+            scrape(engine, &format!("{address}/{round}-{number}"))
+                .await
+                .expect("the scrape must succeed");
+        }
+    }
+
+    let sent: Vec<Vec<String>> = heads
+        .lock()
+        .expect("the list of heads")
+        .iter()
+        .map(|head| {
+            head.lines()
+                .filter(|line| line.contains("secret"))
+                .map(str::to_owned)
+                .collect()
+        })
+        .collect();
+    let own = [
+        vec!["authorization: bearer secret-one".to_owned()],
+        vec!["authorization: bearer secret-two".to_owned()],
+        vec!["x-api-key: secret-three".to_owned()],
+        vec![],
+        vec![],
+    ];
+    assert_eq!(
+        sent,
+        [own.clone(), own].concat(),
+        "each request carries the credentials of its engine only"
+    );
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        1,
+        "engines that differ only in their credentials or in `cookies_enabled` must reuse the open connection"
     );
 }
 

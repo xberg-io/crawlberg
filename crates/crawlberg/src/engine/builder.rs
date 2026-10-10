@@ -436,6 +436,77 @@ impl Default for CrawlEngineBuilder {
 }
 
 #[cfg(test)]
+mod cookie_store_tests {
+    use std::sync::Arc;
+
+    use crate::engine::CrawlEngine;
+    use crate::types::CrawlConfig;
+
+    fn engine_with(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("the engine builds")
+    }
+
+    // ~keep The API server builds the engine of each request from the configuration of its
+    // ~keep long-lived engine, so a store that the builder kept would be one store for every
+    // ~keep request of every API client.
+    #[test]
+    fn an_engine_built_from_the_configuration_of_another_engine_has_a_store_of_its_own() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(first.config.clone());
+
+        let first = first
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        let second = second
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        assert!(!Arc::ptr_eq(&first, &second), "each engine must have its own store");
+    }
+
+    #[test]
+    fn an_engine_with_cookies_off_drops_the_store_its_configuration_carries() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(CrawlConfig {
+            cookies_enabled: false,
+            ..first.config.clone()
+        });
+
+        assert!(second.config.cookie_store.is_none());
+    }
+
+    #[test]
+    fn a_clone_of_an_engine_is_the_same_cookie_session() {
+        let engine = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let clone = engine.clone();
+
+        let (first, second) = (engine.config.cookie_store, clone.config.cookie_store);
+        assert!(
+            Arc::ptr_eq(&first.expect("a store"), &second.expect("a store")),
+            "a clone of an engine must share its store"
+        );
+    }
+
+    #[test]
+    fn an_engine_with_default_configuration_has_no_store() {
+        assert!(engine_with(CrawlConfig::default()).config.cookie_store.is_none());
+    }
+}
+
+#[cfg(test)]
 mod env_private_network_precedence_tests {
     use crate::engine::CrawlEngine;
     use crate::net::SsrfPolicy;

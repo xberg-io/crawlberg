@@ -116,6 +116,14 @@ impl ResearchAgent {
         let mut steps: Vec<ResearchStep> = Vec::new();
         let mut pages_crawled: usize = 0;
 
+        // ~keep One engine for the whole session, not one for each step: the steps are one client,
+        // ~keep and the engine holds what a client keeps between requests (its cookies, its
+        // ~keep per-host throttle, the robots rules it fetched). A step that signs in and a later
+        // ~keep step that reads must be the same engine.
+        let mut session_config = self.crawl_config.clone();
+        session_config.max_pages = Some(self.config.max_pages_per_step);
+        let engine = CrawlEngine::builder().config(session_config).build()?;
+
         for step_num in 0..self.config.max_steps {
             let action = planner
                 .plan_next_step(
@@ -129,13 +137,12 @@ impl ResearchAgent {
 
             match &action {
                 StepAction::Crawl { url, depth } => {
-                    let mut step_config = self.crawl_config.clone();
-                    step_config.max_depth = Some(*depth);
-                    step_config.max_pages = Some(self.config.max_pages_per_step);
+                    // ~keep The depth is the one setting the planner picks for each step. A clone is
+                    // ~keep the same engine (every part it holds is shared), with this step's depth.
+                    let mut step_engine = engine.clone();
+                    step_engine.config.max_depth = Some(*depth);
 
-                    let engine = CrawlEngine::builder().config(step_config).build()?;
-
-                    let crawl_result = match engine.crawl(url).await {
+                    let crawl_result = match step_engine.crawl(url).await {
                         Ok(crawl_result) => crawl_result,
                         Err(e) => {
                             steps.push(ResearchStep {
@@ -214,6 +221,103 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    /// A site where `/login` sets the cookie `session=1` and links to `/next`, and every other
+    /// page sets nothing and links nowhere.
+    async fn session_site() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        let html = |body: &str| {
+            ResponseTemplate::new(200).set_body_raw(format!("<html><body>{body}</body></html>"), "text/html")
+        };
+        Mock::given(method("GET"))
+            .and(path("/login"))
+            .respond_with(html(r#"<a href="/next">next</a>"#).append_header("set-cookie", "session=1; Path=/"))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET")).respond_with(html("page")).mount(&site).await;
+        site
+    }
+
+    /// Run an agent over `seeds` of `site`, at most `max_pages_per_step` pages a step, and return
+    /// the path and the cookie header of each request the site received.
+    async fn session_requests(
+        site: &wiremock::MockServer,
+        seeds: &[&str],
+        max_pages_per_step: usize,
+    ) -> Vec<(String, String)> {
+        let agent = ResearchAgent::new(ResearchConfig {
+            query: "rust".to_owned(),
+            max_steps: seeds.len() + 1,
+            max_pages_per_step,
+            max_depth: 1,
+            seed_urls: seeds.iter().map(|seed| format!("{}{seed}", site.uri())).collect(),
+        })
+        .with_crawl_config(CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                mode: crate::types::BrowserMode::Never,
+                ..Default::default()
+            },
+            cookies_enabled: true,
+            respect_robots_txt: false,
+            max_depth: Some(0),
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        });
+
+        let result = agent.research().await.expect("the research must finish");
+        let errors: Vec<_> = result.steps.iter().filter_map(|step| step.error.as_deref()).collect();
+        assert!(errors.is_empty(), "no step may fail: {errors:?}");
+
+        let requests = site.received_requests().await.expect("request recording is on");
+        requests
+            .iter()
+            .map(|request| {
+                let cookie = request.headers.get("cookie").and_then(|value| value.to_str().ok());
+                (request.url.path().to_owned(), cookie.unwrap_or_default().to_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_later_step_sends_the_cookie_that_an_earlier_step_received() {
+        let site = session_site().await;
+
+        assert_eq!(
+            session_requests(&site, &["/login", "/data"], 1).await,
+            [
+                ("/login".to_owned(), String::new()),
+                ("/data".to_owned(), "session=1".to_owned())
+            ],
+            "the steps of one agent are one session"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_step_crawls_to_the_depth_of_its_plan() {
+        let site = session_site().await;
+
+        assert_eq!(
+            session_requests(&site, &["/login"], 2).await,
+            [
+                ("/login".to_owned(), String::new()),
+                ("/next".to_owned(), "session=1".to_owned())
+            ],
+            "the plan's depth of 1 replaces the crawl configuration's depth of 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_step_fetches_no_more_pages_than_the_limit_for_a_step() {
+        let site = session_site().await;
+
+        assert_eq!(
+            session_requests(&site, &["/login"], 1).await,
+            [("/login".to_owned(), String::new())],
+            "a step fetches no more pages than the limit for a step"
+        );
     }
 
     #[test]

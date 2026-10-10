@@ -96,7 +96,8 @@ All notable changes to crawlberg are documented here.
   session cookie of one user in the crawl of the next user. Each engine now has its own cookie
   store, and a new engine starts with no cookie. One engine still sends the cookies it received
   on its later requests. This changes the behaviour of a program that relied on two engines
-  sharing cookies: use one engine to keep the cookies. (#652)
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. (#652)
 
 ## [1.10.3] - 2026-10-09
 
