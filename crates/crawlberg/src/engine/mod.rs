@@ -13,6 +13,7 @@ mod crawl_state;
 mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod fetch;
+mod frontier_claim;
 #[cfg(not(target_arch = "wasm32"))]
 mod link_discovery;
 mod link_scope;

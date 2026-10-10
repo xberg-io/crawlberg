@@ -264,7 +264,9 @@ impl CrawlEngineBuilder {
 
         Ok(CrawlEngine {
             config,
-            frontier: self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
+            frontier: super::frontier_claim::GuardedFrontier::wrap(
+                self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
+            ),
             rate_limiter: self
                 .rate_limiter
                 .unwrap_or_else(|| Arc::new(default_rate_limiter(rate_limit_ms, rate_limit_jitter_ratio))),

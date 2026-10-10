@@ -73,8 +73,8 @@ pub struct CompleteEvent {
 ///
 /// The engine drives the crawl entirely through this trait. Every URL it intends to visit —
 /// the seed and each link that survives discovery filtering — is handed to [`push`], and the
-/// crawl loop takes work back out with [`pop_batch`]. `is_seen`/`mark_seen` deduplicate on
-/// the discovery path.
+/// crawl loop takes work back out with [`pop_batch`]. [`claim`] deduplicates discovery and
+/// redirect targets.
 ///
 /// # Window semantics
 ///
@@ -110,6 +110,7 @@ pub struct CompleteEvent {
 ///   instance unless that sharing is intended.
 ///
 /// [`push`]: Frontier::push
+/// [`claim`]: Frontier::claim
 /// [`pop_batch`]: Frontier::pop_batch
 /// [`isolated`]: Frontier::isolated
 /// [`BestFirstStrategy`]: crate::defaults::BestFirstStrategy
@@ -154,6 +155,19 @@ pub trait Frontier: Send + Sync {
 
     /// Mark a URL as seen.
     async fn mark_seen(&self, url: &str) -> Result<(), CrawlError>;
+
+    /// Mark a URL as seen, returning `true` only when it was newly claimed.
+    ///
+    /// ~keep The default preserves compatibility with existing frontiers. The engine serializes
+    /// ~keep claims to the same key within one engine and its clones. A distributed backend must
+    /// ~keep override this with an atomic conditional write to coordinate other engines or processes.
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        if self.is_seen(url).await? {
+            return Ok(false);
+        }
+        self.mark_seen(url).await?;
+        Ok(true)
+    }
 
     /// Return a fresh instance scoped to a single crawl call, or `None` to keep
     /// sharing this instance's state across calls.

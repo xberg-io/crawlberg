@@ -438,11 +438,9 @@ impl CrawlEngine {
         // owns the queue, so a persistent implementation that survives a restart
         // would otherwise re-enqueue every URL it had already crawled.
         let dedup_key = crate::normalize::normalize_url_for_dedup(link_url, self.config.dedup_include_query);
-        if self.frontier.is_seen(&dedup_key).await? {
+        if !self.frontier.claim(&dedup_key).await? {
             return Ok(false);
         }
-
-        self.frontier.mark_seen(&dedup_key).await?;
         let child_depth = entry.depth + 1;
         let child_doc_depth: u32 = if is_doc_link { entry.doc_depth + 1 } else { 0 };
         let priority = self.strategy.score_url(link_url, child_depth);

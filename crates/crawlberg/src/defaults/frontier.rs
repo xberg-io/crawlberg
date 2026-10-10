@@ -71,6 +71,10 @@ impl Frontier for InMemoryFrontier {
         Ok(())
     }
 
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
+    }
+
     async fn len(&self) -> Result<usize, CrawlError> {
         Ok(self.queue.lock().expect("lock poisoned").len())
     }
@@ -142,6 +146,10 @@ impl Frontier for LifoFrontier {
         Ok(())
     }
 
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
+    }
+
     async fn len(&self) -> Result<usize, CrawlError> {
         Ok(self.queue.lock().expect("lock poisoned").len())
     }
@@ -155,6 +163,27 @@ impl Frontier for LifoFrontier {
 mod tests {
     use super::*;
     use crate::traits::FrontierEntry;
+
+    #[tokio::test]
+    async fn should_atomically_claim_a_key_once_in_each_memory_frontier() {
+        let frontiers: Vec<std::sync::Arc<dyn Frontier>> = vec![
+            std::sync::Arc::new(InMemoryFrontier::new()),
+            std::sync::Arc::new(LifoFrontier::new()),
+        ];
+        for frontier in frontiers {
+            let claims = futures::future::join_all((0..8).map(|_| frontier.claim("shared-key"))).await;
+            assert_eq!(
+                claims
+                    .into_iter()
+                    .map(|claim| claim.expect("claim"))
+                    .filter(|new| *new)
+                    .count(),
+                1
+            );
+            assert!(frontier.is_seen("shared-key").await.expect("seen"));
+            assert_eq!(frontier.len().await.expect("queue length"), 0);
+        }
+    }
 
     #[tokio::test]
     async fn test_push_pop_fifo_order() {
