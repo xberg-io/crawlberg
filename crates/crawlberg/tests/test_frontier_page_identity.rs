@@ -750,6 +750,88 @@ async fn a_redirect_that_adds_a_query_to_the_requested_address_is_followed() {
     assert!(html_of(&result, &mock, "/q").contains("Step two"));
 }
 
+/// `/p?id=1` and `/p?id=2` differ only in the query, and the first redirects to the second.
+/// `/a` and `/b` redirect to two queries of `/q`.
+async fn site_with_redirects_between_queries() -> MockServer {
+    site(&[
+        (
+            "/",
+            Answer::Html(concat!(
+                r#"<a href="/p?id=1">one</a><a href="/p?id=2">two</a>"#,
+                r#"<a href="/a">a</a><a href="/b">b</a>"#,
+            )),
+        ),
+        ("/p?id=1", Answer::RedirectTo("/p?id=2")),
+        ("/p?id=2", Answer::Html("<h1>Two</h1>")),
+        ("/a", Answer::RedirectTo("/q?id=1")),
+        ("/b", Answer::RedirectTo("/q?id=2")),
+        ("/q?id=1", Answer::Html("<h1>First</h1>")),
+        ("/q?id=2", Answer::Html("<h1>Second</h1>")),
+    ])
+    .await
+}
+
+async fn crawl_with_dedup_include_query(mock: &MockServer, dedup_include_query: bool) -> CrawlResult {
+    let config = CrawlConfig {
+        dedup_include_query,
+        ..config()
+    };
+    let engine = create_engine(Some(config)).expect("engine builds");
+    crawl(&engine, &format!("{}/", mock.uri())).await.expect("crawl runs")
+}
+
+/// Each path without its `?query`, sorted.
+fn without_queries(paths: &[String]) -> Vec<String> {
+    sorted(
+        paths
+            .iter()
+            .map(|path| path.split('?').next().unwrap_or_default().to_owned())
+            .collect(),
+    )
+}
+
+/// With the query kept, a redirect target is claimed on the key that link discovery uses, the
+/// one with the query. A redirect onto a page another link holds is refused, and two redirects
+/// onto two queries of one path are two pages.
+#[tokio::test]
+async fn with_the_query_kept_a_redirect_is_claimed_on_the_key_with_the_query() {
+    let mock = site_with_redirects_between_queries().await;
+
+    let result = crawl_with_dedup_include_query(&mock, true).await;
+
+    assert_eq!(
+        sorted(requested_paths(&mock).await),
+        ["/", "/a", "/b", "/p?id=1", "/p?id=2", "/q?id=1", "/q?id=2"],
+        "the page of the second link is requested once, and both queries of /q are requested"
+    );
+    assert_eq!(
+        final_paths(&mock, &result),
+        ["/", "/p?id=2", "/q?id=1", "/q?id=2"],
+        "the page another link holds is reported once, and no page behind a redirect is lost"
+    );
+}
+
+/// With the default key the same two links are one page, and the redirect between them is the
+/// page under another address. The two queries of `/q` are one page too.
+#[tokio::test]
+async fn with_the_query_dropped_a_redirect_is_claimed_on_the_key_without_the_query() {
+    let mock = site_with_redirects_between_queries().await;
+
+    let result = crawl_with_dedup_include_query(&mock, false).await;
+
+    assert_eq!(
+        without_queries(&requested_paths(&mock).await),
+        ["/", "/a", "/b", "/p", "/p", "/q"],
+        "one of the two links to /p is requested and its redirect is followed; /q is requested once"
+    );
+    let reported = final_paths(&mock, &result);
+    assert!(
+        reported.contains(&"/p?id=2".to_owned()),
+        "the redirect to another query of the link is followed, got: {reported:?}"
+    );
+    assert_eq!(without_queries(&reported), ["/", "/p", "/q"]);
+}
+
 /// The host of a redirect target is compared as the URL standard writes it, in lower case.
 #[tokio::test]
 async fn a_redirect_to_the_slash_form_with_the_host_in_upper_case_is_followed() {

@@ -1391,7 +1391,8 @@ async fn wasm_page_fetch_does_not_follow_a_meta_refresh() {
 /// A body of [`exact_path_site`] that starts with this is a 302 to the rest of the body.
 const REDIRECT: &str = "302 ";
 
-/// A server that answers each listed path, compared byte for byte with the request path.
+/// A server that answers each listed path, compared byte for byte with the request path and,
+/// when the request has one, its `?query`.
 ///
 /// ~keep One responder that reads the raw request path: a path matcher that normalises the
 /// ~keep path would hide the difference between two spellings of an address.
@@ -1399,14 +1400,20 @@ async fn exact_path_site(pages: &[(&'static str, &'static str)]) -> MockServer {
     let mock = MockServer::start().await;
     let pages: std::collections::HashMap<&'static str, &'static str> = pages.iter().copied().collect();
     Mock::given(method("GET"))
-        .respond_with(move |request: &wiremock::Request| match pages.get(request.url.path()) {
-            Some(body) if body.starts_with(REDIRECT) => {
-                ResponseTemplate::new(302).append_header("location", &body[REDIRECT.len()..])
+        .respond_with(move |request: &wiremock::Request| {
+            let asked = match request.url.query() {
+                Some(query) => format!("{}?{query}", request.url.path()),
+                None => request.url.path().to_owned(),
+            };
+            match pages.get(asked.as_str()) {
+                Some(body) if body.starts_with(REDIRECT) => {
+                    ResponseTemplate::new(302).append_header("location", &body[REDIRECT.len()..])
+                }
+                Some(body) => ResponseTemplate::new(200)
+                    .set_body_string(*body)
+                    .append_header("content-type", "text/html"),
+                None => ResponseTemplate::new(404),
             }
-            Some(body) => ResponseTemplate::new(200)
-                .set_body_string(*body)
-                .append_header("content-type", "text/html"),
-            None => ResponseTemplate::new(404),
         })
         .mount(&mock)
         .await;
@@ -1543,10 +1550,19 @@ async fn sequential_crawl_follows_a_redirect_to_another_address_of_the_linked_pa
 /// Run the sequential crawl from `/` to depth 3. Returns the page paths the server was asked
 /// for, sorted, and `(url, normalized_url)` of each reported page without the origin, sorted.
 async fn sequential_requests_and_pages(mock: &MockServer) -> (Vec<String>, Vec<(String, String)>) {
+    sequential_requests_and_pages_with(mock, false).await
+}
+
+/// [`sequential_requests_and_pages`] with `dedup_include_query` as given.
+async fn sequential_requests_and_pages_with(
+    mock: &MockServer,
+    dedup_include_query: bool,
+) -> (Vec<String>, Vec<(String, String)>) {
     let engine = engine_with(permissive(CrawlConfig {
         max_depth: Some(3),
         max_pages: Some(40),
         respect_robots_txt: false,
+        dedup_include_query,
         ..CrawlConfig::default()
     }));
     let result = crawl_admitted(&engine, &format!("{}/", mock.uri()))
@@ -1639,6 +1655,60 @@ async fn sequential_crawl_claims_a_page_it_reaches_only_through_a_redirect() {
         "the link back to the landed page is not fetched: the redirect claimed it"
     );
     assert_eq!(pages, [same("/"), same("/behind"), same("/landed/")]);
+}
+
+/// `/p?id=1` and `/p?id=2` differ only in the query, and the first redirects to the second.
+/// `/a` and `/b` redirect to two queries of `/q`.
+async fn site_with_redirects_between_queries() -> MockServer {
+    exact_path_site(&[
+        (
+            "/",
+            concat!(
+                r#"<html><body><a href="/p?id=1">one</a><a href="/p?id=2">two</a>"#,
+                r#"<a href="/a">a</a><a href="/b">b</a></body></html>"#,
+            ),
+        ),
+        ("/p?id=1", "302 /p?id=2"),
+        ("/p?id=2", "<html><body>two</body></html>"),
+        ("/a", "302 /q?id=1"),
+        ("/b", "302 /q?id=2"),
+        ("/q?id=1", "<html><body>first</body></html>"),
+        ("/q?id=2", "<html><body>second</body></html>"),
+    ])
+    .await
+}
+
+/// With the query kept, the landed address is claimed on the key that link discovery uses, the
+/// one with the query: a page another link holds is reported once, and two redirects onto two
+/// queries of one path are two pages.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_claims_a_landed_page_on_the_key_with_the_query_when_it_is_kept() {
+    let mock = site_with_redirects_between_queries().await;
+
+    let (_, pages) = sequential_requests_and_pages_with(&mock, true).await;
+
+    assert_eq!(
+        pages,
+        [same("/"), same("/p?id=2"), same("/q?id=1"), same("/q?id=2")],
+        "the page of the second link is reported once, and no page behind a redirect is lost"
+    );
+}
+
+/// With the default key the same two links are one page, the redirect between them is that
+/// page under another address, and the two queries of `/q` are one page.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_claims_a_landed_page_on_the_key_without_the_query_by_default() {
+    let mock = site_with_redirects_between_queries().await;
+
+    let (_, pages) = sequential_requests_and_pages_with(&mock, false).await;
+
+    assert_eq!(
+        pages,
+        [same("/"), same("/p?id=2"), same("/q?id=1")],
+        "one page for /p, reached through its redirect, and one page for /q"
+    );
 }
 
 /// `normalized_url` of the sequential loop is the key with the query kept, as in the native loop.

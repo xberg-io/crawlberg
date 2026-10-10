@@ -437,6 +437,25 @@ mod tests {
         }
     }
 
+    /// RFC 3986 section 3.4: the query starts at the first `?`, and a later `?` is data.
+    #[test]
+    fn a_question_mark_inside_the_query_is_data() {
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?b=1&a=http://x/?y", true),
+            "http://example.com/s?a=http://x/?y&b=1",
+            "the whole text after the first `?` is the query that is sorted"
+        );
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?b=1&a=http://x/?y", true),
+            normalize_url_for_dedup("http://example.com/s?a=http://x/?y&b=1", true),
+        );
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/s?b=1&a=http://x/?y", false),
+            "http://example.com/s",
+            "the default key drops the query from its first `?`"
+        );
+    }
+
     #[test]
     fn an_address_that_does_not_parse_is_returned_as_written() {
         assert_eq!(normalize_url_for_dedup("not a url/%2d/", false), "not a url/%2d/");
