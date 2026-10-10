@@ -50,7 +50,7 @@ All notable changes to crawlberg are documented here.
 - The Python package sometimes printed `RuntimeError: _crawlberg::CrawlEngineHandle is
   unsendable, but is being dropped on another thread` on stderr after an async call, and the
   engine was then never freed: its connections and its browser stayed until the process ended.
-  The engine handle is now a class that any thread can release.
+  The engine handle is now a class that any thread can release. (#641)
 
 ## [1.10.3] - 2026-10-09
 
