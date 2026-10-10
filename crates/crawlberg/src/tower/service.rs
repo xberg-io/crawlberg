@@ -196,7 +196,9 @@ async fn do_fetch(
     let http_req = apply_headers(client.get(url.to_string()), config, req, &url, &sent_user_agent);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
-    let resp = http_req.send().await.map_err(classify_reqwest_error)?;
+    let resp = crate::http::send_with_cookies(http_req, config)
+        .await
+        .map_err(classify_reqwest_error)?;
 
     let status = resp.status().as_u16();
     let content_type = content_type_of(&resp);

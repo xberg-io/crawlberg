@@ -245,6 +245,13 @@ impl CrawlEngineBuilder {
 
         resolve_ssrf_deny_private(&mut config);
 
+        // ~keep Always replaced, never kept: a configuration cloned from another engine carries
+        // ~keep that engine's store, and a new engine must start with no cookie.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            config.cookie_store = config.cookies_enabled.then(Default::default);
+        }
+
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
         let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
         let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
