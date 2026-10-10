@@ -97,7 +97,11 @@ title: "Changelog"
   store, and a new engine starts with no cookie. One engine still sends the cookies it received
   on its later requests. This changes the behaviour of a program that relied on two engines
   sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
-  engine for each request, so a cookie from one request is no longer sent in the next. (#652)
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across requests. The cache, store, content filter
+  and event sink of an engine given to `serve` are not used by any API route: `/v1/download` and
+  `/v1/map` used them before. (#652)
 
 ## [1.10.2] - 2026-10-06
 

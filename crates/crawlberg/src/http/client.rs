@@ -415,6 +415,12 @@ fn build_static_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlErr
 /// ~keep follows a redirect itself: every hop is one request through this function.
 ///
 /// ~keep A request that already carries a `Cookie` header keeps it, as it does in reqwest.
+///
+/// ~keep The one function that may call the raw send: `clippy.toml` bans it everywhere else.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "this function adds the Cookie header and stores the Set-Cookie headers"
+)]
 pub(crate) async fn send_with_cookies(
     request: reqwest::RequestBuilder,
     config: &CrawlConfig,

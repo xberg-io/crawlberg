@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::CrawlEngine;
+use crate::engine::{CrawlEngine, Politeness};
 use crate::types::CrawlConfig;
 
 use super::error::ApiError;
@@ -131,6 +131,9 @@ pub struct ApiState {
     /// The crawl settings of the server. Private, so that a handler can only reach an engine
     /// through [`ApiState::request_engine`].
     config: CrawlConfig,
+    /// The rate limiter and the robots.txt cache of the server engine. Every request engine
+    /// shares them, so the per-host throttle holds across requests. They hold no cookie.
+    politeness: Politeness,
     /// Registry of asynchronous crawl and batch scrape jobs.
     pub jobs: Arc<JobRegistry>,
     /// Authentication and resource-limit configuration for this server instance.
@@ -151,6 +154,7 @@ impl ApiState {
         jobs.spawn_eviction_task(DEFAULT_JOB_MAX_AGE);
         Self {
             config: engine.config.clone(),
+            politeness: engine.politeness(),
             jobs,
             security,
         }
@@ -161,7 +165,8 @@ impl ApiState {
     ///
     /// ~keep This is the only way a handler gets an engine. The state holds no engine, so every
     /// ~keep request has its own cookie store and no route can send the cookies that another
-    /// ~keep request received (crawlberg#652).
+    /// ~keep request received (crawlberg#652). The engine shares the rate limiter and the robots
+    /// ~keep cache of the server, which hold no cookie.
     pub(super) fn request_engine(
         &self,
         configure: impl FnOnce(&mut CrawlConfig) -> Result<(), ApiError>,
@@ -170,6 +175,7 @@ impl ApiState {
         configure(&mut config)?;
         CrawlEngine::builder()
             .config(config)
+            .politeness(self.politeness.clone())
             .build()
             .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
     }

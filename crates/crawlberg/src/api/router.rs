@@ -860,6 +860,127 @@ mod tests {
         );
     }
 
+    /// A rate limiter that counts the requests it admits.
+    struct CountingLimiter(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl crate::traits::RateLimiter for CountingLimiter {
+        async fn acquire(&self, _domain: &str) -> Result<(), crate::error::CrawlError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn record_response(&self, _domain: &str, _status: u16) -> Result<(), crate::error::CrawlError> {
+            Ok(())
+        }
+
+        async fn set_crawl_delay(&self, _domain: &str, _delay: Duration) -> Result<(), crate::error::CrawlError> {
+            Ok(())
+        }
+    }
+
+    // ~keep The default throttle spaces the requests of one host. Each request has its own
+    // ~keep engine, so the throttle must be the one of the server.
+    #[tokio::test]
+    async fn sequential_download_requests_to_one_host_are_spaced_by_the_configured_delay() {
+        let site = cookie_site().await;
+        let config = CrawlConfig {
+            rate_limit_ms: Some(150),
+            ..local_test_config()
+        };
+        let engine = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+
+        let started = std::time::Instant::now();
+        for _ in 0..5 {
+            let response = call(
+                router.clone(),
+                json_post(
+                    "/v1/download",
+                    serde_json::json!({ "url": format!("{}/page", site.uri()) }),
+                ),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_millis(4 * 150),
+            "5 requests to one host took {:?}, less than 4 delays of 150 ms",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_routes_that_fetch_a_page_use_the_rate_limiter_of_the_server() {
+        let site = cookie_site().await;
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let engine = Arc::new(
+            CrawlEngine::builder()
+                .config(local_test_config())
+                .rate_limiter(CountingLimiter(count.clone()))
+                .build()
+                .expect("engine"),
+        );
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+        let calls = || count.load(std::sync::atomic::Ordering::SeqCst);
+
+        let mut silent = Vec::new();
+        for route in ["/v1/scrape", "/v1/download"] {
+            let before = calls();
+            let response = call(
+                router.clone(),
+                json_post(route, serde_json::json!({ "url": format!("{}/page", site.uri()) })),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK, "{route} must succeed");
+            if calls() == before {
+                silent.push(route);
+            }
+        }
+
+        assert_eq!(silent, Vec::<&str>::new(), "routes that did not call the rate limiter");
+    }
+
+    // ~keep Each map request reads robots.txt once for its sitemap hints, with no cache. The
+    // ~keep judgment of the seed URL uses the cache of the server, so it fetches once for all
+    // ~keep requests: 5 hint fetches and 1 judgment fetch, as before each request had an engine.
+    #[tokio::test]
+    async fn sequential_map_requests_judge_a_site_with_one_shared_robots_txt_fetch() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("User-agent: *\nAllow: /\n", "text/plain"))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            rate_limit_ms: Some(0),
+            ..local_test_config()
+        };
+        let router = create_router_with_security(test_engine_with_config(config), ApiSecurityConfig::default());
+
+        for _ in 0..5 {
+            let response = call(
+                router.clone(),
+                json_post("/v1/map", serde_json::json!({ "url": format!("{}/page", site.uri()) })),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let requests = site.received_requests().await.expect("request recording is on");
+        let robots = requests.iter().filter(|seen| seen.url.path() == "/robots.txt").count();
+        assert_eq!(
+            robots, 6,
+            "want 5 hint fetches and 1 shared judgment fetch, got {robots}"
+        );
+    }
+
     #[tokio::test]
     async fn map_endpoint_answers_a_seed_robots_txt_disallows_as_forbidden() {
         let mock = MockServer::start().await;

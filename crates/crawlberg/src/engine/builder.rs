@@ -51,6 +51,8 @@ pub struct CrawlEngineBuilder {
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     native_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
     proxy_provider: Option<Arc<dyn crate::ProxyProvider>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    robots_cache: Option<Arc<super::robots_cache::RobotsCache>>,
 }
 
 impl CrawlEngineBuilder {
@@ -74,7 +76,17 @@ impl CrawlEngineBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_executor: None,
             proxy_provider: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            robots_cache: None,
         }
+    }
+
+    /// Share the rate limiter and the robots.txt cache of another engine.
+    #[cfg(feature = "api")]
+    pub(crate) fn politeness(mut self, politeness: super::Politeness) -> Self {
+        self.rate_limiter = Some(politeness.rate_limiter);
+        self.robots_cache = Some(politeness.robots_cache);
+        self
     }
 
     /// Set the crawl configuration.
@@ -290,7 +302,7 @@ impl CrawlEngineBuilder {
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
-            robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
+            robots_cache: self.robots_cache.unwrap_or_default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
         })
