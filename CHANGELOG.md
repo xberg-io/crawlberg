@@ -31,6 +31,11 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
+  pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
+  one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
+  does not get them. In automatic mode, a cookie that a page fetched over HTTP sets or deletes
+  is not sent to later Chrome pages with its old value. (#603)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)

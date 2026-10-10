@@ -134,7 +134,10 @@ fn pages(test_name: &str, result: Result<CrawlResult, crawlberg::CrawlError>) ->
 }
 
 fn owned(pages: &[(&str, u16)]) -> Vec<(String, u16)> {
-    pages.iter().map(|(path, status)| ((*path).to_owned(), *status)).collect()
+    pages
+        .iter()
+        .map(|(path, status)| ((*path).to_owned(), *status))
+        .collect()
 }
 
 /// The start page sets a cookie and the page it links to answers 403 without it
@@ -471,4 +474,142 @@ async fn pages_that_set_the_same_cookie_at_the_same_time_leave_one_cookie() {
             "{at} must get the cookie of a page that ended before it started: {sent:?}"
         );
     }
+}
+
+/// Whether Chrome sent `request` to load a page: the HTTP fetch does not send this header.
+fn from_the_browser(request: &Request) -> bool {
+    request.headers.contains_key("upgrade-insecure-requests")
+}
+
+/// A page only the browser gets: the HTTP fetch gets a 403, which automatic mode answers with
+/// the browser.
+async fn browser_only_route(site: &MockServer, at: &'static str, page: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path(at))
+        .respond_with(move |request: &Request| {
+            if from_the_browser(request) {
+                page.clone()
+            } else {
+                ResponseTemplate::new(403)
+            }
+        })
+        .mount(site)
+        .await;
+}
+
+/// The cookies of each request for `at` that the browser made, or that the HTTP fetch made.
+async fn cookies_sent_by(site: &MockServer, at: &str, browser: bool) -> Vec<Vec<String>> {
+    site.received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .filter(|request| request.url.path() == at && from_the_browser(request) == browser)
+        .map(cookies_of)
+        .collect()
+}
+
+/// A page that sets `c=1` and `keep=1` and sends its reader on to `/hop` after a wait Chrome
+/// does not get to: the crawl follows it, so `/hop` is a hop of the page's redirect chain.
+fn page_that_sets_and_redirects() -> ResponseTemplate {
+    let page = r#"<html><head><meta http-equiv="refresh" content="60; url=/hop"></head><body>first</body></html>"#;
+    ResponseTemplate::new(200)
+        .set_body_raw(page, "text/html")
+        .append_header("set-cookie", "c=1; Path=/")
+        .append_header("set-cookie", "keep=1; Path=/")
+}
+
+/// Crawl the chain `/first` (browser) to `/hop` (HTTP, which answers `hop_cookie`) to `/last`
+/// (browser) in automatic mode, and return the cookies the browser sent to `/last`.
+async fn last_page_cookies_after_an_http_hop(test_name: &str, hop_cookie: &str) -> Option<Vec<String>> {
+    let site = MockServer::start().await;
+    browser_only_route(&site, "/first", page_that_sets_and_redirects()).await;
+    let hop = ResponseTemplate::new(302)
+        .append_header("location", "/last")
+        .append_header("set-cookie", hop_cookie);
+    route(&site, "/hop", hop).await;
+    browser_only_route(&site, "/last", html("last")).await;
+    let engine = create_engine(Some(config(BrowserMode::Auto, true))).expect("engine must build");
+
+    let pages = pages(test_name, crawl(&engine, &format!("{}/first", site.uri())).await)?;
+
+    assert_eq!(pages, owned(&[("/last", 200)]), "the chain must end on the last page");
+    assert_eq!(
+        cookies_sent_by(&site, "/first", true).await.len(),
+        1,
+        "the browser must fetch the first page"
+    );
+    assert!(
+        cookies_sent_by(&site, "/hop", true).await.is_empty(),
+        "the hop must be fetched over HTTP only"
+    );
+    assert_eq!(cookies_sent_by(&site, "/hop", false).await.len(), 1);
+    let sent = cookies_sent_by(&site, "/last", true).await;
+    let [sent] = sent.as_slice() else {
+        panic!("the browser must fetch the last page once: {sent:?}");
+    };
+    Some(sent.clone())
+}
+
+/// A browser page sets a cookie, a hop fetched over HTTP deletes it, and the browser fetches
+/// the last page: one browser context sends that page `keep=1` only.
+#[tokio::test]
+async fn a_browser_page_does_not_get_a_cookie_that_an_http_hop_deleted() {
+    let test_name = "a_browser_page_does_not_get_a_cookie_that_an_http_hop_deleted";
+    let Some(sent) = last_page_cookies_after_an_http_hop(test_name, "c=; Path=/; Max-Age=0").await else {
+        return;
+    };
+
+    assert_eq!(sent, ["keep=1"], "the deleted cookie must not come back");
+}
+
+/// The same chain with a hop that gives the cookie a new value: the old value must not reach
+/// the last page.
+#[tokio::test]
+async fn a_browser_page_does_not_get_the_old_value_of_a_cookie_that_an_http_hop_replaced() {
+    let test_name = "a_browser_page_does_not_get_the_old_value_of_a_cookie_that_an_http_hop_replaced";
+    let Some(sent) = last_page_cookies_after_an_http_hop(test_name, "c=2; Path=/").await else {
+        return;
+    };
+
+    assert!(
+        !sent.contains(&"c=1".to_owned()),
+        "the old value must not come back: {sent:?}"
+    );
+    assert!(
+        sent.contains(&"keep=1".to_owned()),
+        "an untouched cookie stays: {sent:?}"
+    );
+}
+
+/// A page that started with the old cookie still loads when a page fetched over HTTP deletes
+/// the cookie. The slow page ends with its old copy, and the deletion still holds for the page
+/// the crawl reaches last.
+#[tokio::test]
+async fn a_page_that_ends_later_does_not_undo_a_deletion_over_http() {
+    let test_name = "a_page_that_ends_later_does_not_undo_a_deletion_over_http";
+    let site = MockServer::start().await;
+    let start = html(r#"<a href="/slow">slow</a> <a href="/deleter">deleter</a> <a href="/gate">gate</a>"#)
+        .append_header("set-cookie", "c=1; Path=/")
+        .append_header("set-cookie", "keep=1; Path=/");
+    browser_only_route(&site, "/start", start).await;
+    browser_only_route(&site, "/slow", html("slow").set_delay(Duration::from_millis(2500))).await;
+    let deleter = html("deleter").append_header("set-cookie", "c=; Path=/; Max-Age=0");
+    route(&site, "/deleter", deleter.set_delay(Duration::from_millis(300))).await;
+    let gate = html(r#"<a href="/last">last</a>"#).set_delay(Duration::from_millis(5000));
+    route(&site, "/gate", gate).await;
+    browser_only_route(&site, "/last", html("last")).await;
+    let engine = create_engine(Some(config(BrowserMode::Auto, true))).expect("engine must build");
+
+    let Some(pages) = pages(test_name, crawl(&engine, &format!("{}/start", site.uri())).await) else {
+        return;
+    };
+
+    assert_eq!(pages.len(), 5, "every page must be crawled: {pages:?}");
+    assert_eq!(
+        cookies_sent_by(&site, "/slow", true).await,
+        [["c=1", "keep=1"]],
+        "the slow page must start with the cookie"
+    );
+    assert!(cookies_sent_by(&site, "/deleter", true).await.is_empty());
+    assert_eq!(cookies_sent_by(&site, "/last", true).await, [["keep=1"]]);
 }

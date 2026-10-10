@@ -72,9 +72,7 @@ impl CrawlEngine {
     ///
     /// Uses the engine's trait implementations (strategy, frontier, etc.) for the crawl.
     pub fn crawl_stream(&self, url: &str) -> ReceiverStream<CrawlEvent> {
-        let admitted = self
-            .admit(url)
-            .map(|(engine, seed)| (engine.for_one_crawl(), seed));
+        let admitted = self.admit(url).map(|(engine, seed)| (engine.for_one_crawl(), seed));
         let span = match &admitted {
             Ok((_, seed)) => tracing::info_span!("crawl.engine.crawl_stream", { URL_FULL } = %seed),
             Err(_) => tracing::info_span!("crawl.engine.crawl_stream"),
@@ -232,9 +230,7 @@ impl CrawlEngine {
                             Err(_) => break,
                         },
                     };
-                    let admitted = engine
-                        .admit(&url)
-                        .map(|(engine, seed)| (engine.for_one_crawl(), seed));
+                    let admitted = engine.admit(&url).map(|(engine, seed)| (engine.for_one_crawl(), seed));
                     let error_url = admission_key(&url, admitted.as_ref().ok().map(|(_, seed)| seed));
                     let event_sink = engine.event_sink.clone();
                     let tx = tx.clone();

@@ -78,7 +78,9 @@ impl CrawlEngine {
         prior_cookies: Option<&[crate::types::BrowserCookie]>,
         want_screenshot: bool,
     ) -> Result<crate::browser::BrowserPage, CrawlError> {
-        crate::browser::browser_fetch(
+        // ~keep Boxed: each caller's future holds this one inline, and one more level of it pushed
+        // ~keep the generated dart binding's async dispatch past rustc's query depth limit.
+        Box::pin(crate::browser::browser_fetch(
             url,
             &self.config,
             prior_cookies,
@@ -87,7 +89,7 @@ impl CrawlEngine {
             want_screenshot,
             #[cfg(feature = "browser-native")]
             self.native_browser_executor.as_deref(),
-        )
+        ))
         .await
     }
 

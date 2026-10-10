@@ -106,10 +106,39 @@ impl CrawlCookies {
             }
         }
         for (slot, before) in given {
-            if held.cookies.get(&slot).is_some_and(|(_, held)| held.params == before.params) {
+            if held
+                .cookies
+                .get(&slot)
+                .is_some_and(|(_, held)| held.params == before.params)
+            {
                 held.cookies.remove(&slot);
             }
         }
+    }
+
+    /// Forget each cookie that a response from `host`, fetched without the browser, set.
+    ///
+    /// ~keep That fetch has a cookie store of its own, so its `Set-Cookie` deleted or replaced
+    /// ~keep the cookie there and the copy here is the old one. The cookie leaves by its name,
+    /// ~keep whatever its path, for `host` and every domain above or below it: a later page gets
+    /// ~keep no cookie in place of the old one. Nothing is added, so Chrome never gets a cookie
+    /// ~keep it did not make.
+    pub(crate) fn forget_set_without_browser(&self, host: &str, headers: &HashMap<String, Vec<String>>) {
+        let Some(set) = headers.get("set-cookie") else {
+            return;
+        };
+        let names: Vec<&str> = set
+            .iter()
+            .filter_map(|raw| raw.split(';').next()?.split_once('='))
+            .map(|(name, _)| name.trim())
+            .collect();
+        let within = |inner: &str, outer: &str| {
+            inner == outer || inner.strip_suffix(outer).is_some_and(|rest| rest.ends_with('.'))
+        };
+        self.lock().cookies.retain(|slot, _| {
+            let site = slot.site.as_deref().unwrap_or_default().trim_start_matches('.');
+            !(names.contains(&slot.name.as_str()) && (within(host, site) || within(site, host)))
+        });
     }
 
     fn lock(&self) -> MutexGuard<'_, Held> {
@@ -351,6 +380,48 @@ mod tests {
         assert_eq!(held(&crawl), ["session=2"]);
     }
 
+    fn set_cookie(values: &[&str]) -> HashMap<String, Vec<String>> {
+        let values = values.iter().map(|value| (*value).to_owned()).collect();
+        HashMap::from([("set-cookie".to_owned(), values)])
+    }
+
+    /// A deletion and a new value both leave the crawl without the cookie: the old copy is
+    /// what must not reach a later page.
+    #[test]
+    fn a_cookie_set_without_the_browser_leaves_the_crawl() {
+        let crawl = CrawlCookies::default();
+        crawl.absorb(&[], &[left("gone", "1"), left("new", "1"), left("other", "kept")]);
+
+        crawl.forget_set_without_browser("example.com", &set_cookie(&["gone=; Max-Age=0", " new = 2; Path=/a"]));
+
+        assert_eq!(held(&crawl), ["other=kept"]);
+    }
+
+    #[test]
+    fn a_cookie_set_without_the_browser_leaves_for_the_domains_above_and_below_its_host() {
+        for host in ["example.com", "www.example.com", "com"] {
+            let crawl = CrawlCookies::default();
+            crawl.absorb(&[], &[left("session", "1")]);
+
+            crawl.forget_set_without_browser(host, &set_cookie(&["session=2"]));
+
+            assert!(held(&crawl).is_empty(), "a response from {host} sets the cookie");
+        }
+    }
+
+    #[test]
+    fn a_response_for_another_host_or_with_no_cookie_changes_nothing() {
+        let crawl = CrawlCookies::default();
+        crawl.absorb(&[], &[left("session", "1")]);
+
+        crawl.forget_set_without_browser("notexample.com", &set_cookie(&["session=2"]));
+        crawl.forget_set_without_browser("other.org", &set_cookie(&["session=2"]));
+        crawl.forget_set_without_browser("example.com", &set_cookie(&["no pair", "different=1"]));
+        crawl.forget_set_without_browser("example.com", &HashMap::new());
+
+        assert_eq!(held(&crawl), ["session=1"]);
+    }
+
     #[test]
     fn two_pages_that_set_the_same_cookie_leave_one_cookie_with_the_last_value() {
         let crawl = CrawlCookies::default();
@@ -396,7 +467,10 @@ mod tests {
         let mut other_port = cookie("example.com", true, -1.0, None);
         other_port.source_port = 9443;
         other_port.value = "replaced".to_owned();
-        crawl.absorb(&[], &[browser_cookie(other_port, 100.0).expect("a session cookie is carried")]);
+        crawl.absorb(
+            &[],
+            &[browser_cookie(other_port, 100.0).expect("a session cookie is carried")],
+        );
         assert_eq!(crawl.given().len(), apart.len());
         assert!(crawl.given().iter().any(|cookie| cookie.params.value == "replaced"));
     }
@@ -475,7 +549,10 @@ mod tests {
         }
 
         let held = held(&crawl);
-        assert!(held.contains(&"other=kept".to_owned()), "an untouched cookie stays: {held:?}");
+        assert!(
+            held.contains(&"other=kept".to_owned()),
+            "an untouched cookie stays: {held:?}"
+        );
         assert!(held.len() <= 2, "one cookie for one name: {held:?}");
         held.iter()
             .find_map(|pair| pair.strip_prefix("session="))

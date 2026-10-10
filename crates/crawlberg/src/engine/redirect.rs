@@ -518,6 +518,12 @@ pub(crate) async fn follow_redirects(
             Err(e) => return Err(e),
         };
         browser_used = hop_browser_used;
+        // ~keep The crawl's cookies are the one source a browser page reads, so a hop fetched
+        // ~keep without the browser reports the cookies it set there, on the last hop too.
+        #[cfg(feature = "browser")]
+        if !hop_browser_used && let Some(crawl_cookies) = engine.crawl_cookies.as_deref() {
+            crawl_cookies.forget_set_without_browser(&url_host(&chain.current_url), &resp.headers);
+        }
 
         // ~keep The browser tier follows redirects itself, so the chain learns of the hop only
         // ~keep after the request went out. Its landed URL still passes the SSRF check and the
