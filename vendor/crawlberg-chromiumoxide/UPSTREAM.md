@@ -9,3 +9,7 @@ This crate is forked from `chromiumoxide` 0.9.1, downloaded from crates.io.
 The fork keeps the public API compatible and adds an opt-out for chromiumoxide's
 automatic management and resumption of child targets. Crawlberg uses that opt-out
 so its security controller is the sole owner of paused child-target sessions.
+
+The fork also reads a protocol message that holds one half of a surrogate pair. Chrome
+writes that half as a lone `\ud83d` escape, which `serde_json` refuses, so upstream loses
+the whole reply or event. `conn::parse_message` replaces each unpaired half with U+FFFD.
