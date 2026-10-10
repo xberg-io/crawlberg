@@ -234,7 +234,7 @@ pub(crate) use charset::decode_document;
 pub(crate) use charset::decode_page;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use detection::is_pdf_url;
-pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_content, is_pdf_content};
+pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_content, is_page_content, is_pdf_content};
 pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
 pub(crate) use links::{effective_base_url, extract_links};

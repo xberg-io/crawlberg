@@ -19,14 +19,16 @@ title: "Changelog"
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+
 ### Added
 
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
-  Markdown. Its text starts with `conversion_failed:`. Every binding has it as its own error
-  class, the API server reports it as `CONVERSION_FAILED` with status 500, and the MCP server
-  returns it as a tool error.
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. The API server reports it as
+  `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
 
 ### Changed
 
@@ -102,9 +104,13 @@ title: "Changelog"
 - Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
   scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
   that error for the page, follows no links from it, and continues; a failed seed is the error of
-  the crawl.
-- Do not convert a binary or PDF response in a scrape. Its `markdown` is empty and `was_skipped`
-  is set, as in a crawl.
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. A response of another type, such as
+  `application/java-archive` or `font/woff2`, and a response that `download_documents` keeps as
+  a document, is a result with no `markdown` when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
 
 ## [1.10.2] - 2026-10-06
 

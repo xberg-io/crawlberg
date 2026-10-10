@@ -87,11 +87,15 @@ pub(crate) async fn scrape_from_crawl_response(
     let markdown = if decoded.was_skipped {
         None
     } else {
-        let content_config = merged_content_config(config);
-        Some(
-            crate::markdown::convert_to_markdown(&decoded.body, Some(body.page_scan), &parsed_url, &content_config)
-                .await?,
+        crate::markdown::convert_response_to_markdown(
+            &decoded.body,
+            Some(body.page_scan),
+            &parsed_url,
+            &merged_content_config(config),
+            &content_type,
+            downloaded_document.is_some(),
         )
+        .await?
     };
 
     Ok(ScrapeResult {

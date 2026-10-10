@@ -113,6 +113,17 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
         .any(|prefix| starts_with_ignore_ascii_case(trimmed, prefix))
 }
 
+/// Check whether a response is a page: HTML, or a type that says it is text.
+///
+/// ~keep A page is what a caller reads as Markdown, so a page that cannot be converted is an
+/// ~keep error. A response of any other type that the binary lists do not name
+/// ~keep (`application/java-archive`, `font/woff2`, `application/json`) is not a page: the
+/// ~keep converter is still given its body, and when the converter refuses that body the response
+/// ~keep has no Markdown and is not an error.
+pub(crate) fn is_page_content(content_type: &str, body: &str) -> bool {
+    is_html_content(content_type, body) || starts_with_ignore_ascii_case(content_type.trim_start(), "text/")
+}
+
 /// Check whether a Content-Type header indicates binary content.
 ///
 /// ~keep These are the "built-in defaults" `CrawlConfig.document_mime_types` refers to.
@@ -193,6 +204,28 @@ mod tests {
                 is_html_content(content_type, body),
                 expected,
                 "is_html_content({content_type:?}, {body:?}) expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_is_html_or_a_type_that_says_it_is_text() {
+        for (content_type, body, expected) in [
+            ("text/html; charset=utf-8", "PK\u{3}\u{4}", true),
+            ("application/xhtml+xml", "", true),
+            ("text/plain", "PK\u{3}\u{4}", true),
+            (" Text/Markdown", "# title", true),
+            ("", "<p>sniffed as HTML</p>", true),
+            ("application/java-archive", "PK\u{3}\u{4}", false),
+            ("font/woff2", "PK\u{3}\u{4}", false),
+            ("application/json", "{}", false),
+            ("application/x-text/", "", false),
+            ("", "PK\u{3}\u{4}", false),
+        ] {
+            assert_eq!(
+                is_page_content(content_type, body),
+                expected,
+                "is_page_content({content_type:?}, {body:?}) expected {expected}"
             );
         }
     }

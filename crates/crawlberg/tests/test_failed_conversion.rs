@@ -123,11 +123,7 @@ async fn a_scrape_served_from_the_cache_returns_the_error_again() {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/refused"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(REFUSED_PAGE)
-                .append_header("content-type", "text/html"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(REFUSED_PAGE.to_owned(), "text/html"))
         .expect(1)
         .mount(&mock)
         .await;
@@ -348,6 +344,194 @@ async fn a_crawl_follows_no_link_of_a_page_that_cannot_be_converted() {
         vec!["/", "/behind-good", "/good", "/refused"],
         "the crawl requests the page behind the converted child, not the page behind the refused child"
     );
+}
+
+/// A body the converter refuses: the signature of a zip archive, then bytes that are not text.
+fn archive_bytes() -> Vec<u8> {
+    let mut bytes = b"PK\x03\x04".to_vec();
+    bytes.extend([7u8; 200]);
+    bytes
+}
+
+/// Types that no built-in list of binary types names, so the response is not skipped.
+const TYPES_THAT_ARE_NOT_PAGES: [(&str, &str); 2] = [("/app", "application/java-archive"), ("/font", "font/woff2")];
+
+/// A seed that links to one archive body for each of [`TYPES_THAT_ARE_NOT_PAGES`].
+async fn site_with_bodies_that_are_not_pages() -> MockServer {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><p>Seed page.</p><a href="/app">app</a> <a href="/font">font</a></body></html>"#,
+    )
+    .await;
+    for (at, mime) in TYPES_THAT_ARE_NOT_PAGES {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(archive_bytes(), mime))
+            .mount(&mock)
+            .await;
+    }
+    mock
+}
+
+/// The configuration that downloads a response of each `mime_types` as a document.
+fn downloads(max_depth: usize, mime_types: &[&str]) -> CrawlConfig {
+    CrawlConfig {
+        download_documents: true,
+        document_mime_types: mime_types.iter().map(|mime| (*mime).to_owned()).collect(),
+        ..config(max_depth)
+    }
+}
+
+#[tokio::test]
+async fn a_scrape_of_a_body_that_is_not_text_or_html_is_a_result_with_no_markdown() {
+    let mock = site_with_bodies_that_are_not_pages().await;
+    let engine = create_engine(Some(config(0))).expect("the engine builds");
+
+    for (at, mime) in TYPES_THAT_ARE_NOT_PAGES {
+        let result = scrape(&engine, &format!("{}{at}", mock.uri()))
+            .await
+            .unwrap_or_else(|error| panic!("a {mime} body is not a page that failed, got: {error}"));
+        assert_eq!(result.status_code, 200, "{mime}");
+        assert!(
+            result.markdown.is_none(),
+            "a {mime} body the converter refuses has no Markdown"
+        );
+        assert!(!result.was_skipped, "{mime} is in no built-in list of binary types");
+    }
+}
+
+#[tokio::test]
+async fn a_scrape_keeps_the_document_it_downloads_when_the_body_cannot_be_converted() {
+    let mock = site_with_bodies_that_are_not_pages().await;
+    mount_html(&mock, "/refused", REFUSED_PAGE).await;
+    let wanted = downloads(0, &["application/java-archive", "text/html"]);
+    let engine = create_engine(Some(wanted)).expect("the engine builds");
+
+    // ~keep The second row is a page by its type: the download alone keeps it from the error.
+    for (at, mime, bytes) in [
+        ("/app", "application/java-archive", archive_bytes()),
+        ("/refused", "text/html", REFUSED_PAGE.as_bytes().to_vec()),
+    ] {
+        let result = scrape(&engine, &format!("{}{at}", mock.uri()))
+            .await
+            .unwrap_or_else(|error| panic!("a downloaded {mime} document is the result, got: {error}"));
+        let document = result
+            .downloaded_document
+            .unwrap_or_else(|| panic!("the {mime} response is downloaded as a document"));
+        assert_eq!(document.mime_type, mime);
+        assert_eq!(
+            document.content, bytes,
+            "the document holds the bytes of the {mime} response"
+        );
+        assert!(result.markdown.is_none(), "the {mime} body has no Markdown");
+    }
+}
+
+#[tokio::test]
+async fn a_batch_scrape_reports_a_body_that_is_not_text_or_html_as_a_result() {
+    let mock = site_with_bodies_that_are_not_pages().await;
+    let engine = create_engine(Some(config(0))).expect("the engine builds");
+    let urls: Vec<String> = TYPES_THAT_ARE_NOT_PAGES
+        .iter()
+        .map(|(at, _)| format!("{}{at}", mock.uri()))
+        .collect();
+
+    let results = batch_scrape(&engine, urls).await.expect("the batch runs");
+
+    assert_eq!(results.results.len(), 2, "one item for each address");
+    for item in &results.results {
+        assert!(item.error.is_none(), "{} is not an error: {:?}", item.url, item.error);
+        let result = item.result.as_ref().expect("the item has a result");
+        assert!(result.markdown.is_none(), "{} has no Markdown", item.url);
+    }
+}
+
+/// The crawl reports the seed and both bodies as pages, with no error event and no failed page.
+#[tokio::test]
+async fn a_crawl_reports_a_body_that_is_not_text_or_html_as_a_page_with_no_markdown() {
+    let mock = site_with_bodies_that_are_not_pages().await;
+    let engine = create_engine(Some(config(1))).expect("the engine builds");
+
+    let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+    assert!(result.error.is_none(), "got: {:?}", result.error);
+    assert_eq!(result.pages.len(), 3, "the seed and the two bodies are pages");
+    for (at, mime) in TYPES_THAT_ARE_NOT_PAGES {
+        let page = result
+            .pages
+            .iter()
+            .find(|page| page.url.ends_with(at))
+            .unwrap_or_else(|| panic!("the {mime} body is a page of the crawl"));
+        assert!(page.markdown.is_none(), "the {mime} body has no Markdown");
+        assert!(!page.was_skipped, "{mime} is in no built-in list of binary types");
+    }
+
+    let stream = crawl_stream(&engine, &mock.uri()).await.expect("the stream starts");
+    let events: Vec<CrawlEvent> = tokio::time::timeout(
+        STREAM_TIMEOUT,
+        stream.map(|event| event.expect("a stream item")).collect(),
+    )
+    .await
+    .expect("the stream ends");
+    assert!(
+        !events.iter().any(|event| matches!(event, CrawlEvent::Error { .. })),
+        "the stream has no error event: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, CrawlEvent::Complete { pages_crawled: 3 })),
+        "the stream completes with three pages: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_crawl_keeps_the_document_it_downloads_when_the_body_cannot_be_converted() {
+    let mock = site_with_bodies_that_are_not_pages().await;
+    let wanted = downloads(1, &["application/java-archive"]);
+    let engine = create_engine(Some(wanted)).expect("the engine builds");
+
+    let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+
+    assert!(result.error.is_none(), "got: {:?}", result.error);
+    let page = result
+        .pages
+        .iter()
+        .find(|page| page.url.ends_with("/app"))
+        .expect("the archive is a page of the crawl");
+    let document = page
+        .downloaded_document
+        .as_ref()
+        .expect("the archive is downloaded as a document");
+    assert_eq!(
+        document.content,
+        archive_bytes(),
+        "the document holds the bytes of the response"
+    );
+    assert!(page.markdown.is_none(), "the archive has no Markdown");
+}
+
+/// A page by its type that the crawl downloads as a document is a page of the crawl, not an error.
+#[tokio::test]
+async fn a_crawl_keeps_a_page_it_downloads_as_a_document_when_the_page_cannot_be_converted() {
+    let mock = site_with_a_refused_child().await;
+    let engine = create_engine(Some(downloads(1, &["text/html"]))).expect("the engine builds");
+    let refused = format!("{}/refused", mock.uri());
+
+    let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+
+    let page = result
+        .pages
+        .iter()
+        .find(|page| page.url == refused)
+        .expect("the downloaded page is a page of the crawl");
+    let document = page
+        .downloaded_document
+        .as_ref()
+        .expect("the page is downloaded as a document");
+    assert_eq!(document.content, REFUSED_PAGE.as_bytes(), "the document holds the page");
+    assert!(page.markdown.is_none(), "the page has no Markdown");
 }
 
 /// What a store was given: the errors, and the statistics of the finished crawl.

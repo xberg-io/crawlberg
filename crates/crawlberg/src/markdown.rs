@@ -132,6 +132,36 @@ pub(crate) async fn convert_to_markdown(
     }
 }
 
+/// The Markdown of a response that was not skipped as binary or PDF.
+///
+/// ~keep The one place that says what a failed conversion means, for a scrape and for a crawl. It
+/// ~keep is the error of the response only when the response is a page (`is_page_content`) and
+/// ~keep was not kept as a downloaded document. A response of another type, or one the caller
+/// ~keep downloads as a document, was not asked for as Markdown: when the converter refuses it,
+/// ~keep the response has no Markdown and keeps the rest of its result, the document included.
+///
+/// # Errors
+///
+/// The error of [`convert_to_markdown`], for a page that is not kept as a document.
+pub(crate) async fn convert_response_to_markdown(
+    body: &str,
+    page_scan: Option<PageScan>,
+    document_url: &Url,
+    config: &ContentConfig,
+    content_type: &str,
+    kept_as_document: bool,
+) -> Result<Option<MarkdownResult>, CrawlError> {
+    let is_page = !kept_as_document && crate::html::is_page_content(content_type, body);
+    match convert_to_markdown(body, page_scan, document_url, config).await {
+        Ok(markdown) => Ok(Some(markdown)),
+        Err(error) if is_page => Err(error),
+        Err(error) => {
+            tracing::debug!(%error, content_type, kept_as_document, "a response that is not a page has no Markdown");
+            Ok(None)
+        }
+    }
+}
+
 /// What the error says when the conversion ended without a result and without a refusal.
 #[cfg(not(target_arch = "wasm32"))]
 const CONVERSION_STOPPED: &str = "the conversion stopped before it finished";
@@ -274,6 +304,66 @@ mod tests {
             cause.downcast_ref::<ConversionError>().is_some(),
             "the cause is the converter's own error, got: {cause:?}"
         );
+    }
+
+    /// What `convert_response_to_markdown` gives for [`REFUSED_PAGE`] served as `content_type`.
+    async fn refused_response(
+        content_type: &str,
+        kept_as_document: bool,
+    ) -> Result<Option<MarkdownResult>, CrawlError> {
+        convert_response_to_markdown(
+            REFUSED_PAGE,
+            None,
+            &page(),
+            &ContentConfig::default(),
+            content_type,
+            kept_as_document,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_failed_conversion_is_an_error_only_for_a_page_that_is_not_kept_as_a_document() {
+        for page_type in ["text/html", "text/plain"] {
+            let error = refused_response(page_type, false)
+                .await
+                .expect_err("a page that cannot be converted is an error");
+            assert!(
+                matches!(error, CrawlError::ConversionFailed { .. }),
+                "{page_type}: {error:?}"
+            );
+        }
+
+        for (content_type, kept_as_document) in [
+            ("application/java-archive", false),
+            ("font/woff2", false),
+            ("application/java-archive", true),
+            ("text/html", true),
+        ] {
+            let markdown = refused_response(content_type, kept_as_document)
+                .await
+                .unwrap_or_else(|error| panic!("{content_type}, kept {kept_as_document}: {error}"));
+            assert!(
+                markdown.is_none(),
+                "{content_type}, kept {kept_as_document}: no Markdown"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_response_that_is_not_a_page_is_still_converted_when_the_converter_accepts_it() {
+        let markdown = convert_response_to_markdown(
+            "# Title",
+            None,
+            &page(),
+            &ContentConfig::default(),
+            "application/json",
+            false,
+        )
+        .await
+        .expect("an accepted body is not an error")
+        .expect("an accepted body has Markdown");
+        assert!(markdown.content.contains("Title"), "got: {}", markdown.content);
     }
 
     #[tokio::test]
