@@ -448,9 +448,10 @@ fn content_charset(content: &str) -> Option<&str> {
 /// ~keep is more likely Japanese than a short page under `.de`.
 ///
 /// ~keep At the end of its input the detector drops every encoding that the input ends inside
-/// ~keep a character of. A body read up to a size limit ends wherever the limit falls. So the
-/// ~keep guess from before the end stands when its encoding reads all but a last character
-/// ~keep that is cut short, and the detector makes the same guess for the body without it.
+/// ~keep a character of. A body read up to a size limit ends wherever the limit falls, and so
+/// ~keep does the start of a body that is longer than the detector reads. So the guess from
+/// ~keep before the end stands when its encoding reads all but a last character that is cut
+/// ~keep short, and the detector makes the same guess for the bytes without it.
 fn detect(url: &str, body_bytes: &[u8]) -> &'static Encoding {
     let sample = &body_bytes[..body_bytes.len().min(DETECTION_LIMIT)];
     let top_level_domain = top_level_domain(url);
@@ -458,9 +459,6 @@ fn detect(url: &str, body_bytes: &[u8]) -> &'static Encoding {
     let mut detector = chardetng::EncodingDetector::new();
     detector.feed(sample, false);
     let unfinished = detector.guess(hint, false);
-    if sample.len() < body_bytes.len() {
-        return unfinished;
-    }
     detector.feed(&[], true);
     let finished = detector.guess(hint, false);
     let stands = finished != unfinished
@@ -1093,6 +1091,26 @@ mod tests {
             decided("text/html", early).0,
             "Shift_JIS",
             "the same text inside the limit decides"
+        );
+    }
+
+    #[test]
+    fn a_long_body_is_detected_as_the_body_that_ends_at_the_limit() {
+        // ~keep Russian in KOI8-R that starts six bytes before the limit: the detector reads one
+        // ~keep word of it, and takes the word for GBK until the end of its input ends the word.
+        let russian = encoding_rs::KOI8_R.encode("Библиотека открыта каждый день. ").0;
+        let mut page = vec![b' '; DETECTION_LIMIT - 6];
+        page.extend_from_slice(&russian);
+        assert!(
+            page.len() > DETECTION_LIMIT,
+            "the fixture must be longer than the limit"
+        );
+        assert!(std::str::from_utf8(&page).is_err(), "the fixture must not be UTF-8");
+        assert_eq!(decided("text/html", &page[..DETECTION_LIMIT]).0, "KOI8-U");
+        assert_eq!(
+            decided("text/html", &page).0,
+            "KOI8-U",
+            "a body past the limit must be detected as the body that ends at the limit"
         );
     }
 

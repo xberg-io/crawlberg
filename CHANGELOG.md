@@ -75,8 +75,9 @@ All notable changes to crawlberg are documented here.
   comment or in the text of the page no longer counts as a declaration, an unknown label no longer
   stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
   Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
-  holds a few bytes that are not UTF-8. JSON is read as UTF-8. Only HTML is searched for a `<meta>`
-  tag.
+  holds a few bytes that are not UTF-8. An undeclared Shift_JIS, EUC-JP, EUC-KR, GBK or Big5 page
+  that a size limit cut inside its last character keeps its encoding. JSON is read as UTF-8. Only
+  HTML is searched for a `<meta>` tag, and only its first 1 MiB.
 - Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
   other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
   decoded text was decoded again by that tag. `detected_charset` now reports the character set the
