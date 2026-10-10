@@ -74,7 +74,7 @@ async fn site_with_document(
     others: &[(&'static str, &'static str)],
 ) -> MockServer {
     let mut pages = vec![(at, Answer::Document(document))];
-    pages.extend(others.iter().map(|(at, body)| (*at, Answer::Document(*body))));
+    pages.extend(others.iter().map(|(at, body)| (*at, Answer::Document(body))));
     site(&pages).await
 }
 
