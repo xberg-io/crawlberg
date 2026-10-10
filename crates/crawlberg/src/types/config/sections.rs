@@ -57,6 +57,18 @@ pub struct ContentConfig {
     pub wrap: bool,
     /// Wrap width when `wrap` is enabled. Default: `80`.
     pub wrap_width: usize,
+    /// Replace paragraph source line breaks with spaces. Default: `false`.
+    pub strip_newlines: bool,
+    /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
+    pub bullets: String,
+    /// Spaces per nested list level. Default: `2`.
+    pub list_indent_width: usize,
+    /// Markdown emphasis marker: `"*"` (default) or `"_"`.
+    pub strong_em_symbol: String,
+    /// Render tables without column-width padding. Default: `false`.
+    pub compact_tables: bool,
+    /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
+    pub keep_inline_images_in: Vec<String>,
     /// Include document structure tree in output. Default: `true`.
     pub include_document_structure: bool,
     /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
@@ -83,6 +95,12 @@ impl Default for ContentConfig {
             max_depth: None,
             wrap: false,
             wrap_width: 80,
+            strip_newlines: false,
+            bullets: "-*+".to_owned(),
+            list_indent_width: 2,
+            strong_em_symbol: "*".to_owned(),
+            compact_tables: false,
+            keep_inline_images_in: Vec::new(),
             include_document_structure: true,
             extract_metadata: true,
         }
@@ -134,7 +152,7 @@ pub struct BrowserConfig {
     pub proxy: Option<ProxyConfig>,
     /// URL patterns to block before the network request fires. Supports `*`
     /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-    /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+    /// both browser backends.
     #[serde(default)]
     pub block_url_patterns: Vec<String>,
     /// JavaScript snippet evaluated after navigation completes.

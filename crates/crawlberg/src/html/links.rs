@@ -96,6 +96,7 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
             let text = tag.inner_text(parser).trim().to_owned();
 
             links.push(LinkInfo {
+                original_url: resolve_original_url(href, base_url, &resolved_url),
                 url: resolved_url.into(),
                 text,
                 link_type,
@@ -104,7 +105,72 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, base_url: &Url) -> Vec<LinkIn
             });
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if super::immediate_meta_refresh(&dom).is_none()
+        && let Some(target) = super::detect_meta_refresh(&dom)
+        && let Some(resolved) = fetchable_address(&target, base_url)
+        && !links.iter().any(|link| link.url == resolved.as_str())
+    {
+        links.push(LinkInfo {
+            original_url: resolve_original_url(&target, base_url, &resolved),
+            url: resolved.into(),
+            text: String::new(),
+            link_type: classify_link(&target, base_url),
+            rel: None,
+            nofollow: false,
+        });
+    }
     links
+}
+
+// ~keep Url::join normalizes the source spelling that this provenance field must preserve.
+fn resolve_original_url(href: &str, base: &Url, resolved: &Url) -> String {
+    use url::Position;
+    let reference = href
+        .split_once(':')
+        .filter(|(scheme, rest)| scheme.eq_ignore_ascii_case(base.scheme()) && !starts_with_authority(rest))
+        .map_or(href, |(_, rest)| rest);
+    let origin = &base[..Position::BeforePath];
+    let original = if reference.is_empty() {
+        base[..Position::BeforeFragment].to_owned()
+    } else if starts_with_authority(reference) {
+        format!("{}:{reference}", base.scheme())
+    } else if Url::parse(reference).is_ok_and(|url| url.has_host()) {
+        reference.to_owned()
+    } else if reference.starts_with(['/', '\\']) {
+        format!("{origin}{reference}")
+    } else if reference.starts_with('?') {
+        format!("{}{reference}", &base[..Position::AfterPath])
+    } else if reference.starts_with('#') {
+        format!("{}{reference}", &base[..Position::BeforeFragment])
+    } else {
+        let directory = base.path().rsplit_once('/').map_or("", |(directory, _)| directory);
+        format!("{origin}{directory}/{reference}")
+    };
+    if base
+        .join(href)
+        .is_ok_and(|url| crate::net::userinfo::has_userinfo(&url))
+    {
+        remove_original_userinfo(&original).unwrap_or_else(|| resolved.as_str().to_owned())
+    } else {
+        original
+    }
+}
+
+fn starts_with_authority(reference: &str) -> bool {
+    reference
+        .as_bytes()
+        .get(..2)
+        .is_some_and(|prefix| prefix.iter().all(|byte| matches!(byte, b'/' | b'\\')))
+}
+
+fn remove_original_userinfo(original: &str) -> Option<String> {
+    let start = original.find("://")? + 3;
+    let authority_end = original[start..]
+        .find(['/', '?', '#', '\\'])
+        .map_or(original.len(), |end| start + end);
+    let separator = original[start..authority_end].rfind('@')? + start;
+    Some(format!("{}{}", &original[..start], &original[separator + 1..]))
 }
 
 /// Rewrite every real `<a>` start tag of `tags` in `html` into unambiguous form: its name lower-cased, each
@@ -144,6 +210,74 @@ mod tests {
         let page = crate::html::mask_raw_text_markup(html);
         let document_url = Url::parse(document_url).expect("valid document URL");
         extract_links(&page, &effective_base_url(page.base_href.as_deref(), &document_url))
+    }
+
+    #[test]
+    fn should_resolve_original_link_text_without_changing_path_spelling() {
+        let cases = [
+            ("/t/naïve", "https://example.com/t/naïve"),
+            ("/t/raw space", "https://example.com/t/raw space"),
+            ("/t/b\\s", "https://example.com/t/b\\s"),
+            ("/t/d/%2e%2e/up", "https://example.com/t/d/%2e%2e/up"),
+            ("../next", "https://example.com/docs/../next"),
+            ("https:child", "https://example.com/docs/child"),
+            ("https:/child", "https://example.com/child"),
+            (r"https:\child", r"https://example.com\child"),
+            (r"\child", r"https://example.com\child"),
+            ("https:", "https://example.com/docs/page?old=1"),
+            (r"https:\\other.test/path", r"https:\\other.test/path"),
+            (r"https:/\other.test/path", r"https:/\other.test/path"),
+            (r"https:\/other.test/path", r"https:\/other.test/path"),
+            ("?q=raw space", "https://example.com/docs/page?q=raw space"),
+            ("#part", "https://example.com/docs/page?old=1#part"),
+            ("//other.test/raw space", "https://other.test/raw space"),
+            (r"\\other.test/path", r"https:\\other.test/path"),
+            (r"/\other.test/path", r"https:/\other.test/path"),
+            (r"\/other.test/path", r"https:\/other.test/path"),
+            ("https://user:secret@other.test/naïve", "https://other.test/naïve"),
+        ];
+        for (href, expected) in cases {
+            let html = format!("<a href=\"{href}\">link</a>");
+            let links = extract(&html, "https://example.com/docs/page?old=1");
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].original_url, expected, "href: {href}");
+        }
+        let links = extract(
+            r#"<base href="/other/"><a href="naïve">link</a>"#,
+            "https://example.com/docs/page",
+        );
+        assert_eq!(links[0].original_url, "https://example.com/other/naïve");
+    }
+
+    #[test]
+    fn should_remove_credentials_from_original_link_addresses() {
+        let cases = [
+            ("//user:secret@other.test/naïve", "https://other.test/naïve"),
+            (r"https:\\user:secret@other.test/naïve", "https://other.test/na%C3%AFve"),
+            ("HTTPS://user:secret@OTHER.test/naïve", "HTTPS://OTHER.test/naïve"),
+            ("https://user:secret@other.test/a@b", "https://other.test/a@b"),
+        ];
+        for (href, expected) in cases {
+            let links = extract(&format!("<a href=\"{href}\">link</a>"), "https://example.com/");
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].original_url, expected);
+        }
+    }
+
+    #[test]
+    fn should_remove_base_credentials_from_original_relative_link_addresses() {
+        let links = extract(
+            r#"<base href="https://user:secret@other.test/docs/"><a href="naïve">link</a>"#,
+            "https://example.com/",
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].original_url, "https://other.test/docs/naïve");
+        let base = Url::parse("https://user:secret@other.test/docs/").expect("base URL");
+        let resolved = fetchable_address("naïve", &base).expect("fetchable link");
+        assert_eq!(
+            resolve_original_url("naïve", &base, &resolved),
+            "https://other.test/docs/naïve"
+        );
     }
 
     /// The base URL of `html` served at `document_url`.

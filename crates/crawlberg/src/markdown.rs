@@ -61,6 +61,16 @@ fn convert_html_to_markdown(
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
+        strip_newlines: config.strip_newlines,
+        bullets: config.bullets.clone(),
+        list_indent_width: config.list_indent_width,
+        strong_em_symbol: match config.strong_em_symbol.as_str() {
+            "*" => '*',
+            "_" => '_',
+            _ => return None,
+        },
+        compact_tables: config.compact_tables,
+        keep_inline_images_in: config.keep_inline_images_in.clone(),
         base_url: Some(document_url.as_str().to_owned()),
         // ~keep Every option crawlberg has no opinion on stays at the library's default on purpose.
         ..Default::default()
@@ -134,6 +144,54 @@ mod tests {
 
     fn page() -> Url {
         Url::parse("https://example.com/").expect("valid page URL")
+    }
+
+    #[test]
+    fn should_apply_each_markdown_formatting_option() {
+        let cases = [
+            (r#"{"strip_newlines":true}"#, "<p>one\ntwo</p>", "one two"),
+            (
+                r#"{"bullets":"*","list_indent_width":4}"#,
+                "<ul><li>a<ul><li>b</li></ul></li></ul>",
+                "* a\n    * b",
+            ),
+            (
+                r#"{"strong_em_symbol":"_"}"#,
+                "<p><em>em</em> <strong>strong</strong></p>",
+                "_em_ __strong__",
+            ),
+            (
+                r#"{"compact_tables":true}"#,
+                "<table><tr><th>Name</th><th>Id</th></tr><tr><td>Cobalt</td><td>4217</td></tr></table>",
+                "| Name | Id |\n| --- | --- |\n| Cobalt | 4217 |",
+            ),
+            (
+                r#"{"keep_inline_images_in":["h2"]}"#,
+                r#"<h2>Chart <img src="/c.png" alt="Chart icon"></h2>"#,
+                "## Chart ![Chart icon](https://example.com/c.png)",
+            ),
+        ];
+        for (options, html, expected) in cases {
+            let config = serde_json::from_str::<ContentConfig>(options).expect("valid content options");
+            let result = convert_html_to_markdown(html, None, &page(), &config).expect("markdown conversion");
+            assert_eq!(result.content.trim(), expected, "options: {options}");
+        }
+    }
+
+    #[test]
+    fn should_reject_invalid_markdown_formatting_options_at_engine_boundary() {
+        for options in [
+            r#"{"bullets":""}"#,
+            r#"{"bullets":"abc"}"#,
+            r#"{"list_indent_width":0}"#,
+            r#"{"strong_em_symbol":"bad"}"#,
+        ] {
+            let config = crate::types::CrawlConfig {
+                content: serde_json::from_str(options).expect("valid JSON"),
+                ..Default::default()
+            };
+            assert!(config.validate().is_err(), "invalid formatting options: {options}");
+        }
     }
 
     #[tokio::test]

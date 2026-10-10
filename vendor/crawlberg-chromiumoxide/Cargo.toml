@@ -34,6 +34,9 @@ zip8 = ["chromiumoxide_fetcher/zip8"]
 [target."cfg(windows)".dependencies.windows-registry]
 version = "0.6"
 
+[target."cfg(unix)".dependencies.libc]
+version = "=0.2.189"
+
 [dependencies.async-tungstenite]
 version = "0.32"
 features = ["tokio-runtime"]
@@ -88,7 +91,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process"]
+features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process", "net", "io-util"]
 
 [dependencies.tracing]
 version = "0.1"

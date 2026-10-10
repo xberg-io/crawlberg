@@ -482,6 +482,7 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
             .no_sandbox()
             .new_headless_mode()
             .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+            .websocket_transport()
             .build(),
     ) else {
         return;

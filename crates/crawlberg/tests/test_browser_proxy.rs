@@ -322,6 +322,7 @@ async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_p
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(profile.path())
+        .websocket_transport()
         .build()
         .map_err(|e| e.to_string());
     let launched = match launched {
@@ -580,7 +581,7 @@ async fn launch_endpoint_chrome(
     for flag in flags {
         builder = builder.arg(flag.trim_start_matches("--"));
     }
-    let launched = match builder.build() {
+    let launched = match builder.websocket_transport().build() {
         Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };

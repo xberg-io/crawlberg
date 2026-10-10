@@ -142,6 +142,9 @@ fn is_body_error_chain(chain: &str) -> bool {
 
 /// Classify a failed body read as data loss where the chain says so, else as a transport error.
 fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
+    if e.is_timeout() {
+        return classify_reqwest_error(e);
+    }
     let chain = crate::error::error_chain_string(&e);
     let is_body_error = is_body_error_chain(&chain);
     #[cfg(not(target_arch = "wasm32"))]
@@ -207,6 +210,7 @@ async fn do_fetch(
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;
 
+    crate::http::validate_content_encoding(resp.headers())?;
     let status = resp.status().as_u16();
     let content_type = content_type_of(&resp);
     let headers = crate::http::build_headers_map(resp.headers());
@@ -234,9 +238,10 @@ async fn do_fetch(
         return Err(error);
     }
 
+    let response_url = resp.url().clone();
     let (body_vec, hit_cap) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
-        .map_err(classify_body_read_error)?;
+        .map_err(|error| classify_body_read_error(error.with_url(response_url)))?;
 
     if let Some(error) = content_length_shortfall_error(&headers, body_vec.len(), hit_cap) {
         return Err(error);

@@ -1652,8 +1652,8 @@ public class ContentConfig: ContentConfigRefMut {
     }
 }
 extension ContentConfig {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool) {
-        self.init(ptr: __swift_bridge__$ContentConfig$new({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ strip_newlines: Bool, _ bullets: GenericIntoRustString, _ list_indent_width: UInt, _ strong_em_symbol: GenericIntoRustString, _ compact_tables: Bool, _ keep_inline_images_in: RustVec<GenericIntoRustString>, _ include_document_structure: Bool, _ extract_metadata: Bool) {
+        self.init(ptr: __swift_bridge__$ContentConfig$new({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, strip_newlines, { let rustString = bullets.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), list_indent_width, { let rustString = strong_em_symbol.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), compact_tables, { let val = keep_inline_images_in; val.isOwned = false; return val.ptr }(), include_document_structure, extract_metadata))
     }
 }
 public class ContentConfigRefMut: ContentConfigRef {
@@ -1711,6 +1711,30 @@ extension ContentConfigRef {
 
     public func wrapWidth() -> UInt {
         __swift_bridge__$ContentConfig$wrap_width(ptr)
+    }
+
+    public func stripNewlines() -> Bool {
+        __swift_bridge__$ContentConfig$strip_newlines(ptr)
+    }
+
+    public func bullets() -> RustString {
+        RustString(ptr: __swift_bridge__$ContentConfig$bullets(ptr))
+    }
+
+    public func listIndentWidth() -> UInt {
+        __swift_bridge__$ContentConfig$list_indent_width(ptr)
+    }
+
+    public func strongEmSymbol() -> RustString {
+        RustString(ptr: __swift_bridge__$ContentConfig$strong_em_symbol(ptr))
+    }
+
+    public func compactTables() -> Bool {
+        __swift_bridge__$ContentConfig$compact_tables(ptr)
+    }
+
+    public func keepInlineImagesIn() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$ContentConfig$keep_inline_images_in(ptr))
     }
 
     public func includeDocumentStructure() -> Bool {
@@ -2178,8 +2202,8 @@ public class CrawlPageResult: CrawlPageResultRefMut {
     }
 }
 extension CrawlPageResult {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ normalized_url: GenericIntoRustString, _ status_code: UInt16, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ depth: UInt, _ stayed_on_domain: Bool, _ was_skipped: Bool, _ is_pdf: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ downloaded_document: Optional<DownloadedDocument>, _ browser_used: Bool, _ final_url: GenericIntoRustString, _ redirect_count: UInt, _ noindex_detected: Bool, _ nofollow_detected: Bool, _ ssrf_refused_urls: RustVec<GenericIntoRustString>) {
-        self.init(ptr: __swift_bridge__$CrawlPageResult$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = normalized_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), status_code, { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), depth, stayed_on_domain, was_skipped, is_pdf, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), browser_used, { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), redirect_count, noindex_detected, nofollow_detected, { let val = ssrf_refused_urls; val.isOwned = false; return val.ptr }()))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ original_url: GenericIntoRustString, _ normalized_url: GenericIntoRustString, _ status_code: UInt16, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ depth: UInt, _ stayed_on_domain: Bool, _ was_skipped: Bool, _ is_pdf: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ downloaded_document: Optional<DownloadedDocument>, _ browser_used: Bool, _ final_url: GenericIntoRustString, _ redirect_count: UInt, _ noindex_detected: Bool, _ nofollow_detected: Bool, _ ssrf_refused_urls: RustVec<GenericIntoRustString>) {
+        self.init(ptr: __swift_bridge__$CrawlPageResult$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = original_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = normalized_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), status_code, { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), depth, stayed_on_domain, was_skipped, is_pdf, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), browser_used, { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), redirect_count, noindex_detected, nofollow_detected, { let val = ssrf_refused_urls; val.isOwned = false; return val.ptr }()))
     }
 }
 public class CrawlPageResultRefMut: CrawlPageResultRef {
@@ -2197,6 +2221,10 @@ public class CrawlPageResultRef {
 extension CrawlPageResultRef {
     public func url() -> RustString {
         RustString(ptr: __swift_bridge__$CrawlPageResult$url(ptr))
+    }
+
+    public func originalUrl() -> RustString {
+        RustString(ptr: __swift_bridge__$CrawlPageResult$original_url(ptr))
     }
 
     public func normalizedUrl() -> RustString {
@@ -3542,8 +3570,8 @@ public class LinkInfo: LinkInfoRefMut {
     }
 }
 extension LinkInfo {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ text: GenericIntoRustString, _ link_type: LinkType, _ rel: Optional<GenericIntoRustString>, _ nofollow: Bool) {
-        self.init(ptr: __swift_bridge__$LinkInfo$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = text.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), {link_type.isOwned = false; return link_type.ptr;}(), { if let rustString = optionalStringIntoRustString(rel) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), nofollow))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ original_url: GenericIntoRustString, _ text: GenericIntoRustString, _ link_type: LinkType, _ rel: Optional<GenericIntoRustString>, _ nofollow: Bool) {
+        self.init(ptr: __swift_bridge__$LinkInfo$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = original_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = text.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), {link_type.isOwned = false; return link_type.ptr;}(), { if let rustString = optionalStringIntoRustString(rel) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), nofollow))
     }
 }
 public class LinkInfoRefMut: LinkInfoRef {
@@ -3561,6 +3589,10 @@ public class LinkInfoRef {
 extension LinkInfoRef {
     public func url() -> RustString {
         RustString(ptr: __swift_bridge__$LinkInfo$url(ptr))
+    }
+
+    public func originalUrl() -> RustString {
+        RustString(ptr: __swift_bridge__$LinkInfo$original_url(ptr))
     }
 
     public func text() -> RustString {

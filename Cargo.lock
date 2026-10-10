@@ -1344,6 +1344,7 @@ dependencies = [
  "fnv",
  "futures",
  "futures-timer",
+ "libc",
  "pin-project-lite",
  "reqwest",
  "serde",

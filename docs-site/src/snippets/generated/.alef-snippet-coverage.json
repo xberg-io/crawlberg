@@ -161,6 +161,7 @@
     "c/markdown/markdown-basic-conversion.md",
     "c/markdown/markdown-crawl-all-pages.md",
     "c/markdown/markdown-fit-content.md",
+    "c/markdown/markdown-formatting-options.md",
     "c/markdown/markdown-headings-and-paragraphs.md",
     "c/markdown/markdown-links-converted.md",
     "c/markdown/markdown-no-frontmatter.md",
@@ -426,6 +427,7 @@
     "csharp/markdown/markdown-basic-conversion.md",
     "csharp/markdown/markdown-crawl-all-pages.md",
     "csharp/markdown/markdown-fit-content.md",
+    "csharp/markdown/markdown-formatting-options.md",
     "csharp/markdown/markdown-headings-and-paragraphs.md",
     "csharp/markdown/markdown-links-converted.md",
     "csharp/markdown/markdown-no-frontmatter.md",
@@ -699,6 +701,7 @@
     "dart/markdown/markdown-basic-conversion.md",
     "dart/markdown/markdown-crawl-all-pages.md",
     "dart/markdown/markdown-fit-content.md",
+    "dart/markdown/markdown-formatting-options.md",
     "dart/markdown/markdown-headings-and-paragraphs.md",
     "dart/markdown/markdown-links-converted.md",
     "dart/markdown/markdown-no-frontmatter.md",
@@ -963,6 +966,7 @@
     "elixir/markdown/markdown-basic-conversion.md",
     "elixir/markdown/markdown-crawl-all-pages.md",
     "elixir/markdown/markdown-fit-content.md",
+    "elixir/markdown/markdown-formatting-options.md",
     "elixir/markdown/markdown-headings-and-paragraphs.md",
     "elixir/markdown/markdown-links-converted.md",
     "elixir/markdown/markdown-no-frontmatter.md",
@@ -1234,6 +1238,7 @@
     "go/markdown/markdown-basic-conversion.md",
     "go/markdown/markdown-crawl-all-pages.md",
     "go/markdown/markdown-fit-content.md",
+    "go/markdown/markdown-formatting-options.md",
     "go/markdown/markdown-headings-and-paragraphs.md",
     "go/markdown/markdown-links-converted.md",
     "go/markdown/markdown-no-frontmatter.md",
@@ -1507,6 +1512,7 @@
     "java/markdown/markdown-basic-conversion.md",
     "java/markdown/markdown-crawl-all-pages.md",
     "java/markdown/markdown-fit-content.md",
+    "java/markdown/markdown-formatting-options.md",
     "java/markdown/markdown-headings-and-paragraphs.md",
     "java/markdown/markdown-links-converted.md",
     "java/markdown/markdown-no-frontmatter.md",
@@ -1780,6 +1786,7 @@
     "kotlin-android/markdown/markdown-basic-conversion.md",
     "kotlin-android/markdown/markdown-crawl-all-pages.md",
     "kotlin-android/markdown/markdown-fit-content.md",
+    "kotlin-android/markdown/markdown-formatting-options.md",
     "kotlin-android/markdown/markdown-headings-and-paragraphs.md",
     "kotlin-android/markdown/markdown-links-converted.md",
     "kotlin-android/markdown/markdown-no-frontmatter.md",
@@ -2053,6 +2060,7 @@
     "php/markdown/markdown-basic-conversion.md",
     "php/markdown/markdown-crawl-all-pages.md",
     "php/markdown/markdown-fit-content.md",
+    "php/markdown/markdown-formatting-options.md",
     "php/markdown/markdown-headings-and-paragraphs.md",
     "php/markdown/markdown-links-converted.md",
     "php/markdown/markdown-no-frontmatter.md",
@@ -2326,6 +2334,7 @@
     "python/markdown/markdown-basic-conversion.md",
     "python/markdown/markdown-crawl-all-pages.md",
     "python/markdown/markdown-fit-content.md",
+    "python/markdown/markdown-formatting-options.md",
     "python/markdown/markdown-headings-and-paragraphs.md",
     "python/markdown/markdown-links-converted.md",
     "python/markdown/markdown-no-frontmatter.md",
@@ -2599,6 +2608,7 @@
     "ruby/markdown/markdown-basic-conversion.md",
     "ruby/markdown/markdown-crawl-all-pages.md",
     "ruby/markdown/markdown-fit-content.md",
+    "ruby/markdown/markdown-formatting-options.md",
     "ruby/markdown/markdown-headings-and-paragraphs.md",
     "ruby/markdown/markdown-links-converted.md",
     "ruby/markdown/markdown-no-frontmatter.md",
@@ -2872,6 +2882,7 @@
     "rust/markdown/markdown-basic-conversion.md",
     "rust/markdown/markdown-crawl-all-pages.md",
     "rust/markdown/markdown-fit-content.md",
+    "rust/markdown/markdown-formatting-options.md",
     "rust/markdown/markdown-headings-and-paragraphs.md",
     "rust/markdown/markdown-links-converted.md",
     "rust/markdown/markdown-no-frontmatter.md",
@@ -3136,6 +3147,7 @@
     "swift/markdown/markdown-basic-conversion.md",
     "swift/markdown/markdown-crawl-all-pages.md",
     "swift/markdown/markdown-fit-content.md",
+    "swift/markdown/markdown-formatting-options.md",
     "swift/markdown/markdown-headings-and-paragraphs.md",
     "swift/markdown/markdown-links-converted.md",
     "swift/markdown/markdown-no-frontmatter.md",
@@ -3407,6 +3419,7 @@
     "typescript/markdown/markdown-basic-conversion.md",
     "typescript/markdown/markdown-crawl-all-pages.md",
     "typescript/markdown/markdown-fit-content.md",
+    "typescript/markdown/markdown-formatting-options.md",
     "typescript/markdown/markdown-headings-and-paragraphs.md",
     "typescript/markdown/markdown-links-converted.md",
     "typescript/markdown/markdown-no-frontmatter.md",
@@ -3679,6 +3692,7 @@
     "wasm/markdown/markdown-basic-conversion.md",
     "wasm/markdown/markdown-crawl-all-pages.md",
     "wasm/markdown/markdown-fit-content.md",
+    "wasm/markdown/markdown-formatting-options.md",
     "wasm/markdown/markdown-headings-and-paragraphs.md",
     "wasm/markdown/markdown-links-converted.md",
     "wasm/markdown/markdown-no-frontmatter.md",
@@ -3935,6 +3949,7 @@
     "zig/markdown/markdown-basic-conversion.md",
     "zig/markdown/markdown-crawl-all-pages.md",
     "zig/markdown/markdown-fit-content.md",
+    "zig/markdown/markdown-formatting-options.md",
     "zig/markdown/markdown-headings-and-paragraphs.md",
     "zig/markdown/markdown-links-converted.md",
     "zig/markdown/markdown-no-frontmatter.md",
@@ -5961,6 +5976,18 @@
         "language": "c"
       },
       "path": "c/markdown/markdown-fit-content.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "c"
+      },
+      "path": "c/markdown/markdown-formatting-options.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -9141,6 +9168,18 @@
         "language": "csharp"
       },
       "path": "csharp/markdown/markdown-fit-content.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "csharp"
+      },
+      "path": "csharp/markdown/markdown-formatting-options.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -12425,6 +12464,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "dart"
+      },
+      "path": "dart/markdown/markdown-formatting-options.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "dart"
       },
@@ -15585,6 +15636,18 @@
         "language": "elixir"
       },
       "path": "elixir/markdown/markdown-fit-content.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "elixir"
+      },
+      "path": "elixir/markdown/markdown-formatting-options.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18837,6 +18900,18 @@
         "language": "go"
       },
       "path": "go/markdown/markdown-fit-content.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "go"
+      },
+      "path": "go/markdown/markdown-formatting-options.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -22121,6 +22196,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "java"
+      },
+      "path": "java/markdown/markdown-formatting-options.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "java"
       },
@@ -25389,6 +25476,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/markdown/markdown-fit-content.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/markdown/markdown-formatting-options.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28673,6 +28772,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "php"
+      },
+      "path": "php/markdown/markdown-formatting-options.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "php"
       },
@@ -31949,6 +32060,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "python"
+      },
+      "path": "python/markdown/markdown-formatting-options.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "python"
       },
@@ -35217,6 +35340,18 @@
         "language": "ruby"
       },
       "path": "ruby/markdown/markdown-fit-content.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "ruby"
+      },
+      "path": "ruby/markdown/markdown-formatting-options.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38939,6 +39074,21 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "rust"
+      },
+      "path": "rust/markdown/markdown-formatting-options.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "rust"
       },
@@ -42425,6 +42575,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "swift"
+      },
+      "path": "swift/markdown/markdown-formatting-options.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "swift"
       },
@@ -45669,6 +45831,18 @@
         "language": "node"
       },
       "path": "typescript/markdown/markdown-fit-content.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "node"
+      },
+      "path": "typescript/markdown/markdown-formatting-options.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48941,6 +49115,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "wasm"
+      },
+      "path": "wasm/markdown/markdown-formatting-options.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_headings_and_paragraphs",
         "language": "wasm"
       },
@@ -52005,6 +52191,18 @@
         "language": "zig"
       },
       "path": "zig/markdown/markdown-fit-content.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_formatting_options",
+        "language": "zig"
+      },
+      "path": "zig/markdown/markdown-formatting-options.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -63103,6 +63301,66 @@
     },
     {
       "fixture_id": "markdown_fit_content",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "c"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "go"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "java"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "node"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "php"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "python"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
       "language": "zig"
     },
     {
@@ -79281,6 +79539,66 @@
     },
     {
       "fixture_id": "markdown_fit_content",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "c"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "go"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "java"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "node"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "php"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "python"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "markdown_formatting_options",
       "language": "zig"
     },
     {

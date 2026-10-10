@@ -161,6 +161,7 @@ mod tests {
         let f = InMemoryFrontier::new();
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -169,6 +170,7 @@ mod tests {
         .unwrap();
         f.push(FrontierEntry {
             url: "b".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -177,6 +179,7 @@ mod tests {
         .unwrap();
         f.push(FrontierEntry {
             url: "c".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -210,6 +213,7 @@ mod tests {
         assert_eq!(f.len().await.unwrap(), 0);
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -219,6 +223,7 @@ mod tests {
         assert_eq!(f.len().await.unwrap(), 1);
         f.push(FrontierEntry {
             url: "b".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -236,6 +241,7 @@ mod tests {
         for i in 0..5 {
             f.push(FrontierEntry {
                 url: format!("url{i}"),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
@@ -275,6 +281,7 @@ mod tests {
         assert!(f.is_empty().await.unwrap());
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -292,6 +299,7 @@ mod lifo_tests {
     fn entry(url: &str) -> FrontierEntry {
         FrontierEntry {
             url: url.to_owned(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,

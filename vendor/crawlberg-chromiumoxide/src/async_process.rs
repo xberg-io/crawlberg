@@ -62,6 +62,30 @@ impl Command {
         let inner = self.inner.spawn()?;
         Ok(Child::new(inner))
     }
+
+    #[cfg(unix)]
+    pub(crate) fn spawn_pipe(&mut self) -> std::io::Result<(Child, std::os::unix::net::UnixStream)> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let (parent, child) = std::os::unix::net::UnixStream::pair()?;
+        // SAFETY: duplicating above Chrome's reserved fds avoids collisions during pre_exec. ~keep
+        let fd = unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fcntl returned a new descriptor whose sole owner is this value. ~keep
+        let descriptor = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: only async-signal-safe descriptor operations run between fork and exec. ~keep
+        unsafe {
+            self.inner.pre_exec(move || {
+                if libc::dup2(descriptor.as_raw_fd(), 3) < 0 || libc::dup2(descriptor.as_raw_fd(), 4) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = self.spawn()?;
+        Ok((child, parent))
+    }
 }
 
 #[derive(Debug)]

@@ -183,7 +183,7 @@ tracing-subscriber = { workspace = true }
 wiremock = "0.6"
 
 # ~keep A profile teardown test holds a thread of its child at its exit with ptrace.
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 libc = { workspace = true }
 
 [[bench]]

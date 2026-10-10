@@ -83,6 +83,9 @@ pub mod conn;
 pub mod detection;
 pub mod element;
 pub mod error;
+#[cfg(unix)]
+mod pipe;
+pub mod raw_connection;
 #[cfg(feature = "fetcher")]
 pub mod fetcher {
     pub use chromiumoxide_fetcher::*;

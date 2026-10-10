@@ -11,7 +11,9 @@ use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
-use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
+use crate::html::{
+    PageScan, effective_base_url, immediate_meta_refresh, immediate_refresh_target, mask_raw_text_markup,
+};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -528,6 +530,13 @@ pub(crate) async fn follow_redirects(
             }
         }
 
+        if let Some(target) = http_redirect_target(&resp, &chain.current_url) {
+            crate::http::reject_redirect(
+                &target,
+                chain.unseen_key(target.as_str()).is_some(),
+                chain.redirect_count < max_redirects,
+            )?;
+        }
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
             prepend_refused(&mut resp, refused_on_earlier_hops);
@@ -835,7 +844,7 @@ fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Opti
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
     let refresh = resp.header("refresh")?;
-    let target = refresh_target(refresh)?;
+    let target = immediate_refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
 
@@ -858,7 +867,7 @@ fn meta_refresh_target<R: RedirectSignals>(
     let parsed_html = mask_raw_text_markup(resp.body());
     let found = crate::html::parse_html(&parsed_html.text)
         .ok()
-        .and_then(|doc| detect_meta_refresh(&doc))
+        .and_then(|doc| immediate_meta_refresh(&doc))
         .map(|target| {
             let base = Url::parse(current_url)
                 .map(|document_url| effective_base_url(parsed_html.base_href.as_deref(), &document_url).to_string())
@@ -1225,7 +1234,7 @@ mod tests {
         let resp = response(
             200,
             &[("refresh", ".; url=/from-header")],
-            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+            r#"<html><head><meta http-equiv="refresh" content="0; url=/from-meta"></head></html>"#,
         );
         let chain = chain_at("https://example.com/start", &[]);
 
@@ -1628,7 +1637,7 @@ mod tests {
         let second = Some("https://example.com/second".to_owned());
         assert_eq!(refresh_hop(None, &["0; url=/first", "0; url=/second"]), second);
         assert_eq!(refresh_hop(None, &["3; url=/first", "0; url=/second"]), second);
-        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), None);
         assert_eq!(
             refresh_hop(None, &["0; url=/first", "3; url=/second"]),
             Some("https://example.com/first".to_owned())
@@ -1657,8 +1666,8 @@ mod tests {
         );
     }
 
-    /// A `javascript:` refresh target is no refresh at all: the next meta refresh is used whatever
-    /// its delay, and a lone one leaves the chain where it is (#279). ~keep
+    /// A `javascript:` refresh target is ignored; the next immediate refresh is used,
+    /// and a lone one leaves the chain where it is (#279). ~keep
     #[test]
     fn a_javascript_meta_refresh_is_ignored() {
         for first in [
@@ -1668,7 +1677,7 @@ mod tests {
             "0; url=java&#9;script:void(0)",
         ] {
             assert_eq!(
-                refresh_hop(None, &[first, "3; url=/second"]),
+                refresh_hop(None, &[first, "0; url=/second"]),
                 Some("https://example.com/second".to_owned()),
                 "{first:?} must be ignored"
             );
@@ -1682,7 +1691,7 @@ mod tests {
     fn a_javascript_refresh_header_is_ignored() {
         assert_eq!(refresh_hop(Some("0; url=javascript:void(0)"), &[]), None);
         assert_eq!(
-            refresh_hop(Some("0; url=javascript:void(0)"), &["3; url=/second"]),
+            refresh_hop(Some("0; url=javascript:void(0)"), &["0; url=/second"]),
             Some("https://example.com/second".to_owned())
         );
     }
