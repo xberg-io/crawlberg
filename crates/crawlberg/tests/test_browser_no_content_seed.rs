@@ -207,11 +207,11 @@ async fn a_304_chrome_can_serve_from_its_cache_reports_the_cached_page() {
         .await;
 
     let mut config = config(BrowserMode::Always, BrowserBackend::Chromiumoxide);
-    // ~keep The pool is what gives Chrome a cache to revalidate against: it keeps one Chrome
-    // ~keep process across fetches, and the HTTP cache belongs to the process, not the tab.
+    // ~keep Session affinity retains the page and its browser context across fetches, so Chrome
+    // ~keep can revalidate that context's cache. Fresh pooled pages use isolated contexts:
+    // ~keep with affinity disabled, both scrapes succeed but no conditional request is sent.
     // ~keep Dropping `browser_pool` makes the `if-none-match` assertion below fail (verified),
-    // ~keep because a browser launched per fetch starts with an empty cache. Session affinity
-    // ~keep is not needed for it and is set only to exercise the reused-page path too.
+    // ~keep because a browser launched per fetch starts with an empty cache.
     config.browser.session_affinity = true;
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     config.browser_pool = Some(Arc::clone(&pool));

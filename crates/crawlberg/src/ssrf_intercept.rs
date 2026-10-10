@@ -23,8 +23,9 @@ use std::time::{Duration, Instant};
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::browser::{BrowserContextId, CloseParams as CloseBrowserParams};
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, ContinueResponseParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, FulfillRequestParams, HeaderEntry, RequestId as FetchRequestId, RequestPattern, RequestStage,
+    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
+    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
+    RequestId as FetchRequestId, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
@@ -422,6 +423,9 @@ struct Registry {
     /// popups it opened. A target of an ended watch stays until Chrome destroys it, its
     /// requests refused, and interception stays on until then.
     targets: Vec<(TargetId, Arc<WatchedPage>)>,
+    /// ~keep Tabs contain pages and iframes belong to pages; closing either independently
+    /// ~keep can destroy a parked root. Keep their policy ownership without popup teardown.
+    structural_targets: HashSet<TargetId>,
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
@@ -579,7 +583,9 @@ impl Registry {
         self.others.remove(&target);
         self.targets.retain(|(id, _)| *id != target);
         self.target_generations.insert(target.clone(), Arc::new(()));
-        self.targets.push((target.clone(), Arc::clone(&owner)));
+        if !self.structural_targets.contains(&target) {
+            self.targets.push((target.clone(), Arc::clone(&owner)));
+        }
         self.ownership.insert(target, TargetOwnership::Watched(owner));
     }
 
@@ -625,6 +631,7 @@ impl Registry {
         self.others.remove(target);
         self.context_targets.remove(target);
         self.ownership.remove(target);
+        self.structural_targets.remove(target);
         self.other_candidates.retain(|candidate| candidate != target);
         self.target_generations.remove(target);
     }
@@ -2258,7 +2265,10 @@ where
                                 return false;
                             }
                             armed_targets.insert(target.clone());
-                            if waiting_for_debugger {
+                            // ~keep Chrome reports a page under a debugger-held tab as not waiting,
+                            // ~keep but resuming only the tab leaves window.open blocked. Resume the
+                            // ~keep child session after its recursive interception boundary is armed.
+                            if waiting_for_debugger || structural_parent.is_some() {
                                 let Some(id) = child_command_id(&mut next_id) else { return false };
                                 if let Err(write_error) = child_socket_write(&mut socket, child_message(
                                     id,
@@ -2533,8 +2543,8 @@ enum TargetLookup {
 /// once every page of the check is dropped and every answer and every watch end already
 /// started has finished, and on an external browser once every target of a closed page is
 /// destroyed. It is never turned off when the pages share the browser's own context, when the
-/// browser is killed, or on an external browser whose debugging-session detach removes the
-/// interception and every `dispose_on_detach` context together. ~keep
+/// browser is killed. An external browser is disabled only after its owned contexts and
+/// targets are authoritatively absent and the pending refusals have been delivered. ~keep
 async fn serve(
     browser: Arc<Browser>,
     shared: Arc<Shared>,
@@ -2569,6 +2579,19 @@ async fn serve(
             {
                 stopping = Some(stopped);
                 continue;
+            }
+            // ~keep Only the completed context-disposal census makes disabling safe: Chrome
+            // ~keep otherwise releases requests from a watched page that has not died yet.
+            if shared.context != PageContext::Shared
+                && shared.origin != BrowserOrigin::Killed
+                && !tokio::time::timeout(
+                    CONTROLLER_TEARDOWN_TIMEOUT,
+                    browser.execute(FetchDisableParams::default()),
+                )
+                .await
+                .is_ok_and(|disabled| disabled.is_ok())
+            {
+                return false;
             }
             for done in stopped {
                 let _ = done.send(());
@@ -2941,6 +2964,9 @@ fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) -> Result<(),
 /// ~keep the targets as before.
 fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     let mut registry = lock(&shared.registry);
+    if matches!(info.r#type.as_str(), "tab" | "iframe") {
+        registry.structural_targets.insert(info.target_id.clone());
+    }
     let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
         (None, Some(parent)) => {
@@ -3010,7 +3036,7 @@ fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     }
     let ending = owner.ending.load(Ordering::Acquire);
     registry.register_watched(info.target_id.clone(), owner);
-    ending.then(|| info.target_id.clone())
+    (ending && !registry.structural_targets.contains(&info.target_id)).then(|| info.target_id.clone())
 }
 
 /// A main-frame commit of a watched page: the page and the navigation event.
@@ -4089,6 +4115,7 @@ mod tests {
         let address = listener.local_addr().expect("test socket address");
         let accepted = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept child controller");
+            stream.set_nodelay(true).expect("disable test server Nagle delay");
             async_tungstenite::tokio::accept_async(stream)
                 .await
                 .expect("accept WebSocket")
@@ -4096,6 +4123,11 @@ mod tests {
         let (client, _) = async_tungstenite::tokio::connect_async(format!("ws://{address}"))
             .await
             .expect("connect child controller WebSocket");
+        client
+            .get_ref()
+            .get_ref()
+            .set_nodelay(true)
+            .expect("disable test client Nagle delay");
         let mut server = accepted.await.expect("WebSocket accept task");
         let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
         let controller = tokio::spawn(async move {
@@ -4443,7 +4475,17 @@ mod tests {
         let page_arm = next_child_message(&mut socket).await;
         assert_eq!(page_arm["method"], "Target.setAutoAttach");
         assert_eq!(page_arm["sessionId"], "S-PAGE");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the child resumed before its recursive interception boundary was acknowledged"
+        );
         answer_child_command(&mut socket, &page_arm).await;
+        let page_resume = next_child_message(&mut socket).await;
+        assert_eq!(page_resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(page_resume["sessionId"], "S-PAGE");
+        answer_child_command(&mut socket, &page_resume).await;
         assert!(
             tokio::time::timeout(Duration::from_millis(25), socket.next())
                 .await
@@ -5088,6 +5130,40 @@ mod tests {
             !child_policy_acknowledged(&registry, &TargetId::new("CONFLICT")),
             "a conflicting child must stay paused"
         );
+    }
+
+    #[test]
+    fn structural_targets_keep_their_policy_without_becoming_popup_teardown_targets() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("OWNED-CONTEXT");
+        {
+            let mut registry = lock(&shared.registry);
+            registry.register_context(context.clone(), Some(&page.config.ssrf));
+            registry.opened.insert(page.root.clone(), Some(context.clone()));
+        }
+        for (id, kind) in [("TAB", "tab"), ("FRAME", "iframe"), ("POPUP", "page")] {
+            let mut event = target_created_in_context(id, None, &context);
+            event.target_info.r#type = kind.to_owned();
+            assert_eq!(adopt_target(&shared, &event.target_info), None);
+        }
+        let mut registry = lock(&shared.registry);
+        install_watch(&mut registry, &page).expect("install context policy");
+        for id in ["TAB", "FRAME", "POPUP"] {
+            let target = TargetId::new(id);
+            assert!(Arc::ptr_eq(&registry.owner_of_target(id).expect("policy owner"), &page));
+            assert_eq!(registry.context_targets.get(&target), Some(&context));
+            assert!(registry.target_generations.contains_key(&target));
+        }
+        let mut closed_targets = registry
+            .targets
+            .iter()
+            .map(|(id, _)| id.inner().as_str())
+            .collect::<Vec<_>>();
+        closed_targets.sort_unstable();
+        assert_eq!(closed_targets, ["POPUP", "ROOT"]);
+        registry.remove_target(&TargetId::new("TAB"));
+        assert!(!registry.structural_targets.contains(&TargetId::new("TAB")));
     }
 
     #[test]
