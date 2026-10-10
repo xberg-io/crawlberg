@@ -169,6 +169,7 @@ tasks:
     dir: e2e/python
     cmds:
       - uv run pytest
+      - uv run pytest ../../packages/python/tests
 
   e2e:verify:
     desc: Regenerate and validate Python E2E suite (generate + lint + test)
