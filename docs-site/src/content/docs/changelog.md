@@ -21,7 +21,9 @@ title: "Changelog"
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
 ### Added
 
-- Add the `ConversionFailed` error for a page that was fetched but could not be converted to
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
   Markdown. Its text starts with `conversion_failed:`. Every binding has it as its own error
   class, the API server reports it as `CONVERSION_FAILED` with status 500, and the MCP server
   returns it as a tool error.

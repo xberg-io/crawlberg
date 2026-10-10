@@ -128,29 +128,43 @@ pub(crate) async fn convert_to_markdown(
     #[cfg(target_arch = "wasm32")]
     {
         convert_html_to_markdown(html, page_scan, document_url, config)
-            .map_err(|refused| conversion_failure(document_url, refused))
+            .map_err(|refused| refusal(document_url, refused))
     }
 }
+
+/// What the error says when the conversion ended without a result and without a refusal.
+#[cfg(not(target_arch = "wasm32"))]
+const CONVERSION_STOPPED: &str = "the conversion stopped before it finished";
 
 /// Run `conversion` on a blocking task and report its failure as the page's error.
 ///
 /// ~keep A conversion that panics ends its task, and the join error is all that is left of
-/// ~keep it. It is the page's error exactly as a refusal by the converter is.
+/// ~keep it. It is the page's error exactly as a refusal by the converter is. Its text is the
+/// ~keep runtime's (a task number, the panic message), so it stays in the chain and out of the message.
 #[cfg(not(target_arch = "wasm32"))]
 async fn convert_on_blocking_task(
     document_url: &Url,
     conversion: impl FnOnce() -> Result<MarkdownResult, ConversionError> + Send + 'static,
 ) -> Result<MarkdownResult, CrawlError> {
     match tokio::task::spawn_blocking(conversion).await {
-        Ok(converted) => converted.map_err(|refused| conversion_failure(document_url, refused)),
-        Err(stopped) => Err(conversion_failure(document_url, stopped)),
+        Ok(converted) => converted.map_err(|refused| refusal(document_url, refused)),
+        Err(stopped) => Err(conversion_failure(document_url, CONVERSION_STOPPED, stopped)),
     }
 }
 
+/// The error for a page the converter refuses. The converter's own words say why.
+fn refusal(document_url: &Url, refused: ConversionError) -> CrawlError {
+    conversion_failure(document_url, &refused.to_string(), refused)
+}
+
 /// The error for a page that has no Markdown because its conversion failed.
-fn conversion_failure(document_url: &Url, cause: impl std::error::Error + Send + Sync + 'static) -> CrawlError {
+fn conversion_failure(
+    document_url: &Url,
+    why: &str,
+    cause: impl std::error::Error + Send + Sync + 'static,
+) -> CrawlError {
     let page = crate::net::redact_url_credentials(document_url.as_str());
-    CrawlError::conversion_failed_with_source(format!("could not convert {page} to Markdown: {cause}"), cause)
+    CrawlError::conversion_failed_with_source(format!("could not convert {page} to Markdown: {why}"), cause)
 }
 
 #[cfg(test)]
@@ -269,10 +283,15 @@ mod tests {
             .expect_err("a conversion that panics has no Markdown");
 
         assert!(matches!(error, CrawlError::ConversionFailed { .. }), "got: {error:?}");
-        let message = error.to_string();
+        assert_eq!(
+            error.to_string(),
+            "conversion_failed: could not convert https://example.com/ to Markdown: \
+             the conversion stopped before it finished",
+            "the error names the page and says in plain words that the conversion stopped"
+        );
         assert!(
-            message.contains("could not convert https://example.com/ to Markdown") && message.contains("panicked"),
-            "the error names the page and says the conversion stopped, got: {message}"
+            std::error::Error::source(&error).is_some(),
+            "the cause stays in the chain for a caller that wants it"
         );
     }
 

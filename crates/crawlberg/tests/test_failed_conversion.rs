@@ -36,14 +36,14 @@ fn config(max_depth: usize) -> CrawlConfig {
     }
 }
 
+/// Serve `body` at `at` with the content type `text/html`.
+///
+/// The body is set with its type in one call. `set_body_string` sends `text/plain` whatever header
+/// is added to it, and a `text/plain` body that does not start with a tag is not read for links.
 async fn mount_html(mock: &MockServer, at: &str, body: &str) {
     Mock::given(method("GET"))
         .and(path(at))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(body.to_owned())
-                .append_header("content-type", "text/html"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_owned(), "text/html"))
         .mount(mock)
         .await;
 }
