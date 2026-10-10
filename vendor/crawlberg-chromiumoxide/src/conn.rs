@@ -344,7 +344,10 @@ mod tests {
                 }
                 10 => {
                     let (high, low) = (self.unit_in(0xD800, 0xDBFF), self.unit_in(0xDC00, 0xDFFF));
-                    (format!("{}{}", escape(high, upper), escape(low, !upper)), vec![high, low])
+                    (
+                        format!("{}{}", escape(high, upper), escape(low, !upper)),
+                        vec![high, low],
+                    )
                 }
                 11 => {
                     let high = self.unit_in(0xD800, 0xDBFF);
@@ -388,13 +391,20 @@ mod tests {
             let before = serde_json::from_str::<serde_json::Value>(&message);
             if String::from_utf16(&units).is_ok() {
                 assert_eq!(before.ok(), Some(parsed), "case {case}: {message}");
-                assert_eq!(replace_unpaired_surrogate_escapes(&message), None, "case {case}: {message}");
+                assert_eq!(
+                    replace_unpaired_surrogate_escapes(&message),
+                    None,
+                    "case {case}: {message}"
+                );
                 unchanged += 1;
             } else {
                 assert!(before.is_err(), "case {case}: serde_json must refuse {message}");
                 repaired += 1;
             }
         }
-        assert!(unchanged > 2_000 && repaired > 2_000, "{unchanged} unchanged, {repaired} repaired");
+        assert!(
+            unchanged > 2_000 && repaired > 2_000,
+            "{unchanged} unchanged, {repaired} repaired"
+        );
     }
 }
