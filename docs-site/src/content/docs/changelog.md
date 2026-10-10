@@ -12,8 +12,9 @@ title: "Changelog"
   `CrawlPageResult.normalized_url` keeps the trailing slash of the address, and `map` lists both
   addresses. A site that serves the same content at both addresses now gives two pages where it
   gave one, and each of the two counts against `max_pages`. When one form redirects to the other,
-  the crawl reports one page and sends one more request, or two more in browser mode. To merge
-  two pages, compare them in your own code. (#607)
+  the crawl reports one page. For each such pair it sends one more request in HTTP mode, and up
+  to two more in browser mode and in the sequential loop of the wasm build. To merge two pages,
+  compare them in your own code. (#607)
 - `CrawlPageResult.normalized_url` writes percent-encoding in one form, as RFC 3986 section 6.2.2
   states it: an escape of a letter, a digit, `-`, `.`, `_` or `~` is decoded, and the hex digits of
   every other escape are in upper case. `/a%2db` is reported as `/a-b`, and `/caf%c3%a9` as
