@@ -7,6 +7,7 @@ use crate::helpers::PathPattern;
 use url::Url;
 
 use super::CrawlEngine;
+use super::chain_claim::ChainClaim;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::fetch_robots_outcome;
@@ -15,7 +16,7 @@ use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_te
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
-use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
+use crate::normalize::resolve_redirect;
 
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
@@ -135,6 +136,9 @@ pub(crate) struct RedirectPolicy<'a> {
     /// actually goes out (including its retries and escalations, which re-send the same
     /// request rather than starting a new one) are the same agent (crawlberg#423).
     pub(super) pending_user_agent: Option<String>,
+    /// What this policy's one chain holds on the frontier: its starting URL and every hop it
+    /// claimed.
+    chain: ChainClaim,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -154,6 +158,7 @@ impl<'a> RedirectPolicy<'a> {
             last_origin: None,
             urls_filtered: 0,
             pending_user_agent: None,
+            chain: ChainClaim::default(),
         }
     }
 
@@ -191,7 +196,7 @@ impl<'a> RedirectPolicy<'a> {
             Err(refusal) => return Ok(Some(refusal)),
         };
 
-        if is_redirect_hop && let Some(refusal) = self.claim_redirect_target(url).await? {
+        if let Some(refusal) = self.claim_redirect_target(url, is_redirect_hop).await? {
             return Ok(Some(refusal));
         }
 
@@ -288,20 +293,24 @@ impl<'a> RedirectPolicy<'a> {
         (!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() })
     }
 
-    /// Claim `url` -- a redirect hop, never the chain's own starting URL -- against the
-    /// frontier's seen-set.
-    ///
-    /// ~keep Deduplicates against the frontier's own seen-set rather than a set local to this
-    /// ~keep policy: a page reachable both directly (its own frontier entry) and via a
-    /// ~keep redirect must be requested once, and the frontier is the one place both paths
-    /// ~keep already agree on what "seen" means.
-    async fn claim_redirect_target(&self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
-        let dedup_key = normalize_url_for_dedup(url, self.engine.config.dedup_include_query);
-        if self.engine.frontier.is_seen(&dedup_key).await? {
-            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
-        }
-        self.engine.frontier.mark_seen(&dedup_key).await?;
-        Ok(None)
+    /// Claim `url` for this policy's chain against the frontier's seen-set, as
+    /// [`ChainClaim::admits`] decides it. A hop the chain may not take is
+    /// [`PolicyRefusal::Filtered`].
+    async fn claim_redirect_target(
+        &mut self,
+        url: &str,
+        is_redirect_hop: bool,
+    ) -> Result<Option<PolicyRefusal>, CrawlError> {
+        let admitted = self
+            .chain
+            .admits(
+                self.engine.frontier.as_ref(),
+                self.engine.config.dedup_include_query,
+                url,
+                is_redirect_hop,
+            )
+            .await?;
+        Ok((!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() }))
     }
 
     /// What robots.txt established for the origin the chain ended on, which the crawl loop

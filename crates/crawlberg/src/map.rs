@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
-use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
+use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
@@ -228,9 +228,9 @@ async fn urls_from_direct_response(
 }
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
-/// normalized URL. Anchor-only links are not URLs of their own and are skipped.
+/// normalized URL. A link to a place on the page itself is not a URL of its own and is skipped.
 fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(page, &effective_base_url(page.base_href.as_deref(), parsed_url));
+    let links = extract_links(page, parsed_url);
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {

@@ -2372,7 +2372,7 @@ enum LinkType {
   /// A link to a different domain.
   external_,
 
-  /// A fragment-only link (e.g., `#section`).
+  /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
   anchor,
 
   /// A link to a downloadable document (PDF, DOC, etc.).
