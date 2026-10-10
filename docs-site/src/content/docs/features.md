@@ -120,7 +120,7 @@ HTML→Markdown conversion runs automatically on every page via [html-to-markdow
 | **Preprocessing presets** <span class="version-badge">v0.2</span> | `content.preprocessing_preset` accepts `"minimal"`, `"standard"` (default), or `"aggressive"`. |
 | **Output format** <span class="version-badge">v0.2</span> | `content.output_format` selects Markdown, plain text, or Djot. |
 | **Selector filtering** <span class="version-badge">v0.2</span> | `content.exclude_selectors`, `strip_tags`, and `preserve_tags` control conversion-time filtering. |
-| **Charset reporting** <span class="version-badge">v0.2</span> | `detected_charset` records the charset detected from headers or HTML metadata. |
+| **Charset reporting** <span class="version-badge">v0.2</span> | `detected_charset` records the charset declared by headers or HTML metadata, or detected from the bytes. |
 | **Tag removal** | `remove_tags` takes CSS selectors stripped before extraction. |
 | **Path filtering** | `include_paths` and `exclude_paths` accept regex patterns; excludes take priority. |
 | **Domain scoping** | `stay_on_domain` with optional `allow_subdomains`. |
@@ -147,7 +147,7 @@ HTML→Markdown conversion runs automatically on every page via [html-to-markdow
 | **robots.txt**         | RFC 9309 compliant with user-agent prefix matching and `Crawl-delay` support. |
 | **Sitemap parsing**    | XML, gzip-compressed, and sitemap-index files.                                |
 | **noindex / nofollow** | Detection of `<meta>` robots directives and `X-Robots-Tag` headers.           |
-| **Charset detection**  | Automatic from HTTP headers and HTML meta tags.                               |
+| **Charset detection**  | Automatic from HTTP headers, HTML meta tags and the bytes of the page.        |
 | **Config validation**  | `serde` with `deny_unknown_fields` — typos in config keys fail at parse time. |
 
 ---

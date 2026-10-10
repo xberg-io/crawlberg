@@ -13,11 +13,12 @@ use super::BrowserPage;
 use super::cookies::{apply_prior_cookies, page_cookies};
 use super::launch::resolve_default_user_agent;
 use crate::chrome_frame::{
-    committed_document, error_page_error, page_content, read_one_document_within, wait_for_selector,
+    committed_document, document_charset, error_page_error, page_content, read_one_document_within, wait_for_selector,
 };
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
+use crate::tower::BodyText;
 use crate::types::{BrowserCookie, BrowserWait, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -161,12 +162,15 @@ async fn render(
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
-    let ((html, screenshot), document) = read_one_document_within(
+    // ~keep The character set is read inside the read too: it is the one Chrome decoded this
+    // ~keep document with, and the HTML is that decoded text (crawlberg#606).
+    let ((html, charset, screenshot), document) = read_one_document_within(
         timeout,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
-            Ok((html, capture_screenshot(page, config, want_screenshot).await))
+            let charset = document_charset(page).await;
+            Ok((html, charset, capture_screenshot(page, config, want_screenshot).await))
         },
     )
     .await?;
@@ -203,17 +207,25 @@ async fn render(
         redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        text: BodyText::Decoded { charset },
     })
 }
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
     let redirects = watch.redirects_followed();
+    undecoded_page(stop, redirects, redirects > 0)
+}
+
+/// The page for a response the navigation did not show as a document. Its body, if it has
+/// one, is the bytes the server sent, so its character set is still to be decided.
+fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> BrowserPage {
     BrowserPage {
         response: stopped_response(stop),
         redirects,
-        redirected: redirects > 0,
+        redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        text: BodyText::Undecoded,
     }
 }
 
@@ -276,22 +288,18 @@ fn error_page_outcome(
             crate::net::redact_url_credentials(&failed_url)
         )));
     }
-    Ok(BrowserPage {
-        response: stopped_response(StoppedResponse {
-            url: failed_url,
-            status: recorded.status,
-            headers: recorded.headers,
-            body: String::new(),
-            body_bytes: Vec::new(),
-            request_id: None,
-            terminal_intercepted: false,
-            ready: true,
-        }),
-        redirects,
-        redirected: recorded.redirects > 0,
-        refused: Vec::new(),
-        cookies: Vec::new(),
-    })
+    let redirected = recorded.redirects > 0;
+    let response = StoppedResponse {
+        url: failed_url,
+        status: recorded.status,
+        headers: recorded.headers,
+        body: String::new(),
+        body_bytes: Vec::new(),
+        request_id: None,
+        terminal_intercepted: false,
+        ready: true,
+    };
+    Ok(undecoded_page(response, redirects, redirected))
 }
 
 /// The response a navigation stopped on, as the HTTP fetch path reports it.

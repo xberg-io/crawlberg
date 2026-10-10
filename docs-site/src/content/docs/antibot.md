@@ -256,4 +256,6 @@ This pattern is Kubernetes-friendly: mount a `ConfigMap` as a file, watch it, an
 
 Crawlberg exposes the `BypassProvider` trait and `BypassResponse` type for caller-owned integrations. Providers are responsible for authentication, request shaping, response decoding, cost metadata, and error mapping.
 
+A provider sets `BypassResponse::body_kind` to say what its answer holds. Use `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent: Crawlberg decides their character set. Use `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's browser rendered: Crawlberg does not decode it again.
+
 Crawlberg does not ship Bright Data, Zyte, ScrapingBee, or other vendor adapters in the core crate.

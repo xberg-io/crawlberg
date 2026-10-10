@@ -4,6 +4,22 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
+  `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
+  `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
+  browser rendered. A `BypassResponse { .. }` literal does not compile until it sets the field.
+- **`crawlberg-browser`: `NativeBrowserConfig` and `RenderedPage` each have a new public field**,
+  `document_decoder` and `charset`, and the crate has a new public type, `DocumentDecoder`. A
+  struct literal that names every field must add the new one; `..NativeBrowserConfig::default()`
+  needs no change.
+- **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
+  the entry as it gets it needs no change. A cache entry that an earlier release stored is not
+  served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
+  entries must set `decoded` to `true` for a body it stored as decoded text:
+  `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+
 ### Changed
 
 - A crawl keeps empty path segments: `/a/b` and `/a//b` are distinct pages, requested and
@@ -35,6 +51,9 @@ All notable changes to crawlberg are documented here.
   `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
   `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
   way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
+- `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
+  declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
+  longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
 
 ### Fixed
 
@@ -54,6 +73,31 @@ All notable changes to crawlberg are documented here.
   redirect both reached it, for example a folder linked as `/docs` and as `/docs/` where the
   first redirects to the second. It now reports the page one time, and it does not request a
   page again that it first reached through a redirect.
+- The Python package sometimes printed `RuntimeError: _crawlberg::CrawlEngineHandle is
+  unsendable, but is being dropped on another thread` on stderr after an async call, and the
+  engine was then never freed: its connections and its browser stayed until the process ended.
+  The engine handle is now a class that any thread can release. (#641)
+- Read a page with the character set a browser uses for it. In HTTP mode a page that declares no
+  character set and is not UTF-8 came back with replacement characters; its encoding is now detected
+  from its bytes. The sources are read in the order of the HTML standard: a byte-order mark, the
+  `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
+  comment or in the text of the page no longer counts as a declaration, an unknown label no longer
+  stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+  Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
+  holds a few bytes that are not UTF-8. An undeclared Shift_JIS, EUC-JP, EUC-KR, GBK or Big5 page
+  that a size limit cut inside its last character keeps its encoding. JSON is read as UTF-8. Only
+  HTML is searched for a `<meta>` tag, and only its first 1 MiB.
+- Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
+  other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
+  decoded text was decoded again by that tag. `detected_charset` now reports the character set the
+  browser used.
+- Keep the text a bypass vendor decoded. A provider that reads the page from a JSON field (Zyte's
+  `browserHtml`) returns text; it was decoded again by the `<meta>` tag of the page.
+- Read a page with its character set on the native browser backend. It read every document as
+  UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
+  mode.
+- Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
+  letters. The entry now holds the decoded text and its character set.
 
 ## [1.10.3] - 2026-10-09
 

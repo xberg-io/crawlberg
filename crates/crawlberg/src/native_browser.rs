@@ -28,7 +28,7 @@ pub(crate) async fn native_browser_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     let mut state = NativeRenderState::new(&to_native_cookies(prior_cookies));
     native_browser_render(url, config, &mut state, native_executor).await
 }
@@ -40,7 +40,7 @@ pub(crate) async fn native_browser_render(
     config: &CrawlConfig,
     state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -70,7 +70,7 @@ async fn native_browser_fetch_inner(
     config: &CrawlConfig,
     state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -114,6 +114,7 @@ async fn native_browser_fetch_inner(
         tokio::time::sleep(extra).await;
     }
 
+    let charset = rendered.charset;
     let status = rendered.status.unwrap_or(DEFAULT_RENDERED_STATUS);
     // ~keep The native backend parses even an empty body into a skeleton document. A status
     // ~keep that carries no document reports the empty body and the real content type, as the
@@ -156,7 +157,7 @@ async fn native_browser_fetch_inner(
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
     };
-    Ok((response, refused, rendered.redirects))
+    Ok((response, refused, rendered.redirects, charset))
 }
 
 /// Content type assumed when the render reports none.
@@ -245,6 +246,8 @@ pub(crate) fn build_native_config(
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
         max_redirects: Some(config.max_redirects),
+        // ~keep The same decision HTTP mode makes, so a page reads the same on both paths.
+        document_decoder: Some(crate::html::decode_document),
     })
 }
 
@@ -689,7 +692,7 @@ mod tests {
             ..CrawlConfig::builder().allow_private_networks(true).build()
         };
 
-        let (response, _, _) = native_browser_fetch(&site.uri(), &config, None, &executor)
+        let (response, _, _, _) = native_browser_fetch(&site.uri(), &config, None, &executor)
             .await
             .expect("the native render must succeed");
 

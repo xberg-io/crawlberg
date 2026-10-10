@@ -18,9 +18,7 @@ use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
-pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
-};
+pub(crate) use body::{effective_max_body_size, read_body_bounded, truncate_body_at_char_boundary};
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::{build_client, request_client};
 pub(crate) use headers::build_headers_map;

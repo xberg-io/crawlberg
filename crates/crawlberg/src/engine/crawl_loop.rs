@@ -29,7 +29,8 @@ use crate::types::*;
 
 use super::CrawlEngine;
 use super::crawl_state::{
-    CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page, receiver_closed, receiver_gone,
+    CrawlState, FetchOutcome, FetchResult, FetchedBody, LoopContext, blocking_extract_page, receiver_closed,
+    receiver_gone,
 };
 use super::redirect::{
     Hop, PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host,
@@ -897,12 +898,16 @@ async fn fetch_and_extract(
         page_scan,
         ..
     } = outcome;
+    let body_text = resp.body_text().clone();
     let ssrf_refused_urls = resp.landed.map(|landed| landed.refused).unwrap_or_default();
     let status_code = resp.status;
     let content_type = resp.content_type;
     let headers = resp.headers;
-    let body = resp.body;
-    let body_bytes = resp.body_bytes;
+    let fetched = FetchedBody {
+        body: resp.body,
+        body_bytes: resp.body_bytes,
+        body_text,
+    };
     // ~keep The agent this page's request actually sent (rotation-aware); falls back to the
     // ~keep configured default when unset, exactly matching the previous behaviour when no
     // ~keep rotation is in play (crawlberg#423).
@@ -924,8 +929,7 @@ async fn fetch_and_extract(
             &content_type_clone,
             header_robots,
             &robots_user_agent,
-            body,
-            body_bytes,
+            fetched,
             page_scan,
         )
     })
