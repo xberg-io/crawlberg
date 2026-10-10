@@ -504,17 +504,18 @@ impl Drop for Browser {
         if let Some(copy) = self.child.take_if(|child| !child.spawned_here()) {
             std::mem::forget(copy);
         }
-        if let Some(child) = self.child.as_mut() {
+        // A caller that spawned the instance with `kill_on_drop(false)` stops it itself: the
+        // runtime kills nothing, so there is nothing to warn about.
+        if let Some(child) = self.child.as_mut().filter(|child| child.killed_on_drop()) {
             if let Ok(Some(_)) = child.try_wait() {
                 // Already exited, do nothing. Usually occurs after using the method close or kill.
             } else {
-                // We set the `kill_on_drop` property for the child process, so no need to explicitely
-                // kill it here. It can't really be done anyway since the method is async.
+                // The child has the `kill_on_drop` property, so the runtime kills it. It cannot be
+                // done here, since the method is async.
                 //
-                // On Unix, the process will be reaped in the background by the runtime automatically
-                // so it won't leave any resources locked. It is, however, a better practice for the user to
-                // do it himself since the runtime doesn't provide garantees as to when the reap occurs, so we
-                // warn him here.
+                // On Unix the runtime reaps the process in the background, so it leaves no resource
+                // locked. The runtime gives no guarantee as to when the reap occurs, so a caller
+                // does better to close the browser itself, and is warned here.
                 tracing::warn!("Browser was not closed manually, it will be killed automatically in the background");
             }
         }
@@ -596,10 +597,11 @@ mod tests {
 
     /// A browser whose spawned instance is a `cat` that waits on its standard input.
     fn browser_with_a_waiting_instance() -> Browser {
-        let child = Command::new("cat")
-            .stdin(Stdio::piped())
-            .spawn()
-            .expect("cat must start");
+        browser_with_an_instance_of(Command::new("cat").stdin(Stdio::piped()))
+    }
+
+    fn browser_with_an_instance_of(command: &mut Command) -> Browser {
+        let child = command.spawn().expect("cat must start");
         Browser {
             sender: channel(1).0,
             config: None,
@@ -607,6 +609,67 @@ mod tests {
             debug_ws_url: String::new(),
             browser_context: BrowserContext::default(),
         }
+    }
+
+    /// Collects the message of every event.
+    struct Messages(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::field::Visit for Messages {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0
+                    .lock()
+                    .expect("the messages must not be poisoned")
+                    .push(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl tracing::Subscriber for Messages {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            event.record(&mut Messages(self.0.clone()));
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// The messages logged on this thread while `browser` is dropped.
+    fn messages_of_the_drop(browser: Browser) -> Vec<String> {
+        let messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(Messages(messages.clone()));
+        drop(browser);
+        drop(guard);
+        std::mem::take(&mut *messages.lock().expect("the messages must not be poisoned"))
+    }
+
+    /// The drop of a browser warns that the runtime kills the running instance only when the
+    /// runtime does. A caller that spawned the instance with `kill_on_drop(false)` stops it
+    /// itself, and its drop logs no warning.
+    #[tokio::test]
+    async fn dropping_a_browser_warns_of_a_kill_only_when_the_runtime_kills_the_instance() {
+        const WARNING: &str = "Browser was not closed manually";
+
+        let killed = messages_of_the_drop(browser_with_a_waiting_instance());
+        assert!(
+            killed.iter().any(|message| message.contains(WARNING)),
+            "the drop of a running instance the runtime kills must warn: {killed:?}"
+        );
+
+        let kept = messages_of_the_drop(browser_with_an_instance_of(
+            Command::new("cat").stdin(Stdio::piped()).kill_on_drop(false),
+        ));
+        assert!(
+            !kept.iter().any(|message| message.contains(WARNING)),
+            "the drop of an instance its caller stops must not warn of a kill: {kept:?}"
+        );
     }
 
     /// Wait up to ten seconds for the forked child `pid` and return its wait status. A child that

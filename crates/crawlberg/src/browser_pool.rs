@@ -589,7 +589,7 @@ impl ScratchProfileDir {
         if chrome.is_none() {
             tracing::warn!(
                 pid,
-                "the launched Chrome's executable is unreadable; its profile teardown stops no process"
+                "the launched Chrome's executable is unreadable; its profile teardown stops only the launched process and the processes that one started"
             );
         }
         if let Some(profile) = live_profiles().get_mut(&self.teardown().dir) {
@@ -1819,8 +1819,13 @@ impl ChromeFamily {
 ///
 /// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
 /// ~keep while the pool's state mutex was held, stalling every waiting `acquire_page`.
+///
+/// ~keep A directory that is already gone is no failure: the exit hook's teardown of the same
+/// ~keep directory can remove it first.
 async fn remove_profile_dir(dir: std::path::PathBuf) {
-    if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
+    if let Err(error) = tokio::fs::remove_dir_all(&dir).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
         tracing::warn!(
             dir = %dir.display(),
             %error,

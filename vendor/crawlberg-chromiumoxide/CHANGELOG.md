@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that one, `Browser::get_mut_child`, `wait`, `try_wait` and `kill` answer as for a connected
   browser, and a dropped `Browser` leaves the browser process running. `Child::spawned_here`
   tells the two apart
+- A dropped `Browser` no longer warns that the runtime kills the browser process when the caller
+  asked for no kill on drop. `Child::killed_on_drop` tells which was asked
 
 ### Fixed
 

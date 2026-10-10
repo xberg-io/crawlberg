@@ -1794,6 +1794,74 @@ fn a_pool_dropped_where_no_runtime_runs_stops_its_chrome_and_removes_its_profile
     drop(runtime);
 }
 
+/// A pool dropped without `shutdown` logs no warning that its browser "was not closed manually".
+///
+/// ~keep The pool starts its Chrome with no kill on drop and stops it in the profile teardown, so
+/// ~keep the driver's warning of a kill by the runtime was false, and every normal drop of an
+/// ~keep engine logged it. The runtime is a current-thread one, so the drop of the pool and every
+/// ~keep task that holds the browser run on the thread that captures.
+#[test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+fn a_pool_dropped_without_shutdown_logs_no_warning_of_an_unclosed_browser() {
+    const TEST_NAME: &str = "a_pool_dropped_without_shutdown_logs_no_warning_of_an_unclosed_browser";
+    let (path, fields) = crate::tracing_capture::capture_events(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("the runtime must build");
+        let pool = BrowserPool::new(BrowserPoolConfig::default());
+        expect_chrome_or_skip(TEST_NAME, runtime.block_on(pool.warm()))?;
+        let path = runtime.block_on(pool_profile_dir(&pool));
+        drop(pool);
+        // ~keep Let the tasks that hold the browser end on this thread before the runtime goes.
+        runtime.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(200)).await });
+        drop(runtime);
+        Some(path)
+    });
+    let Some(path) = path else {
+        return;
+    };
+
+    assert_profile_directory_is_gone_for_good(&path);
+    let warnings: Vec<&(String, String)> = fields
+        .iter()
+        .filter(|(_, value)| value.contains("not closed manually"))
+        .collect();
+    assert!(
+        warnings.is_empty(),
+        "a dropped pool stops its Chrome itself, so no warning of an unclosed browser may be logged: {warnings:?}"
+    );
+}
+
+/// The removal of a profile directory that is already gone logs no failure, and the removal of
+/// one that cannot be removed still does.
+///
+/// ~keep A teardown from the exit hook can remove the directory first, and the removal after a
+/// ~keep kill then logged "failed to remove" on a normal exit.
+#[test]
+fn removing_a_profile_directory_that_is_gone_logs_no_failure() {
+    const FAILURE: &str = "failed to remove the Chrome profile directory";
+    let parent = tempfile::tempdir().expect("a temp directory must be creatable");
+    let gone = parent.path().join("gone");
+    let a_file = parent.path().join("a-file");
+    std::fs::write(&a_file, b"").expect("the file must be writable");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("the runtime must build");
+
+    let ((), of_a_file) = crate::tracing_capture::capture_events(|| runtime.block_on(remove_profile_dir(a_file)));
+    assert!(
+        of_a_file.iter().any(|(_, value)| value.contains(FAILURE)),
+        "a path that is no directory cannot be removed, and that must be logged: {of_a_file:?}"
+    );
+
+    let ((), of_gone) = crate::tracing_capture::capture_events(|| runtime.block_on(remove_profile_dir(gone)));
+    assert!(
+        !of_gone.iter().any(|(_, value)| value.contains(FAILURE)),
+        "a directory that is already gone is no failure: {of_gone:?}"
+    );
+}
+
 /// Kill the main process of the Chrome `pool` runs, and return its profile directory.
 async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
     let path = pool_profile_dir(pool).await;

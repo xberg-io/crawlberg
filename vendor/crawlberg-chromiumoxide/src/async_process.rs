@@ -10,6 +10,7 @@ use tokio::process;
 #[derive(Debug)]
 pub struct Command {
     inner: process::Command,
+    kill_on_drop: bool,
 }
 
 impl Command {
@@ -21,7 +22,10 @@ impl Command {
         // this case where the user didn't explicitely kill the child
         // process before dropping the handle.
         inner.kill_on_drop(true);
-        Self { inner }
+        Self {
+            inner,
+            kill_on_drop: true,
+        }
     }
 
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
@@ -52,6 +56,7 @@ impl Command {
     /// caller that passes `false` stops the process itself.
     pub fn kill_on_drop(&mut self, kill_on_drop: bool) -> &mut Self {
         self.inner.kill_on_drop(kill_on_drop);
+        self.kill_on_drop = kill_on_drop;
         self
     }
 
@@ -72,7 +77,7 @@ impl Command {
 
     pub fn spawn(&mut self) -> std::io::Result<Child> {
         let (inner, tree) = spawn_in_tree(&mut self.inner)?;
-        Ok(Child::new(inner, tree))
+        Ok(Child::new(inner, tree, self.kill_on_drop))
     }
 }
 
@@ -83,18 +88,27 @@ pub struct Child {
     tree: Option<ProcessTree>,
     /// The process that spawned this child.
     spawner: u32,
+    /// Whether the runtime kills the child when this handle is dropped.
+    killed_on_drop: bool,
 }
 
 /// Wrapper for an async child process.
 impl Child {
-    fn new(mut inner: process::Child, tree: Option<ProcessTree>) -> Self {
+    fn new(mut inner: process::Child, tree: Option<ProcessTree>, killed_on_drop: bool) -> Self {
         let stderr = inner.stderr.take();
         Self {
             inner,
             stderr: stderr.map(|inner| ChildStderr { inner }),
             tree,
             spawner: std::process::id(),
+            killed_on_drop,
         }
+    }
+
+    /// Whether the runtime kills the child when this handle is dropped. `false` when the caller
+    /// asked for that with [`Command::kill_on_drop`]: it stops the process itself.
+    pub fn killed_on_drop(&self) -> bool {
+        self.killed_on_drop
     }
 
     /// Whether this process spawned the child. `false` in a process forked from the one that did:
@@ -213,7 +227,7 @@ fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Ch
     let mut child = command.creation_flags(CREATE_SUSPENDED).spawn()?;
     let joined = match (child.raw_handle(), child.id()) {
         (Some(process), Some(pid)) => job::Job::holding(process, pid),
-        _ => Err(std::io::Error::other("the process ended as it started")),
+        _ => Err(std::io::Error::other("the browser process ended as soon as it started")),
     };
     match joined {
         Ok(job) => Ok((child, Some(ProcessTree(std::sync::Arc::new(job))))),
@@ -229,6 +243,10 @@ fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Ch
 #[cfg(any(windows, test))]
 const JOB_ID_LIST_HEADER: usize = 8;
 
+/// The offset of the count of listed ids in a `JOBOBJECT_BASIC_PROCESS_ID_LIST`.
+#[cfg(any(windows, test))]
+const JOB_ID_LIST_COUNT: usize = 4;
+
 /// The process ids in `list`, the bytes of a `JOBOBJECT_BASIC_PROCESS_ID_LIST` whose ids are
 /// `id_width` bytes each (the pointer width of the system that wrote it: 4 or 8).
 ///
@@ -236,7 +254,7 @@ const JOB_ID_LIST_HEADER: usize = 8;
 /// whatever the count says. An id that does not fit a `u32` is not a process id and is left out.
 #[cfg(any(windows, test))]
 fn job_process_ids(list: &[u8], id_width: usize) -> Vec<u32> {
-    let Some(listed) = list.get(4..JOB_ID_LIST_HEADER) else {
+    let Some(listed) = list.get(JOB_ID_LIST_COUNT..JOB_ID_LIST_HEADER) else {
         return Vec::new();
     };
     let listed = u32::from_le_bytes([listed[0], listed[1], listed[2], listed[3]]) as usize;
@@ -363,6 +381,9 @@ mod job {
 
     //The decoder reads the layout of the structure that the system writes, for this target.
     const _: () = {
+        assert!(
+            std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, NumberOfProcessIdsInList) == super::JOB_ID_LIST_COUNT
+        );
         assert!(std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) == super::JOB_ID_LIST_HEADER);
         assert!(size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() == super::JOB_ID_LIST_HEADER + size_of::<usize>());
     };
@@ -508,7 +529,9 @@ mod job {
         if resumed {
             Ok(())
         } else {
-            Err(io::Error::other("the suspended process has no thread"))
+            Err(io::Error::other(
+                "the browser process could not be started: it has no thread to run",
+            ))
         }
     }
 }
