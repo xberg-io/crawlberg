@@ -315,6 +315,15 @@ impl Browser {
         self.child.as_mut().filter(|child| child.spawned_here())
     }
 
+    /// Whether this [`Browser`] is a copy, in a forked process, of one that spawned a chromium
+    /// instance: the instance exists, and another process spawned it.
+    ///
+    /// It is `false` in the process that spawned the instance, and for a [`Browser`] that
+    /// spawned none (e.g. connected to an existing browser through [`Browser::connect`]).
+    pub fn spawned_elsewhere(&self) -> bool {
+        self.child.as_ref().is_some_and(|child| !child.spawned_here())
+    }
+
     /// Forcibly kill the spawned chromium instance
     ///
     /// The instance is spawned by [`Browser::launch`]. `kill` will automatically wait for the child
@@ -635,11 +644,12 @@ mod tests {
         assert!(forked >= 0, "fork must work");
         if forked == 0 {
             let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let a_copy = browser.spawned_elsewhere();
                 let has_child = browser.get_mut_child().is_some();
                 let killed = futures::executor::block_on(browser.kill()).is_some();
                 let waited = !matches!(browser.try_wait(), Ok(None));
                 drop(browser);
-                i32::from(has_child) | (i32::from(killed) << 1) | (i32::from(waited) << 2)
+                i32::from(has_child) | (i32::from(killed) << 1) | (i32::from(waited) << 2) | (i32::from(!a_copy) << 3)
             }));
             // SAFETY: leaves the forked child at once, with no exit function of the parent.
             unsafe { _exit(found.unwrap_or(64)) }
@@ -648,10 +658,15 @@ mod tests {
 
         let still_runs = matches!(browser.try_wait(), Ok(None));
         let own_child = browser.get_mut_child().is_some();
+        let a_copy_here = browser.spawned_elsewhere();
         let killed_here = browser.kill().await;
         assert_eq!(
             status, 0,
-            "the forked process must get no child, kill nothing and wait for nothing (wait status {status})"
+            "the forked process must get no child, kill nothing, wait for nothing and see a copy (wait status {status})"
+        );
+        assert!(
+            !a_copy_here,
+            "the browser is no copy in the process that spawned the instance"
         );
         assert!(
             still_runs,

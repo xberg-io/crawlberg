@@ -1542,10 +1542,11 @@ pub(crate) async fn kill_browser(
     shutdown_timeout: Duration,
 ) {
     let deadline = tokio::time::Instant::now() + shutdown_timeout;
-    // ~keep The driver hands out the process only where it was launched. A process forked from
-    // ~keep that one holds a copy of the browser: it lets go of the copy and leaves the Chrome
-    // ~keep and the profile to its parent.
-    if browser.get_mut_child().is_none() {
+    // ~keep A process forked from the one that launched the Chrome holds a copy of the browser:
+    // ~keep it lets go of the copy and leaves the Chrome and the profile to its parent. A
+    // ~keep browser with no process in the process that made it (a connected one) goes on: its
+    // ~keep kill fails, it is released, and the profile is removed.
+    if browser.spawned_elsewhere() {
         release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
         return;
     }

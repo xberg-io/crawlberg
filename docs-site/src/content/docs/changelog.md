@@ -91,6 +91,25 @@ title: "Changelog"
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
+  profile directory is removed, when the last clone of the engine handle is dropped, and when the
+  process exits through the C runtime with an engine still alive or with its Chrome still
+  launching. No new call is needed. Only the process that launched a Chrome stops it: a process
+  forked from that one, such as a `multiprocessing` worker, holds a copy of the engine, and
+  dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
+  and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
+  `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
+  nothing ends that Chrome for it. A Python program that ends with an unhandled
+  `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
+  Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
+  them when the process ends in any way. (#594)
+- On Windows a program that captures the output of a crawling child process returns when that
+  child has exited. A Chrome the child left running kept the output pipes open.
+- Chrome no longer gets the standard input of the process that launched it.
+- The browser driver now reports the close of a browser's last page at once. It held that event
+  back until the next page opened, so a page closed outside the request check kept its browser
+  context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
+  already ended for pooled pages. (#595)
 
 ## [1.10.2] - 2026-10-06
 

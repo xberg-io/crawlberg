@@ -224,6 +224,119 @@ fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Ch
     }
 }
 
+/// The length in bytes of the two 32-bit counts that start a `JOBOBJECT_BASIC_PROCESS_ID_LIST`.
+/// The first process id follows them at once, for a 4-byte and for an 8-byte id alike.
+#[cfg(any(windows, test))]
+const JOB_ID_LIST_HEADER: usize = 8;
+
+/// The process ids in `list`, the bytes of a `JOBOBJECT_BASIC_PROCESS_ID_LIST` whose ids are
+/// `id_width` bytes each (the pointer width of the system that wrote it: 4 or 8).
+///
+/// The second count gives the number of ids. Only the ids that `list` holds in full are read,
+/// whatever the count says. An id that does not fit a `u32` is not a process id and is left out.
+#[cfg(any(windows, test))]
+fn job_process_ids(list: &[u8], id_width: usize) -> Vec<u32> {
+    let Some(listed) = list.get(4..JOB_ID_LIST_HEADER) else {
+        return Vec::new();
+    };
+    let listed = u32::from_le_bytes([listed[0], listed[1], listed[2], listed[3]]) as usize;
+    if !matches!(id_width, 4 | 8) {
+        return Vec::new();
+    }
+    list[JOB_ID_LIST_HEADER..]
+        .chunks_exact(id_width)
+        .take(listed)
+        .filter_map(|id| {
+            let mut wide = [0u8; 8];
+            wide[..id_width].copy_from_slice(id);
+            u32::try_from(u64::from_le_bytes(wide)).ok()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::job_process_ids;
+
+    /// The bytes of a list with the two counts `assigned` and `listed`, then `ids` at `id_width` bytes each.
+    fn list(assigned: u32, listed: u32, ids: &[u64], id_width: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(assigned.to_le_bytes());
+        bytes.extend(listed.to_le_bytes());
+        for id in ids {
+            bytes.extend(&id.to_le_bytes()[..id_width]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn the_ids_of_a_32_bit_list_start_after_both_counts() {
+        assert_eq!(job_process_ids(&list(2, 2, &[1100, 2200], 4), 4), [1100, 2200]);
+    }
+
+    #[test]
+    fn the_ids_of_a_64_bit_list_start_after_both_counts() {
+        assert_eq!(job_process_ids(&list(2, 2, &[1100, 2200], 8), 8), [1100, 2200]);
+    }
+
+    #[test]
+    fn a_count_larger_than_the_list_holds_reads_only_the_ids_that_are_there() {
+        assert_eq!(job_process_ids(&list(9, 9, &[1100, 2200], 4), 4), [1100, 2200]);
+        assert_eq!(job_process_ids(&list(9, u32::MAX, &[1100, 2200], 8), 8), [1100, 2200]);
+    }
+
+    #[test]
+    fn a_count_smaller_than_the_list_holds_stops_at_the_count() {
+        assert_eq!(job_process_ids(&list(3, 1, &[1100, 2200], 4), 4), [1100]);
+        assert_eq!(job_process_ids(&list(3, 1, &[1100, 2200], 8), 8), [1100]);
+    }
+
+    #[test]
+    fn a_zero_count_gives_no_id() {
+        assert!(job_process_ids(&list(0, 0, &[1100, 2200], 4), 4).is_empty());
+        assert!(job_process_ids(&list(0, 0, &[], 8), 8).is_empty());
+    }
+
+    #[test]
+    fn an_id_cut_short_by_the_end_of_the_list_is_not_read() {
+        for id_width in [4, 8] {
+            let whole = list(2, 2, &[1100, 2200], id_width);
+            for cut in 1..id_width {
+                assert_eq!(
+                    job_process_ids(&whole[..whole.len() - cut], id_width),
+                    [1100],
+                    "{id_width} {cut}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_shorter_than_its_counts_gives_no_id() {
+        let whole = list(2, 2, &[], 4);
+        for length in 0..whole.len() {
+            assert!(job_process_ids(&whole[..length], 4).is_empty(), "{length}");
+            assert!(job_process_ids(&whole[..length], 8).is_empty(), "{length}");
+        }
+    }
+
+    #[test]
+    fn an_id_that_is_wider_than_32_bits_is_left_out() {
+        assert_eq!(job_process_ids(&list(2, 2, &[1 << 32, 2200], 8), 8), [2200]);
+        assert_eq!(job_process_ids(&list(1, 1, &[u64::from(u32::MAX)], 8), 8), [u32::MAX]);
+    }
+
+    #[test]
+    fn a_width_that_no_windows_has_gives_no_id() {
+        for id_width in [0, 1, 2, 16] {
+            assert!(
+                job_process_ids(&list(2, 2, &[1100, 2200], 8), id_width).is_empty(),
+                "{id_width}"
+            );
+        }
+    }
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod job {
@@ -237,8 +350,8 @@ mod job {
     };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation,
-        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{
         OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ResumeThread,
@@ -247,6 +360,12 @@ mod job {
 
     /// The most processes of a job that one round of [`Job::stop`] waits for.
     const MEMBERS_PER_ROUND: usize = 256;
+
+    //The decoder reads the layout of the structure that the system writes, for this target.
+    const _: () = {
+        assert!(std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) == super::JOB_ID_LIST_HEADER);
+        assert!(size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() == super::JOB_ID_LIST_HEADER + size_of::<usize>());
+    };
 
     /// A job object that ends its processes when its handle is closed, and the process it was
     /// made for.
@@ -319,9 +438,10 @@ mod job {
 
         /// A handle on each process that is in the job now, up to [`MEMBERS_PER_ROUND`].
         fn members(&self) -> Vec<OwnedHandle> {
-            //`JOBOBJECT_BASIC_PROCESS_ID_LIST`: two 32-bit counts, then one pointer-sized
-            //id for each process. The first slot of the buffer holds the two counts.
-            let mut list = [0usize; MEMBERS_PER_ROUND + 1];
+            //The system writes a `JOBOBJECT_BASIC_PROCESS_ID_LIST` with room for that many ids.
+            //The buffer is made of `u64` so that it has the alignment of the structure.
+            const LIST_BYTES: usize = super::JOB_ID_LIST_HEADER + MEMBERS_PER_ROUND * size_of::<usize>();
+            let mut list = [0u64; LIST_BYTES.div_ceil(size_of::<u64>())];
             // SAFETY: the buffer is writable for the size passed. A longer list fails with
             // "more data" after it has filled the buffer, and the next round reads the rest.
             unsafe {
@@ -329,17 +449,14 @@ mod job {
                     self.job.as_raw_handle(),
                     JobObjectBasicProcessIdList,
                     list.as_mut_ptr().cast(),
-                    size_of_val(&list) as u32,
+                    LIST_BYTES as u32,
                     std::ptr::null_mut(),
                 );
             }
-            // SAFETY: the first slot is at least eight bytes and aligned for a `u32` pair.
-            let [_, listed] = unsafe { list.as_ptr().cast::<[u32; 2]>().read() };
-            list[1..]
-                .iter()
-                .take(listed as usize)
-                .filter_map(|&pid| {
-                    let pid = u32::try_from(pid).ok()?;
+            let list: Vec<u8> = list.iter().flat_map(|word| word.to_ne_bytes()).collect();
+            super::job_process_ids(&list[..LIST_BYTES], size_of::<usize>())
+                .into_iter()
+                .filter_map(|pid| {
                     // SAFETY: plain call; a process that is gone gives a null handle.
                     let member =
                         owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })
