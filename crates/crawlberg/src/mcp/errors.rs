@@ -240,6 +240,18 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_conversion_maps_to_an_internal_error_that_keeps_its_message() {
+        let error = CrawlError::conversion_failed("could not convert https://example.com/ to Markdown: refused");
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(mcp_error.code.0, -32603);
+        assert_eq!(
+            mcp_error.message,
+            "Conversion to Markdown failed: could not convert https://example.com/ to Markdown: refused"
+        );
+    }
+
+    #[test]
     fn test_map_other_to_internal_error() {
         let error = CrawlError::other("unexpected failure".to_string());
         let mcp_error = map_crawl_error(error);

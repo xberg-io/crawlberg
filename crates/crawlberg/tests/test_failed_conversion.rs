@@ -2,14 +2,14 @@
 //! Markdown.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use crawlberg::traits::CrawlCache;
+use crawlberg::traits::{CrawlCache, CrawlStats, CrawlStore};
 use crawlberg::{
-    CachedPage, CrawlConfig, CrawlEngine, CrawlError, CrawlEvent, batch_crawl, batch_scrape, crawl, crawl_stream,
-    create_engine, scrape,
+    CachedPage, CrawlConfig, CrawlEngine, CrawlError, CrawlEvent, CrawlPageResult, ScrapeResult, batch_crawl,
+    batch_scrape, crawl, crawl_stream, create_engine, scrape,
 };
 use futures::StreamExt;
 use wiremock::matchers::{method, path};
@@ -169,16 +169,20 @@ async fn a_batch_crawl_reports_the_seed_that_cannot_be_converted() {
             .results
             .iter()
             .find(|item| item.url == url)
-            .and_then(|item| item.result.as_ref())
-            .unwrap_or_else(|| panic!("the batch has a crawl for {url}"))
+            .unwrap_or_else(|| panic!("the batch reports {url}"))
     };
-    assert_eq!(of(&good).pages.len(), 1, "the converted seed is a page");
+    let converted = of(&good)
+        .result
+        .as_ref()
+        .expect("the converted seed has a crawl result");
+    assert_eq!(converted.pages.len(), 1, "the converted seed is a page");
     assert!(of(&good).error.is_none(), "the converted seed has no error");
-    assert!(of(&refused).pages.is_empty(), "the refused seed is not a page");
+    // ~keep A batch item whose crawl has an error carries the error and no crawl result.
+    assert!(of(&refused).result.is_none(), "the refused seed has no crawl result");
     let error = of(&refused)
         .error
         .as_deref()
-        .expect("the refused seed is the error of its crawl");
+        .expect("the refused seed is the error of its batch item");
     assert_failed_conversion(error, &refused);
 }
 
@@ -279,14 +283,7 @@ async fn a_crawl_leaves_out_the_page_that_cannot_be_converted() {
 #[tokio::test]
 async fn a_crawl_whose_seed_cannot_be_converted_reports_it_as_its_error() {
     let mock = MockServer::start().await;
-    // ~keep A link the crawl would follow, to show a refused page contributes no links.
-    mount_html(&mock, "/", &format!(r#"{REFUSED_PAGE}<a href="/good">good</a>"#)).await;
-    Mock::given(method("GET"))
-        .and(path("/good"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("<p>Good page.</p>"))
-        .expect(0)
-        .mount(&mock)
-        .await;
+    mount_html(&mock, "/", REFUSED_PAGE).await;
     let engine = create_engine(Some(config(1))).expect("the engine builds");
 
     let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
@@ -297,4 +294,121 @@ async fn a_crawl_whose_seed_cannot_be_converted_reports_it_as_its_error() {
         .as_deref()
         .expect("a refused seed is the error of the crawl");
     assert_failed_conversion(error, &mock.uri());
+}
+
+/// A page that cannot be converted gives the crawl no links: the page behind it is never requested.
+/// The page behind the converted child is the control: the crawl does follow links at that depth.
+#[tokio::test]
+async fn a_crawl_follows_no_link_of_a_page_that_cannot_be_converted() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/refused">refused</a> <a href="/good">good</a></body></html>"#,
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/refused",
+        "PK\u{3}\u{4}<html><body><a href=\"/behind-refused\">behind</a></body></html>",
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/good",
+        r#"<html><body><a href="/behind-good">behind</a></body></html>"#,
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/behind-refused",
+        "<html><body><p>Behind the refused page.</p></body></html>",
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/behind-good",
+        "<html><body><p>Behind the good page.</p></body></html>",
+    )
+    .await;
+    let engine = create_engine(Some(config(2))).expect("the engine builds");
+
+    crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+
+    let mut requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("the mock records requests")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    requested.sort_unstable();
+    assert_eq!(
+        requested,
+        vec!["/", "/behind-good", "/good", "/refused"],
+        "the crawl requests the page behind the converted child, not the page behind the refused child"
+    );
+}
+
+/// What a store was given: the errors, and the statistics of the finished crawl.
+#[derive(Default)]
+struct Stored {
+    errors: Mutex<Vec<(String, String)>>,
+    stats: Mutex<Option<CrawlStats>>,
+}
+
+struct RecordingStore(Arc<Stored>);
+
+#[async_trait]
+impl CrawlStore for RecordingStore {
+    async fn store_page(&self, _url: &str, _result: &ScrapeResult) -> Result<(), CrawlError> {
+        Ok(())
+    }
+
+    async fn store_crawl_page(&self, _url: &str, _result: &CrawlPageResult) -> Result<(), CrawlError> {
+        Ok(())
+    }
+
+    async fn store_error(&self, url: &str, error: &CrawlError) -> Result<(), CrawlError> {
+        self.0
+            .errors
+            .lock()
+            .expect("the store lock")
+            .push((url.to_owned(), error.to_string()));
+        Ok(())
+    }
+
+    async fn on_complete(&self, stats: &CrawlStats) -> Result<(), CrawlError> {
+        *self.0.stats.lock().expect("the store lock") = Some(stats.clone());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_crawl_counts_the_page_as_failed_and_gives_its_error_to_the_store() {
+    let mock = site_with_a_refused_child().await;
+    let stored = Arc::new(Stored::default());
+    let engine = CrawlEngine::builder()
+        .config(config(1))
+        .store(RecordingStore(Arc::clone(&stored)))
+        .build()
+        .expect("the engine builds");
+    let refused = format!("{}/refused", mock.uri());
+
+    engine.crawl(&mock.uri()).await.expect("the crawl completes");
+
+    let stats = stored
+        .stats
+        .lock()
+        .expect("the store lock")
+        .clone()
+        .expect("the store saw the crawl complete");
+    assert_eq!(
+        stats.pages_failed, 1,
+        "the refused child is the one failed page: {stats:?}"
+    );
+    let errors = stored.errors.lock().expect("the store lock").clone();
+    assert_eq!(errors.len(), 1, "one stored error, for the refused child: {errors:?}");
+    assert_eq!(errors[0].0, refused, "the stored error is for the refused child");
+    assert_failed_conversion(&errors[0].1, &refused);
 }
