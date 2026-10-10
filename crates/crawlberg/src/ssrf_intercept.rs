@@ -4134,8 +4134,6 @@ mod tests {
     /// ~keep of this test that announces no target, so the handler tracks none.
     #[tokio::test]
     async fn the_driver_passes_on_a_browser_event_while_it_tracks_no_target() {
-        use futures::SinkExt as _;
-
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind the test browser socket");

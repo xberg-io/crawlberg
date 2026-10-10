@@ -715,8 +715,10 @@ impl Drop for ProfileTeardown {
         // ~keep directory, which on Windows meant a `taskkill.exe` child for each one: started
         // ~keep from the exit hook of a binding, after the system had ended every other thread,
         // ~keep that child never ran and the process did not exit.
-        // ~keep One teardown of a directory at a time, for as long as one can take. A tree needs
-        // ~keep no turn: every teardown waits on the same processes through it.
+        // ~keep One teardown of a directory at a time. A second one waits for as long as the first
+        // ~keep may wait for its processes and try the removal, then runs beside it, so an exit is
+        // ~keep not held longer. A tree needs no turn: every teardown waits on the same processes
+        // ~keep through it.
         let turn = Arc::clone(&self.turn);
         let _turn = if self.tree.is_none() {
             lock_within(&turn, PROFILE_USERS_EXIT_TIMEOUT + PROFILE_REMOVAL_TIMEOUT)

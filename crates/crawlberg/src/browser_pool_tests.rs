@@ -1298,6 +1298,21 @@ fn the_teardown_made_from_the_list_stops_the_recorded_chrome() {
 /// when the teardown that already runs has finished.
 #[test]
 fn a_second_teardown_of_a_profile_directory_waits_for_the_first() {
+    assert_a_second_teardown_waits_while_the_first_holds_the_turn(Duration::from_millis(300));
+}
+
+/// A second teardown still waits when the first has held the turn for most of the time it may
+/// spend waiting for its Chrome processes to end.
+///
+/// ~keep A second teardown that gave up sooner removed the directory under the first.
+#[test]
+fn a_second_teardown_waits_for_as_long_as_the_first_may_wait_for_its_processes() {
+    assert_a_second_teardown_waits_while_the_first_holds_the_turn(PROFILE_USERS_EXIT_TIMEOUT - Duration::from_secs(1));
+}
+
+/// Hold the turn of a new profile directory for `held_for`, as a running teardown does, with a
+/// second teardown of the directory started beside it.
+fn assert_a_second_teardown_waits_while_the_first_holds_the_turn(held_for: Duration) {
     let dir =
         ScratchProfileDir::create("crawlberg-teardown-turn-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -1314,7 +1329,7 @@ fn a_second_teardown_of_a_profile_directory_waits_for_the_first() {
     others.into_iter().for_each(std::mem::forget);
     let taken_count = taken.len();
     let second = std::thread::spawn(move || drop(taken));
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(held_for);
     let removed_while_held = !path.exists();
     drop(first);
     let removed_after = wait_for_removal(&path);
@@ -1322,11 +1337,78 @@ fn a_second_teardown_of_a_profile_directory_waits_for_the_first() {
     assert_eq!(taken_count, 1, "the listed directory must get one teardown");
     assert!(
         !removed_while_held,
-        "the second teardown must not remove the directory while the first holds the turn"
+        "the second teardown must not remove the directory while the first holds the turn ({held_for:?})"
     );
     assert!(
         removed_after && joined,
         "the second teardown must run once the turn is free"
+    );
+}
+
+/// The teardown tries the removal of its directory again when an attempt fails, and removes the
+/// directory once the cause of the failure is gone.
+///
+/// ~keep The parent of the directory refuses writes for a short time, so the first attempts fail
+/// ~keep with a permission error. On Windows a file that an ended process still holds fails them.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+fn the_teardown_tries_the_removal_again_until_the_directory_can_be_removed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = tempfile::Builder::new()
+        .prefix("crawlberg-removal-retry-test-")
+        .tempdir()
+        .expect("the parent directory must be creatable");
+    let path = parent.path().join("profile");
+    let probe = parent.path().join("probe");
+    std::fs::create_dir_all(path.join("Default")).expect("the profile directory must be creatable");
+    std::fs::create_dir(&probe).expect("the probe directory must be creatable");
+    let set_mode = |mode| std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(mode));
+    set_mode(0o500).expect("the parent's permissions must be settable");
+    if std::fs::remove_dir(&probe).is_ok() {
+        let _ = set_mode(0o700);
+        eprintln!("skipping: this user removes an entry of a directory that refuses writes, so no removal fails");
+        return;
+    }
+    let (begin, begun) = std::sync::mpsc::channel::<()>();
+    let allowed = Arc::new(AtomicBool::new(false));
+    let allow = {
+        let parent = parent.path().to_path_buf();
+        let allowed = Arc::clone(&allowed);
+        std::thread::spawn(move || {
+            let _ = begun.recv();
+            std::thread::sleep(Duration::from_millis(300));
+            allowed.store(true, Ordering::Release);
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+        })
+    };
+
+    let started = std::time::Instant::now();
+    let _ = begin.send(());
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(ProfileTeardown {
+        owner: std::process::id(),
+        dir: path.clone(),
+        launched: None,
+        tree: None,
+        chrome: None,
+        turn: ProfileTurn::default(),
+    });
+    let elapsed = started.elapsed();
+    let returned_after_the_cause_went = allowed.load(Ordering::Acquire);
+    let restored = allow.join().is_ok_and(|set| set.is_ok());
+    let _ = set_mode(0o700);
+
+    assert!(restored, "the parent's permissions must be restored");
+    assert!(
+        returned_after_the_cause_went,
+        "the teardown must go on trying while the removal fails: it returned after {elapsed:?}"
+    );
+    assert!(
+        !path.exists(),
+        "the teardown must remove the directory once the removal can succeed: {}",
+        what_is_left(&path)
     );
 }
 

@@ -99,8 +99,10 @@ All notable changes to crawlberg are documented here.
   dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
   and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
   `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
-  nothing ends that Chrome for it. On Windows the Chrome and its helper processes run in a job
-  object, and the system ends them when the process ends in any way. (#594)
+  nothing ends that Chrome for it. A Python program that ends with an unhandled
+  `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
+  Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
+  them when the process ends in any way. (#594)
 - On Windows a program that captures the output of a crawling child process returns when that
   child has exited. A Chrome the child left running kept the output pipes open.
 - Chrome no longer gets the standard input of the process that launched it.
