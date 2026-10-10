@@ -51,6 +51,18 @@ title: "Changelog"
   unsendable, but is being dropped on another thread` on stderr after an async call, and the
   engine was then never freed: its connections and its browser stayed until the process ended.
   The engine handle is now a class that any thread can release. (#641)
+- Browser mode lost a page that opens a JavaScript dialog. Chrome stops the page until the
+  dialog is answered, and nothing answered it, so `scrape`, `crawl` and `interact` failed with
+  a browser timeout after the full `browser.timeout`. Browser mode now closes the dialog and
+  returns the page. An `alert`, a `confirm` and a `prompt` are dismissed: the page gets `false`
+  from the `confirm` and `null` from the `prompt`. A `beforeunload` dialog is accepted, so the
+  navigation that opened it goes on. The text of a dialog is not part of the page and is not
+  returned. (#602)
+- Browser mode lost a page whose text holds one half of a surrogate pair, such as a string that
+  a script cut in the middle of an emoji. The reply from Chrome could not be read, and the
+  call failed with a browser timeout after the full `browser.timeout`. The page is now
+  returned, with U+FFFD in place of the unpaired half, as a browser shows it. The same holds
+  for an attribute, for the title and for the result of an `interact` script. (#631)
 
 ## [1.10.2] - 2026-10-06
 

@@ -265,6 +265,64 @@ async fn a_dialog_in_a_frame_does_not_hold_the_page() {
     rows.finish();
 }
 
+/// A page that opens a dialog again and again without end is returned, and the page is closed
+/// while a dialog is open or its answer is on the way. A frame that does so, of another site or
+/// of the same site, while the page opens five dialogs of its own, does not hold the page: each
+/// document's dialog is closed when another document's dialog is open or was open a moment ago.
+#[tokio::test]
+async fn dialogs_that_open_again_and_again_do_not_hold_the_page() {
+    let mut rows = Rows::new("dialogs_that_open_again_and_again_do_not_hold_the_page");
+    let without_end = "<script>setInterval(() => alert('again'), 10);</script>";
+
+    let page = format!("<!doctype html><html><body><p>start</p>{without_end}</body></html>");
+    let site = html_site(&[("/", page)]).await;
+    if !rows
+        .scrape(
+            "the page, without end",
+            config(BrowserMode::Always),
+            &site.uri(),
+            &["start"],
+        )
+        .await
+    {
+        return;
+    }
+
+    for another_site in [true, false] {
+        let site = MockServer::start().await;
+        let frame_site = if another_site {
+            as_another_site(&site)
+        } else {
+            site.uri()
+        };
+        let host = format!(
+            "<!doctype html><html><body><p>host text</p><iframe src=\"{frame_site}/frame\"></iframe>\
+             <script>setTimeout(() => {{ const answers = [alert('a'), confirm('b'), prompt('c'), alert('d'), \
+             confirm('e')]; document.body.insertAdjacentHTML('beforeend', '<p>the page closed ' + answers.length + \
+             ' dialogs</p>'); }}, 300);</script></body></html>"
+        );
+        let frame = format!("<!doctype html><html><body><p>frame text</p>{without_end}</body></html>");
+        for (route, body) in [("/", host), ("/frame", frame)] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/html; charset=utf-8"))
+                .mount(&site)
+                .await;
+        }
+        let row = format!(
+            "a frame of {}, without end, while the page opens five",
+            if another_site { "another site" } else { "the same site" }
+        );
+        let mut config = config(BrowserMode::Always);
+        config.browser.extra_wait = Some(Duration::from_millis(1500));
+        let expected = ["host text", "the page closed 5 dialogs<"];
+        if !rows.scrape(&row, config, &site.uri(), &expected).await {
+            return;
+        }
+    }
+    rows.finish();
+}
+
 /// A page that asks before it unloads opens no dialog while nobody has clicked in it: the page is
 /// returned, as it was before dialogs were closed.
 #[tokio::test]
