@@ -41,10 +41,9 @@ impl ChainClaim {
         if self.keys.contains(&dedup_key) {
             return Ok(true);
         }
-        if frontier.is_seen(&dedup_key).await? {
+        if !frontier.claim(&dedup_key).await? {
             return Ok(false);
         }
-        frontier.mark_seen(&dedup_key).await?;
         self.keys.insert(dedup_key);
         Ok(true)
     }

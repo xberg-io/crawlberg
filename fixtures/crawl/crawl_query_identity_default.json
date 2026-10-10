@@ -1,12 +1,15 @@
 {
-	"id": "crawl_double_slash_normalization",
-	"description": "Normalizes double slashes in URL paths (//page to /page)",
+	"id": "crawl_query_identity_default",
+	"description": "Fetches distinct query values with the default configuration",
 	"docs": {
 		"topic": "crawl",
-		"stem": "crawl-double-slash-normalization",
-		"title": "Normalizes double slashes in URL paths (//page to /page)"
+		"stem": "crawl-query-identity-default",
+		"title": "Fetches distinct query values with the default configuration"
 	},
-	"tags": ["crawl", "normalization"],
+	"tags": [
+		"crawl",
+		"normalization"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -16,16 +19,16 @@
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><a href=\"//page\">Double Slash</a><a href=\"/page\">Normal</a></body></html>"
+				"body_inline": "<html><body><a href=\"/item?id=1\">First</a><a href=\"/item?id=2\">Second</a></body></html>"
 			},
 			{
-				"path": "/page",
+				"path": "/item",
 				"method": "GET",
 				"status_code": 200,
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><h1>Page</h1></body></html>"
+				"body_inline": "<html><body><h1>Item</h1></body></html>"
 			}
 		],
 		"config": {
@@ -37,7 +40,7 @@
 		{
 			"type": "equals",
 			"field": "pages.length",
-			"value": 2
+			"value": 3
 		}
 	]
 }

@@ -71,6 +71,10 @@ impl Frontier for InMemoryFrontier {
         Ok(())
     }
 
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
+    }
+
     async fn len(&self) -> Result<usize, CrawlError> {
         Ok(self.queue.lock().expect("lock poisoned").len())
     }
@@ -142,6 +146,10 @@ impl Frontier for LifoFrontier {
         Ok(())
     }
 
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
+    }
+
     async fn len(&self) -> Result<usize, CrawlError> {
         Ok(self.queue.lock().expect("lock poisoned").len())
     }
@@ -155,6 +163,46 @@ impl Frontier for LifoFrontier {
 mod tests {
     use super::*;
     use crate::traits::FrontierEntry;
+
+    // ~keep The claim is one step only if no other thread can run between its check and its mark, so
+    // ~keep the test needs threads in parallel: tasks on one thread never interleave inside a call
+    // ~keep that does not wait. Eight tasks start together and claim the same keys in the same order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn should_atomically_claim_a_key_once_in_each_memory_frontier() {
+        const TASKS: usize = 8;
+        const KEYS: usize = 20_000;
+        let frontiers: Vec<std::sync::Arc<dyn Frontier>> = vec![
+            std::sync::Arc::new(InMemoryFrontier::new()),
+            std::sync::Arc::new(LifoFrontier::new()),
+        ];
+        let keys: std::sync::Arc<Vec<String>> =
+            std::sync::Arc::new((0..KEYS).map(|key| format!("key-{key}")).collect());
+        for frontier in frontiers {
+            let start = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
+            let tasks: Vec<_> = (0..TASKS)
+                .map(|_| {
+                    let (frontier, keys, start) = (frontier.clone(), keys.clone(), start.clone());
+                    tokio::spawn(async move {
+                        start.wait().await;
+                        let mut claimed = 0_usize;
+                        for key in keys.iter() {
+                            if frontier.claim(key).await.expect("claim") {
+                                claimed += 1;
+                            }
+                        }
+                        claimed
+                    })
+                })
+                .collect();
+            let mut claimed = 0_usize;
+            for task in tasks {
+                claimed += task.await.expect("claim task");
+            }
+            assert_eq!(claimed, KEYS, "each key is claimed by one task");
+            assert!(frontier.is_seen("key-0").await.expect("seen"));
+            assert_eq!(frontier.len().await.expect("queue length"), 0);
+        }
+    }
 
     #[tokio::test]
     async fn test_push_pop_fifo_order() {

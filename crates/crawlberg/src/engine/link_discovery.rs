@@ -95,8 +95,7 @@ impl CrawlEngine {
             let child_depth = parent.depth + 1;
             let dedup_key = normalize_url_for_dedup(&link_url, self.config.dedup_include_query);
             // ~keep Mark seen before SSRF validation so concurrent discovery cannot enqueue dedup-equivalent URLs.
-            if !self.frontier.is_seen(&dedup_key).await? {
-                self.frontier.mark_seen(&dedup_key).await?;
+            if self.frontier.claim(&dedup_key).await? {
                 candidates.push((link_url, is_doc_link, child_depth));
             }
         }

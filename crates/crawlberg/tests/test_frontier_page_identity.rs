@@ -119,6 +119,43 @@ fn config() -> CrawlConfig {
         .build()
 }
 
+#[tokio::test]
+async fn addresses_with_single_and_double_path_separators_are_both_requested() {
+    let mock = site(&[
+        (
+            "/",
+            Answer::Html(r#"<a href="/a/b">single</a><a href="/a//b">double</a>"#),
+        ),
+        ("/a/b", Answer::Html("<h1>Single separator</h1>")),
+        ("/a//b", Answer::Html("<h1>Empty path segment</h1>")),
+    ])
+    .await;
+    let result = crawl_from(&mock, "/").await;
+    assert_eq!(sorted(requested_paths(&mock).await), ["/", "/a//b", "/a/b"]);
+    assert_eq!(page_paths(&mock.uri(), &result), ["/", "/a//b", "/a/b"]);
+    assert_eq!(normalized_paths(&mock, &result), ["/", "/a//b", "/a/b"]);
+    assert!(html_of(&result, &mock, "/a/b").contains("Single separator"));
+    assert!(html_of(&result, &mock, "/a//b").contains("Empty path segment"));
+}
+
+#[tokio::test]
+async fn addresses_with_different_query_values_are_both_requested_by_default() {
+    let mock = site(&[
+        (
+            "/",
+            Answer::Html(r#"<a href="/item?id=1">first</a><a href="/item?id=2">second</a>"#),
+        ),
+        ("/item?id=1", Answer::Html("<h1>First item</h1>")),
+        ("/item?id=2", Answer::Html("<h1>Second item</h1>")),
+    ])
+    .await;
+    let result = crawl_from(&mock, "/").await;
+    assert_eq!(sorted(requested_paths(&mock).await), ["/", "/item?id=1", "/item?id=2"]);
+    assert_eq!(page_paths(&mock.uri(), &result), ["/", "/item?id=1", "/item?id=2"]);
+    assert!(html_of(&result, &mock, "/item?id=1").contains("First item"));
+    assert!(html_of(&result, &mock, "/item?id=2").contains("Second item"));
+}
+
 async fn crawl_from(mock: &MockServer, seed_path: &str) -> CrawlResult {
     let engine = create_engine(Some(config())).expect("engine builds");
     crawl(&engine, &format!("{}{seed_path}", mock.uri()))
@@ -811,7 +848,7 @@ async fn with_the_query_kept_a_redirect_is_claimed_on_the_key_with_the_query() {
     );
 }
 
-/// With the default key the same two links are one page, and the redirect between them is the
+/// With query merging enabled the same two links are one page, and the redirect between them is the
 /// page under another address. The two queries of `/q` are one page too.
 #[tokio::test]
 async fn with_the_query_dropped_a_redirect_is_claimed_on_the_key_without_the_query() {
