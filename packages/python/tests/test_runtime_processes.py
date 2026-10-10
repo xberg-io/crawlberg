@@ -156,6 +156,7 @@ def test_should_complete_or_reject_forked_work_and_keep_parent_usable(
 ) -> None:
     result = _run(_FORK, local_server.url, "warm" if warm else "cold", operation)
     assert result.returncode == 0, result.stderr
+    assert "Exception ignored in atexit callback" not in result.stderr
     assert "parent scraped" in result.stdout
     expected = "child rejected inherited runtime" if warm else "child scraped"
     assert expected in result.stdout
