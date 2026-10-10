@@ -16,7 +16,9 @@ title: "Changelog"
   needs no change.
 - **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
   the entry as it gets it needs no change. A cache entry that an earlier release stored is not
-  served: the page is fetched again and the entry is replaced.
+  served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
+  entries must set `decoded` to `true` for a body it stored as decoded text:
+  `..CachedPage::default()` sets it to `false`, and such an entry is not served.
 
 ### Changed
 

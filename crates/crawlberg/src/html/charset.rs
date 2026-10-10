@@ -954,6 +954,22 @@ mod tests {
     }
 
     #[test]
+    fn three_good_sequences_and_one_bad_byte_are_read_as_chrome_reads_them() {
+        // ~keep Chrome 155 and its headless shell read this page as windows-1252, with the same
+        // ~keep text. They read no undeclared page as UTF-8, so no browser sets the rule of four.
+        let mut page = b"<!doctype html><html><head><title>t</title></head><body><p>".to_vec();
+        page.extend_from_slice("a\u{e9} a\u{e0} a\u{ef} ".as_bytes());
+        page.extend_from_slice(b"caf\xe9 here</p></body></html>");
+        assert_eq!(decided("text/html", &page), ("windows-1252", label("windows-1252")));
+        let (text, _) = decode_page(&BodyText::Undecoded, "text/html", URL, &page);
+        let text = text.expect("a page that is not UTF-8 is decoded here");
+        assert!(
+            text.contains("<p>a\u{c3}\u{a9} a\u{c3}\u{a0} a\u{c3}\u{af} caf\u{e9} here</p>"),
+            "the text must be the windows-1252 read, got {text:?}"
+        );
+    }
+
+    #[test]
     fn a_legacy_page_with_a_few_pairs_that_are_utf_8_is_not_utf_8() {
         // ~keep Windows-1252 with three pairs that happen to be UTF-8 sequences ("Ã©", "Â°",
         // ~keep "Ã¼") beside eight letters that are not.

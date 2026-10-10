@@ -566,6 +566,9 @@ pub struct CachedPage {
     /// False for an entry that an earlier release stored. The body of such an entry is a lossy UTF-8 read
     /// of the bytes, so a page in another character set has lost its letters. The cache layer
     /// does not serve an entry that is not decoded; it fetches the page again and replaces it.
+    ///
+    /// `CachedPage::default()` sets it to false. A `CrawlCache` that builds its own entries must
+    /// set it to true for a body it stored as decoded text.
     #[serde(default)]
     pub decoded: bool,
 }
