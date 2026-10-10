@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::engine::CrawlEngine;
+use crate::types::CrawlConfig;
 
+use super::error::ApiError;
 use super::jobs::JobRegistry;
 
 /// Default time-to-live for jobs (1 hour).
@@ -126,8 +128,9 @@ fn env_usize(var: &str, default: usize) -> usize {
 /// Shared state for all API handlers.
 #[derive(Clone)]
 pub struct ApiState {
-    /// The crawl engine used to execute scrape, crawl, and map operations.
-    pub engine: Arc<CrawlEngine>,
+    /// The crawl settings of the server. Private, so that a handler can only reach an engine
+    /// through [`ApiState::request_engine`].
+    config: CrawlConfig,
     /// Registry of asynchronous crawl and batch scrape jobs.
     pub jobs: Arc<JobRegistry>,
     /// Authentication and resource-limit configuration for this server instance.
@@ -135,8 +138,8 @@ pub struct ApiState {
 }
 
 impl ApiState {
-    /// Create a new `ApiState` wrapping the given engine with explicit security
-    /// configuration.
+    /// Create a new `ApiState` from the configuration of the given engine, with explicit
+    /// security configuration.
     ///
     /// This also spawns a background task that periodically evicts expired jobs
     /// from the registry (default TTL: 1 hour). Callers resolve
@@ -146,7 +149,29 @@ impl ApiState {
     pub fn with_security(engine: Arc<CrawlEngine>, security: ApiSecurityConfig) -> Self {
         let jobs = Arc::new(JobRegistry::new());
         jobs.spawn_eviction_task(DEFAULT_JOB_MAX_AGE);
-        Self { engine, jobs, security }
+        Self {
+            config: engine.config.clone(),
+            jobs,
+            security,
+        }
+    }
+
+    /// Build the engine for one request: the configuration of the server with the changes that
+    /// `configure` makes for this request.
+    ///
+    /// ~keep This is the only way a handler gets an engine. The state holds no engine, so every
+    /// ~keep request has its own cookie store and no route can send the cookies that another
+    /// ~keep request received (crawlberg#652).
+    pub(super) fn request_engine(
+        &self,
+        configure: impl FnOnce(&mut CrawlConfig) -> Result<(), ApiError>,
+    ) -> Result<CrawlEngine, ApiError> {
+        let mut config = self.config.clone();
+        configure(&mut config)?;
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
     }
 }
 

@@ -16,7 +16,7 @@ use super::state::{ALLOW_INSECURE_BIND_ENV, ApiSecurityConfig};
 ///
 /// * `host` - IP address to bind to (e.g. `"127.0.0.1"` or `"0.0.0.0"`)
 /// * `port` - Port number to bind to
-/// * `engine` - A shared [`CrawlEngine`] that powers all operations
+/// * `engine` - The [`CrawlEngine`] whose configuration each request builds its own engine from
 ///
 /// # Errors
 ///

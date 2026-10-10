@@ -392,6 +392,35 @@ fn validate_rejects_native_endpoint() {
     assert!(msg.contains("chromiumoxide"), "unexpected error: {msg}");
 }
 
+// ~keep The store holds session cookies, so `Debug` shows only whether it exists.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn crawl_config_debug_does_not_print_the_cookies_of_its_store() {
+    use reqwest::cookie::CookieStore as _;
+
+    let store = crate::net::cookie::PolicyCookieStore::default();
+    let url = url::Url::parse("https://example.com/").expect("a valid URL");
+    let header = reqwest::header::HeaderValue::from_static("session=s3cr3t-cookie-value; Path=/");
+    store.set_cookies(&mut std::iter::once(&header), &url);
+    assert!(store.cookies(&url).is_some(), "the store must hold the cookie");
+    let config = CrawlConfig {
+        cookies_enabled: true,
+        cookie_store: Some(std::sync::Arc::new(store)),
+        ..CrawlConfig::default()
+    };
+
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(
+            !rendered.contains("s3cr3t-cookie-value"),
+            "Debug output must not contain a cookie value"
+        );
+    }
+    assert!(
+        format!("{config:?}").contains("cookie_store: true"),
+        "Debug output must show that the store exists"
+    );
+}
+
 #[test]
 fn proxy_config_debug_redacts_password_and_url_userinfo() {
     let proxy = ProxyConfig {
