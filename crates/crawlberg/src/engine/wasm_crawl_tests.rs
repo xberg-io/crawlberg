@@ -1729,3 +1729,28 @@ async fn sequential_crawl_reports_normalized_url_in_the_one_form() {
         "the address is reported as requested, and normalized_url in the one RFC 3986 form with its slash"
     );
 }
+
+/// The wasm page fetch returns the bytes the server sent, so the page is read with its
+/// character set and not as text that is decoded already.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_returns_bytes_that_are_read_with_their_character_set() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(b"<p>caf\xe9</p>".to_vec(), "text/html; charset=iso-8859-1"),
+        )
+        .mount(&mock)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let (url, response, _) = engine
+        .wasm_fetch_for_scrape(&mock.uri(), None)
+        .await
+        .expect("fetch must succeed");
+
+    let (text, charset) =
+        crate::html::decode_page(response.body_text(), &response.content_type, &url, &response.body_bytes);
+    assert_eq!(text.as_deref(), Some("<p>caf\u{e9}</p>"));
+    assert_eq!(charset.as_deref(), Some("iso-8859-1"));
+}

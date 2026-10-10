@@ -92,16 +92,12 @@ mod tests {
         }
         fn call(&mut self, _: CrawlRequest) -> Self::Future {
             Box::pin(async {
-                Ok(CrawlResponse {
-                    status: 200,
-                    content_type: "text/html".into(),
-                    body: "ok".into(),
-                    body_bytes: vec![],
-                    headers: std::collections::HashMap::new(),
-                    landed: None,
-                    sent_user_agent: None,
-                    soft_error: false,
-                })
+                Ok(CrawlResponse::new(
+                    200,
+                    "text/html".into(),
+                    std::collections::HashMap::new(),
+                    crate::tower::ResponseBody::Bytes(String::from("ok").into_bytes()),
+                ))
             })
         }
     }

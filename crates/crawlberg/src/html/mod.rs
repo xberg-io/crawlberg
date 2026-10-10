@@ -229,7 +229,9 @@ where
     }
 }
 
-pub(crate) use charset::detect_charset;
+#[cfg(feature = "browser-native")]
+pub(crate) use charset::decode_document;
+pub(crate) use charset::decode_page;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use detection::is_pdf_url;
 pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_content, is_pdf_content};

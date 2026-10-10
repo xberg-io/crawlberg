@@ -85,6 +85,10 @@ pub struct Page {
     pub intercept_enabled: bool,
     pub intercept_block_patterns: Vec<String>,
     intercept_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::js::ops::InterceptedRequest>>,
+    /// Turns the bytes of a document into its text. `None` reads every document as UTF-8.
+    pub(crate) document_decoder: Option<crate::adapter::DocumentDecoder>,
+    /// The character set `document_decoder` reported for the current document.
+    pub(crate) document_charset: Option<String>,
     #[cfg(feature = "stealth")]
     pub stealth_client: Option<Arc<StealthHttpClient>>,
 }
@@ -124,6 +128,8 @@ impl Page {
             intercept_enabled: false,
             intercept_block_patterns: Vec::new(),
             intercept_tx: None,
+            document_decoder: None,
+            document_charset: None,
             #[cfg(feature = "stealth")]
             stealth_client,
         }
