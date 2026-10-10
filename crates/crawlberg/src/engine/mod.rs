@@ -77,6 +77,10 @@ pub struct CrawlEngine {
     robots_cache: Arc<robots_cache::RobotsCache>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     pub(crate) native_browser_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
+    /// The cookies the Chrome pages of one crawl have in common, when `cookies_enabled` is set.
+    /// `None` outside a crawl: each crawl call gets its own, so no two crawls share a cookie.
+    #[cfg(feature = "browser")]
+    crawl_cookies: Option<Arc<crate::browser::CrawlCookies>>,
 }
 
 impl CrawlEngine {
@@ -99,6 +103,9 @@ impl CrawlEngine {
     ) -> tower::util::BoxCloneService<CrawlRequest, crate::tower::CrawlResponse, CrawlError> {
         use tower::ServiceBuilder;
 
+        let fetch = crate::tower::HttpFetchService::new(client.clone(), self.config.clone());
+        #[cfg(feature = "browser")]
+        let fetch = fetch.for_crawl(self.crawl_cookies.clone());
         let service = ServiceBuilder::new()
             .layer(crate::tower::PerDomainRateLimitLayer::new(self.rate_limiter.clone()))
             .layer(
@@ -106,7 +113,7 @@ impl CrawlEngine {
                     .bypassing_credentials(Arc::new(self.config.clone())),
             )
             .layer(self.ua_rotation.clone())
-            .service(crate::tower::HttpFetchService::new(client.clone(), self.config.clone()));
+            .service(fetch);
 
         let service = tower::ServiceBuilder::new()
             .layer(crate::tower::CrawlTracingLayer::new())

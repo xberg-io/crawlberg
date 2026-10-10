@@ -209,19 +209,7 @@ impl CrawlEngine {
     /// Scrape through chromiumoxide, keeping the screenshot it captured.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let pool = self.config.browser_pool.as_deref();
-        #[cfg(feature = "browser-native")]
-        let mut page = crate::browser::browser_fetch(
-            url,
-            &self.config,
-            None,
-            pool,
-            true,
-            self.native_browser_executor.as_deref(),
-        )
-        .await?;
-        #[cfg(not(feature = "browser-native"))]
-        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page = self.browser_fetch(url, None, true).await?;
 
         let screenshot = page.response.screenshot.take();
         let final_url = page.response.final_url.clone();

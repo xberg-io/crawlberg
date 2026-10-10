@@ -286,6 +286,8 @@ impl CrawlEngineBuilder {
             robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
+            #[cfg(feature = "browser")]
+            crawl_cookies: None,
         })
     }
 }
