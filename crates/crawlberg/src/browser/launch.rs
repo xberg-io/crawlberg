@@ -29,6 +29,15 @@ pub(super) enum UserDataDir {
 }
 
 impl UserDataDir {
+    /// Write the WebRTC preference into the directory. A scratch directory refuses it once the
+    /// process is exiting.
+    fn disable_non_proxied_udp(&self) -> Result<(), CrawlError> {
+        match self {
+            Self::Persistent(path) => crate::browser_pool::disable_non_proxied_udp(path),
+            Self::Scratch(dir) => dir.disable_non_proxied_udp(),
+        }
+    }
+
     fn path(&self) -> &std::path::Path {
         match self {
             Self::Persistent(path) => path,
@@ -202,7 +211,7 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
         // ~keep Inside the caller's launch deadline, so a wait for the profile ends with it.
         let (user_data, hold) = claim_user_data_dir(config).await?;
         if config.ssrf.enforces_ip_denials() {
-            crate::browser_pool::disable_non_proxied_udp(user_data.path())?;
+            user_data.disable_non_proxied_udp()?;
         }
 
         let browser_config = build_one_shot_launch_builder(user_data.path(), &config.browser, proxy.as_ref())?
@@ -546,6 +555,90 @@ fn snap_can_open(dir: &std::path::Path, common: &std::path::Path, home: &std::pa
 mod tests {
     use super::*;
 
+    /// Deletes the saved profile when the test ends.
+    struct DeleteProfile(crate::browser_profile::BrowserProfile);
+
+    impl Drop for DeleteProfile {
+        fn drop(&mut self) {
+            let _ = self.0.delete();
+        }
+    }
+
+    /// The WebRTC IP handling policy in the preference file of the profile at `dir`.
+    fn webrtc_policy(dir: &std::path::Path) -> Option<String> {
+        let bytes = std::fs::read(dir.join("Default").join("Preferences")).ok()?;
+        let preferences = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
+        Some(preferences.pointer("/webrtc/ip_handling_policy")?.as_str()?.to_owned())
+    }
+
+    /// A one-shot launch that denies private addresses writes the WebRTC preference into its
+    /// profile directory before it starts Chrome.
+    ///
+    /// ~keep No Chrome is needed: a `chrome_args` entry is refused after the write. The profile is
+    /// ~keep a saved one, which stays after the refusal, where a scratch directory is removed.
+    #[tokio::test]
+    async fn a_one_shot_launch_that_denies_private_addresses_writes_the_webrtc_preference() {
+        let name = format!("crawlberg-one-shot-webrtc-preference-{}", std::process::id());
+        let profile = crate::browser_profile::BrowserProfile::new(&name).expect("the profile name must be valid");
+        let _guard = DeleteProfile(profile.clone());
+        // ~keep A Chrome that is not a snap: a snap found on the host cannot open the profile store.
+        let chrome = crate::types::executable_temp_file("one-shot-webrtc");
+        let config = CrawlConfig {
+            browser_profile: Some(name),
+            save_browser_profile: true,
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(chrome.clone()),
+                chrome_args: vec!["--user-data-dir=/tmp/crawlberg-one-shot-elsewhere".to_owned()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let denies = config.ssrf.enforces_ip_denials();
+
+        let error = launch_or_connect(&config)
+            .await
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        let _ = std::fs::remove_file(&chrome);
+
+        assert!(
+            denies,
+            "the default policy must deny private addresses, or the launch writes nothing"
+        );
+        assert!(
+            error.contains("must not set --user-data-dir"),
+            "the launch must be refused after the write, got: {error:?}"
+        );
+        assert_eq!(
+            webrtc_policy(&profile.user_data_dir).as_deref(),
+            Some("disable_non_proxied_udp"),
+            "the launch must write the preference into its profile directory"
+        );
+    }
+
+    /// A scratch profile directory of a one-shot launch gets the preference through the same call.
+    #[test]
+    fn a_one_shot_scratch_profile_directory_gets_the_webrtc_preference() {
+        let resolved = resolve_user_data_dir(&CrawlConfig::default()).expect("resolve must succeed");
+        let path = resolved.path().to_path_buf();
+
+        let written = resolved.disable_non_proxied_udp();
+        let policy = webrtc_policy(&path);
+        drop(resolved);
+
+        assert!(written.is_ok(), "the preference must be written: {written:?}");
+        assert_eq!(
+            policy.as_deref(),
+            Some("disable_non_proxied_udp"),
+            "the scratch directory must hold the preference"
+        );
+        assert!(
+            crate::browser_pool::tests::wait_for_removal(&path),
+            "the scratch directory must be removed when it drops"
+        );
+    }
+
     #[test]
     fn the_one_shot_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
@@ -701,14 +794,6 @@ mod tests {
     /// ~keep explicit cleanup (xberg-io/crawlberg#555).
     #[test]
     fn an_unsaved_profile_copy_is_removed_when_its_owner_task_is_cancelled() {
-        struct DeleteProfile(crate::browser_profile::BrowserProfile);
-
-        impl Drop for DeleteProfile {
-            fn drop(&mut self) {
-                let _ = self.0.delete();
-            }
-        }
-
         let name = format!("crawlberg-cancelled-unsaved-copy-{}", std::process::id());
         let profile = crate::browser_profile::BrowserProfile::new(&name).expect("the profile name must be valid");
         let _guard = DeleteProfile(profile.clone());

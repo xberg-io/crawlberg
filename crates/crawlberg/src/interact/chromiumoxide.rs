@@ -736,7 +736,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
 
         let proxy = crate::proxy::chrome_proxy_for(config)?;
         if config.ssrf.enforces_ip_denials() {
-            crate::browser_pool::disable_non_proxied_udp(user_data_dir.path())?;
+            user_data_dir.disable_non_proxied_udp()?;
         }
         let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy.as_ref(), &config.browser)?
             .build()
