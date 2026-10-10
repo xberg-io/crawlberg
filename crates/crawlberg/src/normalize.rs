@@ -2,15 +2,6 @@
 
 use url::Url;
 
-/// Collapse double slashes in a URL path.
-fn collapse_double_slashes(u: &mut Url) {
-    let path = u.path();
-    if path.contains("//") {
-        let collapsed = path.replace("//", "/");
-        u.set_path(&collapsed);
-    }
-}
-
 /// The octet that the percent-escape at the start of `escape` encodes, when its two digits are hex.
 fn escaped_octet(escape: &str) -> Option<u8> {
     let digits = escape.as_bytes().get(1..3)?;
@@ -87,22 +78,19 @@ pub(crate) fn normalize_url(raw: &str) -> String {
 /// Two addresses get one key only where a standard says they name one resource: the URL
 /// parser's own serialization, no fragment, and the percent-encoding rules of
 /// [`normalize_percent_encoding`]. A trailing slash is kept, because `/docs` and `/docs/` are
-/// two resources a server can answer differently. Doubled slashes in the path are collapsed.
+/// two resources a server can answer differently. Empty path segments are kept for the same reason.
 /// `include_query` decides whether the query string participates in the key too:
-/// `false` (the historical default) drops it entirely, so `?id=1` and `?id=2` collapse to one
+/// `false` drops it entirely, so `?id=1` and `?id=2` collapse to one
 /// key; `true` keeps it, with its parameters sorted by name ([`sort_query_parameters`]) and
 /// its escapes in the same form as the path's, so they are treated as distinct pages.
 ///
-/// ~keep Shared by the native and wasm crawl loops. The wasm loop used to carry its own
-/// copy that omitted the `//` collapse, so the two targets disagreed on which URLs were
-/// duplicates — one normalizer is the only way that stays fixed.
+/// ~keep Shared by the native and wasm crawl loops so both preserve the same resource identity.
 pub(crate) fn normalize_url_for_dedup(raw: &str, include_query: bool) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
         if !include_query {
             u.set_query(None);
         }
-        collapse_double_slashes(&mut u);
         // ~keep Escapes first, the sort second: `%61` and `a` are one name and must sort as one.
         let key = normalize_percent_encoding(u.as_str());
         if include_query { sort_query_parameters(key) } else { key }
@@ -420,7 +408,7 @@ mod tests {
             assert_eq!(
                 normalize_url_for_dedup(one, false),
                 normalize_url_for_dedup(other, false),
-                "the default key drops the query of {one:?} and {other:?}"
+                "query merging drops the query of {one:?} and {other:?}"
             );
         }
         for kept in [
@@ -452,7 +440,7 @@ mod tests {
         assert_eq!(
             normalize_url_for_dedup("http://example.com/s?b=1&a=http://x/?y", false),
             "http://example.com/s",
-            "the default key drops the query from its first `?`"
+            "the explicit query-merging key drops the query from its first `?`"
         );
     }
 
@@ -465,21 +453,20 @@ mod tests {
     #[test]
     fn normalized_url_is_the_frontier_key_with_the_query_kept() {
         let address = "http://example.com/a//b/%7Euser/?b=2&a=1#top";
-        assert_eq!(normalize_url(address), "http://example.com/a/b/~user/?a=1&b=2");
+        assert_eq!(normalize_url(address), "http://example.com/a//b/~user/?a=1&b=2");
         assert_eq!(normalize_url(address), normalize_url_for_dedup(address, true));
-        assert_eq!(normalize_url_for_dedup(address, false), "http://example.com/a/b/~user/");
+        assert_eq!(
+            normalize_url_for_dedup(address, false),
+            "http://example.com/a//b/~user/"
+        );
     }
 
-    /// ~keep The wasm crawl loop used to carry its own dedup normalizer that did all of
-    /// this *except* the `//` collapse, so the two targets disagreed on which URLs were
-    /// duplicates. Both now call this function; this pins the contract they share.
     #[test]
-    fn dedup_key_collapses_double_slashes_and_drops_the_query_and_the_fragment() {
+    fn dedup_key_keeps_empty_path_segments_and_drops_the_query_and_the_fragment() {
         let normalized = normalize_url_for_dedup("http://example.com/a//b/?q=1#top", false);
         assert_eq!(
-            normalized, "http://example.com/a/b/",
-            "expected the query, the fragment and the doubled path separator normalized \
-             away and the trailing slash kept, got {normalized:?}"
+            normalized, "http://example.com/a//b/",
+            "expected the query and fragment removed, with empty path segments and the trailing slash kept, got {normalized:?}"
         );
     }
 
@@ -572,11 +559,11 @@ mod tests {
     }
 
     #[test]
-    fn dedup_key_maps_a_doubled_separator_onto_its_single_separator_twin() {
-        assert_eq!(
+    fn dedup_key_distinguishes_doubled_and_single_separators() {
+        assert_ne!(
             normalize_url_for_dedup("http://example.com/a//b", false),
             normalize_url_for_dedup("http://example.com/a/b", false),
-            "a doubled path separator must not produce a second frontier entry for one page"
+            "an empty path segment names a distinct resource"
         );
     }
 

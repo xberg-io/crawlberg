@@ -63,7 +63,7 @@
     "c/crawl/crawl-depth-priority.md",
     "c/crawl/crawl-depth-two-chain.md",
     "c/crawl/crawl-depth-two.md",
-    "c/crawl/crawl-double-slash-normalization.md",
+    "c/crawl/crawl-double-slash-distinct.md",
     "c/crawl/crawl-empty-page-no-links.md",
     "c/crawl/crawl-exclude-path-pattern.md",
     "c/crawl/crawl-external-links-ignored.md",
@@ -74,6 +74,8 @@
     "c/crawl/crawl-max-pages.md",
     "c/crawl/crawl-mixed-content-types.md",
     "c/crawl/crawl-multiple-redirects-in-traversal.md",
+    "c/crawl/crawl-query-identity-default.md",
+    "c/crawl/crawl-query-identity-legacy.md",
     "c/crawl/crawl-query-param-dedup.md",
     "c/crawl/crawl-redirect-in-traversal.md",
     "c/crawl/crawl-self-link-no-loop.md",
@@ -327,7 +329,7 @@
     "csharp/crawl/crawl-depth-priority.md",
     "csharp/crawl/crawl-depth-two-chain.md",
     "csharp/crawl/crawl-depth-two.md",
-    "csharp/crawl/crawl-double-slash-normalization.md",
+    "csharp/crawl/crawl-double-slash-distinct.md",
     "csharp/crawl/crawl-empty-page-no-links.md",
     "csharp/crawl/crawl-exclude-path-pattern.md",
     "csharp/crawl/crawl-external-links-ignored.md",
@@ -338,6 +340,8 @@
     "csharp/crawl/crawl-max-pages.md",
     "csharp/crawl/crawl-mixed-content-types.md",
     "csharp/crawl/crawl-multiple-redirects-in-traversal.md",
+    "csharp/crawl/crawl-query-identity-default.md",
+    "csharp/crawl/crawl-query-identity-legacy.md",
     "csharp/crawl/crawl-query-param-dedup.md",
     "csharp/crawl/crawl-redirect-in-traversal.md",
     "csharp/crawl/crawl-self-link-no-loop.md",
@@ -600,7 +604,7 @@
     "dart/crawl/crawl-depth-priority.md",
     "dart/crawl/crawl-depth-two-chain.md",
     "dart/crawl/crawl-depth-two.md",
-    "dart/crawl/crawl-double-slash-normalization.md",
+    "dart/crawl/crawl-double-slash-distinct.md",
     "dart/crawl/crawl-empty-page-no-links.md",
     "dart/crawl/crawl-exclude-path-pattern.md",
     "dart/crawl/crawl-external-links-ignored.md",
@@ -611,6 +615,8 @@
     "dart/crawl/crawl-max-pages.md",
     "dart/crawl/crawl-mixed-content-types.md",
     "dart/crawl/crawl-multiple-redirects-in-traversal.md",
+    "dart/crawl/crawl-query-identity-default.md",
+    "dart/crawl/crawl-query-identity-legacy.md",
     "dart/crawl/crawl-query-param-dedup.md",
     "dart/crawl/crawl-redirect-in-traversal.md",
     "dart/crawl/crawl-self-link-no-loop.md",
@@ -865,7 +871,7 @@
     "elixir/crawl/crawl-depth-priority.md",
     "elixir/crawl/crawl-depth-two-chain.md",
     "elixir/crawl/crawl-depth-two.md",
-    "elixir/crawl/crawl-double-slash-normalization.md",
+    "elixir/crawl/crawl-double-slash-distinct.md",
     "elixir/crawl/crawl-empty-page-no-links.md",
     "elixir/crawl/crawl-exclude-path-pattern.md",
     "elixir/crawl/crawl-external-links-ignored.md",
@@ -876,6 +882,8 @@
     "elixir/crawl/crawl-max-pages.md",
     "elixir/crawl/crawl-mixed-content-types.md",
     "elixir/crawl/crawl-multiple-redirects-in-traversal.md",
+    "elixir/crawl/crawl-query-identity-default.md",
+    "elixir/crawl/crawl-query-identity-legacy.md",
     "elixir/crawl/crawl-query-param-dedup.md",
     "elixir/crawl/crawl-redirect-in-traversal.md",
     "elixir/crawl/crawl-self-link-no-loop.md",
@@ -1135,7 +1143,7 @@
     "go/crawl/crawl-depth-priority.md",
     "go/crawl/crawl-depth-two-chain.md",
     "go/crawl/crawl-depth-two.md",
-    "go/crawl/crawl-double-slash-normalization.md",
+    "go/crawl/crawl-double-slash-distinct.md",
     "go/crawl/crawl-empty-page-no-links.md",
     "go/crawl/crawl-exclude-path-pattern.md",
     "go/crawl/crawl-external-links-ignored.md",
@@ -1146,6 +1154,8 @@
     "go/crawl/crawl-max-pages.md",
     "go/crawl/crawl-mixed-content-types.md",
     "go/crawl/crawl-multiple-redirects-in-traversal.md",
+    "go/crawl/crawl-query-identity-default.md",
+    "go/crawl/crawl-query-identity-legacy.md",
     "go/crawl/crawl-query-param-dedup.md",
     "go/crawl/crawl-redirect-in-traversal.md",
     "go/crawl/crawl-self-link-no-loop.md",
@@ -1408,7 +1418,7 @@
     "java/crawl/crawl-depth-priority.md",
     "java/crawl/crawl-depth-two-chain.md",
     "java/crawl/crawl-depth-two.md",
-    "java/crawl/crawl-double-slash-normalization.md",
+    "java/crawl/crawl-double-slash-distinct.md",
     "java/crawl/crawl-empty-page-no-links.md",
     "java/crawl/crawl-exclude-path-pattern.md",
     "java/crawl/crawl-external-links-ignored.md",
@@ -1419,6 +1429,8 @@
     "java/crawl/crawl-max-pages.md",
     "java/crawl/crawl-mixed-content-types.md",
     "java/crawl/crawl-multiple-redirects-in-traversal.md",
+    "java/crawl/crawl-query-identity-default.md",
+    "java/crawl/crawl-query-identity-legacy.md",
     "java/crawl/crawl-query-param-dedup.md",
     "java/crawl/crawl-redirect-in-traversal.md",
     "java/crawl/crawl-self-link-no-loop.md",
@@ -1681,7 +1693,7 @@
     "kotlin-android/crawl/crawl-depth-priority.md",
     "kotlin-android/crawl/crawl-depth-two-chain.md",
     "kotlin-android/crawl/crawl-depth-two.md",
-    "kotlin-android/crawl/crawl-double-slash-normalization.md",
+    "kotlin-android/crawl/crawl-double-slash-distinct.md",
     "kotlin-android/crawl/crawl-empty-page-no-links.md",
     "kotlin-android/crawl/crawl-exclude-path-pattern.md",
     "kotlin-android/crawl/crawl-external-links-ignored.md",
@@ -1692,6 +1704,8 @@
     "kotlin-android/crawl/crawl-max-pages.md",
     "kotlin-android/crawl/crawl-mixed-content-types.md",
     "kotlin-android/crawl/crawl-multiple-redirects-in-traversal.md",
+    "kotlin-android/crawl/crawl-query-identity-default.md",
+    "kotlin-android/crawl/crawl-query-identity-legacy.md",
     "kotlin-android/crawl/crawl-query-param-dedup.md",
     "kotlin-android/crawl/crawl-redirect-in-traversal.md",
     "kotlin-android/crawl/crawl-self-link-no-loop.md",
@@ -1954,7 +1968,7 @@
     "php/crawl/crawl-depth-priority.md",
     "php/crawl/crawl-depth-two-chain.md",
     "php/crawl/crawl-depth-two.md",
-    "php/crawl/crawl-double-slash-normalization.md",
+    "php/crawl/crawl-double-slash-distinct.md",
     "php/crawl/crawl-empty-page-no-links.md",
     "php/crawl/crawl-exclude-path-pattern.md",
     "php/crawl/crawl-external-links-ignored.md",
@@ -1965,6 +1979,8 @@
     "php/crawl/crawl-max-pages.md",
     "php/crawl/crawl-mixed-content-types.md",
     "php/crawl/crawl-multiple-redirects-in-traversal.md",
+    "php/crawl/crawl-query-identity-default.md",
+    "php/crawl/crawl-query-identity-legacy.md",
     "php/crawl/crawl-query-param-dedup.md",
     "php/crawl/crawl-redirect-in-traversal.md",
     "php/crawl/crawl-self-link-no-loop.md",
@@ -2227,7 +2243,7 @@
     "python/crawl/crawl-depth-priority.md",
     "python/crawl/crawl-depth-two-chain.md",
     "python/crawl/crawl-depth-two.md",
-    "python/crawl/crawl-double-slash-normalization.md",
+    "python/crawl/crawl-double-slash-distinct.md",
     "python/crawl/crawl-empty-page-no-links.md",
     "python/crawl/crawl-exclude-path-pattern.md",
     "python/crawl/crawl-external-links-ignored.md",
@@ -2238,6 +2254,8 @@
     "python/crawl/crawl-max-pages.md",
     "python/crawl/crawl-mixed-content-types.md",
     "python/crawl/crawl-multiple-redirects-in-traversal.md",
+    "python/crawl/crawl-query-identity-default.md",
+    "python/crawl/crawl-query-identity-legacy.md",
     "python/crawl/crawl-query-param-dedup.md",
     "python/crawl/crawl-redirect-in-traversal.md",
     "python/crawl/crawl-self-link-no-loop.md",
@@ -2500,7 +2518,7 @@
     "ruby/crawl/crawl-depth-priority.md",
     "ruby/crawl/crawl-depth-two-chain.md",
     "ruby/crawl/crawl-depth-two.md",
-    "ruby/crawl/crawl-double-slash-normalization.md",
+    "ruby/crawl/crawl-double-slash-distinct.md",
     "ruby/crawl/crawl-empty-page-no-links.md",
     "ruby/crawl/crawl-exclude-path-pattern.md",
     "ruby/crawl/crawl-external-links-ignored.md",
@@ -2511,6 +2529,8 @@
     "ruby/crawl/crawl-max-pages.md",
     "ruby/crawl/crawl-mixed-content-types.md",
     "ruby/crawl/crawl-multiple-redirects-in-traversal.md",
+    "ruby/crawl/crawl-query-identity-default.md",
+    "ruby/crawl/crawl-query-identity-legacy.md",
     "ruby/crawl/crawl-query-param-dedup.md",
     "ruby/crawl/crawl-redirect-in-traversal.md",
     "ruby/crawl/crawl-self-link-no-loop.md",
@@ -2773,7 +2793,7 @@
     "rust/crawl/crawl-depth-priority.md",
     "rust/crawl/crawl-depth-two-chain.md",
     "rust/crawl/crawl-depth-two.md",
-    "rust/crawl/crawl-double-slash-normalization.md",
+    "rust/crawl/crawl-double-slash-distinct.md",
     "rust/crawl/crawl-empty-page-no-links.md",
     "rust/crawl/crawl-exclude-path-pattern.md",
     "rust/crawl/crawl-external-links-ignored.md",
@@ -2784,6 +2804,8 @@
     "rust/crawl/crawl-max-pages.md",
     "rust/crawl/crawl-mixed-content-types.md",
     "rust/crawl/crawl-multiple-redirects-in-traversal.md",
+    "rust/crawl/crawl-query-identity-default.md",
+    "rust/crawl/crawl-query-identity-legacy.md",
     "rust/crawl/crawl-query-param-dedup.md",
     "rust/crawl/crawl-redirect-in-traversal.md",
     "rust/crawl/crawl-self-link-no-loop.md",
@@ -3038,7 +3060,7 @@
     "swift/crawl/crawl-depth-priority.md",
     "swift/crawl/crawl-depth-two-chain.md",
     "swift/crawl/crawl-depth-two.md",
-    "swift/crawl/crawl-double-slash-normalization.md",
+    "swift/crawl/crawl-double-slash-distinct.md",
     "swift/crawl/crawl-empty-page-no-links.md",
     "swift/crawl/crawl-exclude-path-pattern.md",
     "swift/crawl/crawl-external-links-ignored.md",
@@ -3049,6 +3071,8 @@
     "swift/crawl/crawl-max-pages.md",
     "swift/crawl/crawl-mixed-content-types.md",
     "swift/crawl/crawl-multiple-redirects-in-traversal.md",
+    "swift/crawl/crawl-query-identity-default.md",
+    "swift/crawl/crawl-query-identity-legacy.md",
     "swift/crawl/crawl-query-param-dedup.md",
     "swift/crawl/crawl-redirect-in-traversal.md",
     "swift/crawl/crawl-self-link-no-loop.md",
@@ -3308,7 +3332,7 @@
     "typescript/crawl/crawl-depth-priority.md",
     "typescript/crawl/crawl-depth-two-chain.md",
     "typescript/crawl/crawl-depth-two.md",
-    "typescript/crawl/crawl-double-slash-normalization.md",
+    "typescript/crawl/crawl-double-slash-distinct.md",
     "typescript/crawl/crawl-empty-page-no-links.md",
     "typescript/crawl/crawl-exclude-path-pattern.md",
     "typescript/crawl/crawl-external-links-ignored.md",
@@ -3319,6 +3343,8 @@
     "typescript/crawl/crawl-max-pages.md",
     "typescript/crawl/crawl-mixed-content-types.md",
     "typescript/crawl/crawl-multiple-redirects-in-traversal.md",
+    "typescript/crawl/crawl-query-identity-default.md",
+    "typescript/crawl/crawl-query-identity-legacy.md",
     "typescript/crawl/crawl-query-param-dedup.md",
     "typescript/crawl/crawl-redirect-in-traversal.md",
     "typescript/crawl/crawl-self-link-no-loop.md",
@@ -3581,7 +3607,7 @@
     "wasm/crawl/crawl-depth-priority.md",
     "wasm/crawl/crawl-depth-two-chain.md",
     "wasm/crawl/crawl-depth-two.md",
-    "wasm/crawl/crawl-double-slash-normalization.md",
+    "wasm/crawl/crawl-double-slash-distinct.md",
     "wasm/crawl/crawl-empty-page-no-links.md",
     "wasm/crawl/crawl-exclude-path-pattern.md",
     "wasm/crawl/crawl-external-links-ignored.md",
@@ -3592,6 +3618,8 @@
     "wasm/crawl/crawl-max-pages.md",
     "wasm/crawl/crawl-mixed-content-types.md",
     "wasm/crawl/crawl-multiple-redirects-in-traversal.md",
+    "wasm/crawl/crawl-query-identity-default.md",
+    "wasm/crawl/crawl-query-identity-legacy.md",
     "wasm/crawl/crawl-query-param-dedup.md",
     "wasm/crawl/crawl-redirect-in-traversal.md",
     "wasm/crawl/crawl-self-link-no-loop.md",
@@ -3837,7 +3865,7 @@
     "zig/crawl/crawl-depth-priority.md",
     "zig/crawl/crawl-depth-two-chain.md",
     "zig/crawl/crawl-depth-two.md",
-    "zig/crawl/crawl-double-slash-normalization.md",
+    "zig/crawl/crawl-double-slash-distinct.md",
     "zig/crawl/crawl-empty-page-no-links.md",
     "zig/crawl/crawl-exclude-path-pattern.md",
     "zig/crawl/crawl-external-links-ignored.md",
@@ -3848,6 +3876,8 @@
     "zig/crawl/crawl-max-pages.md",
     "zig/crawl/crawl-mixed-content-types.md",
     "zig/crawl/crawl-multiple-redirects-in-traversal.md",
+    "zig/crawl/crawl-query-identity-default.md",
+    "zig/crawl/crawl-query-identity-legacy.md",
     "zig/crawl/crawl-query-param-dedup.md",
     "zig/crawl/crawl-redirect-in-traversal.md",
     "zig/crawl/crawl-self-link-no-loop.md",
@@ -4793,10 +4823,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "c"
       },
-      "path": "c/crawl/crawl-double-slash-normalization.md",
+      "path": "c/crawl/crawl-double-slash-distinct.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -4917,6 +4947,30 @@
         "language": "c"
       },
       "path": "c/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "c"
+      },
+      "path": "c/crawl/crawl-query-identity-default.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "c"
+      },
+      "path": "c/crawl/crawl-query-identity-legacy.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -7961,10 +8015,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "csharp"
       },
-      "path": "csharp/crawl/crawl-double-slash-normalization.md",
+      "path": "csharp/crawl/crawl-double-slash-distinct.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -8085,6 +8139,30 @@
         "language": "csharp"
       },
       "path": "csharp/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "csharp"
+      },
+      "path": "csharp/crawl/crawl-query-identity-default.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "csharp"
+      },
+      "path": "csharp/crawl/crawl-query-identity-legacy.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -11237,10 +11315,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "dart"
       },
-      "path": "dart/crawl/crawl-double-slash-normalization.md",
+      "path": "dart/crawl/crawl-double-slash-distinct.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -11361,6 +11439,30 @@
         "language": "dart"
       },
       "path": "dart/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "dart"
+      },
+      "path": "dart/crawl/crawl-query-identity-default.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "dart"
+      },
+      "path": "dart/crawl/crawl-query-identity-legacy.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -14417,10 +14519,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "elixir"
       },
-      "path": "elixir/crawl/crawl-double-slash-normalization.md",
+      "path": "elixir/crawl/crawl-double-slash-distinct.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -14541,6 +14643,30 @@
         "language": "elixir"
       },
       "path": "elixir/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "elixir"
+      },
+      "path": "elixir/crawl/crawl-query-identity-default.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "elixir"
+      },
+      "path": "elixir/crawl/crawl-query-identity-legacy.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -17657,10 +17783,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "go"
       },
-      "path": "go/crawl/crawl-double-slash-normalization.md",
+      "path": "go/crawl/crawl-double-slash-distinct.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -17781,6 +17907,30 @@
         "language": "go"
       },
       "path": "go/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "go"
+      },
+      "path": "go/crawl/crawl-query-identity-default.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "go"
+      },
+      "path": "go/crawl/crawl-query-identity-legacy.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -20933,10 +21083,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "java"
       },
-      "path": "java/crawl/crawl-double-slash-normalization.md",
+      "path": "java/crawl/crawl-double-slash-distinct.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -21057,6 +21207,30 @@
         "language": "java"
       },
       "path": "java/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "java"
+      },
+      "path": "java/crawl/crawl-query-identity-default.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "java"
+      },
+      "path": "java/crawl/crawl-query-identity-legacy.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -24209,10 +24383,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "kotlin_android"
       },
-      "path": "kotlin-android/crawl/crawl-double-slash-normalization.md",
+      "path": "kotlin-android/crawl/crawl-double-slash-distinct.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -24333,6 +24507,30 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/crawl/crawl-query-identity-default.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/crawl/crawl-query-identity-legacy.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -27485,10 +27683,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "php"
       },
-      "path": "php/crawl/crawl-double-slash-normalization.md",
+      "path": "php/crawl/crawl-double-slash-distinct.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -27609,6 +27807,30 @@
         "language": "php"
       },
       "path": "php/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "php"
+      },
+      "path": "php/crawl/crawl-query-identity-default.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "php"
+      },
+      "path": "php/crawl/crawl-query-identity-legacy.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -30761,10 +30983,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "python"
       },
-      "path": "python/crawl/crawl-double-slash-normalization.md",
+      "path": "python/crawl/crawl-double-slash-distinct.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -30885,6 +31107,30 @@
         "language": "python"
       },
       "path": "python/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "python"
+      },
+      "path": "python/crawl/crawl-query-identity-default.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "python"
+      },
+      "path": "python/crawl/crawl-query-identity-legacy.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -34037,10 +34283,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "ruby"
       },
-      "path": "ruby/crawl/crawl-double-slash-normalization.md",
+      "path": "ruby/crawl/crawl-double-slash-distinct.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -34161,6 +34407,30 @@
         "language": "ruby"
       },
       "path": "ruby/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "ruby"
+      },
+      "path": "ruby/crawl/crawl-query-identity-default.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "ruby"
+      },
+      "path": "ruby/crawl/crawl-query-identity-legacy.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -37490,10 +37760,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "rust"
       },
-      "path": "rust/crawl/crawl-double-slash-normalization.md",
+      "path": "rust/crawl/crawl-double-slash-distinct.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -37644,6 +37914,36 @@
         "language": "rust"
       },
       "path": "rust/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "rust"
+      },
+      "path": "rust/crawl/crawl-query-identity-default.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "rust"
+      },
+      "path": "rust/crawl/crawl-query-identity-legacy.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41249,10 +41549,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "swift"
       },
-      "path": "swift/crawl/crawl-double-slash-normalization.md",
+      "path": "swift/crawl/crawl-double-slash-distinct.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -41373,6 +41673,30 @@
         "language": "swift"
       },
       "path": "swift/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "swift"
+      },
+      "path": "swift/crawl/crawl-query-identity-default.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "swift"
+      },
+      "path": "swift/crawl/crawl-query-identity-legacy.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -44489,10 +44813,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "node"
       },
-      "path": "typescript/crawl/crawl-double-slash-normalization.md",
+      "path": "typescript/crawl/crawl-double-slash-distinct.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -44613,6 +44937,30 @@
         "language": "node"
       },
       "path": "typescript/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "node"
+      },
+      "path": "typescript/crawl/crawl-query-identity-default.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "node"
+      },
+      "path": "typescript/crawl/crawl-query-identity-legacy.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -47765,10 +48113,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "wasm"
       },
-      "path": "wasm/crawl/crawl-double-slash-normalization.md",
+      "path": "wasm/crawl/crawl-double-slash-distinct.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -47889,6 +48237,30 @@
         "language": "wasm"
       },
       "path": "wasm/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "wasm"
+      },
+      "path": "wasm/crawl/crawl-query-identity-default.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "wasm"
+      },
+      "path": "wasm/crawl/crawl-query-identity-legacy.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -50837,10 +51209,10 @@
     },
     {
       "key": {
-        "fixture_id": "crawl_double_slash_normalization",
+        "fixture_id": "crawl_double_slash_distinct",
         "language": "zig"
       },
-      "path": "zig/crawl/crawl-double-slash-normalization.md",
+      "path": "zig/crawl/crawl-double-slash-distinct.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -50961,6 +51333,30 @@
         "language": "zig"
       },
       "path": "zig/crawl/crawl-multiple-redirects-in-traversal.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_default",
+        "language": "zig"
+      },
+      "path": "zig/crawl/crawl-query-identity-default.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_query_identity_legacy",
+        "language": "zig"
+      },
+      "path": "zig/crawl/crawl-query-identity-legacy.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -57014,63 +57410,63 @@
       "language": "zig"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "c"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "csharp"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "dart"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "elixir"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "go"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "java"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "kotlin_android"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "node"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "php"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "python"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "ruby"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "rust"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "swift"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "wasm"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "zig"
     },
     {
@@ -57671,6 +58067,126 @@
     },
     {
       "fixture_id": "crawl_multiple_redirects_in_traversal",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
       "language": "zig"
     },
     {
@@ -73192,63 +73708,63 @@
       "language": "zig"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "c"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "csharp"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "dart"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "elixir"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "go"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "java"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "kotlin_android"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "node"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "php"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "python"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "ruby"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "rust"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "swift"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "wasm"
     },
     {
-      "fixture_id": "crawl_double_slash_normalization",
+      "fixture_id": "crawl_double_slash_distinct",
       "language": "zig"
     },
     {
@@ -73849,6 +74365,126 @@
     },
     {
       "fixture_id": "crawl_multiple_redirects_in_traversal",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_query_identity_default",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_query_identity_legacy",
       "language": "zig"
     },
     {

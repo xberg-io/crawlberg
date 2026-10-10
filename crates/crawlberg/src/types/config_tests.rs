@@ -8,6 +8,17 @@
 use super::*;
 use crate::net::ssrf::HostMatcher;
 
+#[test]
+fn query_parameters_participate_in_page_identity_by_default() {
+    assert!(CrawlConfig::default().dedup_include_query);
+    assert!(CrawlConfig::builder().build().dedup_include_query);
+    let config: CrawlConfig = serde_json::from_str("{}").expect("empty configuration");
+    assert!(config.dedup_include_query);
+    let config: CrawlConfig =
+        serde_json::from_str(r#"{"dedup_include_query":false}"#).expect("explicit legacy setting");
+    assert!(!config.dedup_include_query);
+}
+
 /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
 /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
 /// already carries `#[serde(default)]` the field attribute is therefore not redundant — it

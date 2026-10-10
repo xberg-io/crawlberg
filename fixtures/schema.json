@@ -155,7 +155,7 @@
 						},
 						"dedup_include_query": {
 							"type": "boolean",
-							"description": "Include the sorted query string in the crawl-dedup key. Defaults to false, so ?id=1 and ?id=2 collapse to one page"
+							"description": "Include the sorted query string in the crawl-dedup key. Defaults to true, so ?id=1 and ?id=2 are distinct pages; false merges them"
 						},
 						"strip_tracking_params": {
 							"type": "boolean",

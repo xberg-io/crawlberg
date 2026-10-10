@@ -297,10 +297,10 @@ async fn sequential_crawl_excludes_by_full_url_when_match_url_is_enabled() {
     );
 }
 
-/// The dedup key drops the query by default, so `?id=1` and `?id=2` collapse to one page.
+/// Default page identity keeps distinct query values.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
-async fn sequential_crawl_collapses_distinct_queries_by_default() {
+async fn sequential_crawl_fetches_distinct_queries_by_default() {
     let mock = MockServer::start().await;
     mount_html(
         &mock,
@@ -313,36 +313,6 @@ async fn sequential_crawl_collapses_distinct_queries_by_default() {
     let engine = engine_with(permissive(CrawlConfig {
         max_depth: Some(1),
         max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
-
-    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
-
-    assert_eq!(
-        result.pages.len(),
-        2,
-        "/item?id=1 and /item?id=2 must collapse to a single dedup key by default, got: {:?}",
-        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
-    );
-}
-
-/// With `dedup_include_query` on, distinct queries are fetched as distinct pages.
-#[tokio::test]
-#[serial_test::serial(engine_tracing_callsites)]
-async fn sequential_crawl_fetches_both_queries_when_dedup_include_query_is_enabled() {
-    let mock = MockServer::start().await;
-    mount_html(
-        &mock,
-        "/",
-        r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
-    )
-    .await;
-    mount_html(&mock, "/item", "<html><body>item</body></html>").await;
-    let base = mock.uri();
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        dedup_include_query: true,
         ..CrawlConfig::default()
     }));
 
@@ -351,7 +321,37 @@ async fn sequential_crawl_fetches_both_queries_when_dedup_include_query_is_enabl
     assert_eq!(
         result.pages.len(),
         3,
-        "/item?id=1 and /item?id=2 must both be fetched as distinct pages, got: {:?}",
+        "/item?id=1 and /item?id=2 must remain distinct by default, got: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// An explicit query-merging setting retains the previous behavior.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_merges_queries_when_dedup_include_query_is_disabled() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/item", "<html><body>item</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        dedup_include_query: false,
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        2,
+        "the explicit query-merging setting must fetch just one item, got: {:?}",
         result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
     );
 }
@@ -1550,7 +1550,7 @@ async fn sequential_crawl_follows_a_redirect_to_another_address_of_the_linked_pa
 /// Run the sequential crawl from `/` to depth 3. Returns the page paths the server was asked
 /// for, sorted, and `(url, normalized_url)` of each reported page without the origin, sorted.
 async fn sequential_requests_and_pages(mock: &MockServer) -> (Vec<String>, Vec<(String, String)>) {
-    sequential_requests_and_pages_with(mock, false).await
+    sequential_requests_and_pages_with(mock, CrawlConfig::default().dedup_include_query).await
 }
 
 /// [`sequential_requests_and_pages`] with `dedup_include_query` as given.
@@ -1593,6 +1593,23 @@ async fn sequential_requests_and_pages_with(
 
 fn same(path: &str) -> (String, String) {
     (path.to_owned(), path.to_owned())
+}
+
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_preserves_empty_path_segments() {
+    let mock = exact_path_site(&[
+        (
+            "/",
+            r#"<html><body><a href="/a/b">single</a><a href="/a//b">double</a></body></html>"#,
+        ),
+        ("/a/b", "<html><body>single separator</body></html>"),
+        ("/a//b", "<html><body>empty path segment</body></html>"),
+    ])
+    .await;
+    let (requests, pages) = sequential_requests_and_pages(&mock).await;
+    assert_eq!(requests, ["/", "/a//b", "/a/b"]);
+    assert_eq!(pages, [same("/"), same("/a//b"), same("/a/b")]);
 }
 
 /// A folder linked with and without its slash, where the form without it redirects to the
@@ -1695,11 +1712,11 @@ async fn sequential_crawl_claims_a_landed_page_on_the_key_with_the_query_when_it
     );
 }
 
-/// With the default key the same two links are one page, the redirect between them is that
+/// With query merging enabled the same two links are one page, the redirect between them is that
 /// page under another address, and the two queries of `/q` are one page.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
-async fn sequential_crawl_claims_a_landed_page_on_the_key_without_the_query_by_default() {
+async fn sequential_crawl_claims_a_landed_page_on_the_key_when_query_merging_is_enabled() {
     let mock = site_with_redirects_between_queries().await;
 
     let (_, pages) = sequential_requests_and_pages_with(&mock, false).await;

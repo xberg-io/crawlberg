@@ -6,6 +6,13 @@ title: "Changelog"
 
 ### Changed
 
+- A crawl keeps empty path segments: `/a/b` and `/a//b` are distinct pages, requested and
+  reported separately. `normalized_url` and `map` preserve the doubled separator. (#636)
+- `dedup_include_query` now defaults to `true`. Sites whose content depends on query parameters
+  yield more pages; session parameters also create a page for each distinct value. Set it to
+  `false` to retain the previous query-merging behavior. (#637)
+- Go's `CrawlConfig.DedupIncludeQuery` is now `*bool`: `nil` uses the new default, and a pointer
+  to `false` opts into query merging. Update existing struct literals to use pointers. (#637)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.

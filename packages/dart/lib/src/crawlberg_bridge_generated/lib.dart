@@ -1096,10 +1096,10 @@ class CrawlConfig {
   /// (`bücher.de` is matched as `xn--bcher-kva.de`).
   final bool pathPatternsMatchUrl;
 
-  /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
-  /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
-  /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
-  /// query is fetched once.
+  /// Whether the crawl-dedup key includes the query string, sorted by parameter name.
+  /// Defaults to `true`: `/item?id=1` and `/item?id=2` are distinct pages, each fetched once.
+  /// Set to `false` to merge query variants and fetch only the first. Session parameters
+  /// produce a page for each distinct value unless removed with `strip_tracking_params`.
   final bool dedupIncludeQuery;
 
   /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
