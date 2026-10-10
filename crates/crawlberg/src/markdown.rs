@@ -136,7 +136,7 @@ pub(crate) async fn convert_to_markdown(
 ///
 /// ~keep The one place that says what a failed conversion means, for a scrape and for a crawl. It
 /// ~keep is the error of the response only when the response is a page (`is_page_content`) and
-/// ~keep was not kept as a downloaded document. A response of another type, or one the caller
+/// ~keep was not kept as a downloaded document. A response that is not a page, or one the caller
 /// ~keep downloads as a document, was not asked for as Markdown: when the converter refuses it,
 /// ~keep the response has no Markdown and keeps the rest of its result, the document included.
 ///
@@ -324,7 +324,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_conversion_is_an_error_only_for_a_page_that_is_not_kept_as_a_document() {
-        for page_type in ["text/html", "text/plain"] {
+        for page_type in [
+            "text/html",
+            "text/plain",
+            "application/xhtml+xml",
+            "APPLICATION/XHTML+XML",
+            "Application/Xhtml+Xml; Charset=UTF-8",
+            "Text/HTML; Charset=UTF-8",
+            " text/html ",
+            "TEXT/PLAIN",
+        ] {
             let error = refused_response(page_type, false)
                 .await
                 .expect_err("a page that cannot be converted is an error");

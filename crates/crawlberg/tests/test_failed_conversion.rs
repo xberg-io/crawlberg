@@ -346,6 +346,145 @@ async fn a_crawl_follows_no_link_of_a_page_that_cannot_be_converted() {
     );
 }
 
+/// Types of a page as a server writes them: in any case, with a parameter, with white space.
+const PAGE_TYPES_AS_SERVERS_WRITE_THEM: [(&str, &str); 4] = [
+    ("/xhtml", "APPLICATION/XHTML+XML"),
+    ("/html", "Text/HTML; Charset=UTF-8"),
+    ("/spaces", " text/html "),
+    ("/plain", "TEXT/PLAIN"),
+];
+
+/// A seed that links to [`REFUSED_PAGE`] once for each of [`PAGE_TYPES_AS_SERVERS_WRITE_THEM`].
+async fn site_with_refused_pages_of_each_written_type() -> MockServer {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><p>Seed page.</p><a href="/xhtml">1</a> <a href="/html">2</a> <a href="/spaces">3</a> <a href="/plain">4</a></body></html>"#,
+    )
+    .await;
+    for (at, mime) in PAGE_TYPES_AS_SERVERS_WRITE_THEM {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(REFUSED_PAGE, mime))
+            .mount(&mock)
+            .await;
+    }
+    mock
+}
+
+#[tokio::test]
+async fn a_scrape_reads_the_type_of_a_page_in_any_case_and_with_parameters() {
+    let mock = site_with_refused_pages_of_each_written_type().await;
+    let engine = create_engine(Some(config(0))).expect("the engine builds");
+
+    for (at, mime) in PAGE_TYPES_AS_SERVERS_WRITE_THEM {
+        let page = format!("{}{at}", mock.uri());
+        let error = match scrape(&engine, &page).await {
+            Ok(result) => panic!(
+                "a {mime:?} page that cannot be converted is not a result, got Markdown: {:?}",
+                result.markdown.map(|markdown| markdown.content)
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, CrawlError::ConversionFailed { .. }),
+            "{mime:?}: {error:?}"
+        );
+        assert_failed_conversion(&error.to_string(), &page);
+    }
+}
+
+#[tokio::test]
+async fn a_crawl_reads_the_type_of_a_page_in_any_case_and_with_parameters() {
+    let mock = site_with_refused_pages_of_each_written_type().await;
+    let engine = create_engine(Some(config(1))).expect("the engine builds");
+
+    let stream = crawl_stream(&engine, &mock.uri()).await.expect("the stream starts");
+    let events: Vec<CrawlEvent> = tokio::time::timeout(
+        STREAM_TIMEOUT,
+        stream.map(|event| event.expect("a stream item")).collect(),
+    )
+    .await
+    .expect("the stream ends");
+
+    for (at, mime) in PAGE_TYPES_AS_SERVERS_WRITE_THEM {
+        let page = format!("{}{at}", mock.uri());
+        let error = events
+            .iter()
+            .find_map(|event| match event {
+                CrawlEvent::Error { url, error } if *url == page => Some(error.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the {mime:?} page has an error event: {events:?}"));
+        assert_failed_conversion(error, &page);
+    }
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, CrawlEvent::Complete { pages_crawled: 1 })),
+        "the seed is the one page of the crawl: {events:?}"
+    );
+}
+
+/// A document that starts as HTML does and that the converter refuses: control bytes follow the
+/// markup. The refusal is the converter's own input check, so it does not depend on a defect.
+fn refused_html_document() -> Vec<u8> {
+    let mut bytes = b"<!doctype html><html><body><p>This is not a page.</p>".to_vec();
+    bytes.extend([7u8; 400]);
+    bytes
+}
+
+/// A body that starts as HTML is a page whatever type it is served with: the scrape and the crawl
+/// read its links and metadata as HTML, so a failed conversion of it is the error of a page.
+#[tokio::test]
+async fn a_body_that_starts_as_html_is_a_page_whatever_type_it_is_served_with() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><p>Seed page.</p><a href="/json">json</a> <a href="/app">app</a></body></html>"#,
+    )
+    .await;
+    let served = [("/json", "application/json"), ("/app", "application/java-archive")];
+    for (at, mime) in served {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(refused_html_document(), mime))
+            .mount(&mock)
+            .await;
+    }
+    let engine = create_engine(Some(config(1))).expect("the engine builds");
+
+    for (at, mime) in served {
+        let page = format!("{}{at}", mock.uri());
+        let error = match scrape(&engine, &page).await {
+            Ok(result) => panic!(
+                "a refused HTML body served as {mime} is not a result, got Markdown: {:?}",
+                result.markdown.map(|markdown| markdown.content)
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, CrawlError::ConversionFailed { .. }),
+            "{mime}: {error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.starts_with(FAILED_CONVERSION) && text.contains(&page) && text.contains("binary data"),
+            "{mime}: the error names the page and the cause, got: {text}"
+        );
+    }
+
+    let result = crawl(&engine, &mock.uri()).await.expect("the crawl completes");
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "the seed is the one page; each HTML body that cannot be converted is left out"
+    );
+    assert!(result.error.is_none(), "a failed child is not the error of the crawl");
+}
+
 /// A body the converter refuses: the signature of a zip archive, then bytes that are not text.
 fn archive_bytes() -> Vec<u8> {
     let mut bytes = b"PK\x03\x04".to_vec();

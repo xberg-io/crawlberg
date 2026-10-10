@@ -126,10 +126,18 @@ pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
 /// ~keep just before `;` is stripped too, which neither HTML nor the MIME rule does. That is more
 /// ~keep leniency, in the same spirit as the attribute trim above.
 pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
-    get_attr(tag, "type").map(|value| {
-        let essence = value.split(';').next().unwrap_or_default();
-        essence.trim_ascii().to_ascii_lowercase()
-    })
+    get_attr(tag, "type").map(|value| media_type_essence(&value))
+}
+
+/// The essence of a media type, in lowercase: the part of `value` before any `;` parameters,
+/// without the ASCII whitespace around it.
+///
+/// ~keep A media type has no case, and its parameters (`; charset=...`) say nothing about what the
+/// ~keep content is. Every decision on a type reads this value, never the text of the header or
+/// ~keep of the attribute.
+pub(crate) fn media_type_essence(value: &str) -> String {
+    let essence = value.split(';').next().unwrap_or_default();
+    essence.trim_ascii().to_ascii_lowercase()
 }
 
 /// Whether the tag's `rel` value, a space-separated list of tokens, holds `token` in any ASCII case.

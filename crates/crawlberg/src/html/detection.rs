@@ -1,5 +1,7 @@
 //! Content type detection (HTML, binary, PDF).
 
+use super::media_type_essence;
+
 /// Binary file extensions used to detect non-HTML content.
 ///
 /// Covers every binary document format extractable downstream (kept in sync with
@@ -98,9 +100,16 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 /// the whole (potentially multi-megabyte) `body` via `str::to_lowercase` for a handful of short
 /// prefix/substring checks was wasted work on large pages.
 pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
-    if content_type.contains("html") {
-        return true;
-    }
+    is_html_type(&media_type_essence(content_type)) || is_html_body(body)
+}
+
+/// Whether `essence`, the essence of a media type, names HTML: `text/html`, `application/xhtml+xml`.
+fn is_html_type(essence: &str) -> bool {
+    essence.contains("html")
+}
+
+/// Whether `body` starts as an HTML document or fragment does.
+fn is_html_body(body: &str) -> bool {
     let trimmed = body.trim_start();
     if !trimmed.starts_with('<') {
         return false;
@@ -116,12 +125,18 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
 /// Check whether a response is a page: HTML, or a type that says it is text.
 ///
 /// ~keep A page is what a caller reads as Markdown, so a page that cannot be converted is an
-/// ~keep error. A response of any other type that the binary lists do not name
-/// ~keep (`application/java-archive`, `font/woff2`, `application/json`) is not a page: the
-/// ~keep converter is still given its body, and when the converter refuses that body the response
-/// ~keep has no Markdown and is not an error.
+/// ~keep error. HTML is what [`is_html_content`] says it is, so a body that starts as HTML is a
+/// ~keep page whatever type it is served with: its links and metadata are read as those of a page.
+/// ~keep A response of any other type that the binary lists do not name
+/// ~keep (`application/java-archive`, `font/woff2`, `application/json`) with a body that is not
+/// ~keep HTML is not a page: the converter is still given its body, and when the converter refuses
+/// ~keep that body the response has no Markdown and is not an error.
+///
+/// ~keep The type is read once, as its essence: a media type has no case, and its parameters do
+/// ~keep not say what the content is.
 pub(crate) fn is_page_content(content_type: &str, body: &str) -> bool {
-    is_html_content(content_type, body) || starts_with_ignore_ascii_case(content_type.trim_start(), "text/")
+    let essence = media_type_essence(content_type);
+    is_html_type(&essence) || essence.starts_with("text/") || is_html_body(body)
 }
 
 /// Check whether a Content-Type header indicates binary content.
@@ -170,6 +185,13 @@ mod tests {
     fn is_html_content_cases() -> Vec<(&'static str, &'static str, bool)> {
         vec![
             ("text/html", "", true),
+            ("TEXT/HTML", "", true),
+            ("Text/Html; Charset=UTF-8", "", true),
+            ("APPLICATION/XHTML+XML", "", true),
+            ("Application/Xhtml+Xml ; charset=utf-8", "", true),
+            ("\t text/html \t", "", true),
+            // ~keep A parameter is not the type: a file name that ends in `.html` names no HTML.
+            ("text/plain; name=page.html", "", false),
             ("application/json", "not html at all", false),
             ("", "<!DOCTYPE html><html></html>", true),
             ("", "<!doctype html><html></html>", true),
@@ -215,7 +237,12 @@ mod tests {
             ("application/xhtml+xml", "", true),
             ("text/plain", "PK\u{3}\u{4}", true),
             (" Text/Markdown", "# title", true),
+            ("APPLICATION/XHTML+XML", "PK\u{3}\u{4}", true),
+            ("Application/Xhtml+Xml; Charset=UTF-8", "PK\u{3}\u{4}", true),
+            ("TEXT/PLAIN ; charset=utf-8", "PK\u{3}\u{4}", true),
             ("", "<p>sniffed as HTML</p>", true),
+            ("application/json", "<!doctype html><p>HTML served as JSON</p>", true),
+            ("application/octet-stream; name=text/plain", "PK\u{3}\u{4}", false),
             ("application/java-archive", "PK\u{3}\u{4}", false),
             ("font/woff2", "PK\u{3}\u{4}", false),
             ("application/json", "{}", false),
