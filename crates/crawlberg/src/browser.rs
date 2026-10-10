@@ -32,6 +32,8 @@ mod cookies;
 mod launch;
 mod navigation;
 
+pub(crate) use self::cookies::CrawlCookies;
+
 /// ~keep A cancelled caller leaves its supervised launch running to completion. This global cap
 /// ~keep deliberately applies backpressure across profile-lock waits, launches and endpoint
 /// ~keep connects so repeated cancellations cannot accumulate unbounded detached work.
@@ -134,16 +136,28 @@ pub(crate) struct BrowserPage {
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
 /// the redirects the browser followed to reach it. The page's status is handled the way
 /// HTTP mode handles it: a 404 or 500 page is the error the HTTP fetch returns.
+///
+/// With `crawl_cookies`, a Chrome page starts with the cookies of its crawl in place of
+/// `prior_cookies`, and the crawl gets what the page changed, whatever status the page has.
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
+    crawl_cookies: Option<&CrawlCookies>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
     let page = match config.browser.backend {
-        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await?,
+        BrowserBackend::Chromiumoxide => {
+            let given = crawl_cookies.map(CrawlCookies::given);
+            let prior_cookies = given.as_deref().or(prior_cookies);
+            let page = chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await?;
+            if let (Some(crawl_cookies), Some(given)) = (crawl_cookies, &given) {
+                crawl_cookies.absorb(given, &page.cookies);
+            }
+            page
+        }
         BrowserBackend::Native => {
             // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
             // ~keep (`page_fetch`, in `browser/navigation.rs`); the native backend lives in the
@@ -804,6 +818,7 @@ mod tests {
         browser_fetch(
             &format!("{}{route}", site.uri()),
             &config,
+            None,
             None,
             None,
             false,

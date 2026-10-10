@@ -69,6 +69,28 @@ async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Resu
 }
 
 impl CrawlEngine {
+    /// Fetch `url` with the configured browser backend: through the engine's browser pool, and,
+    /// inside a crawl that keeps cookies, with the cookies of that crawl.
+    #[cfg(feature = "browser")]
+    pub(super) async fn browser_fetch(
+        &self,
+        url: &str,
+        prior_cookies: Option<&[crate::types::BrowserCookie]>,
+        want_screenshot: bool,
+    ) -> Result<crate::browser::BrowserPage, CrawlError> {
+        crate::browser::browser_fetch(
+            url,
+            &self.config,
+            prior_cookies,
+            self.crawl_cookies.as_deref(),
+            self.config.browser_pool.as_deref(),
+            want_screenshot,
+            #[cfg(feature = "browser-native")]
+            self.native_browser_executor.as_deref(),
+        )
+        .await
+    }
+
     /// Dispatch a single fetch attempt to the given tier.
     ///
     /// Returns `(CrawlResponse, browser_used)` or a `CrawlError`.
@@ -155,19 +177,7 @@ impl CrawlEngine {
                     {
                         return self.native_render(url, state).await;
                     }
-                    let pool = self.config.browser_pool.as_deref();
-                    #[cfg(feature = "browser-native")]
-                    let page = crate::browser::browser_fetch(
-                        url,
-                        &self.config,
-                        browser_cookies,
-                        pool,
-                        false,
-                        self.native_browser_executor.as_deref(),
-                    )
-                    .await?;
-                    #[cfg(not(feature = "browser-native"))]
-                    let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
+                    let page = self.browser_fetch(url, browser_cookies, false).await?;
                     let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
                     Ok((crawl_resp, true))
                 }
