@@ -326,6 +326,83 @@ async fn sequential_crawl_fetches_distinct_queries_by_default() {
     );
 }
 
+/// A frontier with its own one-step `claim` that records each key the loop checks or claims.
+#[derive(Default)]
+struct ClaimingFrontier {
+    inner: crate::InMemoryFrontier,
+    checked: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    claimed: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::traits::Frontier for ClaimingFrontier {
+    async fn push(&self, entry: FrontierEntry) -> Result<(), CrawlError> {
+        self.inner.push(entry).await
+    }
+
+    async fn pop(&self) -> Result<Option<FrontierEntry>, CrawlError> {
+        self.inner.pop().await
+    }
+
+    async fn len(&self) -> Result<usize, CrawlError> {
+        self.inner.len().await
+    }
+
+    async fn is_seen(&self, url: &str) -> Result<bool, CrawlError> {
+        self.checked.lock().expect("lock poisoned").push(url.to_owned());
+        self.inner.is_seen(url).await
+    }
+
+    async fn mark_seen(&self, url: &str) -> Result<(), CrawlError> {
+        self.inner.mark_seen(url).await
+    }
+
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        self.claimed.lock().expect("lock poisoned").push(url.to_owned());
+        self.inner.claim(url).await
+    }
+}
+
+/// The loop claims a discovered link with the frontier's own `claim`, not with a check and a mark.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_claims_each_discovered_link_with_the_one_step_claim_of_the_frontier() {
+    let mock = MockServer::start().await;
+    let links = r#"<html><body><a href="/a">A</a><a href="/b">B</a></body></html>"#;
+    for at in ["/", "/a", "/b"] {
+        mount_html(&mock, at, links).await;
+    }
+    let base = mock.uri();
+    let frontier = ClaimingFrontier::default();
+    let (checked, claimed) = (frontier.checked.clone(), frontier.claimed.clone());
+    let engine = CrawlEngine::builder()
+        .config(permissive(CrawlConfig {
+            max_depth: Some(2),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        }))
+        .frontier(frontier)
+        .build()
+        .expect("engine must build");
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(result.pages.len(), 3);
+    let claimed = claimed.lock().expect("lock poisoned").clone();
+    let mut claimed_paths: Vec<&str> = claimed
+        .iter()
+        .map(|key| key.strip_prefix(base.as_str()).unwrap_or(key))
+        .collect();
+    claimed_paths.sort_unstable();
+    claimed_paths.dedup();
+    assert_eq!(claimed_paths, ["/a", "/b"], "each discovered link is claimed");
+    let checked = checked.lock().expect("lock poisoned").clone();
+    assert!(
+        checked.is_empty(),
+        "a link was checked and marked in two calls: {checked:?}"
+    );
+}
+
 /// An explicit query-merging setting retains the previous behavior.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]

@@ -224,10 +224,9 @@ async fn redirect_from_a_discovered_page_to_a_target_failing_include_paths_is_ne
 // #65: dedup key including the query string
 // ---------------------------------------------------------------------------------------
 
-/// Characterizes today's behaviour: `/item?id=1` and `/item?id=2` collapse to one dedup
-/// key, so only the first is ever fetched.
+/// A caller that sets nothing gets `/item?id=1` and `/item?id=2` as two pages.
 #[tokio::test]
-async fn distinct_queries_collapse_to_one_page_by_default() {
+async fn distinct_queries_are_one_page_each_by_default() {
     let mock = MockServer::start().await;
     mount_html(
         &mock,
@@ -242,9 +241,43 @@ async fn distinct_queries_collapse_to_one_page_by_default() {
 
     assert_eq!(
         result.pages.len(),
-        2,
-        "/item?id=1 and /item?id=2 must collapse to a single dedup key by default, got: {:?}",
+        3,
+        "/item?id=1 and /item?id=2 must be one page each by default, got: {:?}",
         result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// With `dedup_include_query` set to `false`, `/item?id=1` and `/item?id=2` collapse to one
+/// dedup key, so only the first is ever fetched.
+#[tokio::test]
+async fn distinct_queries_collapse_to_one_page_when_dedup_include_query_is_disabled() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/item", "<html><body>item</body></html>").await;
+
+    let config = base_config().max_depth(1).dedup_include_query(false).build();
+    let result = crawl_seed(config, &format!("{}/", mock.uri())).await;
+
+    assert_eq!(
+        result.pages.len(),
+        2,
+        "/item?id=1 and /item?id=2 must collapse to a single dedup key, got: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+    let requested: Vec<String> = request_log(&mock)
+        .await
+        .into_iter()
+        .filter(|entry| entry.starts_with("/item"))
+        .collect();
+    assert_eq!(
+        requested.len(),
+        1,
+        "one request for the merged page, got: {requested:?}"
     );
 }
 
@@ -407,28 +440,28 @@ async fn dedup_include_query_field_reaches_the_frontier_dedup_key() {
     .await;
     mount_html(&mock, "/item", "<html><body>item</body></html>").await;
 
-    let off = base_config().max_depth(1).build();
-    let with_off = crawl_seed(off, &format!("{}/", mock.uri())).await;
+    let unset = base_config().max_depth(1).build();
+    let with_unset = crawl_seed(unset, &format!("{}/", mock.uri())).await;
     assert_eq!(
-        with_off.pages.len(),
-        2,
-        "the field defaulting to false must collapse the queries"
+        with_unset.pages.len(),
+        3,
+        "the field defaulting to true must keep the queries apart"
     );
 
-    let mock_on = MockServer::start().await;
+    let mock_off = MockServer::start().await;
     mount_html(
-        &mock_on,
+        &mock_off,
         "/",
         r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
     )
     .await;
-    mount_html(&mock_on, "/item", "<html><body>item</body></html>").await;
-    let on = base_config().max_depth(1).dedup_include_query(true).build();
-    let with_on = crawl_seed(on, &format!("{}/", mock_on.uri())).await;
+    mount_html(&mock_off, "/item", "<html><body>item</body></html>").await;
+    let off = base_config().max_depth(1).dedup_include_query(false).build();
+    let with_off = crawl_seed(off, &format!("{}/", mock_off.uri())).await;
     assert_eq!(
-        with_on.pages.len(),
-        3,
-        "setting the field to true must flip the observed dedup behaviour"
+        with_off.pages.len(),
+        2,
+        "setting the field to false must flip the observed dedup behaviour"
     );
 }
 
