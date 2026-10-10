@@ -155,6 +155,7 @@ pub(crate) async fn page_content(page: &chromiumoxide::Page, what: &str) -> Resu
 
 /// The character set Chrome decoded the document of `page` with, by its standard name in
 /// lowercase. `None` when Chrome does not answer with one.
+#[cfg(feature = "browser")]
 pub(crate) async fn document_charset(page: &chromiumoxide::Page) -> Option<String> {
     let charset: String = page.evaluate("document.characterSet").await.ok()?.into_value().ok()?;
     Some(charset.to_ascii_lowercase())
