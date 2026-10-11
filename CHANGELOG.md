@@ -11,6 +11,24 @@ All notable changes to crawlberg are documented here.
 - `original_url` preserves the resolved link spelling on crawl pages and discovered links,
   separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
 
+### Changed
+
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, and a crawl reports an
+  error event for that URL. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page.
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result. The target of the meta tag is one of its links.
+- The message of each HTTP status error has new text. The error class of each status is the same.
+- Browser mode retries a fetch that ends with a browser error or a browser timeout, up to
+  `retry_count` times, and waits for the delay of the domain before each navigation.
+- On Unix, the Chrome that crawlberg starts takes its commands through a private pipe, not a
+  debugging port. Windows and a launch with a configured port keep the port. (#620, #624)
+
 ### Fixed
 
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited

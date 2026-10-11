@@ -18,6 +18,7 @@ use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use body::validate_content_encoding;
 pub(crate) use body::{
     effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
@@ -1841,19 +1842,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deflate_should_decode_and_unknown_content_encoding_should_fail() {
+    async fn deflate_decodes_and_only_a_body_left_compressed_fails() {
         use std::io::Write as _;
         let mock = MockServer::start().await;
         let html = b"<p>page body words</p>";
         let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(html).expect("compression");
         let body = encoder.finish().expect("compressed body");
-        for encoding in ["deflate", "unknown"] {
+        for (encoding, bytes) in [("deflate", &body[..]), ("DEFLATE", &body[..]), ("UTF-8", &html[..])] {
             Mock::given(path(format!("/{encoding}")))
                 .respond_with(
                     ResponseTemplate::new(200)
                         .insert_header("Content-Encoding", encoding)
-                        .set_body_bytes(body.clone()),
+                        .set_body_bytes(bytes),
                 )
                 .mount(&mock)
                 .await;
@@ -1864,11 +1865,57 @@ mod tests {
             .await
             .expect("deflate decoded");
         assert_eq!(response.body_bytes, html);
-        let error = http_fetch(&format!("{}/unknown", mock.uri()), &config, &HashMap::new(), &client)
+        let error = http_fetch(&format!("{}/DEFLATE", mock.uri()), &config, &HashMap::new(), &client)
             .await
             .err()
-            .expect("unsupported encoding");
-        assert!(error.to_string().contains("unknown"), "{error}");
+            .expect("a body that is still compressed");
+        assert!(error.to_string().contains("DEFLATE"), "{error}");
+        let response = http_fetch(&format!("{}/UTF-8", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("a plain page with a label that is not a coding");
+        assert_eq!(response.body_bytes, html);
+    }
+
+    fn content_encoding(value: &'static [u8]) -> Result<(), CrawlError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_ENCODING,
+            reqwest::header::HeaderValue::from_bytes(value).expect("header value"),
+        );
+        validate_content_encoding(&headers)
+    }
+
+    #[test]
+    fn a_compression_coding_left_on_the_response_is_refused_in_each_spelling() {
+        for value in [
+            "gzip",
+            "GZIP",
+            "x-gzip",
+            "X-Gzip",
+            "gzip, identity",
+            "identity,BR",
+            "zstd",
+            "Deflate",
+        ] {
+            let error = content_encoding(value.as_bytes()).expect_err(value);
+            assert!(matches!(error, CrawlError::Unsupported { .. }), "{value}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_label_that_is_not_a_compression_coding_leaves_the_page() {
+        for value in [
+            &b""[..],
+            b"identity",
+            b"IDENTITY, identity",
+            b"UTF-8",
+            b"none",
+            b" , ",
+            b"gzipped",
+            b"\xff",
+        ] {
+            assert!(content_encoding(value).is_ok(), "{value:?}");
+        }
     }
 
     fn permissive_config() -> CrawlConfig {

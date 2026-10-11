@@ -4,6 +4,53 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Added
+
+- Content conversion options for paragraph newlines, list bullets and indentation, emphasis
+  markers, compact tables, and inline images in headings. (#612)
+- `original_url` preserves the resolved link spelling on crawl pages and discovered links,
+  separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
+
+### Changed
+
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, and a crawl reports an
+  error event for that URL. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page.
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result. The target of the meta tag is one of its links.
+- The message of each HTTP status error has new text. The error class of each status is the same.
+- Browser mode retries a fetch that ends with a browser error or a browser timeout, up to
+  `retry_count` times, and waits for the delay of the domain before each navigation.
+- On Unix, the Chrome that crawlberg starts takes its commands through a private pipe, not a
+  debugging port. Windows and a launch with a configured port keep the port. (#620, #624)
+
+### Fixed
+
+- Python async runtime shuts down automatically at interpreter exit and rejects inherited
+  runtime work after a process fork. Explicit shutdown remains restartable.
+- CLI JSON config overlays only explicitly provided fields, including nested sections,
+  preserving unrelated command-line settings. Explicit `null` clears optional fields. (#600)
+
+## [1.10.3] - 2026-10-09
+
+### Security
+
+- Enforce browser egress policy before every page, popup, iframe, worker, and service-worker
+  target can execute. Browser controller loss now fails closed, and WebSocket, WebRTC, and UDP
+  transports remain confined to the configured proxy boundary.
+
+### Changed
+
+- Reject external browser endpoints while IP-based SSRF denial is active because Crawlberg cannot
+  prove or control the remote browser's network boundary.
+- Update compatible dependencies, including ext-php-rs 0.16.1, liter-llm 2.2, and minijinja 3.
+- Use the security-hardened `crawlberg-chromiumoxide` 0.9.2 fork for browser control.
+
 ## [1.10.2] - 2026-10-06
 
 ### Changed

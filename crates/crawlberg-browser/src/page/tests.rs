@@ -1881,21 +1881,25 @@ fn ok_response(content_type: &str, body: &str) -> String {
 /// Runs `script` in a page served from `base_routes`, then returns the JSON its fetch stored.
 async fn fetch_result(page: &mut Page, base: &str) -> serde_json::Value {
     let _ = base;
-    let result = tokio::time::timeout(std::time::Duration::from_secs(10), page.evaluate_for_cdp(
-        "new Promise(resolve => { const poll = () => { if (globalThis.fr !== '\"pending\"') resolve(globalThis.fr); else setTimeout(poll, 10); }; poll(); })",
-        true,
-        true,
-    )).await.expect("the fetch must settle before its deadline");
-    let raw = result.value.expect("the settled fetch must return a value");
+    // ~keep The wait is on the promise of the fetch itself. A poll with the page's `setTimeout`
+    // ~keep never ends while the fetch is pending: that `setTimeout` runs its callback as a
+    // ~keep microtask, so the poll keeps the thread in V8 and the fetch cannot settle.
+    let result = page
+        .evaluate_for_cdp("globalThis.frSettled.then(() => globalThis.fr)", true, true)
+        .await;
+    let raw = result
+        .value
+        .expect("the fetch must settle within the budget of an awaited evaluation");
     let raw = raw.as_str().expect("the fetch stores its result as JSON");
     serde_json::from_str(raw).expect("the settled fetch must return JSON")
 }
 
-/// Script body that stores the outcome of one `fetch` into `globalThis.fr` as JSON.
+/// Script body that stores the outcome of one `fetch` into `globalThis.fr` as JSON, and the
+/// promise that settles after it into `globalThis.frSettled`.
 fn fetch_script(target: &str, init: &str) -> String {
     format!(
         r#"globalThis.fr = '"pending"';
-           fetch('{target}'{init}).then(r => r.text().then(t => {{
+           globalThis.frSettled = fetch('{target}'{init}).then(r => r.text().then(t => {{
              globalThis.fr = JSON.stringify({{
                status: r.status, text: t, blocked: !!r.__blocked, cors: !!r.__cors
              }});
