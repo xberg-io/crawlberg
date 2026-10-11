@@ -366,8 +366,15 @@ jobs:
         with:
           packages: "platforms;android-35"
 
+      - name: Install Task
+        uses: xberg-io/actions/install-task@v1
+
+      - name: Prepare Chromium snap runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime
+
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@v1
+        uses: xberg-io/actions/setup-chrome@361d544a9208d2e165711e1ff2f3e88768376790
 
       - name: Setup library paths for FFI bindings
         if: |
@@ -384,9 +391,6 @@ jobs:
           export LD_LIBRARY_PATH="${PWD}/target/release:${PWD}/target/debug:${LD_LIBRARY_PATH}"
           echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-
-      - name: Install Task
-        uses: xberg-io/actions/install-task@v1
 
       # ~keep This drift check is only sound when the formatting alef applies here is
       # byte-identical to the formatting already in the committed tree. `alef e2e generate`

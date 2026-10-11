@@ -161,9 +161,13 @@ jobs:
       # crates/crawlberg/tests (test_browser_pool_lifecycle, test_browser_profile,
       # test_browser_screenshot, test_interact) had no Chrome binary at all and silently skipped
       # via common::is_missing_chrome_message on every CI run.
+      - name: Prepare Chromium snap runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime
+
       - name: Setup Chrome
         id: chrome
-        uses: xberg-io/actions/setup-chrome@v1
+        uses: xberg-io/actions/setup-chrome@361d544a9208d2e165711e1ff2f3e88768376790
 
       - name: Prepare Chrome app bundle
         id: prepared_chrome
