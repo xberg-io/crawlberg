@@ -270,7 +270,7 @@ impl FetchedPage {
 /// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
 /// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
 /// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
-/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
+/// ~keep rules (see `ChainRules`): the chain stops or fails where the crawl's does.
 pub(crate) async fn http_fetch_with(
     url: &str,
     config: &CrawlConfig,
@@ -1839,6 +1839,29 @@ mod tests {
         assert!(matches!(error, CrawlError::Timeout { .. }), "{error}");
         assert!(error.to_string().contains(&url), "{error}");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_status_error_after_a_redirect_names_the_address_that_answered() {
+        let mock = MockServer::start().await;
+        Mock::given(path("/start"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/missing"))
+            .mount(&mock)
+            .await;
+        Mock::given(path("/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client");
+        let error = http_fetch(&format!("{}/start", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .err()
+            .expect("the 404 behind the redirect");
+        assert_eq!(
+            error.to_string(),
+            format!("not_found: HTTP 404 for {}/missing", mock.uri())
+        );
     }
 
     #[tokio::test]
