@@ -4,10 +4,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from typing_extensions import override
-
-from tests.test_async_runtime import _Handler, _Server
-from tests.test_async_runtime import local_server as _local_server_fixture
+from test_async_runtime import _Handler, _Server, override
+from test_async_runtime import local_server as _local_server_fixture
 
 local_server = _local_server_fixture
 
