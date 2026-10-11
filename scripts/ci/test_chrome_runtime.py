@@ -18,7 +18,8 @@ class ChromeRuntimeTests(unittest.TestCase):
         failures: int,
         connect_failure: bool = False,
         chromium_present: bool = True,
-        legacy: bool = False,
+        attempts: str = "3",
+        delay: str = "0",
     ) -> tuple[subprocess.CompletedProcess[str], list[str], subprocess.CompletedProcess[str]]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -37,14 +38,12 @@ if args[:2] == ["snap", "install"]:
         sys.stderr.write("HTTP408 provider assertion unavailable\n")
         sys.exit(1)
     (root / (args[2] + ".installed")).touch()
-if args[:3] == ["snap", "list", "chromium"] and os.environ["CHROMIUM_PRESENT"] == "0":
-    sys.exit(1)
 if args[:2] == ["snap", "connect"]:
     if os.environ["CONNECT_FAILURE"] == "1" or not (root / (args[3] + ".installed")).exists():
         sys.exit(1)
     (root / (args[3] + ".connected")).touch()
 if args[0] == "chromium":
-    ready = os.environ["CHROMIUM_PRESENT"] == "1" and all(
+    ready = (root / "chromium.installed").exists() and all(
         (root / (provider + suffix)).exists()
         for provider in ["gnome-46-2404", "mesa-2404"]
         for suffix in [".installed", ".connected"]
@@ -61,14 +60,17 @@ if args[0] == "chromium":
                 CASE_ROOT=str(root),
                 FAILURES=str(failures),
                 CONNECT_FAILURE=str(int(connect_failure)),
-                CHROMIUM_PRESENT=str(int(chromium_present)),
             )
-            script = SCRIPT
-            if legacy:
-                script = root / "legacy.sh"
-                script.write_text("sudo snap install chromium --classic\n")
+            (root / "sleep").write_text(
+                "#!/usr/bin/env python3\nimport os, pathlib, sys\n"
+                'with (pathlib.Path(os.environ["CASE_ROOT"]) / "calls").open("a") as log:\n'
+                '    log.write("sleep " + sys.argv[1] + "\\n")\n'
+            )
+            (root / "sleep").chmod(0o755)
+            if chromium_present:
+                (root / "chromium.installed").touch()
             result = subprocess.run(
-                ["bash", str(script), "3", "0", "gnome-46-2404", "mesa-2404"],
+                ["bash", str(SCRIPT), attempts, delay, "gnome-46-2404", "mesa-2404"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -84,13 +86,6 @@ if args[0] == "chromium":
             )
             return result, calls, smoke
 
-    def test_installed_chromium_alone_should_not_make_runtime_ready(self) -> None:
-        result, calls, smoke = self.run_case(0, legacy=True)
-        assert result.returncode == 0
-        assert calls == ["snap install chromium --classic"]
-        assert smoke.returncode != 0
-        assert "ensure slot is connected" in smoke.stderr
-
     def test_should_install_and_connect_providers_for_partial_chromium(self) -> None:
         result, calls, smoke = self.run_case(0)
         assert result.returncode == 0, result.stderr
@@ -99,31 +94,43 @@ if args[0] == "chromium":
         assert calls == [
             "snap install gnome-46-2404",
             "snap install mesa-2404",
-            "snap list chromium",
+            "snap install chromium --classic",
             "snap connect chromium:gnome-46-2404 gnome-46-2404",
             "snap connect chromium:gpu-2404 mesa-2404",
         ]
 
-    def test_should_leave_new_chromium_install_to_shared_setup_action(self) -> None:
+    def test_should_connect_runtime_on_a_fresh_chromium_install(self) -> None:
         result, calls, smoke = self.run_case(0, chromium_present=False)
         assert result.returncode == 0, result.stderr
-        assert smoke.returncode != 0
-        assert calls == ["snap install gnome-46-2404", "snap install mesa-2404", "snap list chromium"]
+        assert smoke.returncode == 0, smoke.stderr
+        assert calls[-2:] == [
+            "snap connect chromium:gnome-46-2404 gnome-46-2404",
+            "snap connect chromium:gpu-2404 mesa-2404",
+        ]
 
     def test_should_retry_each_provider_after_transient_assertion_failure(self) -> None:
-        result, calls, smoke = self.run_case(1)
+        result, calls, smoke = self.run_case(2, delay="7")
         assert result.returncode == 0, result.stderr
         assert smoke.returncode == 0, smoke.stderr
-        assert calls.count("snap install gnome-46-2404") == 2
-        assert calls.count("snap install mesa-2404") == 2
+        assert calls.count("snap install gnome-46-2404") == 3
+        assert calls.count("snap install mesa-2404") == 3
+        assert calls.count("sleep 7") == 4
         assert calls[-1] == "snap connect chromium:gpu-2404 mesa-2404"
 
     def test_should_fail_when_provider_never_installs(self) -> None:
         result, calls, smoke = self.run_case(3)
         assert result.returncode != 0
         assert smoke.returncode != 0
-        assert calls == ["snap install gnome-46-2404"] * 3
+        assert calls.count("snap install gnome-46-2404") == 3
+        assert calls.count("sleep 0") == 2
         assert "gnome-46-2404" in result.stderr
+
+    def test_should_reject_invalid_retry_configuration_before_installing(self) -> None:
+        for attempts, delay in [("0", "0"), ("-1", "0"), ("x", "0"), ("3", "-1"), ("3", "x")]:
+            result, calls, _ = self.run_case(0, attempts=attempts, delay=delay)
+            assert result.returncode != 0
+            assert calls == []
+            assert "retry configuration" in result.stderr
 
     def test_should_fail_when_content_connection_fails(self) -> None:
         result, calls, smoke = self.run_case(0, connect_failure=True)

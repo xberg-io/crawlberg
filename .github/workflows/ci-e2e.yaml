@@ -12,6 +12,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "Taskfile.yml"
+      - "scripts/ci/prepare-chrome-runtime.sh"
+      - "scripts/ci/test_chrome_runtime.py"
       - ".github/workflows/ci-e2e.yaml"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
@@ -369,12 +371,16 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
 
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime:test
+
       - name: Prepare Chromium snap runtime
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
         run: task ci:chrome:runtime
 
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@361d544a9208d2e165711e1ff2f3e88768376790
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
 
       - name: Setup library paths for FFI bindings
         if: |

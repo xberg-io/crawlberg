@@ -20,6 +20,8 @@ on:
       - "e2e/rust/Cargo.lock"
       - "rust-toolchain.toml"
       - "Taskfile.yml"
+      - "scripts/ci/prepare-chrome-runtime.sh"
+      - "scripts/ci/test_chrome_runtime.py"
       - ".task/languages/rust.yml"
       - ".task/workflows/dev-cycle.yml"
       # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
@@ -161,13 +163,17 @@ jobs:
       # crates/crawlberg/tests (test_browser_pool_lifecycle, test_browser_profile,
       # test_browser_screenshot, test_interact) had no Chrome binary at all and silently skipped
       # via common::is_missing_chrome_message on every CI run.
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime:test
+
       - name: Prepare Chromium snap runtime
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
         run: task ci:chrome:runtime
 
       - name: Setup Chrome
         id: chrome
-        uses: xberg-io/actions/setup-chrome@361d544a9208d2e165711e1ff2f3e88768376790
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
 
       - name: Prepare Chrome app bundle
         id: prepared_chrome
