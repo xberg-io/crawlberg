@@ -1,6 +1,6 @@
 //! Rate limiter implementations.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -55,14 +55,37 @@ struct DomainState {
     crawl_delay: Option<Duration>,
     robots_delay: Option<Duration>,
     consecutive_success: u32,
+    /// The queue of the domain: the request that holds it sleeps out the gap, the others wait
+    /// for it in the order of arrival.
+    turn: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl DomainState {
+    /// A domain with no delay of its own, whose last request was at `last_request`.
+    fn new(last_request: Instant) -> Self {
+        Self {
+            last_request,
+            crawl_delay: None,
+            robots_delay: None,
+            consecutive_success: 0,
+            turn: Arc::default(),
+        }
+    }
+
+    /// The delay between two requests, before jitter.
+    fn effective_delay(&self, default_delay: Duration) -> Duration {
+        match (self.crawl_delay, self.robots_delay) {
+            (Some(crawl), Some(robots)) => crawl.max(robots),
+            (Some(delay), None) | (None, Some(delay)) => delay,
+            (None, None) => default_delay,
+        }
+    }
+
     /// Double the delay after a 429, capped at [`MAX_BACKOFF`].
     fn back_off(&mut self, default_delay: Duration) {
         self.consecutive_success = 0;
         let current = self.crawl_delay.unwrap_or(default_delay);
-        self.crawl_delay = Some((current * 2).min(MAX_BACKOFF));
+        self.crawl_delay = Some(current.saturating_mul(2).min(MAX_BACKOFF));
     }
 
     /// Halve the delay once [`SUCCESSES_BEFORE_RELAX`] clean responses have accumulated,
@@ -106,6 +129,13 @@ struct ThrottleState {
 }
 
 impl ThrottleState {
+    /// The state of `domain`, made on first use so that its first request does not wait.
+    fn domain(&mut self, domain: &str, now: Instant, default_delay: Duration) -> &mut DomainState {
+        self.domains
+            .entry(domain.to_owned())
+            .or_insert_with(|| DomainState::new(now.checked_sub(default_delay).unwrap_or(now)))
+    }
+
     /// Drop domains untouched for longer than [`DOMAIN_STATE_TTL`].
     ///
     /// ~keep Without this the map grows for the life of the process: a crawler running
@@ -116,11 +146,11 @@ impl ThrottleState {
             return;
         }
         let before = self.domains.len();
-        // ~keep `last_request` is set into the future when a request is delayed, so
-        // `duration_since` must saturate rather than panic — it does, returning zero,
-        // which correctly treats a pending domain as live.
-        self.domains
-            .retain(|_, state| now.duration_since(state.last_request) < DOMAIN_STATE_TTL);
+        // ~keep A request in the queue holds a clone of `turn`. Its domain stays, however long
+        // ~keep the wait: a new state would start a second queue beside the first.
+        self.domains.retain(|_, state| {
+            Arc::strong_count(&state.turn) > 1 || now.duration_since(state.last_request) < DOMAIN_STATE_TTL
+        });
         self.last_sweep = now;
         let evicted = before - self.domains.len();
         if evicted > 0 {
@@ -174,92 +204,49 @@ impl PerDomainThrottle {
         }
         let random_fraction = random_unit_fraction(domain);
         let factor = (1.0 + self.jitter_ratio * random_fraction.mul_add(2.0, -1.0)).max(0.0);
-        Duration::from_secs_f64(duration.as_secs_f64() * factor)
+        Duration::try_from_secs_f64(duration.as_secs_f64() * factor).unwrap_or(Duration::MAX)
     }
-}
 
-/// The slot a waiter holds while it sleeps in [`PerDomainThrottle::acquire`].
-///
-/// ~keep A waiter dropped before its slot comes (its request was cancelled) gives the slot
-/// ~keep back when it is the last in the queue, so the next caller takes it. A waiter with
-/// ~keep others queued behind it cannot give its slot back: they already sleep toward fixed
-/// ~keep times, so its slot stays empty and it costs the queue one gap at most.
-struct SlotReservation<'a> {
-    throttle: &'a PerDomainThrottle,
-    domain: &'a str,
-    slot: Instant,
-    previous: Instant,
-    /// Time left until the slot; zero once the waiter has slept to it.
-    wait: Duration,
-}
-
-impl Drop for SlotReservation<'_> {
-    fn drop(&mut self) {
-        if self.wait.is_zero() {
-            return;
+    /// How long a request that arrives at `now` waits after the last request of the domain.
+    ///
+    /// ~keep Jitter can shorten the gap, but never under the delay that robots.txt asks for.
+    fn wait_for(&self, state: &DomainState, domain: &str, now: Instant) -> Duration {
+        let effective = state.effective_delay(self.default_delay);
+        let elapsed = now.duration_since(state.last_request);
+        if elapsed >= effective {
+            return Duration::ZERO;
         }
-        let Ok(mut state) = self.throttle.state.lock() else {
-            return;
-        };
-        if let Some(domain_state) = state.domains.get_mut(self.domain)
-            && domain_state.last_request == self.slot
-        {
-            domain_state.last_request = self.previous;
-        }
+        let floor = state.robots_delay.unwrap_or_default();
+        self.jitter(effective, domain).max(floor).saturating_sub(elapsed)
     }
 }
 
 #[async_trait]
 impl RateLimiter for PerDomainThrottle {
     async fn acquire(&self, domain: &str) -> Result<(), CrawlError> {
-        let reservation = {
+        let turn = {
             let mut state = self.state.lock().expect("lock poisoned");
             let now = Instant::now();
             state.sweep_if_due(now);
-            let domain_state = state.domains.entry(domain.to_owned()).or_insert(DomainState {
-                last_request: now - self.default_delay,
-                crawl_delay: None,
-                robots_delay: None,
-                consecutive_success: 0,
-            });
-
-            let effective = match (&domain_state.crawl_delay, &domain_state.robots_delay) {
-                (Some(cd), Some(rd)) => std::cmp::max(*cd, *rd),
-                (Some(cd), None) => *cd,
-                (None, Some(rd)) => *rd,
-                (None, None) => self.default_delay,
-            };
-
-            // ~keep The slot is reserved here, under the lock and before the sleep, so each
-            // ~keep waiter queues one gap after the waiter before it. `last_request` is the last
-            // ~keep reserved slot and can be in the future.
-            if now.duration_since(domain_state.last_request) >= effective {
-                domain_state.last_request = now;
-                None
-            } else {
-                let previous = domain_state.last_request;
-                let slot = previous + self.jitter(effective, domain);
-                if slot <= now {
-                    domain_state.last_request = now;
-                    None
-                } else {
-                    domain_state.last_request = slot;
-                    Some(SlotReservation {
-                        throttle: self,
-                        domain,
-                        slot,
-                        previous,
-                        wait: slot.duration_since(now),
-                    })
-                }
-            }
+            state.domain(domain, now, self.default_delay).turn.clone()
         };
-
-        if let Some(mut reservation) = reservation {
-            tokio::time::sleep(reservation.wait).await;
-            reservation.wait = Duration::ZERO;
+        // ~keep The requests of one domain queue on `turn` in the order of arrival, and the one
+        // ~keep that holds it sleeps out the gap. A cancelled request drops its place in the
+        // ~keep queue, or the turn itself, so it costs the requests behind it nothing. The delay
+        // ~keep is read when the turn comes, so a backoff reaches the requests that already wait.
+        let _turn = turn.lock().await;
+        let wait = {
+            let mut state = self.state.lock().expect("lock poisoned");
+            let now = Instant::now();
+            let domain_state = state.domain(domain, now, self.default_delay);
+            self.wait_for(domain_state, domain, now)
+        };
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
         }
-
+        let mut state = self.state.lock().expect("lock poisoned");
+        let now = Instant::now();
+        state.domain(domain, now, self.default_delay).last_request = now;
         Ok(())
     }
 
@@ -279,12 +266,7 @@ impl RateLimiter for PerDomainThrottle {
 
     async fn set_crawl_delay(&self, domain: &str, delay: Duration) -> Result<(), CrawlError> {
         let mut state = self.state.lock().expect("lock poisoned");
-        let domain_state = state.domains.entry(domain.to_owned()).or_insert(DomainState {
-            last_request: Instant::now() - self.default_delay,
-            crawl_delay: None,
-            robots_delay: None,
-            consecutive_success: 0,
-        });
+        let domain_state = state.domain(domain, Instant::now(), self.default_delay);
         domain_state.robots_delay = Some(delay);
         domain_state.crawl_delay = Some(delay);
         Ok(())
@@ -294,18 +276,12 @@ impl RateLimiter for PerDomainThrottle {
 #[cfg(test)]
 mod tests {
     use std::pin::Pin;
-    use std::sync::Arc;
     use std::task::Poll;
 
     use super::*;
 
     fn state_with(last_request: Instant) -> DomainState {
-        DomainState {
-            last_request,
-            crawl_delay: None,
-            robots_delay: None,
-            consecutive_success: 0,
-        }
+        DomainState::new(last_request)
     }
 
     const DEFAULT: Duration = Duration::from_millis(400);
@@ -493,19 +469,76 @@ mod tests {
         assert!(jittered <= Duration::from_millis(1000), "got {jittered:?}");
     }
 
+    #[test]
+    fn jitter_never_cuts_the_wait_under_the_robots_delay() {
+        let robots = Duration::from_secs(2);
+        let throttle = PerDomainThrottle::with_jitter_ratio(DEFAULT, 1.0);
+        let now = Instant::now();
+        let mut state = state_with(now);
+        state.robots_delay = Some(robots);
+        state.crawl_delay = Some(robots * 4);
+        for i in 0..200 {
+            let wait = throttle.wait_for(&state, &format!("domain-{i}.example"), now);
+            assert!(
+                wait >= robots,
+                "the wait {wait:?} must not be under the robots.txt delay of {robots:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_delay_at_the_end_of_the_range_does_not_panic() {
+        let throttle = PerDomainThrottle::with_jitter_ratio(DEFAULT, 1.0);
+        let now = Instant::now();
+        let mut states = ThrottleState {
+            domains: AHashMap::new(),
+            last_sweep: now,
+        };
+        let state = states.domain(HOST, now, Duration::MAX);
+        state.robots_delay = Some(Duration::MAX);
+        state.crawl_delay = Some(Duration::MAX);
+
+        // ~keep Each call draws a new jitter factor, and only a factor over one is out of range.
+        for _ in 0..50 {
+            assert_eq!(throttle.wait_for(state, HOST, now), Duration::MAX);
+        }
+        state.back_off(DEFAULT);
+        assert_eq!(state.crawl_delay, Some(MAX_BACKOFF));
+    }
+
+    #[test]
+    fn sweep_keeps_an_idle_domain_that_has_a_request_in_its_queue() {
+        let now = Instant::now();
+        let mut state = ThrottleState {
+            domains: AHashMap::new(),
+            last_sweep: now - SWEEP_INTERVAL,
+        };
+        let idle = state_with(now - DOMAIN_STATE_TTL - Duration::from_secs(1));
+        let _queued = idle.turn.clone();
+        state.domains.insert(HOST.to_owned(), idle);
+
+        state.sweep_if_due(now);
+
+        assert!(
+            state.domains.contains_key(HOST),
+            "a domain with a request in its queue must survive the sweep"
+        );
+    }
+
     /// ~keep One gap is a minute and the tests run on the paused clock of the runtime: a
-    /// ~keep sleep to a slot costs no real time, and a stall of the host under a minute cannot
-    /// ~keep move a result. The limiter reads the system clock, which the pause does not stop,
-    /// ~keep so the tests read the reserved slot in the state and the paused clock, never wall time.
+    /// ~keep sleep costs no real time. The limiter reads the real monotonic clock, which the
+    /// ~keep pause does not stop, so a wait is shorter than its gap by the real time the test
+    /// ~keep took. The tests read the paused clock and allow a quarter of the expected time.
     const GAP: Duration = Duration::from_secs(60);
 
     const HOST: &str = "one.example";
 
-    /// The last reserved slot of `host`.
-    fn reserved_slot(throttle: &PerDomainThrottle, host: &str) -> Instant {
-        let state = throttle.state.lock().expect("lock poisoned");
-        let domain_state = state.domains.get(host).expect("the host has state");
-        domain_state.last_request
+    /// The callers that wait for one host at the same time.
+    const CALLERS: usize = 5;
+
+    /// `true` when `actual` is within a quarter of `expected`.
+    fn near(actual: Duration, expected: Duration) -> bool {
+        actual > expected - expected / 4 && actual < expected + expected / 4
     }
 
     /// Poll `future` one time. Returns `true` when it still waits.
@@ -513,49 +546,96 @@ mod tests {
         std::future::poll_fn(|cx| Poll::Ready(Pin::new(&mut *future).poll(cx).is_pending())).await
     }
 
-    /// Take the free first slot of each host, then start `callers` acquires for each host at once.
+    /// Send the first request of each host, then start `callers` acquires for each host at once.
     ///
-    /// Returns the first slot of each host and the time on the paused clock until all callers
-    /// hold a slot.
-    async fn queue_concurrent_acquires(
+    /// Returns, for each host, the times on the paused clock at which its callers were let
+    /// through, in that order.
+    async fn grant_times(
         throttle: &Arc<PerDomainThrottle>,
         hosts: &[&'static str],
         callers: usize,
-    ) -> (Vec<Instant>, Duration) {
-        let mut first_slots = Vec::with_capacity(hosts.len());
+    ) -> Vec<Vec<Duration>> {
         for &host in hosts {
-            throttle.acquire(host).await.expect("the first slot is free");
-            first_slots.push(reserved_slot(throttle, host));
+            throttle.acquire(host).await.expect("the first request does not wait");
         }
         let started = tokio::time::Instant::now();
         let mut tasks = tokio::task::JoinSet::new();
-        for &host in hosts {
+        for (index, &host) in hosts.iter().enumerate() {
             for _ in 0..callers {
                 let throttle = throttle.clone();
-                tasks.spawn(async move { throttle.acquire(host).await });
+                tasks.spawn(async move {
+                    throttle.acquire(host).await.expect("acquire must succeed");
+                    (index, started.elapsed())
+                });
             }
         }
+        let mut granted = vec![Vec::new(); hosts.len()];
         while let Some(joined) = tasks.join_next().await {
-            joined.expect("the task must not panic").expect("acquire must succeed");
+            let (index, at) = joined.expect("the task must not panic");
+            granted[index].push(at);
         }
-        (first_slots, started.elapsed())
+        granted
+    }
+
+    /// Assert that the callers of `host` were let through one gap apart, the first after one gap.
+    fn assert_one_gap_apart(host: &str, granted: &[Duration]) {
+        assert_eq!(granted.len(), CALLERS, "every caller on {host} must be let through");
+        for (turn, at) in (1u32..).zip(granted) {
+            assert!(
+                near(*at, GAP * turn),
+                "caller {turn} on {host} must be let through {turn} gaps of {GAP:?} after the first request, got {granted:?}"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn five_concurrent_callers_on_one_host_each_take_the_next_slot() {
+    async fn five_concurrent_callers_on_one_host_are_let_through_one_gap_apart() {
         let throttle = Arc::new(PerDomainThrottle::new(GAP));
 
-        let (first_slots, slept) = queue_concurrent_acquires(&throttle, &[HOST], 5).await;
+        let granted = grant_times(&throttle, &[HOST], CALLERS).await;
 
+        assert_one_gap_apart(HOST, &granted[0]);
+    }
+
+    // ~keep The grant times alone do not show which caller was let through. Each caller arrives
+    // ~keep at its first poll; the tasks then start in the reverse order, so only the queue can
+    // ~keep give each caller the turn of its arrival.
+    #[tokio::test(start_paused = true)]
+    async fn callers_on_one_host_are_let_through_in_the_order_of_arrival() {
+        let throttle = Arc::new(PerDomainThrottle::new(GAP));
+        throttle.acquire(HOST).await.expect("the first request does not wait");
+        let started = tokio::time::Instant::now();
+        let mut waiters = Vec::new();
+        for arrival in (1u32..).take(CALLERS) {
+            let throttle = throttle.clone();
+            let mut waiter = Box::pin(async move {
+                throttle.acquire(HOST).await.expect("acquire must succeed");
+                (arrival, started.elapsed())
+            });
+            assert!(still_waits(&mut waiter).await, "caller {arrival} must wait");
+            waiters.push(waiter);
+        }
+        let mut tasks = tokio::task::JoinSet::new();
+        for waiter in waiters.into_iter().rev() {
+            tasks.spawn(waiter);
+        }
+        let mut granted = Vec::new();
+        while let Some(joined) = tasks.join_next().await {
+            granted.push(joined.expect("the task must not panic"));
+        }
+
+        let order: Vec<u32> = granted.iter().map(|(arrival, _)| *arrival).collect();
         assert_eq!(
-            reserved_slot(&throttle, HOST),
-            first_slots[0] + GAP * 5,
-            "5 callers behind the first slot must reserve 5 slots, one gap of {GAP:?} apart"
+            order,
+            (1u32..).take(CALLERS).collect::<Vec<_>>(),
+            "the callers must be let through in the order of arrival, got {granted:?}"
         );
-        assert!(
-            slept > GAP * 4 && slept < GAP * 6,
-            "the last caller must sleep to the fifth slot, all held a slot after {slept:?}"
-        );
+        for (arrival, at) in &granted {
+            assert!(
+                near(*at, GAP * *arrival),
+                "caller {arrival} must be let through {arrival} gaps of {GAP:?} after the first request, got {granted:?}"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -563,66 +643,93 @@ mod tests {
         let throttle = Arc::new(PerDomainThrottle::new(GAP));
         let hosts = [HOST, "two.example"];
 
-        let (first_slots, slept) = queue_concurrent_acquires(&throttle, &hosts, 5).await;
+        let granted = grant_times(&throttle, &hosts, CALLERS).await;
 
-        for (host, first_slot) in hosts.into_iter().zip(first_slots) {
-            assert_eq!(
-                reserved_slot(&throttle, host),
-                first_slot + GAP * 5,
-                "5 callers on {host} must reserve 5 slots of that host, one gap of {GAP:?} apart"
+        for (host, times) in hosts.into_iter().zip(&granted) {
+            assert_one_gap_apart(host, times);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_delay_of_zero_never_waits() {
+        let throttle = Arc::new(PerDomainThrottle::new(Duration::ZERO));
+
+        let granted = grant_times(&throttle, &[HOST], CALLERS).await;
+
+        assert_eq!(granted[0], vec![Duration::ZERO; CALLERS]);
+    }
+
+    // ~keep The API server drops a request at its timeout, so the requests that wait for one
+    // ~keep domain are cancelled in the order of arrival. None of them may cost a later request a gap.
+    #[tokio::test(start_paused = true)]
+    async fn waiters_cancelled_in_the_order_of_arrival_cost_the_next_caller_no_gap() {
+        let throttle = Arc::new(PerDomainThrottle::new(GAP));
+        throttle.acquire(HOST).await.expect("the first request does not wait");
+        let mut cancelled = tokio::task::JoinSet::new();
+        for seconds in 1..=5 {
+            let throttle = throttle.clone();
+            cancelled.spawn(async move {
+                tokio::time::timeout(Duration::from_secs(seconds), throttle.acquire(HOST))
+                    .await
+                    .is_err()
+            });
+        }
+        while let Some(timed_out) = cancelled.join_next().await {
+            assert!(
+                timed_out.expect("the task must not panic"),
+                "each waiter must be cancelled before its turn"
             );
         }
+
+        let started = tokio::time::Instant::now();
+        throttle.acquire(HOST).await.expect("acquire must succeed");
+        let waited = started.elapsed();
+
         assert!(
-            slept > GAP * 4 && slept < GAP * 6,
-            "the two hosts must not share one queue (10 gaps), all held a slot after {slept:?}"
+            waited < GAP + GAP / 4,
+            "5 cancelled waiters must cost the next caller no gap: it waited {waited:?}, one gap is {GAP:?}"
         );
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_cancelled_last_waiter_gives_its_slot_back() {
+    async fn a_waiter_behind_a_cancelled_one_takes_its_turn() {
         let throttle = PerDomainThrottle::new(GAP);
-        throttle.acquire(HOST).await.expect("the first slot is free");
-        let first_slot = reserved_slot(&throttle, HOST);
-
-        let mut waiter = throttle.acquire(HOST);
-        assert!(still_waits(&mut waiter).await, "the waiter must wait for its slot");
-        assert_eq!(
-            reserved_slot(&throttle, HOST),
-            first_slot + GAP,
-            "the waiter must hold the next slot"
-        );
-        drop(waiter);
-
-        assert_eq!(
-            reserved_slot(&throttle, HOST),
-            first_slot,
-            "the cancelled last waiter must give its slot back"
-        );
-        let mut next = throttle.acquire(HOST);
-        assert!(still_waits(&mut next).await, "the next caller must wait for a slot");
-        assert_eq!(
-            reserved_slot(&throttle, HOST),
-            first_slot + GAP,
-            "the next caller must take the slot that the cancelled waiter gave back"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_cancelled_waiter_with_another_behind_it_leaves_its_slot_empty() {
-        let throttle = PerDomainThrottle::new(GAP);
-        throttle.acquire(HOST).await.expect("the first slot is free");
-        let first_slot = reserved_slot(&throttle, HOST);
+        throttle.acquire(HOST).await.expect("the first request does not wait");
+        let started = tokio::time::Instant::now();
 
         let mut cancelled = throttle.acquire(HOST);
         assert!(still_waits(&mut cancelled).await, "the first waiter must wait");
         let mut behind = throttle.acquire(HOST);
         assert!(still_waits(&mut behind).await, "the second waiter must wait");
         drop(cancelled);
+        behind.await.expect("acquire must succeed");
 
-        assert_eq!(
-            reserved_slot(&throttle, HOST),
-            first_slot + GAP * 2,
-            "the waiter behind the cancelled one must keep its slot"
+        let waited = started.elapsed();
+        assert!(
+            near(waited, GAP),
+            "the waiter behind a cancelled one must be let through after one gap of {GAP:?}, it waited {waited:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_backoff_reaches_a_request_that_already_waits() {
+        let delay = GAP / 4;
+        let throttle = PerDomainThrottle::new(delay);
+        throttle.acquire(HOST).await.expect("the first request does not wait");
+        let started = tokio::time::Instant::now();
+
+        let mut first = throttle.acquire(HOST);
+        assert!(still_waits(&mut first).await, "the first waiter must wait");
+        let mut second = throttle.acquire(HOST);
+        assert!(still_waits(&mut second).await, "the second waiter must wait");
+        throttle.record_response(HOST, 429).await.expect("record must succeed");
+        first.await.expect("acquire must succeed");
+        second.await.expect("acquire must succeed");
+
+        let waited = started.elapsed();
+        assert!(
+            near(waited, delay * 3),
+            "the second waiter must wait one delay of {delay:?} and then the doubled delay, it waited {waited:?}"
         );
     }
 

@@ -116,12 +116,14 @@ All notable changes to crawlberg are documented here.
   API route: `/v1/download` and `/v1/map` used them before. (#652)
 - Requests that waited for one host at the same time all started after one delay. With
   `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
-  are due. Each waiting request now takes the next free slot, one delay after the request before
-  it. A request that is cancelled while it is last in the queue gives its slot back. This makes a
-  crawl with more than one concurrent request to one host slower: it now keeps the delay. A
-  request that waits holds one of the `max_concurrent` slots of its crawl, as before, but now for
-  up to `max_concurrent` delays: a crawl of many hosts slows down while its next pages are all on
-  one host with a long delay.
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
 - Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
   scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
   that error for the page, follows no links from it, and continues; a failed seed is the error of

@@ -912,6 +912,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_download_requests_to_one_host_are_spaced_by_the_configured_delay() {
+        let site = cookie_site().await;
+        let config = CrawlConfig {
+            rate_limit_ms: Some(150),
+            ..local_test_config()
+        };
+        let engine = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+        let download = || {
+            call(
+                router.clone(),
+                json_post(
+                    "/v1/download",
+                    serde_json::json!({ "url": format!("{}/page", site.uri()) }),
+                ),
+            )
+        };
+
+        let started = std::time::Instant::now();
+        let responses = tokio::join!(download(), download(), download(), download(), download());
+        let elapsed = started.elapsed();
+
+        for response in [responses.0, responses.1, responses.2, responses.3, responses.4] {
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        assert!(
+            elapsed >= Duration::from_millis(4 * 150),
+            "5 concurrent requests to one host took {elapsed:?}, less than 4 delays of 150 ms"
+        );
+    }
+
+    #[tokio::test]
     async fn the_routes_that_fetch_a_page_use_the_rate_limiter_of_the_server() {
         let site = cookie_site().await;
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
