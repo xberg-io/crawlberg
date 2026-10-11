@@ -748,6 +748,41 @@ impl RedirectSignals for crate::http::HttpResponse {
     }
 }
 
+#[cfg(feature = "browser-chromiumoxide")]
+impl RedirectSignals for crate::ssrf_intercept::StoppedResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        self.header("content-type").unwrap_or_default()
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+/// [`unfollowed_redirect_error`] for a navigation that Chrome made from `requested` and that
+/// stopped on `resp` at `landed`.
+///
+/// ~keep Chrome follows the redirects of a navigation itself, so the addresses known here are
+/// ~keep the one requested and the one that answered last. A loop through a third address is
+/// ~keep reported with the reason of the redirect limit.
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) fn stopped_navigation_error<R: RedirectSignals>(
+    resp: &R,
+    requested: &str,
+    landed: &str,
+) -> Option<CrawlError> {
+    unfollowed_redirect_error(resp, landed, |target| {
+        [requested, landed]
+            .iter()
+            .any(|seen| Url::parse(seen).is_ok_and(|seen| seen == *target))
+    })
+}
+
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
 ///
 /// ~keep The three sources are tried in order, and a target the chain has already visited
