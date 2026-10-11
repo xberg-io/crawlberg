@@ -69,7 +69,11 @@ fn convert_html_to_markdown(
         strong_em_symbol: match config.strong_em_symbol.as_str() {
             "*" => '*',
             "_" => '_',
-            _ => return None,
+            other => {
+                return Err(ConversionError::ConfigError(format!(
+                    "content.strong_em_symbol must be * or _, not {other:?}"
+                )));
+            }
         },
         compact_tables: config.compact_tables,
         keep_inline_images_in: config.keep_inline_images_in.clone(),
@@ -261,6 +265,20 @@ mod tests {
             };
             assert!(config.validate().is_err(), "invalid formatting options: {options}");
         }
+    }
+
+    #[test]
+    fn an_emphasis_marker_the_converter_does_not_have_is_an_error() {
+        let config = ContentConfig {
+            strong_em_symbol: "bad".to_owned(),
+            ..ContentConfig::default()
+        };
+        let error = convert_html_to_markdown("<p><em>em</em></p>", None, &page(), &config)
+            .expect_err("a marker other than * and _ is refused");
+        assert!(
+            error.to_string().contains("content.strong_em_symbol must be * or _"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
