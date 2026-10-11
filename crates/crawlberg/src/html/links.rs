@@ -116,9 +116,9 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, document_url: &Url) -> Vec<Li
         && !links.iter().any(|link| link.url == resolved.as_str())
     {
         links.push(LinkInfo {
+            link_type: classify_link(&target, &resolved, document_url),
             url: resolved.into(),
             text: String::new(),
-            link_type: classify_link(&target, base_url),
             rel: None,
             nofollow: false,
         });
