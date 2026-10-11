@@ -293,19 +293,7 @@ impl CrawlEngine {
             {
                 return self.native_render(url, state).await;
             }
-            let pool = self.config.browser_pool.as_deref();
-            #[cfg(feature = "browser-native")]
-            let page = crate::browser::browser_fetch(
-                url,
-                &self.config,
-                browser_cookies,
-                pool,
-                false,
-                self.native_browser_executor.as_deref(),
-            )
-            .await?;
-            #[cfg(not(feature = "browser-native"))]
-            let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
+            let page = self.browser_fetch(url, browser_cookies, false).await?;
             let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
             return Ok((crawl_resp, true));
         }
