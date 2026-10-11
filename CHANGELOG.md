@@ -82,6 +82,10 @@ All notable changes to crawlberg are documented here.
 - With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
   kept for a site failed at once with a browser error: every second fetch of the site. The engine
   closed the page it kept. The kept page now serves the next fetch. (#653)
+- In the command-line tool, a `--config` value reset settings that it did not name, so
+  `--browser-mode always` with any `--config` value fetched the page over plain HTTP. A `--config`
+  value now replaces only the settings that it names, also inside a section such as `browser` or
+  `ssrf`. A `null` clears an optional setting. A value that is not a JSON object is an error. (#600)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)
