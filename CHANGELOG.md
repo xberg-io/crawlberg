@@ -97,6 +97,13 @@ All notable changes to crawlberg are documented here.
 - On Linux and macOS the Chrome of a crawl ends when the process that started it ends, also when
   that process is killed with SIGKILL or gets a SIGTERM that it does not handle. Before, the
   Chrome kept running with PID 1 as its parent. Windows is not changed. (#620)
+- With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
+  pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
+  one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
+  does not get them. In automatic mode, a cookie that a response over HTTP or from a bypass
+  provider sets or deletes is not sent to later Chrome pages with its old value. With a session
+  pool and `session_affinity`, the page kept for a site keeps its cookies: a later crawl gets
+  them, and so does a later page after a response over HTTP deleted one. (#603)
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited
   runtime work after a process fork. The runtime starts at the first async call, not at import.
   A call after the exit hooks ran raises `RuntimeError`. (#633)

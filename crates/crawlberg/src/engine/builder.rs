@@ -305,6 +305,8 @@ impl CrawlEngineBuilder {
             robots_cache: self.robots_cache.unwrap_or_default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
+            #[cfg(feature = "browser")]
+            crawl_cookies: None,
         })
     }
 }
