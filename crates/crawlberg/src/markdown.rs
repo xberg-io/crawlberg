@@ -281,6 +281,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_default_formatting_options_are_the_defaults_of_the_converter() {
+        let ours = ContentConfig::default();
+        let theirs = html_to_markdown_rs::options::ConversionOptions::default();
+        assert_eq!(ours.strip_newlines, theirs.strip_newlines, "strip_newlines");
+        assert_eq!(ours.bullets, theirs.bullets, "bullets");
+        assert_eq!(ours.list_indent_width, theirs.list_indent_width, "list_indent_width");
+        assert_eq!(
+            ours.strong_em_symbol,
+            theirs.strong_em_symbol.to_string(),
+            "strong_em_symbol"
+        );
+        assert_eq!(ours.compact_tables, theirs.compact_tables, "compact_tables");
+        assert_eq!(
+            ours.keep_inline_images_in, theirs.keep_inline_images_in,
+            "keep_inline_images_in"
+        );
+    }
+
     #[tokio::test]
     async fn converts_heading() {
         let result = convert_to_markdown("<h1>Hello</h1>", None, &page(), &ContentConfig::default()).await;
