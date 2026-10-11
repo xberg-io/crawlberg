@@ -304,6 +304,7 @@ dependencies = [
  "fnv",
  "futures",
  "futures-timer",
+ "libc",
  "pin-project-lite",
  "proc-macro2",
  "quote",
