@@ -29,6 +29,8 @@ on:
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "Taskfile.yml"
+  #     - "scripts/ci/prepare-chrome-runtime.sh"
+  #     - "scripts/ci/test_chrome_runtime.py"
   #     - ".github/workflows/ci-e2e.yaml"
   workflow_dispatch:
 

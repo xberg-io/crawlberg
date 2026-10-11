@@ -58,6 +58,8 @@ on:
   #     - "e2e/rust/Cargo.lock"
   #     - "rust-toolchain.toml"
   #     - "Taskfile.yml"
+  #     - "scripts/ci/prepare-chrome-runtime.sh"
+  #     - "scripts/ci/test_chrome_runtime.py"
   #     - ".task/languages/rust.yml"
   #     - ".task/workflows/dev-cycle.yml"
   #     # ~keep alef.toml is the generator's entire configuration and this workflow runs the only

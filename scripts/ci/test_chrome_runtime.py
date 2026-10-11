@@ -16,6 +16,7 @@ class ChromeRuntimeTests(unittest.TestCase):
     def run_case(
         self,
         failures: int,
+        chromium_failures: int = 0,
         connect_failure: bool = False,
         chromium_present: bool = True,
         attempts: str = "3",
@@ -34,7 +35,8 @@ if args[:2] == ["snap", "install"]:
     count_file = root / args[2]
     count = int(count_file.read_text()) if count_file.exists() else 0
     count_file.write_text(str(count + 1))
-    if args[2] != "chromium" and count < int(os.environ["FAILURES"]):
+    failure_limit = os.environ["CHROMIUM_FAILURES"] if args[2] == "chromium" else os.environ["FAILURES"]
+    if count < int(failure_limit):
         sys.stderr.write("HTTP408 provider assertion unavailable\n")
         sys.exit(1)
     (root / (args[2] + ".installed")).touch()
@@ -59,6 +61,7 @@ if args[0] == "chromium":
                 PATH=f"{root}:{os.environ['PATH']}",
                 CASE_ROOT=str(root),
                 FAILURES=str(failures),
+                CHROMIUM_FAILURES=str(chromium_failures),
                 CONNECT_FAILURE=str(int(connect_failure)),
             )
             (root / "sleep").write_text(
@@ -116,6 +119,22 @@ if args[0] == "chromium":
         assert calls.count("snap install mesa-2404") == 3
         assert calls.count("sleep 7") == 4
         assert calls[-1] == "snap connect chromium:gpu-2404 mesa-2404"
+
+    def test_should_retry_chromium_after_a_transient_install_failure(self) -> None:
+        result, calls, smoke = self.run_case(0, chromium_failures=1, chromium_present=False)
+        assert result.returncode == 0, result.stderr
+        assert calls.count("snap install chromium --classic") == 2
+        assert calls.count("sleep 0") == 1
+        assert smoke.returncode == 0, smoke.stderr
+
+    def test_should_fail_when_chromium_never_installs(self) -> None:
+        result, calls, smoke = self.run_case(0, chromium_failures=3, chromium_present=False)
+        assert result.returncode != 0
+        assert calls.count("snap install chromium --classic") == 3
+        assert calls.count("sleep 0") == 2
+        assert "provider chromium failed after 3 attempts" in result.stderr
+        assert smoke.returncode != 0
+        assert not any(call.startswith("snap connect") for call in calls)
 
     def test_should_fail_when_provider_never_installs(self) -> None:
         result, calls, smoke = self.run_case(3)
