@@ -1456,7 +1456,17 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
     let taken_count = taken.len();
     drop(taken);
 
-    let launcher_stopped = launcher.try_wait().expect("the status must be readable").is_some();
+    // ~keep macOS can report the killed process as gone before waitpid publishes its exit status.
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    let launcher_stopped = loop {
+        if launcher.try_wait().expect("the status must be readable").is_some() {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let helper_left = helper.map_or(0, |helper| ChromeFamily::running(&[helper], |_| {}));
     let removed = !path.exists();
     if let Some(helper) = helper {
