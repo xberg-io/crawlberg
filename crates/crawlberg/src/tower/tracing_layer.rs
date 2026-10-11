@@ -186,16 +186,12 @@ mod tests {
         let _guard = tracing::subscriber::set_default(CapturingSubscriber { sink: sink.clone() });
 
         let inner = service_fn(|_req: CrawlRequest| async {
-            Ok::<_, CrawlError>(CrawlResponse {
-                status: 200,
-                content_type: String::new(),
-                body: String::new(),
-                body_bytes: Vec::new(),
-                headers: std::collections::HashMap::new(),
-                landed: None,
-                sent_user_agent: None,
-                soft_error: false,
-            })
+            Ok::<_, CrawlError>(CrawlResponse::new(
+                200,
+                String::new(),
+                std::collections::HashMap::new(),
+                crate::tower::ResponseBody::Bytes(Vec::new()),
+            ))
         });
         let svc = CrawlTracingLayer::new().layer(inner);
 

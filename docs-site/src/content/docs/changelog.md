@@ -4,6 +4,33 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
+  `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
+  `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
+  browser rendered. A `BypassResponse { .. }` literal does not compile until it sets the field.
+- **`crawlberg-browser`: `NativeBrowserConfig` and `RenderedPage` each have a new public field**,
+  `document_decoder` and `charset`, and the crate has a new public type, `DocumentDecoder`. A
+  struct literal that names every field must add the new one; `..NativeBrowserConfig::default()`
+  needs no change.
+- **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
+  the entry as it gets it needs no change. A cache entry that an earlier release stored is not
+  served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
+  entries must set `decoded` to `true` for a body it stored as decoded text:
+  `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+
+### Added
+
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. In PHP the text starts with
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+
 ### Changed
 
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
@@ -28,6 +55,9 @@ title: "Changelog"
   `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
   `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
   way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
+- `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
+  declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
+  longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
 
 ### Fixed
 
@@ -36,6 +66,13 @@ title: "Changelog"
   one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
   does not get them. In automatic mode, a cookie that a response over HTTP or from a bypass
   provider sets or deletes is not sent to later Chrome pages with its old value. (#603)
+- With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
+  kept for a site failed at once with a browser error: every second fetch of the site. The engine
+  closed the page it kept. The kept page now serves the next fetch. (#653)
+- In the command-line tool, a `--config` value reset settings that it did not name, so
+  `--browser-mode always` with any `--config` value fetched the page over plain HTTP. A `--config`
+  value now replaces only the settings that it names, also inside a section such as `browser` or
+  `ssrf`. A `null` clears an optional setting. A value that is not a JSON object is an error. (#600)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)
@@ -56,6 +93,129 @@ title: "Changelog"
   unsendable, but is being dropped on another thread` on stderr after an async call, and the
   engine was then never freed: its connections and its browser stayed until the process ended.
   The engine handle is now a class that any thread can release. (#641)
+- Read a page with the character set a browser uses for it. In HTTP mode a page that declares no
+  character set and is not UTF-8 came back with replacement characters; its encoding is now detected
+  from its bytes. The sources are read in the order of the HTML standard: a byte-order mark, the
+  `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
+  comment or in the text of the page no longer counts as a declaration, an unknown label no longer
+  stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+  Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
+  holds a few bytes that are not UTF-8. An undeclared Shift_JIS, EUC-JP, EUC-KR, GBK or Big5 page
+  that a size limit cut inside its last character keeps its encoding. JSON is read as UTF-8. Only
+  HTML is searched for a `<meta>` tag, and only its first 1 MiB.
+- Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
+  other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
+  decoded text was decoded again by that tag. `detected_charset` now reports the character set the
+  browser used.
+- Keep the text a bypass vendor decoded. A provider that reads the page from a JSON field (Zyte's
+  `browserHtml`) returns text; it was decoded again by the `<meta>` tag of the page.
+- Read a page with its character set on the native browser backend. It read every document as
+  UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
+  mode.
+- Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
+  letters. The entry now holds the decoded text and its character set.
+- Browser mode lost a page that opens a JavaScript dialog. Chrome stops the page until the
+  dialog is answered, and nothing answered it, so `scrape`, `crawl` and `interact` failed with
+  a browser timeout after the full `browser.timeout`. Browser mode now closes the dialog and
+  returns the page. An `alert`, a `confirm` and a `prompt` are dismissed: the page gets `false`
+  from the `confirm` and `null` from the `prompt`. A `beforeunload` dialog is accepted, so the
+  navigation that opened it goes on. The text of a dialog is not part of the page and is not
+  returned. (#602)
+- Browser mode lost a page whose text holds one half of a surrogate pair, such as a string that
+  a script cut in the middle of an emoji. The reply from Chrome could not be read, and the
+  call failed with a browser timeout after the full `browser.timeout`. The page is now
+  returned, with U+FFFD in place of the unpaired half, as a browser shows it. The same holds
+  for an attribute, for the title and for the result of an `interact` script. (#631)
+- With `cookies_enabled`, a new engine in HTTP mode sent the cookies that an earlier engine with
+  the same configuration had received. A program that makes one engine for each user sent the
+  session cookie of one user in the crawl of the next user. Each engine now has its own cookie
+  store, and a new engine starts with no cookie. One engine still sends the cookies it received
+  on its later requests. This changes the behaviour of a program that relied on two engines
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. The type is read without case and without its parameters,
+  so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
+  counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
+  starts as HTML is a page with any declared type, `application/json` included. A response of
+  another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
+  and a response that `download_documents` keeps as a document, is a result with no `markdown`
+  when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
+- A browser command no longer waits for its full timeout after Chrome closes the DevTools
+  connection. The command fails at once, and a browser pool that is dropped lets go of its
+  Chrome.
+- A stop of the SSRF check turns request interception off again on a browser that crawlberg
+  launched, and on a `browser.endpoint` browser after the last refusal is delivered. Before,
+  interception stayed on with nothing to answer, and every other tab of that browser waited
+  without end. A browser that crawlberg kills when it is done, and a check that runs in the
+  default context of the browser, keep interception on, as before.
+- A popup that a page opens while its SSRF check ends is closed, and the page stays usable for
+  the next check. Before, the browser session failed, or the close of the popup's tab closed
+  the page with it.
+- Known limit: a script that calls `window.open` directly at the moment the SSRF check of its
+  page ends gets no answer after the popup is closed, and that page runs no further script
+  (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
+  gets past the check, the next check of the page still starts and ends, and other tabs are
+  not affected. A `window.open` from a timer or an event handler does not block its page.
+- An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
+  profile directory is removed, when the last clone of the engine handle is dropped, and when the
+  process exits through the C runtime with an engine still alive or with its Chrome still
+  launching. No new call is needed. Only the process that launched a Chrome stops it: a process
+  forked from that one, such as a `multiprocessing` worker, holds a copy of the engine, and
+  dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
+  and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
+  `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
+  nothing ends that Chrome for it. A Python program that ends with an unhandled
+  `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
+  Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
+  them when the process ends in any way. (#594)
+- On Linux and macOS a browser launch fails with an error when the process table does not show
+  the Chrome it started, and it stops that Chrome at once. Without that entry the engine cannot
+  stop the Chrome later, and the Chrome ran on after its engine was gone. The error says what to
+  do: on Linux, run the program where the `/proc` of its own process id namespace is mounted; on
+  macOS, let the sandbox profile allow the program to read process information. A Chrome that
+  ended at once is reported with its exit status instead. The engine knows its Chrome by the
+  process id and a start value that a later change of the system clock does not move. (#594)
+- On Windows a program that captures the output of a crawling child process returns when that
+  child has exited. A Chrome the child left running kept the output pipes open.
+- Chrome no longer gets the standard input of the process that launched it.
+- The browser driver now reports the close of a browser's last page at once. It held that event
+  back until the next page opened, so a page closed outside the request check kept its browser
+  context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
+  already ended for pooled pages. (#595)
 
 ## [1.10.2] - 2026-10-06
 

@@ -75,7 +75,7 @@ The `ScrapeResult` struct contains everything extracted from a single page:
 | `content_type`     | `String`         | The Content-Type header value.                                          |
 | `html`             | `String`         | The response body (possibly truncated by `content.max_body_size`).      |
 | `body_size`        | `usize`          | Size of the response body in bytes.                                     |
-| `detected_charset` | `Option<String>` | Character encoding detected from Content-Type header or HTML meta tags. |
+| `detected_charset` | `Option<String>` | The character set the page was decoded with: the label a header or a meta tag declares, or the name of the encoding detected from the bytes. In browser mode, the character set the browser used. `None` for an undeclared UTF-8 page in HTTP mode. |
 | `is_pdf`           | `bool`           | Whether the content was detected as PDF.                                |
 | `was_skipped`      | `bool`           | Whether extraction was skipped (binary or PDF content).                 |
 

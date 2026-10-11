@@ -14,7 +14,7 @@ mod streaming;
 #[cfg(not(target_arch = "wasm32"))]
 pub use antibot::{AntibotStrategy, Decision};
 pub use builder::{CrawlConfigBuilder, DispatchProfileBuilder};
-pub use bypass::{BypassProvider, BypassResponse, DynBypassProvider};
+pub use bypass::{BypassBody, BypassProvider, BypassResponse, DynBypassProvider};
 #[cfg(all(test, feature = "browser-chromiumoxide"))]
 pub(crate) use config::executable_temp_file;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]

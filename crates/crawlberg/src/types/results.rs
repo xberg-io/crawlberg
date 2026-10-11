@@ -535,7 +535,7 @@ pub struct CachedPage {
     pub status_code: u16,
     /// `Content-Type` header captured from the original response.
     pub content_type: String,
-    /// Raw response body stored verbatim in the cache.
+    /// The response body as text, decoded with the character set of the page.
     pub body: String,
     /// `ETag` header value, if any. Sent back as `If-None-Match` to revalidate this entry.
     pub etag: Option<String>,
@@ -557,6 +557,20 @@ pub struct CachedPage {
     /// never be served without first revalidating it against the origin.
     #[serde(default)]
     pub must_revalidate: bool,
+    /// The character set `body` was decoded with, as `detected_charset` reports it.
+    ///
+    /// `None` for a page that declares no character set and is UTF-8.
+    pub charset: Option<String>,
+    /// Whether `body` is the text of the page, decoded with the character set of the page.
+    ///
+    /// False for an entry that an earlier release stored. The body of such an entry is a lossy UTF-8 read
+    /// of the bytes, so a page in another character set has lost its letters. The cache layer
+    /// does not serve an entry that is not decoded; it fetches the page again and replaces it.
+    ///
+    /// `CachedPage::default()` sets it to false. A `CrawlCache` that builds its own entries must
+    /// set it to true for a body it stored as decoded text.
+    #[serde(default)]
+    pub decoded: bool,
 }
 
 #[cfg(test)]

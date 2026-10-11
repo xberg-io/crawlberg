@@ -2047,6 +2047,9 @@ const _: fn() = || {
         crate::CrawlError::DataLoss { message } => {
             let _: String = message;
         }
+        crate::CrawlError::ConversionFailed { message } => {
+            let _: String = message;
+        }
         crate::CrawlError::BrowserError { message } => {
             let _: String = message;
         }
@@ -2977,21 +2980,25 @@ impl SseDecode for crate::CrawlError {
             }
             13 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserError { message: var_message };
+                return crate::CrawlError::ConversionFailed { message: var_message };
             }
             14 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserTimeout { message: var_message };
+                return crate::CrawlError::BrowserError { message: var_message };
             }
             15 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::InvalidConfig { message: var_message };
+                return crate::CrawlError::BrowserTimeout { message: var_message };
             }
             16 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Unsupported { message: var_message };
+                return crate::CrawlError::InvalidConfig { message: var_message };
             }
             17 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Unsupported { message: var_message };
+            }
+            18 => {
                 let mut var_url = <String>::sse_decode(deserializer);
                 let mut var_reason = <String>::sse_decode(deserializer);
                 return crate::CrawlError::SsrfPolicyViolation {
@@ -2999,7 +3006,7 @@ impl SseDecode for crate::CrawlError {
                     reason: var_reason,
                 };
             }
-            18 => {
+            19 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::CrawlError::Other { message: var_message };
             }
@@ -4910,25 +4917,28 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
             crate::CrawlError::DataLoss { message } => {
                 [12.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BrowserError { message } => {
+            crate::CrawlError::ConversionFailed { message } => {
                 [13.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BrowserTimeout { message } => {
+            crate::CrawlError::BrowserError { message } => {
                 [14.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::InvalidConfig { message } => {
+            crate::CrawlError::BrowserTimeout { message } => {
                 [15.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Unsupported { message } => {
+            crate::CrawlError::InvalidConfig { message } => {
                 [16.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
+            crate::CrawlError::Unsupported { message } => {
+                [17.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
             crate::CrawlError::SsrfPolicyViolation { url, reason } => [
-                17.into_dart(),
+                18.into_dart(),
                 url.into_into_dart().into_dart(),
                 reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::CrawlError::Other { message } => [18.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Other { message } => [19.into_dart(), message.into_into_dart().into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -6083,29 +6093,33 @@ impl SseEncode for crate::CrawlError {
                 <i32>::sse_encode(12, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserError { message } => {
+            crate::CrawlError::ConversionFailed { message } => {
                 <i32>::sse_encode(13, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserTimeout { message } => {
+            crate::CrawlError::BrowserError { message } => {
                 <i32>::sse_encode(14, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::InvalidConfig { message } => {
+            crate::CrawlError::BrowserTimeout { message } => {
                 <i32>::sse_encode(15, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Unsupported { message } => {
+            crate::CrawlError::InvalidConfig { message } => {
                 <i32>::sse_encode(16, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+            crate::CrawlError::Unsupported { message } => {
                 <i32>::sse_encode(17, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+                <i32>::sse_encode(18, serializer);
                 <String>::sse_encode(url, serializer);
                 <String>::sse_encode(reason, serializer);
             }
             crate::CrawlError::Other { message } => {
-                <i32>::sse_encode(18, serializer);
+                <i32>::sse_encode(19, serializer);
                 <String>::sse_encode(message, serializer);
             }
             _ => {

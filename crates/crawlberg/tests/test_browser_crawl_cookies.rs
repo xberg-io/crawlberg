@@ -762,7 +762,10 @@ impl BypassProvider for ProviderOfNext {
             status: 200,
             content_type: "text/html".to_owned(),
             body: body.to_owned(),
-            body_bytes: body.as_bytes().to_vec(),
+            // ~keep Text with no bytes: the link to `/last` reaches the crawl only when the same
+            // ~keep answer that reports the deleted cookie is read by its body kind.
+            body_bytes: Vec::new(),
+            body_kind: crawlberg::BypassBody::Text,
             headers: HashMap::from([("set-cookie".to_owned(), set_cookie)]),
             final_url: String::new(),
             cost_usd: None,

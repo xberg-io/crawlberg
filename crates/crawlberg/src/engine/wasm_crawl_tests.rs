@@ -600,6 +600,50 @@ async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
     );
 }
 
+/// A page served as HTML that the converter refuses, by its own input check, for its zip signature.
+const REFUSED_PAGE: &str = "PK\u{3}\u{4}<html><body><p>This is not a page.</p></body></html>";
+
+/// A page whose conversion to Markdown fails is a failed page of the sequential crawl.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_reports_a_page_that_cannot_be_converted() {
+    let refused_seed = MockServer::start().await;
+    mount_html(&refused_seed, "/", REFUSED_PAGE).await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+    let result = crawl_admitted(&engine, &refused_seed.uri())
+        .await
+        .expect("a seed that cannot be converted is still a completed crawl");
+    assert!(result.pages.is_empty(), "a seed that cannot be converted is not a page");
+    let error = result
+        .error
+        .expect("a depth-0 failure must surface as CrawlResult::error");
+    assert!(
+        error.starts_with("conversion_failed: could not convert ") && error.contains("zip archive"),
+        "the error starts with the tag of a failed conversion and says why, got: {error}"
+    );
+
+    let refused_child = MockServer::start().await;
+    mount_html(
+        &refused_child,
+        "/",
+        r#"<html><body><a href="/a">A</a> <a href="/b">B</a></body></html>"#,
+    )
+    .await;
+    mount_html(&refused_child, "/a", REFUSED_PAGE).await;
+    mount_html(&refused_child, "/b", "<html><body><p>B</p></body></html>").await;
+    let base = refused_child.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        ..CrawlConfig::default()
+    }));
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/b".to_owned()],
+        "the child that cannot be converted contributes no page, and the crawl goes on"
+    );
+}
+
 /// A seed that redirects is counted once and reported under its post-redirect URL.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
@@ -1728,4 +1772,29 @@ async fn sequential_crawl_reports_normalized_url_in_the_one_form() {
         [same("/"), ("/a%2db/%7euser/".to_owned(), "/a-b/~user/".to_owned())],
         "the address is reported as requested, and normalized_url in the one RFC 3986 form with its slash"
     );
+}
+
+/// The wasm page fetch returns the bytes the server sent, so the page is read with its
+/// character set and not as text that is decoded already.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_returns_bytes_that_are_read_with_their_character_set() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(b"<p>caf\xe9</p>".to_vec(), "text/html; charset=iso-8859-1"),
+        )
+        .mount(&mock)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let (url, response, _) = engine
+        .wasm_fetch_for_scrape(&mock.uri(), None)
+        .await
+        .expect("fetch must succeed");
+
+    let (text, charset) =
+        crate::html::decode_page(response.body_text(), &response.content_type, &url, &response.body_bytes);
+    assert_eq!(text.as_deref(), Some("<p>caf\u{e9}</p>"));
+    assert_eq!(charset.as_deref(), Some("iso-8859-1"));
 }
