@@ -99,6 +99,10 @@ pub fn map_crawl_error(error: CrawlError) -> McpError {
             McpError::internal_error(format!("Data loss during transfer: {msg}"), None)
         }
 
+        CrawlError::ConversionFailed { message: msg, .. } => {
+            McpError::internal_error(format!("Conversion to Markdown failed: {msg}"), None)
+        }
+
         CrawlError::BrowserError { message: msg, .. } => {
             McpError::internal_error(format!("Browser error: {msg}"), None)
         }
@@ -236,6 +240,18 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_conversion_maps_to_an_internal_error_that_keeps_its_message() {
+        let error = CrawlError::conversion_failed("could not convert https://example.com/ to Markdown: refused");
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(mcp_error.code.0, -32603);
+        assert_eq!(
+            mcp_error.message,
+            "Conversion to Markdown failed: could not convert https://example.com/ to Markdown: refused"
+        );
+    }
+
+    #[test]
     fn test_map_other_to_internal_error() {
         let error = CrawlError::other("unexpected failure".to_string());
         let mcp_error = map_crawl_error(error);
@@ -273,6 +289,7 @@ mod tests {
             CrawlError::dns("test".to_string()),
             CrawlError::ssl("test".to_string()),
             CrawlError::data_loss("test".to_string()),
+            CrawlError::conversion_failed("test".to_string()),
             CrawlError::browser_error("test".to_string()),
             CrawlError::browser_timeout("test".to_string()),
             CrawlError::invalid_config("test".to_string()),
@@ -329,6 +346,7 @@ mod tests {
             CrawlError::dns("could not resolve".to_string()),
             CrawlError::ssl("certificate expired".to_string()),
             CrawlError::data_loss("truncated body".to_string()),
+            CrawlError::conversion_failed("could not convert https://example.com/ to Markdown".to_string()),
             CrawlError::browser_error("failed to launch".to_string()),
             CrawlError::browser_timeout("page never loaded".to_string()),
             CrawlError::other("unexpected failure".to_string()),

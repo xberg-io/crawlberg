@@ -32,7 +32,7 @@ use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
 
-use super::is_binary_content_type;
+use super::{is_binary_content_type, media_type_essence};
 use crate::tower::BodyText;
 
 /// The bytes a `<meta>` tag is honoured in wherever it stands. Past them it counts only while
@@ -173,12 +173,7 @@ enum Kind {
 
 impl Kind {
     fn of(content_type: &str) -> Self {
-        let essence = content_type
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase();
+        let essence = media_type_essence(content_type);
         if is_binary_content_type(content_type) {
             Self::Binary
         } else if essence.is_empty() || essence == "text/html" {

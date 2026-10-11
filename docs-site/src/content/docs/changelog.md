@@ -20,6 +20,17 @@ title: "Changelog"
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
 
+### Added
+
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. In PHP the text starts with
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+
 ### Changed
 
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
@@ -94,6 +105,32 @@ title: "Changelog"
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. The type is read without case and without its parameters,
+  so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
+  counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
+  starts as HTML is a page with any declared type, `application/json` included. A response of
+  another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
+  and a response that `download_documents` keeps as a document, is a result with no `markdown`
+  when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
 
 ## [1.10.2] - 2026-10-06
 
