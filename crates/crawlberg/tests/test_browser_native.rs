@@ -1158,3 +1158,70 @@ async fn native_scrape_of_a_missing_seed_without_a_trailing_slash_is_not_found()
         }
     }
 }
+
+/// A native scrape asks again for a page that answers 429, up to `retry_count` times, as HTTP
+/// mode does.
+#[tokio::test]
+async fn native_scrape_retries_a_429_with_the_configured_budget() {
+    let site = MockServer::start().await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&hits);
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(move |_: &wiremock::Request| {
+            let status = if count.fetch_add(1, Ordering::SeqCst) < 2 {
+                429
+            } else {
+                200
+            };
+            ResponseTemplate::new(status).set_body_raw("<html><body><p>accepted</p></body></html>", "text/html")
+        })
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        respect_robots_txt: false,
+        retry_count: 2,
+        retry_codes: vec![429],
+        retry_initial_delay_ms: 10,
+        retry_max_delay_ms: 20,
+        ..native_config(|c| c)
+    };
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the third request is accepted");
+    assert_eq!(scraped.status_code, 200);
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+}
+
+/// Two native scrapes of one host arrive one delay of the domain apart.
+#[tokio::test]
+async fn native_scrapes_of_one_host_keep_the_delay_of_the_domain() {
+    let site = MockServer::start().await;
+    let arrivals = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = Arc::clone(&arrivals);
+    Mock::given(method("GET"))
+        .respond_with(move |_: &wiremock::Request| {
+            record.lock().expect("record").push(std::time::Instant::now());
+            ResponseTemplate::new(200).set_body_raw("<html><body><p>paced</p></body></html>", "text/html")
+        })
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        respect_robots_txt: false,
+        rate_limit_ms: Some(1500),
+        rate_limit_jitter_ratio: 0.0,
+        ..native_config(|c| c)
+    };
+    let engine = engine_with(config);
+    scrape(&engine, &format!("{}/first", site.uri())).await.expect("first");
+    scrape(&engine, &format!("{}/second", site.uri()))
+        .await
+        .expect("second");
+    let arrivals = arrivals.lock().expect("arrivals").clone();
+    assert_eq!(arrivals.len(), 2, "each page is asked for once");
+    let gap = arrivals[1].duration_since(arrivals[0]);
+    assert!(
+        gap >= Duration::from_millis(1300),
+        "the two pages must arrive about one delay of 1500 ms apart, got {gap:?}"
+    );
+}

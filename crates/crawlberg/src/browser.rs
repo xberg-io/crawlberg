@@ -956,6 +956,61 @@ mod tests {
         assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
     }
 
+    /// A rate limiter that records the domain of each turn it is asked for.
+    #[derive(Default)]
+    struct RecordedTurns(std::sync::Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl crate::traits::RateLimiter for RecordedTurns {
+        async fn acquire(&self, domain: &str) -> Result<(), CrawlError> {
+            self.0.lock().expect("turns").push(domain.to_owned());
+            Ok(())
+        }
+
+        async fn record_response(&self, _domain: &str, _status: u16) -> Result<(), CrawlError> {
+            Ok(())
+        }
+
+        async fn set_crawl_delay(&self, _domain: &str, _delay: Duration) -> Result<(), CrawlError> {
+            Ok(())
+        }
+    }
+
+    /// A native fetch waits for the turn of its domain once, before it asks for the page.
+    #[tokio::test]
+    async fn a_native_fetch_takes_one_turn_of_the_rate_limiter_for_its_host() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
+            .expect("single-worker executor should start");
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let turns = RecordedTurns::default();
+        browser_fetch(
+            &format!("{}/page", site.uri()),
+            &config,
+            None,
+            None,
+            false,
+            &turns,
+            Some(&executor),
+        )
+        .await
+        .expect("the page must load");
+        assert_eq!(*turns.0.lock().expect("turns"), ["127.0.0.1"]);
+    }
+
     /// A native fetch reads a page with the character set of the page, and says that its text is
     /// decoded, so nothing decodes it a second time.
     #[tokio::test]
