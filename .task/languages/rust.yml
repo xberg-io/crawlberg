@@ -154,6 +154,16 @@ tasks:
       - cmd: bash scripts/ci/rust/run-unit-tests.sh
         platforms: [linux, darwin]
 
+  test:windows-browser:
+    desc: Run Windows driver job tests and real Chrome lifecycle regressions
+    platforms: [windows]
+    preconditions:
+      - sh: powershell -NoProfile -Command 'if (-not (Test-Path -LiteralPath $env:CRAWLBERG_TEST_CHROME_PATH -PathType Leaf)) { exit 1 }'
+        msg: CRAWLBERG_TEST_CHROME_PATH must point to the installed Chrome executable
+    cmds:
+      - cargo test --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib -- --test-threads=1
+      - cargo test -p crawlberg --features browser,interact --test test_browser_profile_cleanup --test test_browser_pool_lifecycle -- --test-threads=1
+
   test:quick:
     desc: Run fast Rust tests (unit tests only)
     env:

@@ -15,6 +15,8 @@ More changes against upstream:
 - On Windows the browser process starts suspended, joins a job object with kill-on-close and is
   then resumed, so the system ends it and its helper processes with the launching process.
   `Child::tree` hands that job to the caller as a `ProcessTree`.
+  Member enumeration retries with a larger buffer instead of trusting partial results, and
+  teardown reports failure when membership cannot be queried or a member cannot be inspected.
 - The browser process gets the null device as its standard input. Upstream lets it inherit the
   caller's.
 

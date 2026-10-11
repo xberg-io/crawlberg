@@ -50,6 +50,8 @@ title: "Changelog"
 
 ### Fixed
 
+- Windows browser teardown no longer reports success when querying or inspecting job members fails.
+  Job member lists grow when Chrome has more processes than the initial buffer holds. (#659)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)
