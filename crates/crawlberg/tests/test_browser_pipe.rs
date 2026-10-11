@@ -222,3 +222,194 @@ async fn browser_firewall_keeps_child_requests_guarded_over_the_private_pipe() {
     assert!(page.ssrf_refused_urls.contains(&format!("{denied}/denied")));
     drop(engine);
 }
+
+/// The Chrome that an engine starts for a crawl, read from the process table by the directory of
+/// its profile. A process of its own runs the crawl, so that a test can end that process.
+#[cfg(feature = "browser")]
+mod engine_crawl {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    use super::test_chrome;
+
+    const HELPER: &str = "engine_crawl::crawl_owner_helper";
+    const MARKER: &str = "CRAWLBERG_PIPE_CRAWL_MARKER";
+
+    /// The processes whose command line names `dir`, each with its command line.
+    fn processes_naming(dir: &Path) -> Vec<(i32, String)> {
+        let table = std::process::Command::new("ps")
+            .args(["-A", "-ww", "-o", "pid=", "-o", "args="])
+            .output()
+            .expect("ps must be installed to read the process table");
+        assert!(table.status.success(), "ps must list the processes");
+        let dir = dir.to_str().expect("a UTF-8 directory");
+        String::from_utf8_lossy(&table.stdout)
+            .lines()
+            .filter(|line| line.contains(dir))
+            .filter_map(|line| {
+                let (pid, args) = line.trim_start().split_once(' ')?;
+                Some((pid.parse().ok()?, args.trim_start().to_owned()))
+            })
+            .collect()
+    }
+
+    /// The TCP sockets that the process `pid` listens on, as `lsof` prints them.
+    fn listening_sockets(pid: i32) -> String {
+        let sockets = std::process::Command::new("lsof")
+            .args(["-nP", "-a", "-p", &pid.to_string(), "-iTCP", "-sTCP:LISTEN"])
+            .output()
+            .expect("lsof must be installed to read the listening sockets");
+        String::from_utf8_lossy(&sockets.stdout).into_owned()
+    }
+
+    /// Stop the processes that still name `dir`. Each pid comes from the process table at this call.
+    fn stop_processes_naming(dir: &Path) {
+        for (pid, _) in processes_naming(dir) {
+            // SAFETY: the pid names a process that runs on the directory this test created. ~keep
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+    }
+
+    /// Start a process that scrapes one page in browser mode and then keeps its engine. The
+    /// profile of its Chrome is under `scratch`. Return when the scrape is done.
+    async fn start_crawl_owner(chrome: &Path, scratch: &Path) -> std::process::Child {
+        let marker = scratch.join("crawled");
+        let mut owner = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--ignored", "--exact", HELPER])
+            .env(MARKER, &marker)
+            .env("CHROME", chrome)
+            .env("TMPDIR", scratch)
+            .spawn()
+            .expect("crawl process");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !marker.exists() {
+            if owner.try_wait().expect("crawl process status").is_some() || Instant::now() >= deadline {
+                let _ = owner.kill();
+                let _ = owner.wait();
+                stop_processes_naming(scratch);
+                panic!("the crawl process must finish one scrape in browser mode");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        owner
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess helper of the tests that read the Chrome of a crawl"]
+    async fn crawl_owner_helper() {
+        use crawlberg::{BrowserMode, CrawlConfig, HostMatcher, create_engine, scrape};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let marker = std::env::var_os(MARKER).expect("marker path");
+        let chrome = std::env::var_os("CHROME").expect("CHROME");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("<html><body><h1>Owned</h1></body></html>", "text/html"),
+            )
+            .mount(&server)
+            .await;
+        let mut config = CrawlConfig::default();
+        config.ssrf.allowlist = vec![HostMatcher::exact("localhost")];
+        config.respect_robots_txt = false;
+        config.browser.mode = BrowserMode::Always;
+        config.browser.chrome_path = Some(chrome.into());
+        let engine = create_engine(Some(config)).expect("engine");
+        let page = scrape(&engine, &format!("{}/", server.uri().replace("127.0.0.1", "localhost")))
+            .await
+            .expect("scrape in browser mode");
+        assert!(page.html.contains("Owned"));
+        std::fs::write(marker, "done").expect("publish the marker");
+        let _keep_alive = (engine, server);
+        std::future::pending::<()>().await;
+    }
+
+    #[tokio::test]
+    async fn the_chrome_of_a_crawl_has_no_debugging_port_and_no_listening_socket() {
+        let Some(chrome) = test_chrome() else {
+            return;
+        };
+        let control = std::net::TcpListener::bind("127.0.0.1:0").expect("positive socket control");
+        let control_port = control.local_addr().expect("control address").port();
+        let own_pid = i32::try_from(std::process::id()).expect("pid fits");
+        assert!(
+            listening_sockets(own_pid).contains(&format!(":{control_port}")),
+            "lsof must show a listening socket that exists"
+        );
+        drop(control);
+
+        let scratch = tempfile::tempdir().expect("scratch directory");
+        let root = scratch.path().canonicalize().expect("scratch path");
+        let mut owner = start_crawl_owner(&chrome, &root).await;
+        let processes = processes_naming(&root);
+        let listening: Vec<String> = processes
+            .iter()
+            .map(|(pid, _)| listening_sockets(*pid))
+            .filter(|sockets| !sockets.is_empty())
+            .collect();
+        let _ = owner.kill();
+        let _ = owner.wait();
+        stop_processes_naming(&root);
+
+        let profile_flag = format!("--user-data-dir={}", root.display());
+        let browsers: Vec<&String> = processes
+            .iter()
+            .map(|(_, args)| args)
+            .filter(|args| args.contains(&profile_flag) && !args.contains("--type="))
+            .collect();
+        assert!(
+            !browsers.is_empty(),
+            "the process table must show the Chrome of the crawl by its profile directory: {processes:?}"
+        );
+        for args in browsers {
+            assert!(
+                args.contains("--remote-debugging-pipe"),
+                "the Chrome of a crawl must speak the protocol over a pipe: {args}"
+            );
+        }
+        for (_, args) in &processes {
+            assert!(
+                !args.contains("--remote-debugging-port"),
+                "no process of the crawl gets a debugging port: {args}"
+            );
+        }
+        assert!(
+            listening.is_empty(),
+            "no process of the crawl listens on a TCP port: {listening:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_chrome_of_a_crawl_is_left_after_its_process_is_killed() {
+        let Some(chrome) = test_chrome() else {
+            return;
+        };
+        for signal in [libc::SIGKILL, libc::SIGTERM] {
+            let scratch = tempfile::tempdir().expect("scratch directory");
+            let root = scratch.path().canonicalize().expect("scratch path");
+            let mut owner = start_crawl_owner(&chrome, &root).await;
+            let started = processes_naming(&root);
+            // SAFETY: the pid is the one of the live crawl process that this test started. ~keep
+            let sent = unsafe { libc::kill(i32::try_from(owner.id()).expect("pid fits"), signal) };
+            owner.wait().expect("reap the crawl process");
+            assert_eq!(sent, 0, "the crawl process must get signal {signal}");
+            assert!(
+                !started.is_empty(),
+                "the process table must show the Chrome of the crawl by its profile directory"
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let left = processes_naming(&root);
+                if left.is_empty() {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    stop_processes_naming(&root);
+                    panic!("signal {signal} ended the crawl process, and 10 s later its Chrome still runs: {left:?}");
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+    }
+}
