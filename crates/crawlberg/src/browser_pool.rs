@@ -2057,6 +2057,7 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 /// internally for each compatible binding engine, so downstream language clients do not
 /// manage a pool themselves.
 pub struct BrowserPool {
+    owner: u32,
     config: BrowserPoolConfig,
     state: Arc<Mutex<Option<BrowserState>>>,
     page_semaphore: Arc<Semaphore>,
@@ -2084,6 +2085,7 @@ impl BrowserPool {
     pub fn new(config: BrowserPoolConfig) -> Arc<Self> {
         let semaphore = Arc::new(Semaphore::new(config.max_pages));
         Arc::new(Self {
+            owner: std::process::id(),
             config,
             state: Arc::new(Mutex::new(None)),
             page_semaphore: semaphore,
@@ -2398,6 +2400,20 @@ impl BrowserPool {
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
             remote_warned: std::sync::Once::new(),
         })
+    }
+}
+
+impl Drop for BrowserPool {
+    fn drop(&mut self) {
+        if self.owner != std::process::id() {
+            // ~keep A fork inherits Tokio wakers, not its running reactor. Retain the copied
+            // ~keep resources so field drops cannot wake invalid I/O handles or tear down the
+            // ~keep parent's Chrome. Only child memory is leaked; the parent keeps its cleanup.
+            std::mem::forget(Arc::clone(&self.state));
+            std::mem::forget(Arc::clone(&self.page_semaphore));
+            #[cfg(test)]
+            std::mem::forget(self.hold_handler_end.clone());
+        }
     }
 }
 

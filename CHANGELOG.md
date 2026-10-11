@@ -61,6 +61,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
+  Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
+
 - A browser-pool fetch after a cancelled scrape could fail because cleanup closed its browser
   connection after the next fetch started. The next fetch now waits for that cleanup, replacing
   the browser when cleanup fails or stalls.

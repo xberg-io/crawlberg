@@ -4153,10 +4153,20 @@ fn a_pool_dropped_in_a_forked_process_leaves_its_parents_chrome_and_profile_dire
 
     let chrome_processes = chrome_process_count_for_profile(&path);
     let directory_there = path.is_dir();
+    let parent_page = runtime.block_on(async {
+        let pool = copy.as_ref().expect("the parent holds its pool");
+        let page = pool.acquire_page().await?;
+        page.close().await;
+        Ok::<_, CrawlError>(())
+    });
     if let Some(pool) = copy {
         runtime.block_on(pool.shutdown());
     }
     assert_eq!(status, 0, "the forked process must drop its copy of the pool and leave");
+    assert!(
+        parent_page.is_ok(),
+        "the parent must still open and close a page after its forked copy drops: {parent_page:?}"
+    );
     assert!(
         chrome_processes > 0,
         "a pool dropped in a forked process must leave the Chrome of the parent running"
