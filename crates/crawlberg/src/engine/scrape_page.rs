@@ -242,12 +242,7 @@ impl CrawlEngine {
 
         // ~keep This fetch does not go through `follow_redirects`, so it applies the rule of the
         // ~keep chain for a redirect that Chrome stopped on.
-        let landed = &page.response.final_url;
-        if let Some(error) = super::redirect::unfollowed_redirect_error(&page.response, landed, |target| {
-            [url, landed.as_str()]
-                .iter()
-                .any(|seen| url::Url::parse(seen).is_ok_and(|seen| seen == *target))
-        }) {
+        if let Some(error) = super::redirect::stopped_navigation_error(&page.response, url, &page.response.final_url) {
             return Err(error);
         }
 

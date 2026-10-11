@@ -65,8 +65,7 @@ All notable changes to crawlberg are documented here.
   scrape returned a result with status 302 and no text. It now fails with an SSRF policy
   violation whose reason is `redirect loop` or `redirect limit exceeded`, in HTTP mode and in
   browser mode, with or without a screenshot. A crawl reports the error for that address and no
-  page. `interact` still returns a result with no document, and each action fails with an error
-  that names the status. (#613)
+  page. `interact` with the chromiumoxide backend fails with the same error. (#613)
 - **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
   names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
   the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
