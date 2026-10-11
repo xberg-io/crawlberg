@@ -554,12 +554,21 @@ fn start_listed_chrome_reading(
     let mut child = config.command().kill_on_drop(false).spawn()?;
     let launched = child.inner.id().and_then(read);
     if launched.is_none() && child.tree().is_none() {
+        // ~keep A Chrome that has ended is no longer shown on macOS. Its exit is the cause of
+        // ~keep the failed launch then, not the read.
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(std::io::Error::other(format!(
+                "the Chrome that was started ended at once ({status})"
+            )));
+        }
         let outcome = match child.inner.start_kill() {
             Ok(()) => "it was stopped right after its start".to_owned(),
             Err(error) => format!("it can still run, because the attempt to stop it failed: {error}"),
         };
         return Err(std::io::Error::other(format!(
-            "the process table does not show the Chrome that was started, so it could not be stopped later; {outcome}"
+            "the process table does not show the Chrome that was started, so it could not be stopped later; {outcome}. \
+             On Linux, run this program where the `/proc` of its own process id namespace is mounted. \
+             On macOS, let the sandbox profile allow this program to read process information."
         )));
     }
     if let Some(profile) = profiles.get_mut(dir) {
@@ -600,18 +609,21 @@ extern "C" fn tear_down_live_profiles() {
         let Some(list) = listed_profiles() else {
             return;
         };
-        let held = lock_within(list, PROFILE_LIST_EXIT_WAIT);
-        if held.is_none() {
-            tracing::warn!(
-                "the list of Chrome profiles stayed locked at exit; a Chrome still running is left with its profile directory"
-            );
-        }
-        let left = held
-            .map(|profiles| live_profile_teardowns_of(&profiles, std::process::id()))
-            .unwrap_or_default();
         // ~keep Each teardown runs as it drops, after the lock is released.
-        drop(left);
+        drop(teardowns_at_exit(list, PROFILE_LIST_EXIT_WAIT));
     });
+}
+
+/// The teardowns of the exit hook: one for each directory that this process still lists in
+/// `list`. None, with a warning, when the list stays locked for `wait`.
+fn teardowns_at_exit(list: &ProfileList, wait: Duration) -> Vec<ProfileTeardown> {
+    let Some(profiles) = lock_within(list, wait) else {
+        tracing::warn!(
+            "the list of Chrome profiles stayed locked at exit; a Chrome still running is left with its profile directory"
+        );
+        return Vec::new();
+    };
+    live_profile_teardowns_of(&profiles, std::process::id())
 }
 
 impl ScratchProfileDir {
@@ -1003,44 +1015,92 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
     }
 }
 
-/// The process a launch started: its process id with the time the process started.
+/// The process a launch started: its process id with its start mark ([`start_mark`]).
 ///
 /// ~keep The system gives the id of a reaped process to a new one, and the teardown of a Chrome
 /// ~keep that ended early then stopped another child of this program (xberg-io/crawlberg#657).
-/// ~keep The start time tells the two apart on Linux, macOS and Windows alike, so one comparison
-/// ~keep serves all three. A pidfd pins a process only on Linux, and the family below it is still
-/// ~keep found by process id. The start time has a resolution of 1 second: a child that gets the
-/// ~keep id in the second in which the launched process started is not told apart.
+/// ~keep The start mark tells the two apart. A pidfd pins a process only on Linux, and the family
+/// ~keep below it is still found by process id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LaunchedProcess {
     pid: u32,
-    /// The start time of the process, as sysinfo reports it: seconds since the epoch.
+    /// The start mark of the process.
     started: u64,
 }
 
 impl LaunchedProcess {
-    /// The process that has the id `pid` now. `None` when the process table does not show it.
+    /// The process that has the id `pid` now. `None` when the system does not show it.
     fn of(pid: u32) -> Option<Self> {
-        let process = Pid::from_u32(pid);
-        let mut system = System::new();
-        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[process]));
-        system.process(process).map(|found| Self {
-            pid,
-            started: found.start_time(),
-        })
+        Self::of_reading(pid, start_mark)
     }
 
-    /// Whether `process` is this one, not a later process with the same id.
-    fn is(self, process: &Process) -> bool {
-        process.pid() == Pid::from_u32(self.pid) && process.start_time() == self.started
+    /// [`LaunchedProcess::of`], with the start mark read through `start`.
+    fn of_reading(pid: u32, start: impl FnOnce(u32) -> Option<u64>) -> Option<Self> {
+        start(pid).map(|started| Self { pid, started })
     }
+
+    /// Whether the process that has the id now is this one, not a later process with the same
+    /// id. `start` reads the start mark.
+    fn has_its_pid(self, start: impl FnOnce(u32) -> Option<u64>) -> bool {
+        start(self.pid) == Some(self.started)
+    }
+}
+
+/// The start mark of the process `pid`: a number that the system fixes when the process starts
+/// and that no later process with the same id has. `None` when the system does not show the
+/// process.
+///
+/// ~keep On Linux the mark is the start of the process in clock ticks since the boot. It is not
+/// ~keep the start time that sysinfo reports: sysinfo adds the boot time to it, which it reads
+/// ~keep from the `btime` line of `/proc/stat` on every call, and the kernel moves that line with
+/// ~keep every step of the wall clock (a time sync, a resumed virtual machine). After a step no
+/// ~keep Chrome that was started before it matched its record, and the teardown stopped none.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn start_mark(pid: u32) -> Option<u64> {
+    start_ticks_under(std::path::Path::new("/proc"), pid)
+}
+
+/// The start mark of the process `pid`: a number that the system fixes when the process starts
+/// and that no later process with the same id has. `None` when the system does not show the
+/// process.
+///
+/// ~keep macOS and Windows keep the wall-clock time of the start with the process, and sysinfo
+/// ~keep reports it as it is, in seconds: a later step of the clock does not change it. A child
+/// ~keep that gets the id in the second in which the launched process started is not told apart.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn start_mark(pid: u32) -> Option<u64> {
+    let process = Pid::from_u32(pid);
+    let mut system = System::new();
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[process]));
+    system.process(process).map(Process::start_time)
+}
+
+/// The start of the process `pid` in clock ticks since the boot, read from the process files
+/// under `proc`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn start_ticks_under(proc: &std::path::Path, pid: u32) -> Option<u64> {
+    let stat = std::fs::read(proc.join(pid.to_string()).join("stat")).ok()?;
+    start_ticks(&stat)
+}
+
+/// Field 22 of a `/proc/<pid>/stat` line: the start of the process in clock ticks since the
+/// boot.
+///
+/// ~keep Field 2 is the name of the program in parentheses, and the name can hold spaces and
+/// ~keep parentheses of its own. No later field can, so the fields are counted from the last `)`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn start_ticks(stat: &[u8]) -> Option<u64> {
+    let name_end = stat.iter().rposition(|byte| *byte == b')')?;
+    let after_name = std::str::from_utf8(stat.get(name_end + 1..)?).ok()?;
+    // ~keep The first field after the name is field 3.
+    after_name.split_ascii_whitespace().nth(22 - 3)?.parse().ok()
 }
 
 /// Stop the launched process of the directory `dir` and every process below it, and wait
 /// until each has ended, with all its threads.
 ///
-/// ~keep The processes are found through their parent, from `pid` down, and each is stopped as it
-/// ~keep is found, as for an explicit kill ([`ChromeFamily`]). A scan for the directory's flag
+/// ~keep The processes are found through their parent, from the launched process down, and each
+/// ~keep is stopped as it is found, as for an explicit kill ([`ChromeFamily`]). A scan for the directory's flag
 /// ~keep misses processes. The helpers of the Chromium headless shell do not carry the flag, so
 /// ~keep after a dropped engine nothing waited for them, and under load one wrote into the
 /// ~keep directory after its removal (6 of 40 runs). A process that is replacing its program, as
@@ -1050,13 +1110,24 @@ impl LaunchedProcess {
 /// ~keep and a live child of this process: once it is reaped, the number can belong to another
 /// ~keep process, also to another child of this one.
 fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) {
+    stop_launched_family_reading(dir, launched, start_mark);
+}
+
+/// [`stop_launched_family`], with the start mark of the process read through `start`.
+fn stop_launched_family_reading(
+    dir: &std::path::Path,
+    launched: LaunchedProcess,
+    start: impl FnOnce(u32) -> Option<u64>,
+) {
     let pid = Pid::from_u32(launched.pid);
     let mut system = System::new();
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
     let this_process = Pid::from_u32(std::process::id());
-    if !system.process(pid).is_some_and(|process| {
-        launched.is(process) && process.parent() == Some(this_process) && ChromeFamily::is_running(&system, pid)
-    }) {
+    if !(launched.has_its_pid(start)
+        && system
+            .process(pid)
+            .is_some_and(|process| process.parent() == Some(this_process) && ChromeFamily::is_running(&system, pid)))
+    {
         return;
     }
     let family = ChromeFamily::freeze(launched.pid);

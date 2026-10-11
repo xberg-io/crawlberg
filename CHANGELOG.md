@@ -195,7 +195,11 @@ All notable changes to crawlberg are documented here.
   them when the process ends in any way. (#594)
 - On Linux and macOS a browser launch fails with an error when the process table does not show
   the Chrome it started, and it stops that Chrome at once. Without that entry the engine cannot
-  stop the Chrome later, and the Chrome ran on after its engine was gone. (#594)
+  stop the Chrome later, and the Chrome ran on after its engine was gone. The error says what to
+  do: on Linux, run the program where the `/proc` of its own process id namespace is mounted; on
+  macOS, let the sandbox profile allow the program to read process information. A Chrome that
+  ended at once is reported with its exit status instead. The engine knows its Chrome by the
+  process id and a start value that a later change of the system clock does not move. (#594)
 - On Windows a program that captures the output of a crawling child process returns when that
   child has exited. A Chrome the child left running kept the output pipes open.
 - Chrome no longer gets the standard input of the process that launched it.

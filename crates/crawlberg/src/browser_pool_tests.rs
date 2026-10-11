@@ -4247,7 +4247,7 @@ fn a_browser_killed_in_a_forked_process_leaves_its_parents_chrome_and_profile_di
 /// stopped by a signal on the way (xberg-io/crawlberg#657).
 ///
 /// ~keep The `sleep` is a live child of this process, so the parent test passes for it. The
-/// ~keep recorded start time is one second before its own: it stands for the Chrome that had the
+/// ~keep recorded start mark is one less than its own: it stands for the Chrome that had the
 /// ~keep id first, ended and was reaped.
 #[cfg(unix)]
 #[test]
@@ -4275,7 +4275,7 @@ fn the_teardown_leaves_a_child_that_got_the_pid_of_the_launched_process() {
     let _ = reuser.wait();
     assert!(
         now.is_some(),
-        "the start time of the child must be readable, or the test shows nothing"
+        "the start mark of the child must be readable, or the test shows nothing"
     );
     assert_eq!(
         (runs_after, stopped_after),
@@ -4438,14 +4438,21 @@ fn a_link_to_a_bundled_executable_names_the_bundle_once_followed() {
 /// whatever its arguments. The script lies in the returned directory.
 #[cfg(unix)]
 fn a_listed_launch_of_a_sleeping_script(prefix: &str) -> (tempfile::TempDir, ScratchProfileDir, BrowserConfig) {
+    a_listed_launch_of_a_script(prefix, "#!/bin/sh\nexec sleep 300\n")
+}
+
+/// A profile directory and the config of a launch on it whose "Chrome" is a script with `text`.
+/// The script lies in the returned directory.
+#[cfg(unix)]
+fn a_listed_launch_of_a_script(prefix: &str, text: &str) -> (tempfile::TempDir, ScratchProfileDir, BrowserConfig) {
     use std::os::unix::fs::PermissionsExt as _;
 
     let root = tempfile::Builder::new()
         .prefix(prefix)
         .tempdir()
         .expect("the directory of the script must be creatable");
-    let script = root.path().join("chrome-that-sleeps.sh");
-    std::fs::write(&script, "#!/bin/sh\nexec sleep 300\n").expect("the script must be writable");
+    let script = root.path().join("chrome-stand-in.sh");
+    std::fs::write(&script, text).expect("the script must be writable");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("the script must be executable");
     let dir = ScratchProfileDir::create(prefix, None).expect("the directory must be creatable");
     let config = BrowserConfig::builder()
@@ -4476,7 +4483,7 @@ fn ended_within_the_wait(pid: u32) -> bool {
 }
 
 /// A launch whose process the process table does not show stops that process through its handle
-/// and fails. Recorded with no start time, the process was one that no teardown stopped: the
+/// and fails. Recorded with no start mark, the process was one that no teardown stopped: the
 /// binding's Chrome ran on after its engine was gone (xberg-io/crawlberg#594).
 ///
 /// ~keep The read is made to fail here; the process is a script that sleeps, with no process tree.
@@ -4511,8 +4518,10 @@ async fn a_launch_whose_process_cannot_be_read_stops_it_and_fails() {
     assert!(
         error
             .as_deref()
-            .is_some_and(|error| error.contains("it was stopped right after its start")),
-        "the launch must fail and say that the Chrome was stopped, got {error:?}"
+            .is_some_and(|error| error.contains("it was stopped right after its start")
+                && error.contains("On Linux, run this program where the `/proc` of its own process id namespace")
+                && error.contains("On macOS, let the sandbox profile allow")),
+        "the launch must fail, say that the Chrome was stopped and name what the user can do, got {error:?}"
     );
     assert_eq!(
         recorded,
@@ -4522,7 +4531,7 @@ async fn a_launch_whose_process_cannot_be_read_stops_it_and_fails() {
     assert!(!path.exists(), "the teardown must still remove the directory");
 }
 
-/// A launch records the process it started, with its start time, in the list and for its caller,
+/// A launch records the process it started, with its start mark, in the list and for its caller,
 /// and the teardown of the directory stops that process.
 #[cfg(unix)]
 #[tokio::test]
@@ -4548,6 +4557,170 @@ async fn a_launch_records_the_process_it_started_and_the_teardown_stops_it() {
     assert_eq!(listed, launched, "the list must hold the same process");
     assert_eq!(ended, Some(true), "the teardown must stop the recorded process");
     assert!(!path.exists(), "the teardown must remove the directory");
+}
+
+/// The teardown still knows the launched process after the boot time of the system has moved, as
+/// it does with every step of the wall clock, and stops it. A start time that holds the boot
+/// time no longer matched its record, and the teardown left the Chrome running
+/// (xberg-io/crawlberg#594).
+///
+/// ~keep A step of the clock needs privileges, so the process files are a copy that the test
+/// ~keep owns: the `stat` file of a live child, and a `stat` file of the system whose `btime`
+/// ~keep line moves by 90 seconds between the record and the teardown.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_teardown_stops_the_launched_process_after_the_boot_time_moved() {
+    let mut chrome = std::process::Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("sleep must start");
+    let pid = chrome.id();
+    let files = tempfile::Builder::new()
+        .prefix("crawlberg-moved-boot-time-test-")
+        .tempdir()
+        .expect("the directory of the process files must be creatable");
+    let of_the_process = files.path().join(pid.to_string());
+    std::fs::create_dir(&of_the_process).expect("the directory of the process must be creatable");
+    std::fs::copy(format!("/proc/{pid}/stat"), of_the_process.join("stat")).expect("the child must be readable");
+    let of_the_system = files.path().join("stat");
+    std::fs::write(&of_the_system, "cpu  1 2 3 4\nbtime 1700000000\n").expect("the boot time must be writable");
+    let start = |pid: u32| start_ticks_under(files.path(), pid);
+
+    let recorded = LaunchedProcess::of_reading(pid, start);
+    std::fs::write(&of_the_system, "cpu  1 2 3 4\nbtime 1700000090\n").expect("the boot time must be writable");
+    if let Some(recorded) = recorded {
+        stop_launched_family_reading(files.path(), recorded, start);
+    }
+
+    let ended = ended_within_the_wait(pid);
+    let _ = chrome.kill();
+    let _ = chrome.wait();
+    assert!(
+        recorded.is_some(),
+        "the copied process file must be readable, or the test shows nothing"
+    );
+    assert!(
+        ended,
+        "the teardown must stop the launched process after the boot time has moved"
+    );
+}
+
+/// The start ticks are field 22 of the process's `stat` line, counted from the end of the program
+/// name: a name with spaces and parentheses of its own moves no field.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_start_ticks_are_read_after_a_program_name_with_spaces_and_parentheses() {
+    let after_name = "S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 424242 20 21";
+
+    assert_eq!(
+        start_ticks(format!("77 (chrome) {after_name}").as_bytes()),
+        Some(424_242)
+    );
+    assert_eq!(
+        start_ticks(format!("77 (a) b (c) 1 2 3 4 5 6 7 8 9) {after_name}").as_bytes()),
+        Some(424_242)
+    );
+    assert_eq!(
+        start_ticks(b"77 (chrome) S 1 2"),
+        None,
+        "a line that ends early has no field 22"
+    );
+    assert_eq!(start_ticks(b"77 chrome S 1 2"), None, "a line with no name is not read");
+}
+
+/// A launch whose Chrome has ended before its process is read reports that exit, with its status.
+/// macOS no longer shows such a process, and the launch then said that the process table does not
+/// show the Chrome, which hid the cause.
+///
+/// ~keep The read waits here until the script has ended, and then finds no process.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_launch_whose_chrome_ended_before_the_read_reports_its_exit() {
+    let (_root, mut dir, config) = a_listed_launch_of_a_script("crawlberg-ended-launch-test-", "#!/bin/sh\nexit 3\n");
+    let path = dir.path().to_path_buf();
+    let mut ended = None;
+
+    let outcome = start_listed_chrome_reading(&path, &config, |pid| {
+        ended = Some(ended_within_the_wait(pid));
+        None
+    });
+
+    let error = match outcome {
+        Ok((mut child, _)) => {
+            let _ = child.inner.start_kill();
+            None
+        }
+        Err(error) => Some(error.to_string()),
+    };
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(dir.0.take());
+    assert_eq!(
+        ended,
+        Some(true),
+        "the script must have ended before the read returns, or the test shows nothing"
+    );
+    assert!(
+        error.as_deref().is_some_and(|error| error.contains("ended at once")
+            && error.contains("exit status: 3")
+            && !error.contains("process table")),
+        "the launch must fail with the exit of its Chrome, got {error:?}"
+    );
+}
+
+/// What the test's subscriber prints, for [`the_exit_hook_warns_when_the_list_stays_locked`].
+struct PrintedLines(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for PrintedLines {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut lines = match self.0.lock() {
+            Ok(lines) => lines,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        lines.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The exit hook waits for the list of live profiles only for its limit. When the list stays
+/// locked, it tears down nothing and warns that a Chrome can be left.
+///
+/// ~keep The list is one of the test's own, held by the test's thread, so the hook's wait runs
+/// ~keep on another thread, with a subscriber that keeps what it prints.
+#[test]
+fn the_exit_hook_warns_when_the_list_stays_locked() {
+    let list = ProfileList::default();
+    let printed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = Arc::clone(&printed);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || PrintedLines(Arc::clone(&writer)))
+        .finish();
+
+    let held = list.lock().expect("a new list is free");
+    let waited_from = std::time::Instant::now();
+    let left = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tracing::subscriber::with_default(subscriber, || teardowns_at_exit(&list, PROFILE_LIST_EXIT_WAIT).len())
+            })
+            .join()
+    });
+    let waited = waited_from.elapsed();
+    drop(held);
+
+    let printed = String::from_utf8_lossy(&printed.lock().expect("the writer does not panic")).into_owned();
+    assert_eq!(left.ok(), Some(0), "a locked list gives the hook no teardown");
+    assert!(
+        waited >= PROFILE_LIST_EXIT_WAIT,
+        "the hook must wait for the list for its limit, waited {waited:?}"
+    );
+    assert!(
+        printed.contains("the list of Chrome profiles stayed locked at exit"),
+        "the hook must warn that the list stayed locked, printed {printed:?}"
+    );
 }
 
 #[tokio::test]
