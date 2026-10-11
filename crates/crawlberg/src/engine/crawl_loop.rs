@@ -712,8 +712,8 @@ impl CrawlEngine {
         }
     }
 
-    /// Emit the error events for a fetch that failed before it produced a page.
-    async fn report_fetch_error(&self, url: &str, error: &CrawlError, context: &LoopContext<'_>) {
+    /// Emit the error events for a page that failed: its fetch, or the conversion of its body.
+    pub(super) async fn report_fetch_error(&self, url: &str, error: &CrawlError, context: &LoopContext<'_>) {
         self.event_emitter
             .on_error(&ErrorEvent {
                 url: url.to_owned(),

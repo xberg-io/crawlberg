@@ -271,6 +271,19 @@ pub enum CrawlError {
         #[source]
         source: Option<ErrorSource>,
     },
+    /// The page was fetched but could not be converted to Markdown.
+    ///
+    /// A crawl event and a batch item carry an error as text only. There, the text starts with
+    /// `conversion_failed:`, and that tag is stable.
+    #[error("conversion_failed: {message}")]
+    ConversionFailed {
+        /// Human-readable description of the failure. It names the page and the cause.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The browser failed to launch, connect, or navigate.
     #[error("browser: {message}")]
     BrowserError {
@@ -348,6 +361,7 @@ message_constructors! {
     Dns => (dns, dns_with_source),
     Ssl => (ssl, ssl_with_source),
     DataLoss => (data_loss, data_loss_with_source),
+    ConversionFailed => (conversion_failed, conversion_failed_with_source),
     BrowserError => (browser_error, browser_error_with_source),
     BrowserTimeout => (browser_timeout, browser_timeout_with_source),
     InvalidConfig => (invalid_config, invalid_config_with_source),

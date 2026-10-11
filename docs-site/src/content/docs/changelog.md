@@ -20,6 +20,17 @@ title: "Changelog"
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
 
+### Added
+
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. In PHP the text starts with
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+
 ### Changed
 
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
@@ -50,6 +61,9 @@ title: "Changelog"
 
 ### Fixed
 
+- With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
+  kept for a site failed at once with a browser error: every second fetch of the site. The engine
+  closed the page it kept. The kept page now serves the next fetch. (#653)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)
@@ -91,6 +105,70 @@ title: "Changelog"
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- With `cookies_enabled`, a new engine in HTTP mode sent the cookies that an earlier engine with
+  the same configuration had received. A program that makes one engine for each user sent the
+  session cookie of one user in the crawl of the next user. Each engine now has its own cookie
+  store, and a new engine starts with no cookie. One engine still sends the cookies it received
+  on its later requests. This changes the behaviour of a program that relied on two engines
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. The type is read without case and without its parameters,
+  so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
+  counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
+  starts as HTML is a page with any declared type, `application/json` included. A response of
+  another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
+  and a response that `download_documents` keeps as a document, is a result with no `markdown`
+  when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
+- A browser command no longer waits for its full timeout after Chrome closes the DevTools
+  connection. The command fails at once, and a browser pool that is dropped lets go of its
+  Chrome.
+- A stop of the SSRF check turns request interception off again on a browser that crawlberg
+  launched, and on a `browser.endpoint` browser after the last refusal is delivered. Before,
+  interception stayed on with nothing to answer, and every other tab of that browser waited
+  without end. A browser that crawlberg kills when it is done, and a check that runs in the
+  default context of the browser, keep interception on, as before.
+- A popup that a page opens while its SSRF check ends is closed, and the page stays usable for
+  the next check. Before, the browser session failed, or the close of the popup's tab closed
+  the page with it.
+- Known limit: a script that calls `window.open` directly at the moment the SSRF check of its
+  page ends gets no answer after the popup is closed, and that page runs no further script
+  (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
+  gets past the check, the next check of the page still starts and ends, and other tabs are
+  not affected. A `window.open` from a timer or an event handler does not block its page.
 - An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
   profile directory is removed, when the last clone of the engine handle is dropped, and when the
   process exits through the C runtime with an engine still alive or with its Chrome still

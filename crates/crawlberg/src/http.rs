@@ -20,7 +20,7 @@ use crate::types::CrawlConfig;
 
 pub(crate) use body::{effective_max_body_size, read_body_bounded, truncate_body_at_char_boundary};
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
-pub(crate) use client::{build_client, request_client};
+pub(crate) use client::{build_client, request_client, send_with_cookies};
 pub(crate) use headers::build_headers_map;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
@@ -606,7 +606,9 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(k.as_str(), v.as_str());
     }
 
-    req.send().await.map_err(classify_reqwest_error)
+    send_with_cookies(req, context.config)
+        .await
+        .map_err(classify_reqwest_error)
 }
 
 /// Resolve a 3xx response's `Location` header against the URL that served it.
