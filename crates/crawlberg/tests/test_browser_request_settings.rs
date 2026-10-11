@@ -79,7 +79,7 @@ async fn should_space_browser_requests_to_the_same_domain() {
         .mount(&site)
         .await;
     let mut settings = config();
-    settings.rate_limit_ms = Some(2000);
+    settings.rate_limit_ms = Some(1200);
     settings.rate_limit_jitter_ratio = 0.0;
     let engine = create_engine(Some(settings)).expect("engine");
     let first_url = format!("{}/first", site.uri());
@@ -91,11 +91,11 @@ async fn should_space_browser_requests_to_the_same_domain() {
     assert_eq!(arrivals.len(), 2, "each page is asked for once");
     // ~keep The delay runs from the moment a fetch gets its turn, not from the arrival of its
     // ~keep request. The first page of a new Chrome takes longer to send, so the gap at the
-    // ~keep server is a little under the delay: 57 to 107 ms under it in three measured runs.
+    // ~keep server can be a little under the delay.
     let gap = arrivals[1].duration_since(arrivals[0]);
     assert!(
-        gap >= Duration::from_millis(1700),
-        "the two pages must arrive about one delay of 2000 ms apart, got {gap:?}"
+        gap >= Duration::from_millis(1100),
+        "the two pages must arrive about one delay of 1200 ms apart, got {gap:?}"
     );
     let mut pages = paths_the_page_asked_for(&site).await;
     pages.sort();
