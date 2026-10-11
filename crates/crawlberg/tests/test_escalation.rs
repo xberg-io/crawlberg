@@ -33,6 +33,7 @@ impl CountingMockProvider {
                 content_type: "text/html".into(),
                 body: format!("<html><body>{body}</body></html>"),
                 body_bytes: format!("<html><body>{body}</body></html>").into_bytes(),
+                body_kind: crawlberg::BypassBody::Bytes,
                 headers: Default::default(),
                 final_url: String::new(),
                 cost_usd: Some(0.0015),

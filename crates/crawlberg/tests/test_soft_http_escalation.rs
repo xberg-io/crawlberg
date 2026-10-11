@@ -23,6 +23,7 @@ impl BypassProvider for CountingBypass {
             status: 200,
             content_type: "text/html".into(),
             body_bytes: body.clone().into_bytes(),
+            body_kind: crawlberg::BypassBody::Bytes,
             body,
             headers: Default::default(),
             final_url: String::new(),

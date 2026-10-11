@@ -119,7 +119,7 @@ for entry in &results.results {
 }
 ```
 
-`batch_crawl` respects the same `max_concurrent` limit across all seed URLs. It returns `BatchCrawlResults`, an aggregate object with `results`, `total_count`, `completed_count`, and `failed_count`. Each entry in `results` is a `BatchCrawlResult` with either a populated `result` or an `error` message.
+`batch_crawl` respects the same `max_concurrent` limit across all seed URLs. It returns `BatchCrawlResults`, an aggregate object with `results`, `total_count`, `completed_count`, and `failed_count`. Each entry in `results` is a `BatchCrawlResult` with either a populated `result` or an `error` message. An error message starts with the stable tag of the error, for example `conversion_failed:` for a page that was fetched but not converted to Markdown.
 
 There is also `batch_scrape` for scraping multiple individual URLs without link following:
 

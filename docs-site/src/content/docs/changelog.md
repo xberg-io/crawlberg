@@ -4,6 +4,131 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
+  `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
+  `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
+  browser rendered. A `BypassResponse { .. }` literal does not compile until it sets the field.
+- **`crawlberg-browser`: `NativeBrowserConfig` and `RenderedPage` each have a new public field**,
+  `document_decoder` and `charset`, and the crate has a new public type, `DocumentDecoder`. A
+  struct literal that names every field must add the new one; `..NativeBrowserConfig::default()`
+  needs no change.
+- **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
+  the entry as it gets it needs no change. A cache entry that an earlier release stored is not
+  served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
+  entries must set `decoded` to `true` for a body it stored as decoded text:
+  `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+
+### Added
+
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. In PHP the text starts with
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+
+### Changed
+
+- **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
+  and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
+  both. Before, it requested the one it met first and never requested the other.
+  `CrawlPageResult.normalized_url` keeps the trailing slash of the address, and `map` lists both
+  addresses. A site that serves the same content at both addresses now gives two pages where it
+  gave one, and each of the two counts against `max_pages`. When one form redirects to the other,
+  the crawl reports one page. For each such pair it sends one more request in HTTP mode, and up
+  to two more in browser mode and in the sequential loop of the wasm build. To merge two pages,
+  compare them in your own code. (#607)
+- `CrawlPageResult.normalized_url` writes percent-encoding in one form, as RFC 3986 section 6.2.2
+  states it: an escape of a letter, a digit, `-`, `.`, `_` or `~` is decoded, and the hex digits of
+  every other escape are in upper case. `/a%2db` is reported as `/a-b`, and `/caf%c3%a9` as
+  `/caf%C3%A9`. (#615)
+- `LinkInfo.link_type` is decided against the address of the page, not against its `<base>`
+  address. `anchor` is a link that has a fragment and names the page it is on, however the link
+  is written. `external` is a link to another host than the page's host.
+- With `dedup_include_query`, a crawl keeps each query parameter as it is written. It sorts the
+  parameters by name and keeps the order of the values of one name. Before, it decoded each
+  parameter and encoded it again, so `?a=1&a=2` and `?a=2&a=1`, `?a` and `?a=`, and `?q=a+b` and
+  `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
+  `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
+  way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
+- `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
+  declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
+  longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
+
+### Fixed
+
+- A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
+  `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
+  An escape of a reserved character, such as `%2F`, still names its own page. (#615)
+- A crawl did not follow a link that is only a fragment, such as `#part`, on a page whose
+  `<base>` address is another document. The link names that other document, and the crawl now
+  requests it. `map` lists it too. (#616)
+- A crawl dropped a linked page that redirects to another address of the same page, and every
+  page behind it. A link to `/docs` that answers a redirect to `/docs/` gave one request, no
+  page and no error. The crawl now follows the redirect and reads the links of the page it
+  lands on, in HTTP mode and in browser mode. The same holds for a redirect to another
+  percent-encoded spelling of the address, and for a redirect that adds a query. A redirect to
+  a page the crawl already has from another link is still not requested again. (#629)
+- The sequential crawl loop of the wasm build reported a page two times when a link and a
+  redirect both reached it, for example a folder linked as `/docs` and as `/docs/` where the
+  first redirects to the second. It now reports the page one time, and it does not request a
+  page again that it first reached through a redirect.
+- The Python package sometimes printed `RuntimeError: _crawlberg::CrawlEngineHandle is
+  unsendable, but is being dropped on another thread` on stderr after an async call, and the
+  engine was then never freed: its connections and its browser stayed until the process ended.
+  The engine handle is now a class that any thread can release. (#641)
+- Read a page with the character set a browser uses for it. In HTTP mode a page that declares no
+  character set and is not UTF-8 came back with replacement characters; its encoding is now detected
+  from its bytes. The sources are read in the order of the HTML standard: a byte-order mark, the
+  `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
+  comment or in the text of the page no longer counts as a declaration, an unknown label no longer
+  stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+  Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
+  holds a few bytes that are not UTF-8. An undeclared Shift_JIS, EUC-JP, EUC-KR, GBK or Big5 page
+  that a size limit cut inside its last character keeps its encoding. JSON is read as UTF-8. Only
+  HTML is searched for a `<meta>` tag, and only its first 1 MiB.
+- Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
+  other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
+  decoded text was decoded again by that tag. `detected_charset` now reports the character set the
+  browser used.
+- Keep the text a bypass vendor decoded. A provider that reads the page from a JSON field (Zyte's
+  `browserHtml`) returns text; it was decoded again by the `<meta>` tag of the page.
+- Read a page with its character set on the native browser backend. It read every document as
+  UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
+  mode.
+- Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
+  letters. The entry now holds the decoded text and its character set.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. The type is read without case and without its parameters,
+  so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
+  counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
+  starts as HTML is a page with any declared type, `application/json` included. A response of
+  another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
+  and a response that `download_documents` keeps as a document, is a result with no `markdown`
+  when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
+
 ## [1.10.2] - 2026-10-06
 
 ### Changed

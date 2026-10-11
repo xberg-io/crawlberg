@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
-use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
+use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup, media_type_essence};
 use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
@@ -181,7 +181,7 @@ async fn urls_from_direct_response(
     config: &CrawlConfig,
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
-    let is_xml = resp.content_type.contains("xml") || resp.body.trim_start().starts_with("<?xml");
+    let is_xml = media_type_essence(&resp.content_type).contains("xml") || resp.body.trim_start().starts_with("<?xml");
 
     if is_gzip(&resp.body_bytes)
         && let Ok(decompressed) = decompress_gzip(&resp.body_bytes)
@@ -228,9 +228,9 @@ async fn urls_from_direct_response(
 }
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
-/// normalized URL. Anchor-only links are not URLs of their own and are skipped.
+/// normalized URL. A link to a place on the page itself is not a URL of its own and is skipped.
 fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(page, &effective_base_url(page.base_href.as_deref(), parsed_url));
+    let links = extract_links(page, parsed_url);
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
@@ -413,6 +413,83 @@ mod tests {
             .respond_with(response)
             .mount(mock)
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_sitemap_served_with_its_type_in_any_case_and_with_parameters_is_read() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        // No XML prologue: only the declared type says this body is a sitemap.
+        let body = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        // Not a well-known path: the well-known probe would read it without the direct fetch.
+        // Sent as bytes: a string body makes the mock replace the declared type with text/plain.
+        mount_bytes(
+            &mock,
+            "/feeds/main.xml",
+            "Application/XML; charset=utf-8",
+            body.into_bytes(),
+        )
+        .await;
+
+        let result = map(&format!("{base}/feeds/main.xml"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            locs,
+            "a media type has no case: Application/XML is a sitemap type"
+        );
+    }
+
+    /// The direct fetch of a URL that is not well-known reads a body with no XML prologue as a
+    /// sitemap only when its type says XML. The well-known `/sitemap.xml` is a sitemap by its
+    /// name, so there the body decides and the type is not read.
+    #[tokio::test]
+    async fn a_sitemap_with_no_prologue_is_read_by_its_type_at_a_direct_url_and_by_its_body_at_the_well_known_url() {
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        let bare = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        let none: Vec<String> = Vec::new();
+        for (route, content_type, expected, why) in [
+            (
+                "/feeds/main.xml",
+                "text/plain; name=sitemap.xml",
+                &none,
+                "a parameter that names xml is not the type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/octet-stream",
+                &none,
+                "the direct fetch reads a sitemap with no prologue only by its type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/xml; name=notes.txt",
+                &locs,
+                "the type says XML, whatever its parameters say",
+            ),
+            (
+                "/sitemap.xml",
+                "text/plain; name=sitemap.xml",
+                &locs,
+                "the well-known sitemap is read by its body",
+            ),
+        ] {
+            let mock = MockServer::start().await;
+            mount_bytes(&mock, route, content_type, bare.clone().into_bytes()).await;
+
+            let result = map(&format!("{}{route}", mock.uri()), &local_test_config())
+                .await
+                .expect("map should succeed");
+
+            assert_eq!(
+                &result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+                expected,
+                "{route} served as {content_type}: {why}"
+            );
+        }
     }
 
     fn page_urls(base: &str, count: usize) -> Vec<String> {

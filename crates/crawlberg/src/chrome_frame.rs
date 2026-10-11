@@ -153,6 +153,14 @@ pub(crate) async fn page_content(page: &chromiumoxide::Page, what: &str) -> Resu
     Ok(html)
 }
 
+/// The character set Chrome decoded the document of `page` with, by its standard name in
+/// lowercase. `None` when Chrome does not answer with one.
+#[cfg(feature = "browser")]
+pub(crate) async fn document_charset(page: &chromiumoxide::Page) -> Option<String> {
+    let charset: String = page.evaluate("document.characterSet").await.ok()?.into_value().ok()?;
+    Some(charset.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 tokio::task_local! {
     /// A URL the page navigates to once, right after the next HTML read in this task. A test sets

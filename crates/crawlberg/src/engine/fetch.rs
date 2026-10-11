@@ -315,20 +315,7 @@ impl CrawlEngine {
         if matches!(plan.effective_strategy, EscalationStrategy::BypassFirst)
             && let Some(provider) = self.config.dispatch.as_ref().and_then(|d| d.bypass.as_ref())
         {
-            let bypass_resp = provider.fetch(url).await?;
-            return Ok((
-                crate::tower::CrawlResponse {
-                    status: bypass_resp.status,
-                    content_type: bypass_resp.content_type,
-                    body: bypass_resp.body,
-                    body_bytes: bypass_resp.body_bytes,
-                    headers: bypass_resp.headers,
-                    landed: None,
-                    sent_user_agent: None,
-                    soft_error: false,
-                },
-                false,
-            ));
+            return Ok((provider.fetch(url).await?.into_crawl_response(), false));
         }
 
         self.run_dispatch_loop(url, &plan, forced_user_agent, native_state, browser_cookies)

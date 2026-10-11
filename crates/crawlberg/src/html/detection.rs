@@ -1,5 +1,7 @@
 //! Content type detection (HTML, binary, PDF).
 
+use super::media_type_essence;
+
 /// Binary file extensions used to detect non-HTML content.
 ///
 /// Covers every binary document format extractable downstream (kept in sync with
@@ -16,11 +18,9 @@ static BINARY_EXTENSIONS: &[&str] = &[
     ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", ".exe", ".dll", ".so", ".bin",
 ];
 
-/// Content-Type prefixes (already lowercase) that mark a response as binary.
+/// Prefixes (already lowercase) of the essence of a Content-Type that mark a response as binary.
 ///
-/// Anchored at the start because these are whole type/subtype names: a `contains` test would
-/// misread `application/vnd.ms-word.document+xml`-style parameters and, more importantly,
-/// `text/rtf` must not match a `charset=` parameter that merely mentions it.
+/// Anchored at the start because these are whole type/subtype names.
 const BINARY_CONTENT_TYPE_PREFIXES: &[&str] = &[
     "image/",
     "video/",
@@ -35,7 +35,7 @@ const BINARY_CONTENT_TYPE_PREFIXES: &[&str] = &[
 
 /// Substrings (already lowercase) that mark a Content-Type as a binary document or archive.
 ///
-/// These are matched anywhere because the formats they identify appear inside long vendor
+/// These are matched anywhere in the essence because the formats they identify appear inside long vendor
 /// types -- `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and
 /// `application/x-7z-compressed` among them -- rather than at a fixed position.
 const BINARY_CONTENT_TYPE_MARKERS: &[&str] = &[
@@ -98,9 +98,16 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 /// the whole (potentially multi-megabyte) `body` via `str::to_lowercase` for a handful of short
 /// prefix/substring checks was wasted work on large pages.
 pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
-    if content_type.contains("html") {
-        return true;
-    }
+    is_html_type(&media_type_essence(content_type)) || is_html_body(body)
+}
+
+/// Whether `essence`, the essence of a media type, names HTML: `text/html`, `application/xhtml+xml`.
+fn is_html_type(essence: &str) -> bool {
+    essence.contains("html")
+}
+
+/// Whether `body` starts as an HTML document or fragment does.
+fn is_html_body(body: &str) -> bool {
     let trimmed = body.trim_start();
     if !trimmed.starts_with('<') {
         return false;
@@ -113,18 +120,40 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
         .any(|prefix| starts_with_ignore_ascii_case(trimmed, prefix))
 }
 
+/// Check whether a response is a page: HTML, or a type that says it is text.
+///
+/// ~keep A page is what a caller reads as Markdown, so a page that cannot be converted is an
+/// ~keep error. HTML is what [`is_html_content`] says it is, so a body that starts as HTML is a
+/// ~keep page whatever type it is served with: its links and metadata are read as those of a page.
+/// ~keep A response of any other type that the binary lists do not name
+/// ~keep (`application/java-archive`, `font/woff2`, `application/json`) with a body that is not
+/// ~keep HTML is not a page: the converter is still given its body, and when the converter refuses
+/// ~keep that body the response has no Markdown and is not an error.
+///
+/// ~keep The type is read once, as its essence: a media type has no case, and its parameters do
+/// ~keep not say what the content is.
+pub(crate) fn is_page_content(content_type: &str, body: &str) -> bool {
+    let essence = media_type_essence(content_type);
+    is_html_type(&essence) || essence.starts_with("text/") || is_html_body(body)
+}
+
 /// Check whether a Content-Type header indicates binary content.
 ///
 /// ~keep These are the "built-in defaults" `CrawlConfig.document_mime_types` refers to.
 /// This function only decides `is_binary`/markdown-skip classification; it does not
 /// gate document *downloading* — a non-empty `document_mime_types` allowlist governs
 /// that decision independently in `document::build_downloaded_document`.
+///
+/// ~keep The lists are matched against the essence of the type: a parameter that happens to hold
+/// ~keep a marker (`text/plain; name=startup.txt` holds `tar`) does not make a response binary.
 pub(crate) fn is_binary_content_type(ct: &str) -> bool {
-    let lower = ct.to_lowercase();
+    let essence = media_type_essence(ct);
     BINARY_CONTENT_TYPE_PREFIXES
         .iter()
-        .any(|prefix| lower.starts_with(prefix))
-        || BINARY_CONTENT_TYPE_MARKERS.iter().any(|marker| lower.contains(marker))
+        .any(|prefix| essence.starts_with(prefix))
+        || BINARY_CONTENT_TYPE_MARKERS
+            .iter()
+            .any(|marker| essence.contains(marker))
 }
 
 /// Check whether a URL has a binary file extension.
@@ -137,7 +166,7 @@ pub(crate) fn is_binary_url(url: &str) -> bool {
 
 /// Check whether content is a PDF based on Content-Type or body magic bytes.
 pub(crate) fn is_pdf_content(ct: &str, body: &str) -> bool {
-    ct.to_lowercase().contains("application/pdf") || body.starts_with("%PDF")
+    media_type_essence(ct).contains("application/pdf") || body.starts_with("%PDF")
 }
 
 /// Check whether a URL has a `.pdf` extension.
@@ -159,6 +188,13 @@ mod tests {
     fn is_html_content_cases() -> Vec<(&'static str, &'static str, bool)> {
         vec![
             ("text/html", "", true),
+            ("TEXT/HTML", "", true),
+            ("Text/Html; Charset=UTF-8", "", true),
+            ("APPLICATION/XHTML+XML", "", true),
+            ("Application/Xhtml+Xml ; charset=utf-8", "", true),
+            ("\t text/html \t", "", true),
+            // ~keep A parameter is not the type: a file name that ends in `.html` names no HTML.
+            ("text/plain; name=page.html", "", false),
             ("application/json", "not html at all", false),
             ("", "<!DOCTYPE html><html></html>", true),
             ("", "<!doctype html><html></html>", true),
@@ -193,6 +229,33 @@ mod tests {
                 is_html_content(content_type, body),
                 expected,
                 "is_html_content({content_type:?}, {body:?}) expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_is_html_or_a_type_that_says_it_is_text() {
+        for (content_type, body, expected) in [
+            ("text/html; charset=utf-8", "PK\u{3}\u{4}", true),
+            ("application/xhtml+xml", "", true),
+            ("text/plain", "PK\u{3}\u{4}", true),
+            (" Text/Markdown", "# title", true),
+            ("APPLICATION/XHTML+XML", "PK\u{3}\u{4}", true),
+            ("Application/Xhtml+Xml; Charset=UTF-8", "PK\u{3}\u{4}", true),
+            ("TEXT/PLAIN ; charset=utf-8", "PK\u{3}\u{4}", true),
+            ("", "<p>sniffed as HTML</p>", true),
+            ("application/json", "<!doctype html><p>HTML served as JSON</p>", true),
+            ("application/octet-stream; name=text/plain", "PK\u{3}\u{4}", false),
+            ("application/java-archive", "PK\u{3}\u{4}", false),
+            ("font/woff2", "PK\u{3}\u{4}", false),
+            ("application/json", "{}", false),
+            ("application/x-text/", "", false),
+            ("", "PK\u{3}\u{4}", false),
+        ] {
+            assert_eq!(
+                is_page_content(content_type, body),
+                expected,
+                "is_page_content({content_type:?}, {body:?}) expected {expected}"
             );
         }
     }
@@ -247,6 +310,33 @@ mod tests {
         ] {
             assert!(!is_binary_content_type(ct), "expected non-binary: {ct}");
         }
+    }
+
+    #[test]
+    fn a_binary_format_named_only_in_a_parameter_is_not_a_binary_type() {
+        for ct in [
+            "text/plain; name=startup.txt",
+            "text/plain; name=archive.zip",
+            "text/html; charset=utf-8; title=image/png",
+        ] {
+            assert!(!is_binary_content_type(ct), "a parameter is not the type: {ct}");
+        }
+        for ct in ["Application/X-Tar; name=notes.txt", " APPLICATION/ZIP ;x=1"] {
+            assert!(is_binary_content_type(ct), "the type has no case: {ct}");
+        }
+    }
+
+    #[test]
+    fn a_pdf_named_only_in_a_parameter_is_not_a_pdf_type() {
+        assert!(
+            !is_pdf_content("text/plain; name=application/pdf", "plain text"),
+            "a parameter is not the type"
+        );
+        assert!(
+            is_pdf_content("Application/PDF; charset=binary", ""),
+            "the type has no case"
+        );
+        assert!(is_pdf_content("text/plain", "%PDF-1.7"), "the body decides too");
     }
 
     #[test]

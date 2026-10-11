@@ -7,6 +7,7 @@
 
 #![cfg(any(target_arch = "wasm32", test))]
 
+use super::chain_claim::ChainClaim;
 use super::link_scope::{LinkScopePolicy, link_in_scope};
 use super::{CrawlEngine, DEFAULT_MAX_LINKS_PER_PAGE, take_selected};
 use crate::error::CrawlError;
@@ -247,6 +248,10 @@ impl CrawlEngine {
 
             state.note_page_outcome(&entry, &scrape);
 
+            if !self.claims_landed_page(&entry, &scrape).await? {
+                continue;
+            }
+
             if self.should_discover_sequentially(&entry, &scrape, plan) {
                 self.discover_sequential_links(&scrape, &entry, plan, state).await?;
             }
@@ -319,6 +324,22 @@ impl CrawlEngine {
                 None
             }
         }
+    }
+
+    /// Whether the page `entry` landed on is this entry's page to report.
+    ///
+    /// ~keep The fetch follows a redirect by itself, so the loop learns where it landed only
+    /// ~keep afterwards. The landed address then makes the claim a redirect hop makes in the
+    /// ~keep native loop, with the same [`ChainClaim`]: a page that another entry holds is
+    /// ~keep dropped here, and a page nobody holds is marked, so a later link to it is not
+    /// ~keep fetched again. Without it a folder linked as `/docs` and as `/docs/`, where the
+    /// ~keep first redirects to the second, is reported twice.
+    async fn claims_landed_page(&self, entry: &FrontierEntry, scrape: &ScrapeResult) -> Result<bool, CrawlError> {
+        let mut chain = ChainClaim::default();
+        let frontier = self.frontier.as_ref();
+        let include_query = self.config.dedup_include_query;
+        chain.admits(frontier, include_query, &entry.url, false).await?;
+        chain.admits(frontier, include_query, &scrape.final_url, true).await
     }
 
     /// Whether this page's links are followed at all. A `nofollow` page's links are not,

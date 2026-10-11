@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 
 use tower::Service;
 
-use super::types::{CrawlRequest, CrawlResponse};
+use super::types::{CrawlRequest, CrawlResponse, ResponseBody};
 use crate::error::{CrawlError, classify_reqwest_error};
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
@@ -115,17 +115,8 @@ async fn read_redirect_response(
     let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
         .unwrap_or_default();
-    let body = String::from_utf8_lossy(&body_bytes).into_owned();
-    CrawlResponse {
-        status,
-        content_type,
-        body,
-        body_bytes,
-        headers,
-        landed: None,
-        sent_user_agent: Some(sent_user_agent),
-        soft_error: false,
-    }
+    CrawlResponse::new(status, content_type, headers, ResponseBody::Bytes(body_bytes))
+        .with_sent_user_agent(Some(sent_user_agent))
 }
 
 /// Whether an error chain names a truncated or failed body transfer rather than a transport fault.
@@ -242,25 +233,17 @@ async fn do_fetch(
         return Err(error);
     }
 
-    let body = String::from_utf8_lossy(&body_vec).into_owned();
+    let response = CrawlResponse::new(status, content_type, headers, ResponseBody::Bytes(body_vec))
+        .with_sent_user_agent(Some(sent_user_agent));
 
     // ~keep The same 2xx decision `http::fetch_one_hop` makes, so the engine's crawl and the plain
     // fetch refuse exactly the same responses (crawlberg#231).
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(error) = crate::http::waf_2xx_error(status, &body_vec, &body, &headers) {
+    if let Some(error) = crate::http::waf_2xx_error(status, &response.body_bytes, &response.body, &response.headers) {
         return Err(error);
     }
 
-    Ok(CrawlResponse {
-        status,
-        content_type,
-        body,
-        body_bytes: body_vec,
-        headers,
-        landed: None,
-        sent_user_agent: Some(sent_user_agent),
-        soft_error: false,
-    })
+    Ok(response)
 }
 
 impl Service<CrawlRequest> for HttpFetchService {

@@ -1,10 +1,10 @@
 {
-	"id": "crawl_trailing_slash_dedup",
-	"description": "Deduplicates /page and /page/ as the same URL",
+	"id": "crawl_trailing_slash_distinct",
+	"description": "Fetches /page and /page/ as two pages",
 	"docs": {
 		"topic": "crawl",
-		"stem": "crawl-trailing-slash-dedup",
-		"title": "Deduplicates /page and /page/ as the same URL"
+		"stem": "crawl-trailing-slash-distinct",
+		"title": "Fetches /page and /page/ as two pages"
 	},
 	"tags": ["crawl", "normalization"],
 	"input": {
@@ -25,7 +25,7 @@
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><h1>Page</h1></body></html>"
+				"body_inline": "<html><body><h1>The file named page</h1></body></html>"
 			},
 			{
 				"path": "/page/",
@@ -34,7 +34,7 @@
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><h1>Page</h1></body></html>"
+				"body_inline": "<html><body><h1>The folder named page</h1></body></html>"
 			}
 		],
 		"config": {
@@ -46,7 +46,7 @@
 		{
 			"type": "equals",
 			"field": "pages.length",
-			"value": 2
+			"value": 3
 		}
 	]
 }

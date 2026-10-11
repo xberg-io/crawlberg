@@ -28,10 +28,10 @@ pub use service::HttpFetchService;
 pub use tracing_layer::CrawlTracingLayer;
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::CrawlRequest;
-pub use types::CrawlResponse;
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(feature = "browser", feature = "browser-native", test)
 ))]
 pub use types::Landing;
+pub use types::{BodyText, CrawlResponse, ResponseBody};
 pub use ua_rotation::UaRotation;
