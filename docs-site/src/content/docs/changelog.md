@@ -99,9 +99,18 @@ title: "Changelog"
   sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
   engine for each request, so a cookie from one request is no longer sent in the next. The API
   server gives each of these engines the rate limiter and the robots.txt cache of the server, so
-  the delay for each host holds across requests. The cache, store, content filter
-  and event sink of an engine given to `serve` are not used by any API route: `/v1/download` and
-  `/v1/map` used them before. (#652)
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. Each waiting request now takes the next free slot, one delay after the request before
+  it. A request that is cancelled while it is last in the queue gives its slot back. This makes a
+  crawl with more than one concurrent request to one host slower: it now keeps the delay. A
+  request that waits holds one of the `max_concurrent` slots of its crawl, as before, but now for
+  up to `max_concurrent` delays: a crawl of many hosts slows down while its next pages are all on
+  one host with a long delay.
 
 ## [1.10.2] - 2026-10-06
 
