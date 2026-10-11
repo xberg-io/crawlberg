@@ -30,6 +30,10 @@ title: "Changelog"
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- Content conversion options for paragraph newlines, list bullets and indentation, emphasis
+  markers, compact tables, and inline images in headings. (#612)
+- `original_url` preserves the resolved link spelling on crawl pages and discovered links,
+  separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
 
 ### Changed
 
@@ -57,6 +61,24 @@ title: "Changelog"
   at a time claim a given address. A frontier that more than one process uses must implement
   `claim` as one conditional write. Before, a custom frontier that answers slowly let a page that
   several redirects point to be requested and reported once for each redirect. (#638)
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, in HTTP mode and in
+  browser mode, with or without a screenshot. A crawl reports the error for that address and no
+  page. `interact` with the chromiumoxide backend fails with the same error. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page. A body that the server
+  compressed with deflate is now decoded. (#614)
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result, in HTTP mode and in browser mode. The target of the meta tag is one of its
+  links. (#605)
+- The error for an HTTP error status names the status and the address, for example
+  `forbidden: HTTP 403 for https://example.com/page`. The address has its credentials removed.
+  The error class of each status is the same. (#611)
+- A response body that does not end before `request_timeout` fails as a timeout that names the
+  address. It failed as a data loss. (#623)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
@@ -93,6 +115,8 @@ title: "Changelog"
 - The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
   and `-platform` names the release platform. On a Linux host with musl, the command now selects
   the `linux-<arch>-musl` platform.
+- Browser mode retries a fetch that ends with a browser error or a browser timeout, up to
+  `retry_count` times, and waits for the delay of the domain before each navigation.
 
 ### Fixed
 

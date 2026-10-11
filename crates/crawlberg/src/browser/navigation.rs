@@ -51,6 +51,16 @@ impl chromiumoxide::Command for BlockedUrls {
     type Response = chromiumoxide::cdp::browser_protocol::network::SetBlockedUrLsReturns;
 }
 
+/// The command that sets the blocked URL patterns of a page, or `None` when the list is empty.
+///
+/// ~keep A page starts with no blocked pattern, so an empty list needs no command, and a
+/// ~keep command that is not sent cannot fail the fetch.
+fn blocked_urls_command(patterns: &[String]) -> Option<BlockedUrls> {
+    (!patterns.is_empty()).then(|| BlockedUrls {
+        urls: patterns.to_vec(),
+    })
+}
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -80,11 +90,11 @@ pub(super) async fn page_fetch(
     }
 
     apply_user_agent(page, config, stealth).await?;
-    page.execute(BlockedUrls {
-        urls: config.browser.block_url_patterns.clone(),
-    })
-    .await
-    .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
+    if let Some(command) = blocked_urls_command(&config.browser.block_url_patterns) {
+        page.execute(command)
+            .await
+            .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
+    }
 
     if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
@@ -504,6 +514,14 @@ mod tests {
             "https://user:secret@10.0.0.1/".to_owned(),
             "denied by SSRF policy: private_network".to_owned(),
         ))
+    }
+
+    #[test]
+    fn an_empty_blocked_url_list_sends_no_command() {
+        assert!(blocked_urls_command(&[]).is_none());
+        let patterns = ["*.png".to_owned(), "*://ads.example/*".to_owned()];
+        let command = blocked_urls_command(&patterns).expect("a list with patterns sends the command");
+        assert_eq!(command.urls, patterns);
     }
 
     #[test]
