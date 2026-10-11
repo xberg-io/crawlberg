@@ -68,6 +68,7 @@ async fn a_kept_page_serves_the_next_fetch_of_its_site() {
         later.push(scrape(&engine, &format!("{}/next", mock.uri())).await);
     }
     let kept_at_end = sessions.size().await;
+    sessions.shutdown().await;
     pool.shutdown().await;
 
     assert!(first.html.contains("first page"), "{test_name}: {}", first.html);
