@@ -2139,6 +2139,72 @@ async fn a_fetch_to_a_url_with_userinfo_is_refused_without_it() {
     );
 }
 
+/// A `fetch` that the page refuses before it opens a connection: its URL has userinfo.
+///
+/// The fetch needs no network and no timer, but its promise settles only on a turn of the event
+/// loop. So only the drain of a navigation can settle it before `navigate` returns.
+const REFUSED_FETCH: &str = "fetch('http://user:s3cret@127.0.0.1:9/refused')";
+
+/// Navigates to a page with one classic `script`, then reads `globalThis.drained` one time, with no wait.
+async fn drained_after_navigate(script: &str) -> serde_json::Value {
+    let html = format!("<html><body><script>globalThis.drained = 'pending';\n{script}</script></body></html>");
+    let mut page = navigate_bounded(&html, &[]).await;
+    global(&mut page, "globalThis.drained")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_a_script_starts_that_needs_no_network_is_done_when_navigate_returns() {
+    // ~keep Three fetches in a row, each started when the one before settles: one turn is not enough.
+    let script = format!(
+        "{REFUSED_FETCH}.catch(() => {REFUSED_FETCH}).catch(() => {REFUSED_FETCH})\
+         .catch(() => {{ globalThis.drained = 'done'; }});"
+    );
+
+    assert_eq!(
+        drained_after_navigate(&script).await,
+        serde_json::json!("done"),
+        "the navigation must drain the event loop until the page is quiet"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_the_load_handler_starts_that_needs_no_network_is_done_when_navigate_returns() {
+    let script =
+        format!("window.onload = () => {{ {REFUSED_FETCH}.catch(() => {{ globalThis.drained = 'done'; }}); }};");
+
+    assert_eq!(
+        drained_after_navigate(&script).await,
+        serde_json::json!("done"),
+        "the navigation must drain the event loop after the load handler runs"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_page_that_never_goes_quiet_costs_the_navigation_one_drain_budget() {
+    // ~keep Each refused fetch starts the next one, so the event loop always has work.
+    let html = format!(
+        "<html><body><script>globalThis.turns = 0;\n\
+         const again = () => {{ globalThis.turns++; {REFUSED_FETCH}.catch(again); }};\n\
+         again();</script></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let mut page = test_page();
+
+    let started = std::time::Instant::now();
+    tokio::time::timeout(std::time::Duration::from_secs(40), page.navigate(&base))
+        .await
+        .expect("a page that never goes quiet must not hold the navigation")
+        .expect("navigation must succeed");
+    let took = started.elapsed();
+
+    let turns = global(&mut page, "globalThis.turns").as_f64().unwrap_or_default();
+    assert!(turns > 1.0, "the drain must run the work of the page: {turns} turn(s)");
+    assert!(
+        took >= std::time::Duration::from_millis(500) && took < std::time::Duration::from_secs(15),
+        "the drain must give a busy page its 500 ms budget and then end: took {took:?}"
+    );
+}
+
 /// Serves `responses` on `listener`, recording each raw request head.
 fn serve_raw_recording(
     listener: TcpListener,
