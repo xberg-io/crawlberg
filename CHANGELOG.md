@@ -30,6 +30,11 @@ All notable changes to crawlberg are documented here.
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- Python: `crawlberg.shutdown_async_runtime()` stops the async runtime of the package and gives
+  back its threads and file descriptors. Call it when no request and no stream is in progress;
+  it raises `RuntimeError` while work is active. The next async call starts a new runtime, and
+  an engine made before the call still works. Two descriptors that Tokio opens for signals stay
+  until the process ends. (#630)
 
 ### Changed
 
