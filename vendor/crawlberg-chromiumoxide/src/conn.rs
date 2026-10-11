@@ -284,6 +284,24 @@ mod tests {
         );
     }
 
+    /// An escaped backslash before `ud83d` is six characters of text. The repair of an unpaired
+    /// half in the same message does not change that text.
+    #[test]
+    fn an_escaped_backslash_is_kept_in_a_repaired_message() {
+        let parsed: String = parse_message(r#""lit \\ud83d real \ud83d""#).expect("the message must parse");
+        assert_eq!(parsed, "lit \\ud83d real \u{FFFD}");
+    }
+
+    #[test]
+    fn an_unpaired_half_in_an_object_key_is_read_as_the_replacement_character() {
+        let text = r#"{"id":7,"result":{"k\ud83d":"v","\uDE00":1}}"#;
+        let reply: serde_json::Value = parse_message(text).expect("the reply must parse");
+        assert_eq!(
+            reply,
+            serde_json::json!({ "id": 7, "result": { "k\u{FFFD}": "v", "\u{FFFD}": 1 } })
+        );
+    }
+
     #[test]
     fn a_message_that_is_not_json_is_still_refused() {
         for text in [

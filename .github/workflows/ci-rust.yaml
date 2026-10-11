@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+      # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+      - "vendor/crawlberg-chromiumoxide/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "fuzz/Cargo.toml"
@@ -37,6 +40,9 @@ on:
   #   branches: [main]
   #   paths:
   #     - "crates/**"
+  #     # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+  #     # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+  #     - "vendor/crawlberg-chromiumoxide/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "fuzz/Cargo.toml"
