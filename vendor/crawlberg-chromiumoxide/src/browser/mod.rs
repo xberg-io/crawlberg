@@ -653,6 +653,8 @@ mod tests {
             child: Some(child),
             debug_ws_url: String::new(),
             browser_context: BrowserContext::default(),
+            #[cfg(unix)]
+            pipe_hub: None,
         }
     }
 
