@@ -1,0 +1,39 @@
+{
+	"id": "links_original_url",
+	"description": "Gives the address of each link as the page wrote it, beside the resolved address",
+	"docs": {
+		"topic": "links",
+		"stem": "links-original-url",
+		"title": "Gives the address of each link as the page wrote it"
+	},
+	"tags": ["links", "resolution", "regression"],
+	"input": {
+		"config": {},
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><a href=\"/t/d/%2e%2e/up\">Up</a></body></html>"
+			}
+		]
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "links.length",
+			"value": 1
+		},
+		{
+			"type": "contains",
+			"field": "links[].original_url",
+			"value": "/t/d/%2e%2e/up"
+		},
+		{
+			"type": "contains",
+			"field": "links[].url",
+			"value": "/t/up"
+		}
+	]
+}
