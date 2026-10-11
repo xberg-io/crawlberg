@@ -1,10 +1,10 @@
 {
 	"id": "crawl_url_deduplication",
-	"description": "Deduplicates URLs that differ only by fragment or query params",
+	"description": "Deduplicates URLs that are equal or differ only by fragment, and keeps a query as its own page",
 	"docs": {
 		"topic": "crawl",
 		"stem": "crawl-url-deduplication",
-		"title": "Deduplicates URLs that differ only by fragment or query params"
+		"title": "Deduplicates URLs that are equal or differ only by fragment, and keeps a query as its own page"
 	},
 	"tags": ["crawl", "dedup"],
 	"input": {
@@ -16,7 +16,7 @@
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><a href=\"/page\">Page</a><a href=\"/page#section\">Page Section</a><a href=\"/page?ref=home\">Page Ref</a></body></html>"
+				"body_inline": "<html><body><a href=\"/page\">Page</a><a href=\"/page\">Page Again</a><a href=\"/page#section\">Page Section</a><a href=\"/page?ref=home\">Page Ref</a></body></html>"
 			},
 			{
 				"path": "/page",
@@ -35,9 +35,9 @@
 	},
 	"assertions": [
 		{
-			"type": "less_than_or_equal",
+			"type": "equals",
 			"field": "pages.length",
-			"value": 2
+			"value": 3
 		}
 	]
 }
