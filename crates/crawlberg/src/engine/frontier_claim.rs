@@ -7,7 +7,14 @@ use tokio::sync::Mutex;
 use crate::error::CrawlError;
 use crate::traits::{Frontier, FrontierEntry};
 
-type KeyLocks = SyncMutex<AHashMap<String, Arc<Mutex<()>>>>;
+/// The lock of one key and the count of calls that hold or await it.
+#[derive(Default)]
+struct KeyLock {
+    lock: Arc<Mutex<()>>,
+    turns: usize,
+}
+
+type KeyLocks = SyncMutex<AHashMap<String, KeyLock>>;
 
 // ~keep Existing frontiers have no atomic claim operation, so the engine lets one call at a time
 // ~keep run their two-step fallback for a key. The lock is for that key alone and lives only while
@@ -31,8 +38,9 @@ impl GuardedFrontier {
     }
 }
 
-/// One call's place in the queue for a key. Dropping it removes the key's lock when no other
-/// call holds or awaits it, so a cancelled call leaves nothing behind.
+/// One call's place in the queue for a key. The table counts the turns of each key. The turn
+/// that brings the count to zero removes the key, so a finished or cancelled call leaves
+/// nothing behind.
 struct KeyTurn<'a> {
     table: &'a KeyLocks,
     key: &'a str,
@@ -41,24 +49,27 @@ struct KeyTurn<'a> {
 
 impl<'a> KeyTurn<'a> {
     fn enter(table: &'a KeyLocks, key: &'a str) -> Self {
-        let lock = Arc::clone(
-            table
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(key.to_owned())
-                .or_default(),
-        );
+        let lock = {
+            let mut locks = table.lock().unwrap_or_else(PoisonError::into_inner);
+            let entry = locks.entry(key.to_owned()).or_default();
+            entry.turns += 1;
+            Arc::clone(&entry.lock)
+        };
         Self { table, key, lock }
     }
 }
 
 impl Drop for KeyTurn<'_> {
     fn drop(&mut self) {
-        let mut table = self.table.lock().unwrap_or_else(PoisonError::into_inner);
-        // ~keep A turn is entered only under the table lock, so the count cannot rise here. Two
-        // ~keep owners are the table and this turn: no other call holds or awaits the key.
-        if Arc::strong_count(&self.lock) == 2 {
-            table.remove(self.key);
+        let mut locks = self.table.lock().unwrap_or_else(PoisonError::into_inner);
+        // ~keep The count changes only under the table lock, and the removal is in the same step
+        // ~keep as the last decrement: two turns that end together cannot both leave the key.
+        let last = locks.get_mut(self.key).is_some_and(|entry| {
+            entry.turns -= 1;
+            entry.turns == 0
+        });
+        if last {
+            locks.remove(self.key);
         }
     }
 }
@@ -110,7 +121,7 @@ impl Frontier for GuardedFrontier {
 mod tests {
     use std::time::Duration;
 
-    use tokio::sync::Notify;
+    use tokio::sync::{Barrier, Notify};
 
     use super::*;
     use crate::{CrawlEngine, InMemoryFrontier};
@@ -263,9 +274,56 @@ mod tests {
         stuck.abort();
         assert!(stuck.await.expect_err("cancelled").is_cancelled());
         gated.entered.notified().await;
+        assert_eq!(locks(&frontier), 1, "the lock left the table while a call holds it");
         waiting.abort();
         assert!(waiting.await.expect_err("cancelled").is_cancelled());
         assert_eq!(locks(&frontier), 0, "a cancelled call left its lock");
+    }
+
+    /// Eight tasks on eight threads claim one new key in each round, all at once: the turns
+    /// of a key end together. Returns the count of claims that won and of locks left.
+    async fn claim_each_key_on_eight_threads(inner: Arc<dyn Frontier>) -> (usize, usize) {
+        const TASKS: usize = 8;
+        let frontier = Arc::new(GuardedFrontier::new(inner));
+        let barrier = Arc::new(Barrier::new(TASKS));
+        let tasks: Vec<_> = (0..TASKS)
+            .map(|_| {
+                let frontier = Arc::clone(&frontier);
+                let barrier = Arc::clone(&barrier);
+                tokio::spawn(async move {
+                    let mut wins = 0;
+                    for round in 0..CONTENDED_KEYS {
+                        barrier.wait().await;
+                        if frontier.claim(&format!("key-{round}")).await.expect("claim") {
+                            wins += 1;
+                        }
+                    }
+                    wins
+                })
+            })
+            .collect();
+        let mut wins = 0;
+        for task in tasks {
+            wins += task.await.expect("task");
+        }
+        let left = frontier.in_flight.lock().expect("table").len();
+        (wins, left)
+    }
+
+    const CONTENDED_KEYS: usize = 20_000;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn should_keep_no_lock_after_eight_threads_claim_each_key_of_a_memory_frontier() {
+        let (wins, left) = claim_each_key_on_eight_threads(Arc::new(InMemoryFrontier::new())).await;
+        assert_eq!(left, 0, "locks stayed in the table after every call ended");
+        assert_eq!(wins, CONTENDED_KEYS, "a key had no winner or more than one");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn should_keep_no_lock_after_eight_threads_claim_each_key_of_a_yielding_frontier() {
+        let (wins, left) = claim_each_key_on_eight_threads(Arc::new(YieldingFrontier::new(false))).await;
+        assert_eq!(left, 0, "locks stayed in the table after every call ended");
+        assert_eq!(wins, CONTENDED_KEYS, "a key had no winner or more than one");
     }
 
     #[tokio::test(start_paused = true)]
