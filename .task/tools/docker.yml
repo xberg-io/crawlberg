@@ -35,3 +35,26 @@ tasks:
         --max-examples={{.MAX_EXAMPLES | default "25"}}
         --request-timeout=30000
         --checks not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance,negative_data_rejection
+
+  test:config:
+    desc: Test supported server and CLI configuration in a built Docker image
+    vars:
+      IMAGE: '{{.IMAGE | default "crawlberg:dev"}}'
+    cmds:
+      - python3 scripts/ci/docker/test_config.py --image '{{.IMAGE}}'
+
+  test:features:
+    desc: Test CLI features in a built Docker image
+    vars:
+      IMAGE: '{{.IMAGE | default "crawlberg:dev"}}'
+    cmds:
+      - python3 scripts/ci/docker/test_docker.py --image '{{.IMAGE}}'
+
+  save:
+    desc: Save a built Docker image as a compressed archive
+    requires:
+      vars: [IMAGE, OUTPUT]
+    cmds:
+      - |
+        set -o pipefail
+        docker save '{{.IMAGE}}' | gzip > '{{.OUTPUT}}'
