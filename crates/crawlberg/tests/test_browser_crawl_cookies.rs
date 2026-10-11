@@ -14,8 +14,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BypassProvider, BypassResponse, CrawlConfig, CrawlEngineHandle,
-    CrawlError, CrawlResult, DispatchProfile, DynBypassProvider, EscalationStrategy, batch_crawl, crawl, create_engine,
+    CrawlError, CrawlEvent, CrawlResult, DispatchProfile, DynBypassProvider, EscalationStrategy, batch_crawl,
+    batch_crawl_stream, crawl, crawl_stream, create_engine,
 };
+use futures::StreamExt as _;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -262,6 +264,60 @@ async fn two_crawls_at_the_same_time_do_not_share_cookies() {
             );
         }
     }
+}
+
+/// The cookies `/members` got in a crawl of the members site through a stream entry point, or
+/// `None` when Chrome is missing.
+async fn members_cookies_of_a_stream_crawl(test_name: &str, batch: bool) -> Option<Vec<Vec<String>>> {
+    let site = members_site().await;
+    let engine = browser_engine();
+    let start = format!("{}/", site.uri());
+    let stream = if batch {
+        batch_crawl_stream(&engine, vec![start]).await
+    } else {
+        crawl_stream(&engine, &start).await
+    };
+    let events: Vec<_> = stream.expect("the stream must start").collect().await;
+    for event in &events {
+        let message = match event {
+            Ok(CrawlEvent::Error { error, .. }) => error.clone(),
+            Err(error) => error.to_string(),
+            Ok(_) => continue,
+        };
+        if is_missing_chrome_message(&message) {
+            announce_chrome_skip(test_name, &message);
+            return None;
+        }
+    }
+    Some(cookies_sent_to(&site, "/members").await)
+}
+
+/// A crawl that reports its pages as a stream shares cookies between its pages too.
+#[tokio::test]
+async fn a_stream_crawl_sends_the_cookie_the_start_page_set() {
+    let test_name = "a_stream_crawl_sends_the_cookie_the_start_page_set";
+    let Some(sent) = members_cookies_of_a_stream_crawl(test_name, false).await else {
+        return;
+    };
+    assert_eq!(
+        sent,
+        [["session=1"]],
+        "the linked page must get the cookie the start page set"
+    );
+}
+
+/// So does each crawl of a batch that reports its pages as a stream.
+#[tokio::test]
+async fn a_batch_stream_crawl_sends_the_cookie_the_start_page_set() {
+    let test_name = "a_batch_stream_crawl_sends_the_cookie_the_start_page_set";
+    let Some(sent) = members_cookies_of_a_stream_crawl(test_name, true).await else {
+        return;
+    };
+    assert_eq!(
+        sent,
+        [["session=1"]],
+        "the linked page must get the cookie the start page set"
+    );
 }
 
 /// Chrome decides which request gets a cookie, by the attributes the cookie was set with.
