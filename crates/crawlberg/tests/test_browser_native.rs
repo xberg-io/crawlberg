@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, HostMatcher, batch_scrape, create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, CrawlError, HostMatcher, batch_scrape, create_engine,
+    scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -652,9 +653,7 @@ async fn native_chain_outcome(
         respect_robots_txt: false,
         ..native_config(|c| BrowserConfig { mode, ..c })
     };
-    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
-        .await
-        .expect("the crawl must succeed");
+    let result = native_chain_crawl(site, config).await;
     let status = result.pages.first().map_or(0, |page| page.status_code);
     (
         result.redirect_count,
@@ -663,20 +662,48 @@ async fn native_chain_outcome(
     )
 }
 
+async fn native_chain_crawl(site: &MockServer, config: CrawlConfig) -> crawlberg::CrawlResult {
+    crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the crawl must succeed")
+}
+
+/// The error and the count of pages of a crawl of `site` at `max_redirects` with `mode`.
+async fn native_chain_failure(
+    site: &MockServer,
+    mode: crawlberg::BrowserMode,
+    max_redirects: usize,
+) -> (Option<String>, usize) {
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        max_redirects,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig { mode, ..c })
+    };
+    let result = native_chain_crawl(site, config).await;
+    (
+        result.error.map(|error| error.replace(&site.uri(), "")),
+        result.pages.len(),
+    )
+}
+
 /// The native backend stops a chain longer than `max_redirects` where HTTP mode stops it, in
 /// crawl and in scrape (#115).
 #[tokio::test]
 async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
-    let http = native_chain_outcome(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
+    let http = native_chain_failure(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
     assert_eq!(
         http,
-        (2, "/r2".to_owned(), 301),
-        "HTTP mode stops on the 3xx at the limit"
+        (
+            Some("ssrf_policy_violation: /r3 - redirect limit exceeded".to_owned()),
+            0
+        ),
+        "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
     let site = native_redirect_chain(5).await;
     assert_eq!(
-        native_chain_outcome(&site, crawlberg::BrowserMode::Always, 2).await,
+        native_chain_failure(&site, crawlberg::BrowserMode::Always, 2).await,
         http,
         "the native backend must report the chain the way HTTP mode does"
     );
@@ -692,13 +719,13 @@ async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
         respect_robots_txt: false,
         ..native_config(|c| c)
     };
-    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+    let error = scrape(&engine_with(config), &format!("{}/", site.uri()))
         .await
-        .expect("the scrape must succeed");
-    assert_eq!(
-        (scraped.status_code, scraped.final_url.trim_start_matches(&site.uri())),
-        (301, "/r2"),
-        "the scrape must stop on the 3xx at the limit"
+        .expect_err("the scrape must fail on the 3xx at the limit");
+    assert!(
+        matches!(&error, CrawlError::SsrfPolicyViolation { url, reason, .. }
+            if reason == "redirect limit exceeded" && url.ends_with("/r3")),
+        "the error must name the redirect limit and the address not followed: {error:?}"
     );
     let requested = native_requested_paths(&site).await;
     assert!(

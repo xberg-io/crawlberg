@@ -621,14 +621,10 @@ async fn too_many_redirects_refused() {
 
     match result {
         Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
-            assert!(
-                reason.contains("too many redirects"),
-                "SsrfPolicyViolation reason must contain 'too many redirects', got: '{reason}'"
-            );
+            assert_eq!(reason, "redirect loop", "the error must name the redirect loop");
         }
-        Ok(ref page) if page.status_code == 302 => {}
         other => {
-            panic!("expected SsrfPolicyViolation(too many redirects) or Ok(302), got: {other:?}");
+            panic!("expected SsrfPolicyViolation(redirect loop), got: {other:?}");
         }
     }
 }
