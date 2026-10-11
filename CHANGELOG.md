@@ -72,6 +72,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- On Linux and macOS the Chrome that crawlberg starts no longer listens on a debugging port.
+  crawlberg speaks the DevTools protocol with it over a private pipe, so no other local process
+  can drive the browser of a crawl. The profile directory of that Chrome has no
+  `DevToolsActivePort` file. A Chrome behind `browser.endpoint` belongs to the caller and is not
+  changed. On Windows the Chrome still gets a debugging port on 127.0.0.1. (#624)
+- On Linux and macOS the Chrome of a crawl ends when the process that started it ends, also when
+  that process is killed with SIGKILL or gets a SIGTERM that it does not handle. Before, the
+  Chrome kept running with PID 1 as its parent. Windows is not changed. (#620)
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited
   runtime work after a process fork. The runtime starts at the first async call, not at import.
   A call after the exit hooks ran raises `RuntimeError`. (#633)
