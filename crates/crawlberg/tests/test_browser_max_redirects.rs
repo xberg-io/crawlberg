@@ -460,18 +460,20 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
             ..config(BrowserMode::Always, 2)
         };
         let engine = create_engine(Some(config)).expect("engine must build");
-        let result = match scrape(&engine, &format!("{}/", site.uri())).await {
-            Ok(result) => result,
+        let error = match scrape(&engine, &format!("{}/", site.uri())).await {
+            Ok(result) => panic!(
+                "capture_screenshot={capture_screenshot}: the scrape must fail, got status {} at {}",
+                result.status_code, result.final_url
+            ),
             Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
                 announce_chrome_skip("scrape_stops_at_max_redirects_with_and_without_a_screenshot", &message);
                 return;
             }
-            Err(error) => panic!("scrape must succeed: {error:?}"),
+            Err(error) => error,
         };
-        assert_eq!(
-            (result.status_code, result.final_url.trim_start_matches(&site.uri())),
-            (301, "/r2"),
-            "capture_screenshot={capture_screenshot}: the scrape must stop on the 3xx at the limit"
+        assert!(
+            matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect limit exceeded"),
+            "capture_screenshot={capture_screenshot}: the error must name the redirect limit: {error:?}"
         );
         let requested = requested_paths(&site).await;
         assert!(
