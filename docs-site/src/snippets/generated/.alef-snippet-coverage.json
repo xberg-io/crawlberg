@@ -105,6 +105,7 @@
     "c/error/error-browser-launch-failure.md",
     "c/error/error-browser-page-timeout.md",
     "c/error/error-connection-refused.md",
+    "c/error/error-conversion-failed.md",
     "c/error/error-data-loss-truncated.md",
     "c/error/error-dns-resolution.md",
     "c/error/error-empty-batch-urls.md",
@@ -370,6 +371,7 @@
     "csharp/error/error-browser-launch-failure.md",
     "csharp/error/error-browser-page-timeout.md",
     "csharp/error/error-connection-refused.md",
+    "csharp/error/error-conversion-failed.md",
     "csharp/error/error-data-loss-truncated.md",
     "csharp/error/error-dns-resolution.md",
     "csharp/error/error-empty-batch-urls.md",
@@ -643,6 +645,7 @@
     "dart/error/error-browser-launch-failure.md",
     "dart/error/error-browser-page-timeout.md",
     "dart/error/error-connection-refused.md",
+    "dart/error/error-conversion-failed.md",
     "dart/error/error-data-loss-truncated.md",
     "dart/error/error-dns-resolution.md",
     "dart/error/error-empty-batch-urls.md",
@@ -907,6 +910,7 @@
     "elixir/error/error-browser-launch-failure.md",
     "elixir/error/error-browser-page-timeout.md",
     "elixir/error/error-connection-refused.md",
+    "elixir/error/error-conversion-failed.md",
     "elixir/error/error-data-loss-truncated.md",
     "elixir/error/error-dns-resolution.md",
     "elixir/error/error-empty-batch-urls.md",
@@ -1178,6 +1182,7 @@
     "go/error/error-browser-launch-failure.md",
     "go/error/error-browser-page-timeout.md",
     "go/error/error-connection-refused.md",
+    "go/error/error-conversion-failed.md",
     "go/error/error-data-loss-truncated.md",
     "go/error/error-dns-resolution.md",
     "go/error/error-empty-batch-urls.md",
@@ -1451,6 +1456,7 @@
     "java/error/error-browser-launch-failure.md",
     "java/error/error-browser-page-timeout.md",
     "java/error/error-connection-refused.md",
+    "java/error/error-conversion-failed.md",
     "java/error/error-data-loss-truncated.md",
     "java/error/error-dns-resolution.md",
     "java/error/error-empty-batch-urls.md",
@@ -1724,6 +1730,7 @@
     "kotlin-android/error/error-browser-launch-failure.md",
     "kotlin-android/error/error-browser-page-timeout.md",
     "kotlin-android/error/error-connection-refused.md",
+    "kotlin-android/error/error-conversion-failed.md",
     "kotlin-android/error/error-data-loss-truncated.md",
     "kotlin-android/error/error-dns-resolution.md",
     "kotlin-android/error/error-empty-batch-urls.md",
@@ -1997,6 +2004,7 @@
     "php/error/error-browser-launch-failure.md",
     "php/error/error-browser-page-timeout.md",
     "php/error/error-connection-refused.md",
+    "php/error/error-conversion-failed.md",
     "php/error/error-data-loss-truncated.md",
     "php/error/error-dns-resolution.md",
     "php/error/error-empty-batch-urls.md",
@@ -2270,6 +2278,7 @@
     "python/error/error-browser-launch-failure.md",
     "python/error/error-browser-page-timeout.md",
     "python/error/error-connection-refused.md",
+    "python/error/error-conversion-failed.md",
     "python/error/error-data-loss-truncated.md",
     "python/error/error-dns-resolution.md",
     "python/error/error-empty-batch-urls.md",
@@ -2543,6 +2552,7 @@
     "ruby/error/error-browser-launch-failure.md",
     "ruby/error/error-browser-page-timeout.md",
     "ruby/error/error-connection-refused.md",
+    "ruby/error/error-conversion-failed.md",
     "ruby/error/error-data-loss-truncated.md",
     "ruby/error/error-dns-resolution.md",
     "ruby/error/error-empty-batch-urls.md",
@@ -2816,6 +2826,7 @@
     "rust/error/error-browser-launch-failure.md",
     "rust/error/error-browser-page-timeout.md",
     "rust/error/error-connection-refused.md",
+    "rust/error/error-conversion-failed.md",
     "rust/error/error-data-loss-truncated.md",
     "rust/error/error-dns-resolution.md",
     "rust/error/error-empty-batch-urls.md",
@@ -3080,6 +3091,7 @@
     "swift/error/error-browser-launch-failure.md",
     "swift/error/error-browser-page-timeout.md",
     "swift/error/error-connection-refused.md",
+    "swift/error/error-conversion-failed.md",
     "swift/error/error-data-loss-truncated.md",
     "swift/error/error-dns-resolution.md",
     "swift/error/error-empty-batch-urls.md",
@@ -3351,6 +3363,7 @@
     "typescript/error/error-browser-launch-failure.md",
     "typescript/error/error-browser-page-timeout.md",
     "typescript/error/error-connection-refused.md",
+    "typescript/error/error-conversion-failed.md",
     "typescript/error/error-data-loss-truncated.md",
     "typescript/error/error-dns-resolution.md",
     "typescript/error/error-empty-batch-urls.md",
@@ -3623,6 +3636,7 @@
     "wasm/error/error-browser-launch-failure.md",
     "wasm/error/error-browser-page-timeout.md",
     "wasm/error/error-connection-refused.md",
+    "wasm/error/error-conversion-failed.md",
     "wasm/error/error-data-loss-truncated.md",
     "wasm/error/error-dns-resolution.md",
     "wasm/error/error-empty-batch-urls.md",
@@ -3879,6 +3893,7 @@
     "zig/error/error-browser-launch-failure.md",
     "zig/error/error-browser-page-timeout.md",
     "zig/error/error-connection-refused.md",
+    "zig/error/error-conversion-failed.md",
     "zig/error/error-data-loss-truncated.md",
     "zig/error/error-dns-resolution.md",
     "zig/error/error-empty-batch-urls.md",
@@ -5289,6 +5304,18 @@
         "language": "c"
       },
       "path": "c/error/error-connection-refused.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "c"
+      },
+      "path": "c/error/error-conversion-failed.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -8469,6 +8496,18 @@
         "language": "csharp"
       },
       "path": "csharp/error/error-connection-refused.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "csharp"
+      },
+      "path": "csharp/error/error-conversion-failed.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -11753,6 +11792,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "dart"
+      },
+      "path": "dart/error/error-conversion-failed.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "dart"
       },
@@ -14913,6 +14964,18 @@
         "language": "elixir"
       },
       "path": "elixir/error/error-connection-refused.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "elixir"
+      },
+      "path": "elixir/error/error-conversion-failed.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18165,6 +18228,18 @@
         "language": "go"
       },
       "path": "go/error/error-connection-refused.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "go"
+      },
+      "path": "go/error/error-conversion-failed.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21449,6 +21524,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "java"
+      },
+      "path": "java/error/error-conversion-failed.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "java"
       },
@@ -24717,6 +24804,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/error/error-connection-refused.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/error/error-conversion-failed.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28001,6 +28100,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "php"
+      },
+      "path": "php/error/error-conversion-failed.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "php"
       },
@@ -31277,6 +31388,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "python"
+      },
+      "path": "python/error/error-conversion-failed.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "python"
       },
@@ -34545,6 +34668,18 @@
         "language": "ruby"
       },
       "path": "ruby/error/error-connection-refused.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "ruby"
+      },
+      "path": "ruby/error/error-conversion-failed.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38113,6 +38248,20 @@
         "language": "rust"
       },
       "path": "rust/error/error-connection-refused.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "rust"
+      },
+      "path": "rust/error/error-conversion-failed.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41753,6 +41902,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "swift"
+      },
+      "path": "swift/error/error-conversion-failed.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "swift"
       },
@@ -44997,6 +45158,18 @@
         "language": "node"
       },
       "path": "typescript/error/error-connection-refused.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "node"
+      },
+      "path": "typescript/error/error-conversion-failed.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48269,6 +48442,18 @@
     },
     {
       "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "wasm"
+      },
+      "path": "wasm/error/error-conversion-failed.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_data_loss_truncated",
         "language": "wasm"
       },
@@ -51333,6 +51518,18 @@
         "language": "zig"
       },
       "path": "zig/error/error-connection-refused.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "error_conversion_failed",
+        "language": "zig"
+      },
+      "path": "zig/error/error-conversion-failed.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -59923,6 +60120,66 @@
     },
     {
       "fixture_id": "error_connection_refused",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "c"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "go"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "java"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "node"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "php"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "python"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
       "language": "zig"
     },
     {
@@ -76101,6 +76358,66 @@
     },
     {
       "fixture_id": "error_connection_refused",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "c"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "go"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "java"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "node"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "php"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "python"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "error_conversion_failed",
       "language": "zig"
     },
     {

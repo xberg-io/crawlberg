@@ -284,17 +284,18 @@ All error responses follow the same structure:
 
 Error codes map to HTTP status codes:
 
-| Error code       | HTTP status | Condition                               |
-| ---------------- | ----------- | --------------------------------------- |
-| `BAD_REQUEST`    | 400         | Invalid input (missing URL, bad config) |
-| `NOT_FOUND`      | 404         | Job or resource not found               |
-| `UNAUTHORIZED`   | 401         | Authentication required                 |
-| `FORBIDDEN`      | 403         | Access denied                           |
-| `WAF_BLOCKED`    | 403         | Blocked by WAF/bot protection           |
-| `TIMEOUT`        | 504         | Request or browser timed out            |
-| `RATE_LIMITED`   | 429         | Rate limit exceeded                     |
-| `SERVER_ERROR`   | 502         | Upstream server error                   |
-| `INTERNAL_ERROR` | 500         | Unexpected internal error               |
+| Error code          | HTTP status | Condition                               |
+| ------------------- | ----------- | --------------------------------------- |
+| `BAD_REQUEST`       | 400         | Invalid input (missing URL, bad config) |
+| `NOT_FOUND`         | 404         | Job or resource not found               |
+| `UNAUTHORIZED`      | 401         | Authentication required                 |
+| `FORBIDDEN`         | 403         | Access denied                           |
+| `WAF_BLOCKED`       | 403         | Blocked by WAF/bot protection           |
+| `TIMEOUT`           | 504         | Request or browser timed out            |
+| `RATE_LIMITED`      | 429         | Rate limit exceeded                     |
+| `SERVER_ERROR`      | 502         | Upstream server error                   |
+| `CONVERSION_FAILED` | 500         | Fetched page not converted to Markdown  |
+| `INTERNAL_ERROR`    | 500         | Unexpected internal error               |
 
 :::note[Feature gate]
 The server requires the `api` Cargo feature. Add `features = ["api"]` to your `Cargo.toml` dependency, or pass `--features api` to `cargo run`.
