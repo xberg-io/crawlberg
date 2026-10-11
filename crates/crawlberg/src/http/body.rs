@@ -109,7 +109,7 @@ pub(crate) async fn read_body_bounded(
     Ok((resp.bytes().await?.to_vec(), false))
 }
 
-/// The content codings of the IANA registry that compress the body. The HTTP client removes
+/// The content codings that a server uses to compress a page. The HTTP client removes
 /// `Content-Encoding` when it decodes a body, and it matches the exact bytes `gzip`, `deflate`
 /// and `br` only. A coding of this list that is still on the response therefore names bytes
 /// that are not the page: another spelling (`GZIP`, `x-gzip`) or a list (`gzip, identity`).
