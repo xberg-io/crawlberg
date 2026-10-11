@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'package:crawlberg/src/native_loader.dart';
+
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:io';
@@ -11,10 +12,12 @@ import 'dart:core' as _DartCore;
 import 'dart:core';
 import 'dart:async';
 import 'dart:convert';
+
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
 import 'lib.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Main entrypoint of the Rust API
@@ -2531,9 +2534,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Map.fromEntries(
-      dco_decode_list_record_string_string(
-        raw,
-      ).map((e) => MapEntry(e.$1, e.$2)),
+      dco_decode_list_record_string_string(raw)
+          .map((e) => MapEntry(e.$1, e.$2)),
     );
   }
 
@@ -3030,19 +3032,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 12:
         return CrawlError_DataLoss(message: dco_decode_String(raw[1]));
       case 13:
-        return CrawlError_BrowserError(message: dco_decode_String(raw[1]));
+        return CrawlError_ConversionFailed(message: dco_decode_String(raw[1]));
       case 14:
-        return CrawlError_BrowserTimeout(message: dco_decode_String(raw[1]));
+        return CrawlError_BrowserError(message: dco_decode_String(raw[1]));
       case 15:
-        return CrawlError_InvalidConfig(message: dco_decode_String(raw[1]));
+        return CrawlError_BrowserTimeout(message: dco_decode_String(raw[1]));
       case 16:
-        return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
+        return CrawlError_InvalidConfig(message: dco_decode_String(raw[1]));
       case 17:
+        return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
+      case 18:
         return CrawlError_SsrfPolicyViolation(
           url: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
-      case 18:
+      case 19:
         return CrawlError_Other(message: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -4567,21 +4571,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return CrawlError_DataLoss(message: var_message);
       case 13:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_BrowserError(message: var_message);
+        return CrawlError_ConversionFailed(message: var_message);
       case 14:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_BrowserTimeout(message: var_message);
+        return CrawlError_BrowserError(message: var_message);
       case 15:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_InvalidConfig(message: var_message);
+        return CrawlError_BrowserTimeout(message: var_message);
       case 16:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_Unsupported(message: var_message);
+        return CrawlError_InvalidConfig(message: var_message);
       case 17:
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Unsupported(message: var_message);
+      case 18:
         var var_url = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
-      case 18:
+      case 19:
         var var_message = sse_decode_String(deserializer);
         return CrawlError_Other(message: var_message);
       default:
@@ -6443,24 +6450,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case CrawlError_DataLoss(message: final message):
         sse_encode_i_32(12, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_BrowserError(message: final message):
+      case CrawlError_ConversionFailed(message: final message):
         sse_encode_i_32(13, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_BrowserTimeout(message: final message):
+      case CrawlError_BrowserError(message: final message):
         sse_encode_i_32(14, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_InvalidConfig(message: final message):
+      case CrawlError_BrowserTimeout(message: final message):
         sse_encode_i_32(15, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_Unsupported(message: final message):
+      case CrawlError_InvalidConfig(message: final message):
         sse_encode_i_32(16, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+      case CrawlError_Unsupported(message: final message):
         sse_encode_i_32(17, serializer);
+        sse_encode_String(message, serializer);
+      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+        sse_encode_i_32(18, serializer);
         sse_encode_String(url, serializer);
         sse_encode_String(reason, serializer);
       case CrawlError_Other(message: final message):
-        sse_encode_i_32(18, serializer);
+        sse_encode_i_32(19, serializer);
         sse_encode_String(message, serializer);
     }
   }

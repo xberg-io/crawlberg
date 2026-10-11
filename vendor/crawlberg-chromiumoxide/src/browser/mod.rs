@@ -142,12 +142,23 @@ impl Browser {
     /// This fails if no web socket url could be detected from the child
     /// processes stderr for more than the configured `launch_timeout`
     /// (20 seconds by default).
-    pub async fn launch(mut config: BrowserConfig) -> Result<(Self, Handler)> {
+    pub async fn launch(config: BrowserConfig) -> Result<(Self, Handler)> {
+        Self::launch_with(config, BrowserConfig::launch).await
+    }
+
+    /// Like [`Self::launch`], with the child process started by `spawn`.
+    ///
+    /// `spawn` gets the final config and runs once, before the wait for the web socket url. A
+    /// caller that must know the process from the moment it exists records it there.
+    pub async fn launch_with(
+        mut config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<Child>,
+    ) -> Result<(Self, Handler)> {
         // Canonalize paths to reduce issues with sandboxing
         config.executable = utils::canonicalize_except_snap(config.executable).await?;
 
         // Launch a new chromium instance
-        let mut child = config.launch()?;
+        let mut child = spawn(&config)?;
 
         /// Faillible initialization to run once the child process is created.
         ///
@@ -257,7 +268,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub async fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.own_child() {
             Ok(Some(child.wait().await?))
         } else {
             Ok(None)
@@ -273,7 +284,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.own_child() {
             child.try_wait()
         } else {
             Ok(None)
@@ -290,8 +301,27 @@ impl Browser {
     ///
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
+    ///
+    /// It returns `None` in a process forked from the one that spawned the instance. So do
+    /// [`Browser::wait`], [`Browser::try_wait`] and [`Browser::kill`], and a drop there leaves the
+    /// instance running: only the process that spawned it ends it.
     pub fn get_mut_child(&mut self) -> Option<&mut Child> {
-        self.child.as_mut()
+        self.own_child()
+    }
+
+    /// The spawned chromium instance, in the process that spawned it. Every call that waits for
+    /// the instance or ends it goes through here.
+    fn own_child(&mut self) -> Option<&mut Child> {
+        self.child.as_mut().filter(|child| child.spawned_here())
+    }
+
+    /// Whether this [`Browser`] is a copy, in a forked process, of one that spawned a chromium
+    /// instance: the instance exists, and another process spawned it.
+    ///
+    /// It is `false` in the process that spawned the instance, and for a [`Browser`] that
+    /// spawned none (e.g. connected to an existing browser through [`Browser::connect`]).
+    pub fn spawned_elsewhere(&self) -> bool {
+        self.child.as_ref().is_some_and(|child| !child.spawned_here())
     }
 
     /// Forcibly kill the spawned chromium instance
@@ -305,7 +335,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub async fn kill(&mut self) -> Option<io::Result<()>> {
-        match self.child.as_mut() {
+        match self.own_child() {
             Some(child) => Some(child.kill().await),
             None => None,
         }
@@ -468,17 +498,24 @@ impl Browser {
 
 impl Drop for Browser {
     fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
+        // In a process forked from the one that spawned the instance, the handle is a copy.
+        // Dropping it would kill the instance, which `kill_on_drop` asks the runtime to do, so
+        // the copy is leaked instead.
+        if let Some(copy) = self.child.take_if(|child| !child.spawned_here()) {
+            std::mem::forget(copy);
+        }
+        // A caller that spawned the instance with `kill_on_drop(false)` stops it itself: the
+        // runtime kills nothing, so there is nothing to warn about.
+        if let Some(child) = self.child.as_mut().filter(|child| child.killed_on_drop()) {
             if let Ok(Some(_)) = child.try_wait() {
                 // Already exited, do nothing. Usually occurs after using the method close or kill.
             } else {
-                // We set the `kill_on_drop` property for the child process, so no need to explicitely
-                // kill it here. It can't really be done anyway since the method is async.
+                // The child has the `kill_on_drop` property, so the runtime kills it. It cannot be
+                // done here, since the method is async.
                 //
-                // On Unix, the process will be reaped in the background by the runtime automatically
-                // so it won't leave any resources locked. It is, however, a better practice for the user to
-                // do it himself since the runtime doesn't provide garantees as to when the reap occurs, so we
-                // warn him here.
+                // On Unix the runtime reaps the process in the background, so it leaves no resource
+                // locked. The runtime gives no guarantee as to when the reap occurs, so a caller
+                // does better to close the browser itself, and is warned here.
                 tracing::warn!("Browser was not closed manually, it will be killed automatically in the background");
             }
         }
@@ -540,5 +577,171 @@ async fn ws_url_from_output(
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+#[allow(unsafe_code)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::async_process::{Command, Stdio};
+
+    unsafe extern "C" {
+        fn fork() -> i32;
+        fn _exit(code: i32) -> !;
+        fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+
+    /// A browser whose spawned instance is a `cat` that waits on its standard input.
+    fn browser_with_a_waiting_instance() -> Browser {
+        browser_with_an_instance_of(Command::new("cat").stdin(Stdio::piped()))
+    }
+
+    fn browser_with_an_instance_of(command: &mut Command) -> Browser {
+        let child = command.spawn().expect("cat must start");
+        Browser {
+            sender: channel(1).0,
+            config: None,
+            child: Some(child),
+            debug_ws_url: String::new(),
+            browser_context: BrowserContext::default(),
+        }
+    }
+
+    /// Collects the message of every event.
+    struct Messages(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::field::Visit for Messages {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0
+                    .lock()
+                    .expect("the messages must not be poisoned")
+                    .push(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl tracing::Subscriber for Messages {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            event.record(&mut Messages(self.0.clone()));
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// The messages logged on this thread while `browser` is dropped.
+    fn messages_of_the_drop(browser: Browser) -> Vec<String> {
+        let messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(Messages(messages.clone()));
+        drop(browser);
+        drop(guard);
+        std::mem::take(&mut *messages.lock().expect("the messages must not be poisoned"))
+    }
+
+    /// The drop of a browser warns that the runtime kills the running instance only when the
+    /// runtime does. A caller that spawned the instance with `kill_on_drop(false)` stops it
+    /// itself, and its drop logs no warning.
+    #[tokio::test]
+    async fn dropping_a_browser_warns_of_a_kill_only_when_the_runtime_kills_the_instance() {
+        const WARNING: &str = "Browser was not closed manually";
+
+        let killed = messages_of_the_drop(browser_with_a_waiting_instance());
+        assert!(
+            killed.iter().any(|message| message.contains(WARNING)),
+            "the drop of a running instance the runtime kills must warn: {killed:?}"
+        );
+
+        let kept = messages_of_the_drop(browser_with_an_instance_of(
+            Command::new("cat").stdin(Stdio::piped()).kill_on_drop(false),
+        ));
+        assert!(
+            !kept.iter().any(|message| message.contains(WARNING)),
+            "the drop of an instance its caller stops must not warn of a kill: {kept:?}"
+        );
+    }
+
+    /// Wait up to ten seconds for the forked child `pid` and return its wait status. A child that
+    /// has not left by then is killed, and the status is the one of that kill.
+    fn wait_for_forked_child(pid: i32) -> i32 {
+        const NO_HANG: i32 = 1;
+        const KILL: i32 = 9;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut status = 0;
+        // SAFETY: `pid` is a child of this process and `status` is writable.
+        while unsafe { waitpid(pid, &raw mut status, NO_HANG) } == 0 {
+            if Instant::now() >= deadline {
+                // SAFETY: as above; the child is not reaped yet, so the pid is still its own.
+                unsafe {
+                    kill(pid, KILL);
+                    waitpid(pid, &raw mut status, 0);
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        status
+    }
+
+    /// A process forked from the one that spawned a browser holds a copy of the browser. It gets
+    /// no child from it, its `kill` and `try_wait` do nothing, and its drop leaves the instance
+    /// running.
+    #[tokio::test]
+    async fn a_forked_process_does_not_end_the_instance_its_parent_spawned() {
+        let mut browser = browser_with_a_waiting_instance();
+
+        // SAFETY: the forked child has one thread. It uses its copy of the browser and leaves
+        // through `_exit`, so it never returns into the test harness.
+        let forked = unsafe { fork() };
+        assert!(forked >= 0, "fork must work");
+        if forked == 0 {
+            let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let a_copy = browser.spawned_elsewhere();
+                let has_child = browser.get_mut_child().is_some();
+                let killed = futures::executor::block_on(browser.kill()).is_some();
+                let waited = !matches!(browser.try_wait(), Ok(None));
+                drop(browser);
+                i32::from(has_child) | (i32::from(killed) << 1) | (i32::from(waited) << 2) | (i32::from(!a_copy) << 3)
+            }));
+            // SAFETY: leaves the forked child at once, with no exit function of the parent.
+            unsafe { _exit(found.unwrap_or(64)) }
+        }
+        let status = wait_for_forked_child(forked);
+
+        let still_runs = matches!(browser.try_wait(), Ok(None));
+        let own_child = browser.get_mut_child().is_some();
+        let a_copy_here = browser.spawned_elsewhere();
+        let killed_here = browser.kill().await;
+        assert_eq!(
+            status, 0,
+            "the forked process must get no child, kill nothing, wait for nothing and see a copy (wait status {status})"
+        );
+        assert!(
+            !a_copy_here,
+            "the browser is no copy in the process that spawned the instance"
+        );
+        assert!(
+            still_runs,
+            "the instance must still run after a forked process killed and dropped its copy of the browser"
+        );
+        assert!(
+            own_child,
+            "the process that spawned the instance must still get its child"
+        );
+        assert!(
+            matches!(killed_here, Some(Ok(()))),
+            "the process that spawned the instance must still be able to kill it: {killed_here:?}"
+        );
     }
 }

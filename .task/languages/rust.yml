@@ -23,6 +23,11 @@ vars:
       ' 2>/dev/null || echo ""
 
 tasks:
+  chrome:prepare:
+    desc: Preserve the macOS Chrome app bundle for browser tests
+    cmds:
+      - bash scripts/ci/rust/prepare-chrome.sh
+
   install:
     desc: Install Rust toolchain and tools (rustup, cargo-deny)
     cmds:
@@ -151,6 +156,10 @@ tasks:
       RUST_BACKTRACE: "1"
       CARGO_TERM_COLOR: "always"
     cmds:
+      # ~keep The vendored driver is not a workspace member, so no workspace command runs its
+      # ~keep tests. It runs first: `task` stops at the first failing cmd. The root lockfile does
+      # ~keep not apply to it: `--locked` holds it to the driver's own lockfile.
+      - cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib
       - cmd: bash scripts/ci/rust/run-unit-tests.sh
         platforms: [linux, darwin]
 
@@ -215,17 +224,18 @@ tasks:
     env:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
-      # ~keep These four manifests own independent lockfiles and are not covered by commands
+      # ~keep These five manifests own independent lockfiles and are not covered by commands
       # ~keep against the root workspace. Assert both counts so a lost path or an empty loop
       # ~keep cannot turn this drift gate into a successful zero-work check (#296).
       - cmd: |
-          expected=4
+          expected=5
           checked=0
           set -- \
             fuzz/Cargo.toml \
             e2e/rust/Cargo.toml \
             packages/elixir/native/crawlberg_nif/Cargo.toml \
-            packages/ruby/ext/crawlberg_rb/native/Cargo.toml
+            packages/ruby/ext/crawlberg_rb/native/Cargo.toml \
+            vendor/crawlberg-chromiumoxide/Cargo.toml
 
           echo "secondary Cargo manifests: expected $expected, configured $#"
           if [ "$#" -ne "$expected" ]; then
@@ -356,6 +366,8 @@ tasks:
         ignore_error: true
       - cmd: cargo update --manifest-path packages/ruby/ext/crawlberg_rb/native/Cargo.toml
         ignore_error: true
+      - cmd: echo "Updating Rust dependencies (vendored browser driver)..."
+      - cmd: cargo update --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml
 
   e2e:generate:
     desc: Generate and format Rust E2E tests from fixtures

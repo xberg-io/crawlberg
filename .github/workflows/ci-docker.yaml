@@ -26,6 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Task
+        uses: xberg-io/actions/install-task@f2be77fcc9149c34363aa08de6ba8abb60b04d0c
+
       - name: Free disk space
         uses: xberg-io/actions/free-disk-space-linux@v1
 
@@ -45,10 +48,7 @@ jobs:
 
       - name: Save Docker image
         shell: bash
-        run: |
-          mkdir -p /tmp
-          docker save crawlberg:${{ matrix.variant }} | gzip > /tmp/crawlberg-${{ matrix.variant }}.tar.gz
-          ls -lh /tmp/crawlberg-${{ matrix.variant }}.tar.gz
+        run: task docker:save IMAGE=crawlberg:${{ matrix.variant }} OUTPUT=/tmp/crawlberg-${{ matrix.variant }}.tar.gz
 
       - name: Check image size
         uses: xberg-io/actions/check-docker-image-size@v1
@@ -59,12 +59,12 @@ jobs:
 
       - name: Run feature tests
         if: matrix.variant != 'cli'
-        run: scripts/ci/docker/run-feature-tests.sh "${{ matrix.variant }}"
+        run: task docker:test:features IMAGE=crawlberg:${{ matrix.variant }}
 
       - name: Run configuration tests
         if: matrix.variant != 'cli'
-        run: scripts/ci/docker/run-config-tests.sh "${{ matrix.variant }}"
+        run: task docker:test:config IMAGE=crawlberg:${{ matrix.variant }}
 
       - name: Run CLI tests
         if: matrix.variant == 'cli'
-        run: scripts/ci/docker/run-cli-tests.sh
+        run: task docker:test:features IMAGE=crawlberg:cli

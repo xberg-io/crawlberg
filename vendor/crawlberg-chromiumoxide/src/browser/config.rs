@@ -383,6 +383,12 @@ impl BrowserConfigBuilder {
 
 impl BrowserConfig {
     pub fn launch(&self) -> io::Result<Child> {
+        self.command().spawn()
+    }
+
+    /// The command that [`Self::launch`] spawns. A caller that stops the browser process itself
+    /// changes the command first, with [`async_process::Command::kill_on_drop`].
+    pub fn command(&self) -> async_process::Command {
         let mut builder = ArgsBuilder::new();
 
         if self.disable_default_args {
@@ -462,7 +468,10 @@ impl BrowserConfig {
         if let Some(ref envs) = self.process_envs {
             cmd.envs(envs);
         }
-        cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
+        // The browser gets no standard handle of the caller: it would hold a caller's pipe open
+        // for as long as it runs.
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+        cmd
     }
 }
 
