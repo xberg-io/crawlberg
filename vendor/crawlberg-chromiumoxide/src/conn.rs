@@ -430,3 +430,57 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod pipe_tests {
+    use std::time::Duration;
+
+    use chromiumoxide_cdp::cdp::CdpEventMessage;
+    use futures::{FutureExt, StreamExt};
+    use tokio::io::AsyncReadExt;
+
+    use super::Connection;
+    use crate::pipe::PipeHub;
+
+    /// ~keep A page that floods requests needs one answer for each request, so the commands queue
+    /// ~keep up faster than the task of the connection wakes. A WebSocket takes the whole queue in
+    /// ~keep one poll. The pipe took one command for each poll, and the read of the document
+    /// ~keep waited behind the queue until its timeout (the two flood tests of
+    /// ~keep `test_browser_ssrf_whole_fetch`). The test polls the connection one time and never
+    /// ~keep again, with no Chrome: the peer is the other end of a socket pair.
+    #[tokio::test]
+    async fn one_poll_of_the_connection_hands_every_queued_command_to_the_pipe() {
+        const COMMANDS: usize = 200;
+        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_hub, client) = PipeHub::start(socket);
+        let mut connection = Connection::<CdpEventMessage>::from_raw(client);
+        for number in 0..COMMANDS {
+            connection
+                .submit_command(
+                    "Fetch.failRequest".into(),
+                    None,
+                    serde_json::json!({"requestId": number.to_string()}),
+                )
+                .expect("command queued");
+        }
+        assert!(
+            connection.next().now_or_never().is_none(),
+            "the peer sent nothing, so the poll has nothing to return"
+        );
+
+        let mut frames = 0;
+        let all_read = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut buffer = [0; 4096];
+            while frames < COMMANDS {
+                let count = peer.read(&mut buffer).await.expect("read commands");
+                assert_ne!(count, 0, "the pipe stays open");
+                frames += buffer[..count].iter().filter(|byte| **byte == 0).count();
+            }
+        })
+        .await;
+        assert!(
+            all_read.is_ok(),
+            "one poll must hand all {COMMANDS} commands to the pipe: the peer got {frames}"
+        );
+    }
+}

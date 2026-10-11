@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -26,16 +25,9 @@ pub(crate) struct PipeHub(mpsc::UnboundedSender<Command>);
 
 #[derive(Debug)]
 enum Command {
-    Send(usize, Value, WriteReceipt),
+    Send(usize, Value),
     Open(oneshot::Sender<Result<RawConnection>>),
-    Close(usize, Option<WriteReceipt>),
-}
-
-type WriteReceipt = oneshot::Sender<Result<()>>;
-
-struct WriteJob {
-    bytes: Vec<u8>,
-    receipt: Option<WriteReceipt>,
+    Close(usize),
 }
 
 struct WriterTask(tokio::task::JoinHandle<Result<()>>);
@@ -51,35 +43,23 @@ pub(crate) struct PipeClient {
     id: usize,
     hub: PipeHub,
     incoming: mpsc::UnboundedReceiver<Result<Message>>,
-    receipt: Option<oneshot::Receiver<Result<()>>>,
     closing: bool,
 }
 
 impl Drop for PipeClient {
     fn drop(&mut self) {
         if !self.closing {
-            let _ = self.hub.0.send(Command::Close(self.id, None));
+            let _ = self.hub.0.send(Command::Close(self.id));
         }
     }
 }
 
 impl PipeClient {
-    fn poll_receipt(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        let Some(receipt) = self.receipt.as_mut() else {
-            return Poll::Ready(Ok(()));
-        };
-        let result = std::task::ready!(Pin::new(receipt).poll(cx));
-        self.receipt = None;
-        Poll::Ready(result.unwrap_or(Err(CdpError::NoResponse)))
-    }
-
     fn queue_close(&mut self) -> Result<()> {
-        let (done, receipt) = oneshot::channel();
         self.hub
             .0
-            .send(Command::Close(self.id, Some(done)))
+            .send(Command::Close(self.id))
             .map_err(|_| CdpError::NoResponse)?;
-        self.receipt = Some(receipt);
         self.closing = true;
         Ok(())
     }
@@ -93,13 +73,16 @@ impl Stream for PipeClient {
     }
 }
 
+/// ~keep The sink never waits for the hub. A command is queued for the writer task and the sink is
+/// ~keep ready for the next one at once, as a WebSocket is while its send buffer has room. A sink
+/// ~keep that waited for each write let the connection hand over one command for each wake of its
+/// ~keep task, so a page that needed an answer to each of its requests held every other command
+/// ~keep back. A failed write ends the hub, and each client reads that error from its stream.
 impl Sink<Message> for PipeClient {
     type Error = CdpError;
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        let client = self.get_mut();
-        std::task::ready!(client.poll_receipt(cx))?;
-        Poll::Ready(if client.hub.0.is_closed() || client.closing {
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(if self.hub.0.is_closed() || self.closing {
             Err(CdpError::NoResponse)
         } else {
             Ok(())
@@ -108,7 +91,7 @@ impl Sink<Message> for PipeClient {
 
     fn start_send(self: Pin<&mut Self>, message: Message) -> Result<()> {
         let client = self.get_mut();
-        if client.receipt.is_some() || client.closing {
+        if client.closing {
             return Err(CdpError::NoResponse);
         }
         match message {
@@ -117,30 +100,25 @@ impl Sink<Message> for PipeClient {
                 if value.get("id").is_none() {
                     return Err(CdpError::NoResponse);
                 }
-                let (done, receipt) = oneshot::channel();
                 client
                     .hub
                     .0
-                    .send(Command::Send(client.id, value, done))
-                    .map_err(|_| CdpError::NoResponse)?;
-                client.receipt = Some(receipt);
-                Ok(())
+                    .send(Command::Send(client.id, value))
+                    .map_err(|_| CdpError::NoResponse)
             }
             Message::Close(_) => client.queue_close(),
             other => Err(CdpError::UnexpectedWsMessage(other)),
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.get_mut().poll_receipt(cx)
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
         let client = self.get_mut();
-        std::task::ready!(client.poll_receipt(cx))?;
         if !client.closing {
             client.queue_close()?;
-            return client.poll_receipt(cx);
         }
         Poll::Ready(Ok(()))
     }
@@ -213,15 +191,15 @@ impl Router {
                 id,
                 hub: self.hub.clone(),
                 incoming: receiver,
-                receipt: None,
                 closing: false,
             }),
         }
     }
 
-    fn encode_command(&mut self, command: Command) -> Result<Option<WriteJob>> {
-        let (mut value, pending, receipt) = match command {
-            Command::Send(client, mut value, receipt) => {
+    /// The bytes to write for `command`, with the frame end. `None` for a command that writes nothing.
+    fn encode_command(&mut self, command: Command) -> Result<Option<Vec<u8>>> {
+        let (mut value, pending) = match command {
+            Command::Send(client, mut value) => {
                 let state = self.clients.get(&client).ok_or(CdpError::NoResponse)?;
                 if value.get("sessionId").is_none()
                     && let Some(root) = &state.root_session
@@ -229,26 +207,21 @@ impl Router {
                     value["sessionId"] = Value::String(root.clone());
                 }
                 let original_id = value.get("id").cloned().ok_or(CdpError::NoResponse)?;
-                (value, Pending::Reply { client, original_id }, Some(receipt))
+                (value, Pending::Reply { client, original_id })
             }
             Command::Open(done) => (
                 serde_json::json!({"method":"Target.attachToBrowserTarget","params":{}}),
                 Pending::Open { done },
-                None,
             ),
-            Command::Close(client, receipt) => {
+            Command::Close(client) => {
                 let state = self.clients.remove(&client);
                 self.sessions.retain(|_, owner| *owner != client);
                 let Some(root) = state.and_then(|state| state.root_session) else {
-                    if let Some(receipt) = receipt {
-                        let _ = receipt.send(Ok(()));
-                    }
                     return Ok(None);
                 };
                 (
                     serde_json::json!({"method":"Target.detachFromTarget","params":{"sessionId":root}}),
                     Pending::Ignore,
-                    receipt,
                 )
             }
         };
@@ -258,7 +231,7 @@ impl Router {
         self.pending.insert(id, pending);
         let mut bytes = serde_json::to_vec(&value)?;
         bytes.push(0);
-        Ok(Some(WriteJob { bytes, receipt }))
+        Ok(Some(bytes))
     }
 
     fn deliver(&mut self, mut value: Value) -> Result<()> {
@@ -343,13 +316,18 @@ impl Router {
         loop {
             tokio::select! {
                 command = commands.recv() => {
-                    let Some(command) = command else { return Ok(()); };
-                    let job = self.encode_command(command)?;
-                    if self.clients.is_empty() {
-                        if let Some(receipt) = job.and_then(|job| job.receipt) { let _ = receipt.send(Ok(())); }
-                        return Ok(());
+                    let ended = command.is_none();
+                    if let Some(command) = command
+                        && let Some(bytes) = self.encode_command(command)?
+                    {
+                        writes.send(bytes).map_err(|_| CdpError::NoResponse)?;
                     }
-                    if let Some(job) = job { writes.send(job).map_err(|_| CdpError::NoResponse)?; }
+                    if ended || self.clients.is_empty() {
+                        // ~keep The writer ends when its queue is empty, so a command that a client
+                        // ~keep queued before it closed is written before the pipe closes.
+                        drop(writes);
+                        return (&mut writer.0).await.map_err(|error| CdpError::Io(std::io::Error::other(error)))?;
+                    }
                 }
                 written = &mut writer.0 => {
                     return written.map_err(|error| CdpError::Io(std::io::Error::other(error)))?;
@@ -373,23 +351,10 @@ impl Router {
 
     async fn write_commands(
         mut writer: impl tokio::io::AsyncWrite + Unpin,
-        mut queued: mpsc::UnboundedReceiver<WriteJob>,
+        mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
     ) -> Result<()> {
-        while let Some(job) = queued.recv().await {
-            match writer.write_all(&job.bytes).await {
-                Ok(()) => {
-                    if let Some(receipt) = job.receipt {
-                        let _ = receipt.send(Ok(()));
-                    }
-                }
-                Err(error) => {
-                    if let Some(receipt) = job.receipt {
-                        let cause = std::io::Error::new(error.kind(), error.to_string());
-                        let _ = receipt.send(Err(cause.into()));
-                    }
-                    return Err(error.into());
-                }
-            }
+        while let Some(bytes) = queued.recv().await {
+            writer.write_all(&bytes).await?;
         }
         Ok(())
     }
@@ -398,12 +363,11 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{SinkExt, StreamExt};
+    use futures::{FutureExt, SinkExt, StreamExt};
     use std::time::Duration;
     use tokio::time::timeout;
 
     const DEADLINE: Duration = Duration::from_secs(2);
-    const BLOCKED_WRITE_WAIT: Duration = Duration::from_millis(100);
 
     #[test]
     fn frame_scan_skips_bytes_already_examined() {
@@ -544,27 +508,48 @@ mod tests {
         assert_eq!(value["result"]["product"], "TestBrowser");
     }
 
+    /// ~keep The commands are larger together than the buffer of the socket, and the peer reads
+    /// ~keep nothing while the client sends them. A sink that waits for a write stops at the first.
     #[tokio::test]
-    async fn flush_waits_until_the_peer_accepts_the_command() {
+    async fn a_client_sends_a_flood_of_commands_while_the_peer_reads_nothing() {
+        const COMMANDS: u64 = 500;
         let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
         let (_, mut client) = PipeHub::start(socket);
-        let command = large_command();
-        assert!(timeout(BLOCKED_WRITE_WAIT, client.send(command)).await.is_err());
-        let drain = tokio::spawn(async move {
-            let mut buffer = [0; READ_BUFFER_SIZE];
-            loop {
-                let count = peer.read(&mut buffer).await.expect("read command");
-                assert_ne!(count, 0);
-                if buffer[..count].contains(&0) {
-                    return peer;
-                }
-            }
-        });
-        timeout(DEADLINE, client.flush())
-            .await
-            .expect("flush deadline")
-            .expect("flush succeeds");
-        let _peer = drain.await.expect("drain task");
+        for number in 0..COMMANDS {
+            let command = serde_json::json!({
+                "id": number,
+                "method": "Fetch.failRequest",
+                "params": {"number": number, "requestId": "r".repeat(1024)},
+            });
+            client
+                .send(Message::Text(command.to_string().into()))
+                .now_or_never()
+                .expect("the sink takes a command with no wait for the peer")
+                .expect("command queued");
+        }
+        for number in 0..COMMANDS {
+            let mut event =
+                serde_json::to_vec(&serde_json::json!({"method":"Fetch.requestPaused","params":{"number":number}}))
+                    .expect("event JSON");
+            event.push(0);
+            peer.write_all(&event).await.expect("event write");
+        }
+        for number in 0..COMMANDS {
+            let event = timeout(DEADLINE, client.next())
+                .await
+                .expect("event deadline")
+                .expect("event")
+                .expect("event result");
+            let value: Value = serde_json::from_str(event.to_text().expect("text")).expect("event JSON");
+            assert_eq!(value["params"]["number"], number, "each event arrives in its order");
+        }
+        for number in 0..COMMANDS {
+            let command = read_command(&mut peer).await;
+            assert_eq!(
+                command["params"]["number"], number,
+                "each command is written in its order"
+            );
+        }
     }
 
     #[tokio::test]
@@ -592,10 +577,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dropping_the_last_client_releases_a_blocked_writer() {
+    async fn the_command_of_a_dropped_client_is_written_before_the_pipe_closes() {
         let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
         let (hub, mut client) = PipeHub::start(socket);
-        assert!(timeout(BLOCKED_WRITE_WAIT, client.send(large_command())).await.is_err());
+        client
+            .send(large_command())
+            .now_or_never()
+            .expect("the sink takes a command with no wait for the peer")
+            .expect("command queued");
         drop(client);
         drop(hub);
         let mut received = Vec::new();
@@ -603,7 +592,9 @@ mod tests {
             .await
             .expect("pipe EOF deadline")
             .expect("pipe EOF");
-        assert!(!received.is_empty());
+        assert_eq!(received.last(), Some(&0), "the command ends with its frame end");
+        let command: Value = serde_json::from_slice(&received[..received.len() - 1]).expect("one whole command");
+        assert_eq!(command["method"], "Runtime.evaluate");
     }
 
     #[tokio::test]
@@ -664,45 +655,22 @@ mod tests {
         );
     }
 
+    /// ~keep The peer stops reading and keeps its writing end open, so only the write fails.
     #[tokio::test]
-    async fn ready_waits_for_the_previous_command_receipt() {
-        let (socket, _peer) = tokio::net::UnixStream::pair().expect("socket pair");
+    async fn a_failed_write_reaches_the_client_as_an_error_on_its_stream() {
+        let (socket, peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let peer = peer.into_std().expect("std socket");
+        peer.shutdown(std::net::Shutdown::Read).expect("the peer stops reading");
         let (_, mut client) = PipeHub::start(socket);
-        client.feed(large_command()).await.expect("first command queued");
-        assert!(timeout(BLOCKED_WRITE_WAIT, client.feed(large_command())).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn socket_write_failures_reach_the_command_receipt() {
-        struct BrokenWriter;
-
-        impl tokio::io::AsyncWrite for BrokenWriter {
-            fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<std::io::Result<usize>> {
-                Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed peer")))
-            }
-
-            fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-                Poll::Ready(Ok(()))
-            }
-
-            fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-                Poll::Ready(Ok(()))
-            }
-        }
-
-        let (queued, jobs) = mpsc::unbounded_channel();
-        let (receipt, done) = oneshot::channel();
-        queued
-            .send(WriteJob {
-                bytes: vec![0],
-                receipt: Some(receipt),
-            })
-            .expect("queue command");
-        let failure = Router::write_commands(BrokenWriter, jobs)
+        client
+            .send(large_command())
+            .now_or_never()
+            .expect("the sink takes a command with no wait for the peer")
+            .expect("command queued");
+        let failure = timeout(DEADLINE, client.next())
             .await
-            .expect_err("write fails");
-        assert!(matches!(failure, CdpError::Io(error) if error.kind() == std::io::ErrorKind::BrokenPipe));
-        let failure = done.await.expect("receipt delivered").expect_err("receipt fails");
-        assert!(matches!(failure, CdpError::Io(error) if error.kind() == std::io::ErrorKind::BrokenPipe));
+            .expect("error deadline")
+            .expect("error");
+        assert!(matches!(failure, Err(CdpError::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe));
     }
 }
