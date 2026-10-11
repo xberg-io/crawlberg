@@ -72,6 +72,19 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Browser mode applies `block_url_patterns` on the default backend. A request of the page whose
+  address matches a pattern is not sent. Before, the setting had no effect there. (#608)
+- Browser mode applies the retry settings. A page that fails with a status in `retry_codes` is
+  loaded again after the retry delay, up to `retry_count` times, on the two backends. A browser
+  timeout is not retried. (#610)
+- Browser mode waits for the delay of the domain (`rate_limit_ms`) before each page load, on the
+  two backends. The delay applies to the page, not to the files that the page loads. (#622)
+- Browser mode sends client hints that agree with a configured Chrome user agent: the brands
+  with its version, its platform and the mobile flag, on every request of the page. For a user
+  agent that does not name Chrome on Android, Windows, macOS or Linux, Chrome sends no client
+  hints, as before. (#627)
+- A page that is loading when the pooled Chrome dies is loaded again on the new Chrome when
+  `retry_count` is 1 or more. Before, the retry settings did not cover this failure. (#621)
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited
   runtime work after a process fork. The runtime starts at the first async call, not at import.
   A call after the exit hooks ran raises `RuntimeError`. (#633)
