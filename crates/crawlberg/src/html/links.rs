@@ -116,11 +116,12 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, document_url: &Url) -> Vec<Li
         && let Some(resolved) = fetchable_address(&target, base_url)
         && !links.iter().any(|link| link.url == resolved.as_str())
     {
+        let link_type = classify_link(&target, &resolved, document_url);
         links.push(LinkInfo {
             original_url: resolve_original_url(&target, base_url, &resolved),
             url: resolved.into(),
             text: String::new(),
-            link_type: classify_link(&target, base_url),
+            link_type,
             rel: None,
             nofollow: false,
         });
