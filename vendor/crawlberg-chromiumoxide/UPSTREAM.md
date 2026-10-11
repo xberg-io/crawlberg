@@ -30,3 +30,7 @@ More changes against upstream:
 - A `Child` records the process that spawned it. In a process forked from that one, `Browser`
   hands out no child, waits for none and kills none, and its drop leaks the copied handle. Upstream
   kills the browser of the parent when the forked process drops its copy.
+
+The fork also reads a protocol message that holds one half of a surrogate pair. Chrome
+writes that half as a lone `\ud83d` escape, which `serde_json` refuses, so upstream loses
+the whole reply or event. `conn::parse_message` replaces each unpaired half with U+FFFD.
