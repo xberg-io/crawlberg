@@ -1,0 +1,26 @@
+{
+	"id": "error_conversion_failed",
+	"description": "A fetched page that cannot be converted to Markdown is a conversion error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-conversion-failed",
+		"title": "A fetched page that cannot be converted to Markdown is a conversion error"
+	},
+	"tags": ["error", "conversion_failed"],
+	"assertions": [
+		{
+			"type": "error"
+		},
+		{
+			"type": "error",
+			"value": "conversion_failed:"
+		}
+	],
+	"mock_response": {
+		"status": 200,
+		"body": "PK\u0003\u0004<html><body><p>This is a zip archive signature, not a page.</p></body></html>",
+		"headers": {
+			"content-type": "text/html; charset=utf-8"
+		}
+	}
+}

@@ -300,6 +300,7 @@ fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
             | crate::error::CrawlError::Unauthorized { .. }
             | crate::error::CrawlError::Gone { .. }
             | crate::error::CrawlError::DataLoss { .. }
+            | crate::error::CrawlError::ConversionFailed { .. }
             | crate::error::CrawlError::BrowserError { .. }
             | crate::error::CrawlError::BrowserTimeout { .. }
             | crate::error::CrawlError::SsrfPolicyViolation { .. },
@@ -474,6 +475,23 @@ mod tests {
             snapshot.is_none(),
             "DNS error must not pollute domain state; got {snapshot:?}"
         );
+    }
+
+    #[test]
+    fn a_failed_conversion_says_nothing_about_the_host() {
+        let outcome = AttemptOutcome {
+            attempt: 0,
+            url: Arc::from("https://example.com/"),
+            status: Some(200),
+            error: Some(crate::error::CrawlError::conversion_failed("refused")),
+            waf_signal: None,
+            body_size: 0,
+            content_density: 0.0,
+            bytes_transferred: None,
+            previous_tier: Tier::Http,
+        };
+
+        assert!(matches!(classify_outcome(&outcome), ObservedOutcome::Permanent));
     }
 
     /// ~keep Time is injected rather than slept: the TTL is an hour, so a sleeping test
