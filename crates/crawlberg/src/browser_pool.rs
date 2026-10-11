@@ -1658,7 +1658,7 @@ pub(crate) async fn release_browser(
 ) {
     if browser.get_mut_child().is_none() {
         if let Some(pending) = cleanup.pending_closes {
-            await_pending_closes(&pending, shutdown_timeout).await;
+            let _ = await_pending_closes(&pending, shutdown_timeout).await;
         }
         if let Some(target_id) = cleanup.open_tab {
             let _ = tokio::time::timeout(shutdown_timeout, browser.execute(CloseTargetParams::new(target_id))).await;
@@ -1681,19 +1681,21 @@ pub(crate) async fn release_browser(
 /// ~keep function exists to prevent. Awaiting the handles, not just sleeping, keeps it
 /// ~keep deterministic: `Drop` registers the handle before it returns, so a caller that drops a
 /// ~keep `PooledPage` and then shuts the pool down always finds the close here.
-async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
+async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) -> bool {
     let handles = match pending.lock() {
         Ok(mut guard) => std::mem::take(&mut *guard),
         Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
     };
     if handles.is_empty() {
-        return;
+        return true;
     }
     let pending_count = handles.len();
     let joined = tokio::time::timeout(wait_timeout, async {
+        let mut completed = true;
         for handle in handles {
-            let _ = handle.await;
+            completed &= handle.await.is_ok();
         }
+        completed
     })
     .await;
     if joined.is_err() {
@@ -1703,6 +1705,7 @@ async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
             "pool-opened tabs did not close before the shutdown timeout; leaving them to the browser"
         );
     }
+    joined.is_ok_and(|completed| completed)
 }
 
 /// Close `browser` and wait for its process to exit, bounding the wait by
@@ -2226,16 +2229,21 @@ impl BrowserPool {
         config: &crate::types::CrawlConfig,
     ) -> Result<(chromiumoxide::Page, crate::ssrf_intercept::Watch, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
+        let cleanup_completed = if let Some(current) = guard.as_ref() {
+            await_pending_closes(&current.pending_closes, HANDLER_SHUTDOWN_TIMEOUT).await
+        } else {
+            true
+        };
 
-        if guard.is_none()
+        if !cleanup_completed
+            || guard.is_none()
             || guard
                 .as_ref()
                 .is_some_and(|bs| bs.handler_end.has_ended() || bs.firewall.has_failed())
         {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
-                old.firewall.stop().await;
-                old.handler_handle.abort();
+                old.fail_closed().await;
             }
             let bs = self.launch_browser().await?;
             *guard = Some(bs);
@@ -2471,7 +2479,9 @@ impl Drop for PooledPage {
             let watch = self.watch.take();
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
+                    let permit = self._permit.take();
                     let close = handle.spawn(async move {
+                        let _permit = permit;
                         if let Some(watch) = watch {
                             drop(page);
                             watch.close().await;

@@ -4811,3 +4811,98 @@ async fn a_closed_cdp_socket_cancels_a_command_waiting_for_its_response() {
     );
     assert!(matches!(ended, Ok(Ok(()))), "the handler must end, got {ended:?}");
 }
+
+#[tokio::test]
+async fn a_new_borrow_waits_for_cancelled_cleanup_even_with_spare_page_permits() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if expect_chrome_or_skip(
+        "a_new_borrow_waits_for_cancelled_cleanup_even_with_spare_page_permits",
+        pool.warm().await,
+    )
+    .is_none()
+    {
+        return;
+    }
+    let generation = pool.state.lock().await.as_ref().expect("warm browser").generation;
+    let (finish, finished) = tokio::sync::oneshot::channel();
+    let close = tokio::spawn(async move {
+        let _ = finished.await;
+    });
+    {
+        let guard = pool.state.lock().await;
+        let state = guard.as_ref().expect("warm browser");
+        state.pending_closes.lock().expect("pending registry").push(close);
+    }
+    let config = crate::types::CrawlConfig::builder()
+        .allow_private_networks(true)
+        .build();
+    let borrow = pool.acquire_page_with_config(&config);
+    tokio::pin!(borrow);
+    let early = tokio::time::timeout(Duration::from_secs(2), &mut borrow).await;
+    let was_waiting = early.is_err();
+    finish.send(()).expect("release cancelled cleanup");
+    let page = match early {
+        Ok(page) => page.expect("early borrow"),
+        Err(_) => tokio::time::timeout(Duration::from_secs(10), borrow)
+            .await
+            .expect("cleanup releases borrow")
+            .expect("new page"),
+    };
+    assert_eq!(
+        pool.state.lock().await.as_ref().expect("running browser").generation,
+        generation,
+        "completed cleanup must preserve the same healthy browser generation"
+    );
+    page.close().await;
+    pool.shutdown().await;
+    assert!(
+        was_waiting,
+        "a spare permit must not reuse a browser before cancelled cleanup completes"
+    );
+}
+
+#[tokio::test]
+async fn failed_or_timed_out_cancelled_cleanup_retires_the_browser_before_a_new_borrow() {
+    for fail_fast in [true, false] {
+        let pool = BrowserPool::new(BrowserPoolConfig::default());
+        if expect_chrome_or_skip(
+            "failed_or_timed_out_cancelled_cleanup_retires_the_browser_before_a_new_borrow",
+            pool.warm().await,
+        )
+        .is_none()
+        {
+            return;
+        }
+        let generation = pool.state.lock().await.as_ref().expect("warm browser").generation;
+        let close = tokio::spawn(std::future::pending::<()>());
+        let abort = close.abort_handle();
+        if fail_fast {
+            abort.abort();
+        }
+        {
+            let guard = pool.state.lock().await;
+            guard
+                .as_ref()
+                .expect("warm browser")
+                .pending_closes
+                .lock()
+                .expect("pending registry")
+                .push(close);
+        }
+        let config = crate::types::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .build();
+        let page = tokio::time::timeout(Duration::from_secs(15), pool.acquire_page_with_config(&config))
+            .await
+            .expect("failed cleanup must allow a replacement browser")
+            .expect("replacement page");
+        abort.abort();
+        assert_ne!(
+            pool.state.lock().await.as_ref().expect("running browser").generation,
+            generation,
+            "failed or timed-out cleanup must retire the old browser before opening a new page"
+        );
+        page.close().await;
+        pool.shutdown().await;
+    }
+}

@@ -61,6 +61,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A browser-pool fetch after a cancelled scrape could fail because cleanup closed its browser
+  connection after the next fetch started. The next fetch now waits for that cleanup, replacing
+  the browser when cleanup fails or stalls.
 - With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
   kept for a site failed at once with a browser error: every second fetch of the site. The engine
   closed the page it kept. The kept page now serves the next fetch. (#653)
