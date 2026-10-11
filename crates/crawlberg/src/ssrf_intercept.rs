@@ -829,6 +829,8 @@ struct TestDelays {
     action_waits: Arc<Mutex<Vec<(Duration, usize)>>>,
     /// Before a watch hands its policy to the listener, until the test gives one permit. ~keep
     watch_handoff_gate: Option<Arc<UrlGate>>,
+    /// Hold registration after opening returns, to exercise the watch command ordering. ~keep
+    opened_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// After frame attribution snapshots target ownership, until the test gives one permit. ~keep
     attribute_snapshot_gate: Option<Arc<UrlGate>>,
     /// Before a lifecycle reconciliation queries Chrome, until the test gives one permit. ~keep
@@ -871,7 +873,7 @@ enum Command {
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
         DialogAnswers,
-        oneshot::Sender<Result<(), String>>,
+        oneshot::Sender<Result<Option<BrowserContextId>, String>>,
     ),
     /// Cancellation cannot run async cleanup, so it hands disposal to the listener. ~keep
     Abandon(TargetId),
@@ -1490,7 +1492,6 @@ impl FirewallHandle {
         redirect_limit: usize,
     ) -> Result<Watch, CrawlError> {
         let mut setup = WatchSetup::new(&self.commands, page.target_id().clone());
-        let owned_context = registered_context(&lock(&self.shared.registry), page.target_id())?;
         let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
         let navigations = page
             .event_listener::<EventFrameNavigated>()
@@ -1535,17 +1536,17 @@ impl FirewallHandle {
                 ack,
             ))
             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
-        let watch = Watch {
-            owned_context,
-            child_commands: self.child_commands.clone(),
-            commands: self.commands.clone(),
-            shared: Arc::clone(&self.shared),
-            browser: self.browser.clone(),
-            page: watched,
-            ended: false,
-        };
         match enabled.await {
-            Ok(Ok(())) => {
+            Ok(Ok(owned_context)) => {
+                let watch = Watch {
+                    owned_context,
+                    child_commands: self.child_commands.clone(),
+                    commands: self.commands.clone(),
+                    shared: Arc::clone(&self.shared),
+                    browser: self.browser.clone(),
+                    page: watched,
+                    ended: false,
+                };
                 disable_primary_child_attach(page).await?;
                 let (armed, boundary) = oneshot::channel();
                 self.child_commands
@@ -2780,6 +2781,12 @@ async fn serve(
                     }));
                 }
                 Some(Command::Opened(root, context)) => {
+                    #[cfg(test)]
+                    if let Some(gate) = &shared.delays.opened_gate
+                        && let Ok(permit) = gate.acquire().await
+                    {
+                        permit.forget();
+                    }
                     let mut registry = lock(&shared.registry);
                     if let Some(context) = &context {
                         registry.context_targets.insert(root.clone(), context.clone());
@@ -2811,13 +2818,14 @@ async fn serve(
                 }
                 Some(Command::Watch(page, navigated, failed, answers, ack)) => {
                     let mut registry = lock(&shared.registry);
-                    if !registry.opened.contains_key(&page.root) {
+                    // ~keep `Opened` precedes `Watch` on this queue; capture its context only after registration.
+                    let Some(owned_context) = registry.opened.get(&page.root).cloned() else {
                         drop(registry);
                         let _ = ack.send(Err(
                             "the SSRF check can only watch a page it opened; open the page with the check".to_owned(),
                         ));
                         continue;
-                    }
+                    };
                     if let Err(error) = install_watch(&mut registry, &page) {
                         drop(registry);
                         let _ = ack.send(Err(error));
@@ -2827,7 +2835,7 @@ async fn serve(
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
                     dialogs.push(answers);
-                    let _ = ack.send(Ok(()));
+                    let _ = ack.send(Ok(owned_context));
                 }
                 Some(Command::End { page, close_page, done }) => {
                     running.push(Box::pin(end_watch(browser, shared, page, close_page, done)));
@@ -4274,6 +4282,78 @@ mod tests {
         }
     }
 
+    fn firewall_with_test_listeners(shared: Arc<Shared>) -> super::BrowserFirewall {
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let listener = tokio::spawn(async move {
+            if let Some(super::Command::Stop(Some(done))) = receiver.recv().await {
+                let _ = done.send(());
+            }
+        });
+        let (child_commands, mut children) = mpsc::channel(1);
+        let child_controller = tokio::spawn(async move {
+            let _ = children.recv().await;
+        });
+        super::BrowserFirewall {
+            handle: super::FirewallHandle {
+                commands,
+                child_commands,
+                shared,
+                browser: std::sync::Weak::new(),
+                context: PageContext::Copied,
+                egress: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            },
+            listener,
+            child_controller,
+            stopped: false,
+        }
+    }
+
+    fn watch_with_disconnected_listener(shared: Arc<Shared>, root: &str) -> super::Watch {
+        let (commands, receiver) = mpsc::unbounded_channel();
+        drop(receiver);
+        let (child_commands, _) = mpsc::channel(1);
+        super::Watch {
+            owned_context: None,
+            child_commands,
+            commands,
+            shared,
+            browser: std::sync::Weak::new(),
+            page: watched(root),
+            ended: false,
+        }
+    }
+
+    async fn assert_disconnected_watches_released(explicit_stop: bool) {
+        let shared = Arc::new(shared_with(&watched("ROOT"), "OTHER"));
+        let firewall = firewall_with_test_listeners(Arc::clone(&shared));
+        let mut first = Box::pin(watch_with_disconnected_listener(Arc::clone(&shared), "FIRST").close());
+        let mut second = Box::pin(watch_with_disconnected_listener(Arc::clone(&shared), "SECOND").close());
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        if explicit_stop {
+            firewall.stop().await;
+        } else {
+            drop(firewall);
+        }
+        tokio::time::timeout(Duration::from_millis(100), futures::future::join(first, second))
+            .await
+            .expect("both disconnected watches must observe firewall shutdown");
+        assert!(
+            !shared.failed.load(Ordering::Acquire),
+            "normal shutdown must release watches without failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_the_firewall_releases_every_disconnected_watch() {
+        assert_disconnected_watches_released(true).await;
+    }
+
+    #[tokio::test]
+    async fn dropping_the_firewall_releases_every_disconnected_watch() {
+        assert_disconnected_watches_released(false).await;
+    }
+
     type TestChildSocket =
         async_tungstenite::WebSocketStream<async_tungstenite::tokio::TokioAdapter<tokio::net::TcpStream>>;
 
@@ -4802,6 +4882,52 @@ mod tests {
             ))
             .await
             .expect("confirm retired context absent");
+    }
+
+    #[tokio::test]
+    async fn a_context_drain_cannot_acknowledge_an_unclassified_pending_command() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        retire_child_test_context(&shared, &context);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(1)).await;
+        let params = serde_json::json!({
+            "sessionId": "UNCLASSIFIED", "waitingForDebugger": true,
+            "targetInfo": { "targetId": "UNKNOWN-TAB", "type": "tab", "title": "", "url": "about:blank", "attached": true, "canAccessOpener": false }
+        });
+        let attached: super::ChildAttached = serde_json::from_value(params.clone()).expect("valid CDP attachment");
+        assert!(attached.target_info.browser_context_id.is_none());
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "method": "Target.attachedToTarget", "params": params,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send a structural target without a context");
+        let arm = next_child_message(&mut socket).await;
+        assert_eq!(arm["method"], "Target.setAutoAttach");
+        assert_eq!(arm["sessionId"], "UNCLASSIFIED");
+        let (done, drained) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Drain { context, done })
+            .await
+            .expect("request drain");
+        answer_drain_census(&mut socket).await;
+        let result = tokio::time::timeout(Duration::from_millis(100), drained).await;
+        let _ = commands.try_send(super::ChildCommand::Stop);
+        let healthy = controller.await.expect("child controller task");
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "a context-free command must prevent proof of drainage: {result:?}"
+        );
+        assert!(
+            !healthy,
+            "unclassified pending work must fail closed before acknowledging drainage"
+        );
     }
 
     #[tokio::test]
@@ -7970,6 +8096,56 @@ mod race_tests {
             error.contains("only watch a page it opened"),
             "{test_name}: a page opened outside the check must be refused, got {error:?}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watch_waits_for_its_queued_page_registration() {
+        let test_name = "a_watch_waits_for_its_queued_page_registration";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let firewall = BrowserFirewall::start_with(
+            Arc::clone(&browser),
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays {
+                opened_gate: Some(Arc::clone(&gate)),
+                ..TestDelays::default()
+            },
+        )
+        .await
+        .expect("the listener must start");
+        let handle = firewall.handle();
+        let page = handle.new_page(None, None).await.expect("page");
+        assert!(!lock(&handle.shared.registry).opened.contains_key(page.target_id()));
+        let configuration = config();
+        let result = {
+            let mut watching = Box::pin(handle.watch(&page, &configuration, 0));
+            let first_poll = futures::poll!(watching.as_mut());
+            gate.add_permits(1);
+            match first_poll {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => tokio::time::timeout(Duration::from_secs(10), watching)
+                    .await
+                    .expect("the queued watch must finish"),
+            }
+        };
+        let result = match result {
+            Ok(watch) => {
+                assert!(
+                    watch.owned_context.is_some(),
+                    "the watch must retain its isolated context"
+                );
+                watch.close().await;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        };
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        result.expect("watch must wait for the earlier Opened command instead of reading an unregistered context");
     }
 
     /// How a test reads the refusal of a request to a denied address a watched page sends.

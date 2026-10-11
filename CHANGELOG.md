@@ -64,9 +64,8 @@ All notable changes to crawlberg are documented here.
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
-- A browser-pool fetch after a cancelled scrape could fail because cleanup closed its browser
-  connection after the next fetch started. The next fetch now waits for that cleanup, replacing
-  the browser when cleanup fails or stalls.
+- Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
+  controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
 - With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
   kept for a site failed at once with a browser error: every second fetch of the site. The engine
   closed the page it kept. The kept page now serves the next fetch. (#653)
