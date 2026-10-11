@@ -2408,20 +2408,15 @@ where
                     return false;
                 }
                 if attached.target_info.r#type == "tab" {
-                    let _ = adopt_target(shared, &attached.target_info);
-                    let authorized = {
-                        let registry = lock(&shared.registry);
-                        child_policy_boundary_exists(&registry, &attached.target_info.target_id)
-                            || matches!(
-                                registry.ownership.get(&attached.target_info.target_id),
-                                Some(TargetOwnership::Other)
-                            )
-                    };
+                    // ~keep A tab is never recorded as a target: it holds no document and sends no
+                    // ~keep request, and `Target.closeTarget` on it closes its page, so a park that
+                    // ~keep owned the tab closed the page it was keeping. The tab resumes when a
+                    // ~keep child of it passes the policy boundary, which authorizes it then.
                     let structural = StructuralTarget {
                         target: attached.target_info.target_id,
                         session: attached.session_id.clone(),
                         waiting_for_debugger: attached.waiting_for_debugger,
-                        authorized,
+                        authorized: false,
                         arm_acknowledged: false,
                         child_boundary_acknowledged: false,
                         deadline: tokio::time::Instant::now() + command_timeout,
@@ -2939,7 +2934,14 @@ fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) -> Result<(),
 /// ~keep A popup opened from inside that frame names the page's target as its opener and the
 /// ~keep frame only as `openerFrameId` (measured on Chrome 154), so the opener is found among
 /// ~keep the targets as before.
+///
+/// ~keep A browser's own `tab` target is refused: it holds no document and sends no request, and
+/// ~keep `Target.closeTarget` on it closes its page. Nothing is stored for it and it is never
+/// ~keep returned for closing.
 fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
+    if info.r#type == "tab" {
+        return None;
+    }
     let mut registry = lock(&shared.registry);
     let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
@@ -4461,6 +4463,15 @@ mod tests {
             .await
             .expect("stop child controller");
         assert!(controller.await.expect("child controller task"));
+        let registry = lock(&shared.registry);
+        assert!(
+            !registry.ownership.contains_key(&TargetId::new("TAB")),
+            "the tab must not be recorded as a target: a park closes every target its page owns"
+        );
+        assert!(
+            registry.targets.iter().all(|(id, _)| id.inner() != "TAB"),
+            "the tab must not be a target that the park of its page closes"
+        );
     }
 
     #[tokio::test]
@@ -4483,6 +4494,41 @@ mod tests {
                 .expect("child controller task"),
             "a structural target without an authoritative child boundary must fail closed"
         );
+    }
+
+    /// A tab is refused by the record of targets: nothing is stored for it, in a context of a
+    /// watched page, in a retired context and in a context of another client.
+    #[test]
+    fn a_tab_is_not_adopted_as_a_target() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = register_owned_context(&shared, &page);
+        let foreign = BrowserContextId::new("FOREIGN-CONTEXT");
+        let retired = BrowserContextId::new("RETIRED-CONTEXT");
+        lock(&shared.registry).retired_contexts.push_back(retired.clone());
+
+        for (id, context) in [("TAB", &context), ("FOREIGN-TAB", &foreign), ("RETIRED-TAB", &retired)] {
+            let event = in_context(target_created(id, "tab", None, None, None), context);
+            assert_eq!(
+                adopt_target(&shared, &event.target_info),
+                None,
+                "{id}: a tab is never a target to close"
+            );
+            let registry = lock(&shared.registry);
+            let target = TargetId::new(id);
+            assert!(
+                !registry.ownership.contains_key(&target),
+                "{id}: a tab must not be recorded as a target"
+            );
+            assert!(
+                !registry.context_targets.contains_key(&target),
+                "{id}: a tab must not be recorded in its context"
+            );
+            assert!(
+                registry.targets.iter().all(|(owned, _)| *owned != target),
+                "{id}: a tab must not be a target that the park of its page closes"
+            );
+        }
     }
 
     #[tokio::test]
