@@ -137,13 +137,11 @@ async fn scrape_stops_on_redirect_cycle() {
     let url = format!("{}/a", mock.uri());
     let result = scrape(&handle, &url).await;
 
+    let error = result.expect_err("a redirect cycle must fail the scrape");
     assert!(
-        result.is_ok(),
-        "scrape must not raise on a redirect cycle: {:?}",
-        result.err()
+        matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect loop"),
+        "the error must name the redirect loop: {error:?}"
     );
-    let page = result.unwrap();
-    assert_eq!(page.status_code, 302, "final status must be the unfollowed 3xx");
 }
 
 /// Regression test for a seed-normalization bug: when the crawl is seeded with a bare
@@ -231,13 +229,11 @@ async fn scrape_stops_at_max_redirects() {
     let url = format!("{}/r1", mock.uri());
     let result = scrape(&handle, &url).await;
 
+    let error = result.expect_err("a chain longer than max_redirects must fail the scrape");
     assert!(
-        result.is_ok(),
-        "scrape must not raise when max_redirects is exceeded: {:?}",
-        result.err()
+        matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect limit exceeded"),
+        "the error must name the redirect limit: {error:?}"
     );
-    let page = result.unwrap();
-    assert_eq!(page.status_code, 302, "final status must be the last unfollowed 3xx");
 }
 
 /// scrape() must populate `final_url` with the post-redirect URL, not the
