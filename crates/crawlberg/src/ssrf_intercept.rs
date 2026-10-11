@@ -29,7 +29,10 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
 };
-use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
+use chromiumoxide::cdp::browser_protocol::page::{
+    DialogType, EventFrameNavigated, EventFrameStoppedLoading, EventJavascriptDialogOpening, FrameId,
+    HandleJavaScriptDialogParams,
+};
 use chromiumoxide::cdp::browser_protocol::storage::{
     GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
 };
@@ -833,11 +836,13 @@ enum Command {
     /// The check opened a page: its own target, and its browser context when it has one of its
     /// own.
     Opened(TargetId, Option<BrowserContextId>),
-    /// Watch the page, recording main-frame commits and document load failures.
+    /// Watch the page, recording main-frame commits and document load failures, and closing
+    /// the JavaScript dialogs it opens.
     Watch(
         Arc<WatchedPage>,
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
+        DialogAnswers,
         oneshot::Sender<Result<(), String>>,
     ),
     /// Cancellation cannot run async cleanup, so it hands disposal to the listener. ~keep
@@ -1460,6 +1465,10 @@ impl FirewallHandle {
             .event_listener::<EventLoadingFailed>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+        let dialogs = page
+            .event_listener::<EventJavascriptDialogOpening>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register dialog listener: {e}")))?;
         #[cfg(test)]
         if let Some(gate) = &self.shared.delays.watch_handoff_gate {
             lock(&gate.held).push(page.target_id().inner().clone());
@@ -1483,7 +1492,13 @@ impl FirewallHandle {
         });
         let (ack, enabled) = oneshot::channel();
         self.commands
-            .send(Command::Watch(Arc::clone(&watched), navigations, failures, ack))
+            .send(Command::Watch(
+                Arc::clone(&watched),
+                navigations,
+                failures,
+                dialog_answers(&watched, page, dialogs),
+                ack,
+            ))
             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
         let watch = Watch {
             commands: self.commands.clone(),
@@ -2552,6 +2567,7 @@ async fn serve(
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
     let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
+    let mut dialogs: SelectAll<DialogAnswers> = SelectAll::new();
     // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
     // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
     let mut lifecycles: FuturesOrdered<BoxFuture<'_, ReconciledLifecycle>> = FuturesOrdered::new();
@@ -2621,10 +2637,10 @@ async fn serve(
                         }
                     }
                 }
-                Some(Command::Watch(_, _, _, ack)) if stopping.is_some() => {
+                Some(Command::Watch(_, _, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
-                Some(Command::Watch(page, navigated, failed, ack)) => {
+                Some(Command::Watch(page, navigated, failed, answers, ack)) => {
                     let mut registry = lock(&shared.registry);
                     if !registry.opened.contains_key(&page.root) {
                         drop(registry);
@@ -2641,6 +2657,7 @@ async fn serve(
                     drop(registry);
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
+                    dialogs.push(answers);
                     let _ = ack.send(Ok(()));
                 }
                 Some(Command::End { page, close_page, done }) => {
@@ -2708,6 +2725,7 @@ async fn serve(
             Some((page, failed)) = failures.next(), if !failures.is_empty() => {
                 record_document_failure(&page, &failed);
             }
+            Some(answer) = dialogs.next(), if !dialogs.is_empty() => running.push(answer),
             Some(done) = running.next(), if !running.is_empty() => settle(shared, done),
             Some(done) = draining.next(), if !draining.is_empty() => settle(shared, done),
             _ = teardown_checks.tick(), if draining.is_empty() && stopping.is_some() => {
@@ -3030,6 +3048,47 @@ fn failures_of(
     failed: chromiumoxide::listeners::EventStream<EventLoadingFailed>,
 ) -> BoxStream<'static, Failed> {
     events_of(page, failed)
+}
+
+/// One answer for each JavaScript dialog a watched page opens, until its watch ends.
+type DialogAnswers = BoxStream<'static, BoxFuture<'static, Done>>;
+
+fn dialog_answers(
+    watched: &Arc<WatchedPage>,
+    page: &chromiumoxide::Page,
+    dialogs: chromiumoxide::listeners::EventStream<EventJavascriptDialogOpening>,
+) -> DialogAnswers {
+    let page = page.clone();
+    events_of(watched, dialogs)
+        .map(move |(_, dialog)| {
+            let page = page.clone();
+            async move {
+                answer_dialog(&page, &dialog).await;
+                Done::Answered
+            }
+            .boxed()
+        })
+        .boxed()
+}
+
+/// Close a JavaScript dialog the page opened, as a reader who wants the page closes it.
+///
+/// ~keep Chrome blocks the page until a client answers `Page.javascriptDialogOpening`, and
+/// ~keep chromiumoxide 0.9.1 answers none, so the page never loaded and every read of it waited
+/// ~keep for the browser timeout (xberg-io/crawlberg#602). An alert, a confirm and a prompt are
+/// ~keep dismissed: the page gets nothing, `false` and `null`, so nothing a confirm guards is
+/// ~keep done. A `beforeunload` dialog is accepted, because to dismiss it cancels the navigation
+/// ~keep or the close that opened it.
+async fn answer_dialog(page: &chromiumoxide::Page, dialog: &EventJavascriptDialogOpening) {
+    let accept = dialog_is_accepted(&dialog.r#type);
+    tracing::debug!(kind = ?dialog.r#type, accept, "closing a JavaScript dialog the page opened");
+    if let Err(error) = page.execute(HandleJavaScriptDialogParams::new(accept)).await {
+        tracing::debug!(%error, "failed to close a JavaScript dialog the page opened");
+    }
+}
+
+fn dialog_is_accepted(kind: &DialogType) -> bool {
+    matches!(kind, DialogType::Beforeunload)
 }
 
 fn events_of<T, S>(page: &Arc<WatchedPage>, events: S) -> BoxStream<'static, (Arc<WatchedPage>, Arc<T>)>

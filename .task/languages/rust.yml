@@ -151,6 +151,9 @@ tasks:
       RUST_BACKTRACE: "1"
       CARGO_TERM_COLOR: "always"
     cmds:
+      # ~keep The vendored driver is not a workspace member, so no workspace command runs its
+      # ~keep tests. It runs first: `task` stops at the first failing cmd.
+      - cargo test --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib
       - cmd: bash scripts/ci/rust/run-unit-tests.sh
         platforms: [linux, darwin]
 
