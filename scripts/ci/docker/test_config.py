@@ -63,22 +63,32 @@ def server(image: str, port: int = 3000, *options: str, default_command: bool = 
 
 def test_server_configuration(image: str) -> int:
     token = uuid.uuid4().hex
+    checks = 0
     with server(image, 3000, "-e", f"CRAWLBERG_API_TOKEN={token}", default_command=True) as url:
-        assert status(f"{url}/health") == 200
-        assert status(f"{url}/version") == 401
-        assert status(f"{url}/version", uuid.uuid4().hex) == 401
-        assert status(f"{url}/version", token) == 200
+        expected = (("/health", None, 200), ("/version", None, 401), ("/version", uuid.uuid4().hex, 401))
+        for path, bearer, code in (*expected, ("/version", token, 200)):
+            assert status(f"{url}{path}", bearer) == code, (path, code)
+            checks += 1
     print("PASS: default port health, missing/wrong/correct bearer token (4 checks)")
     with server(image, 3107, "-e", f"CRAWLBERG_API_TOKEN={token}") as url:
         assert status(f"{url}/version", token) == 200
+        checks += 1
     print("PASS: explicit server port")
     with server(image, 3000, "-e", "CRAWLBERG_API_ALLOW_INSECURE=1") as url:
         assert status(f"{url}/version") == 200
+        checks += 1
     print("PASS: explicit insecure bind opt-in")
-    result = docker("run", "--rm", image)
+    name = f"crawlberg-config-test-{uuid.uuid4().hex}"
+    try:
+        result = docker("run", "--rm", "--name", name, image)
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError("The server started on the default bind without authentication") from error
+    finally:
+        docker("rm", "-f", name)
     assert result.returncode != 0 and "without authentication" in result.stderr, result.stderr
+    checks += 1
     print("PASS: unauthenticated default bind is refused")
-    return 7
+    return checks
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -109,23 +119,30 @@ def fixture() -> Iterator[str]:
 
 
 def test_cli_configuration(image: str) -> int:
-    config = json.dumps({"user_agent": "crawlberg-mounted-config", "ssrf": {"deny_private": False}})
+    inline, mounted = (
+        json.dumps({"user_agent": agent, "ssrf": {"deny_private": False}})
+        for agent in ("crawlberg-inline-config", "crawlberg-mounted-config")
+    )
+    checks = 0
     with tempfile.TemporaryDirectory(prefix="crawlberg-config-") as directory, fixture() as url:
         path = Path(directory) / "config.json"
-        path.write_text(config)
+        path.write_text(mounted)
         path.chmod(0o644)
         command = ["scrape", url, "--browser-mode", "never", "--config"]
         options = ["run", "--rm", "--add-host", "host.docker.internal:host-gateway"]
-        for overlay in (config, "@/app/config.json"):
+        for overlay, agent in ((inline, "crawlberg-inline-config"), ("@/app/config.json", "crawlberg-mounted-config")):
             output = successful(*options, "-v", f"{path}:/app/config.json:ro", image, *command, overlay)
             result = json.loads(output)
-            assert result["metadata"]["title"] == "crawlberg-mounted-config", output
+            assert result["metadata"]["title"] == agent, output
+            checks += 1
         print("PASS: inline and read-only mounted JSON overlays change fetched User-Agent (2 checks)")
-        for overlay, expected in (("{invalid", "invalid config"), ("@/missing-config.json", "invalid config")):
+        for overlay, detail in (("{invalid", "key must be a string"), ("@/missing-config.json", "No such file")):
             result = docker("run", "--rm", image, "scrape", url, "--config", overlay)
-            assert result.returncode != 0 and expected in result.stderr, result.stderr
+            assert result.returncode != 0, result.stderr
+            assert "invalid config" in result.stderr and detail in result.stderr, result.stderr
+            checks += 1
         print("PASS: malformed and missing JSON config are rejected (2 checks)")
-    return 4
+    return checks
 
 
 def main() -> None:

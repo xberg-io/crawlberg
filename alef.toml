@@ -346,6 +346,7 @@ replace = 'release/swift/{version}'
 # ~keep all of that with a placeholder seed on the next overwriting regen, which is what
 # ~keep `task version:sync` is. Only the version-bearing line in each needs to track the
 # ~keep release, and a text replacement is the one mechanism that touches just that line.
+# ~keep e2e/zig/build.zig is not one of the six: it is adopted, and alef regenerates it whole.
 # ~keep Without these the pins sat at 1.2.1 through NINE releases -- 1.3.0, 1.3.1, 1.3.2,
 # ~keep 1.3.3, 1.4.0, 1.4.1, 1.4.2, 1.5.0 and 1.5.1 -- so every "does the published package
 # ~keep work" test app was in fact exercising a package from 2026-08-11.

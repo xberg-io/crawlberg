@@ -30,6 +30,7 @@ on:
       - "packages/**/crawlberg.h"
       - "scripts/ci/check-vendored-headers.sh"
       - "scripts/ci/check-alef-generated.sh"
+      - "scripts/ci/rust/prepare-chrome.sh"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
   # ~keep before merging any PR that needs its own CI.
@@ -62,6 +63,7 @@ on:
   #     - "packages/**/crawlberg.h"
   #     - "scripts/ci/check-vendored-headers.sh"
   #     - "scripts/ci/check-alef-generated.sh"
+  #     - "scripts/ci/rust/prepare-chrome.sh"
   workflow_dispatch:
 
 concurrency:
