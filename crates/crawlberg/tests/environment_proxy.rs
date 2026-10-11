@@ -211,3 +211,71 @@ async fn no_proxy_routes_an_allowlisted_private_target_directly() {
     assert_eq!(target_requests.lock().expect("request log").len(), 1);
     assert!(proxy_requests.lock().expect("request log").is_empty());
 }
+
+/// A proxy that answers `/start` with a redirect to `/landed` and the cookie `hop=1`, and every
+/// other request with a page. It records each request.
+async fn redirecting_proxy() -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("proxy must bind");
+    let address = format!(
+        "http://localhost:{}",
+        listener.local_addr().expect("proxy address").port()
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&requests);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = vec![0; 4096];
+            let read = socket.read(&mut request).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..read]).to_string();
+            let response = if request.starts_with("GET http://1.1.1.1/start ") {
+                "HTTP/1.1 302 Found\r\nLocation: http://1.1.1.1/landed\r\nSet-Cookie: hop=1; Path=/\r\n\
+                 Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_owned()
+            } else {
+                let body = "<html><body><p>landed</p></body></html>";
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            log.lock().expect("request log").push(request);
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    (address, requests)
+}
+
+/// ~keep The client for an environment proxy must not follow a redirect itself: the engine sends
+/// ~keep each hop, so the cookie that the first hop sets is in the request of the second hop.
+#[tokio::test]
+#[serial_test::serial(environment_proxy)]
+async fn a_redirect_through_an_environment_proxy_sends_the_cookie_of_the_first_hop() {
+    let (proxy, requests) = redirecting_proxy().await;
+    let _environment = EnvironmentGuard::isolated_http_proxy(proxy);
+    let config = CrawlConfig {
+        cookies_enabled: true,
+        ssrf_deny_private_explicit: Some(true),
+        ..CrawlConfig::default()
+    };
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let result = scrape(&engine, "http://1.1.1.1/start")
+        .await
+        .expect("the redirect must be followed through the environment proxy");
+
+    assert_eq!(result.status_code, 200);
+    let requests = requests.lock().expect("request log");
+    let landed = requests
+        .iter()
+        .find(|request| request.starts_with("GET http://1.1.1.1/landed "))
+        .expect("the second hop must go through the environment proxy");
+    let cookie = landed
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("cookie:"))
+        .and_then(|line| line.split_once(':'))
+        .map(|(_, value)| value.trim().to_owned());
+    assert_eq!(cookie.as_deref(), Some("hop=1"));
+}

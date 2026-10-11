@@ -165,9 +165,7 @@ pub async fn scrape_handler(
         validate_formats(formats)?;
     }
 
-    let mut config = state.engine.config.clone();
-    apply_scrape_overrides(&mut config, &req)?;
-    let engine = rebuild_engine_with_config(&state.engine, config)?;
+    let engine = state.request_engine(|config| apply_scrape_overrides(config, &req))?;
 
     let result = engine.scrape(&req.url).await?;
     let mut value =
@@ -197,9 +195,7 @@ pub async fn crawl_handler(
         validate_max_pages(pages, state.security.max_pages_ceiling)?;
     }
 
-    let mut config = state.engine.config.clone();
-    apply_crawl_overrides(&mut config, &req)?;
-    let crawl_engine = rebuild_engine_with_config(&state.engine, config)?;
+    let crawl_engine = state.request_engine(|config| apply_crawl_overrides(config, &req))?;
     ensure_job_capacity(&state)?;
 
     let job_id = state.jobs.create_job();
@@ -380,19 +376,16 @@ pub async fn map_handler(
 
     // ~keep `search` becomes `map_search`, so this endpoint matches a term the same way as the
     // ~keep CLI and the MCP `map` tool.
-    let mut result = if req.respect_robots_txt.is_some() || req.search.is_some() {
-        let mut config = state.engine.config.clone();
+    let engine = state.request_engine(|config| {
         if let Some(respect_robots_txt) = req.respect_robots_txt {
             config.respect_robots_txt = respect_robots_txt;
         }
         if let Some(search) = &req.search {
             config.map_search = Some(search.clone());
         }
-        let engine = rebuild_engine_with_config(&state.engine, config)?;
-        engine.map(&req.url).await?
-    } else {
-        state.engine.map(&req.url).await?
-    };
+        Ok(())
+    })?;
+    let mut result = engine.map(&req.url).await?;
 
     if let Some(limit) = req.limit {
         result.urls.truncate(limit);
@@ -433,14 +426,15 @@ pub async fn batch_scrape_handler(
     }
     ensure_job_capacity(&state)?;
 
-    let mut config = state.engine.config.clone();
-    if let Some(true) = req.only_main_content {
-        config.content.preprocessing_preset = "aggressive".to_owned();
-    }
-    if let Some(concurrency) = req.concurrency {
-        config.max_concurrent = Some(concurrency);
-    }
-    let engine = rebuild_engine_with_config(&state.engine, config)?;
+    let engine = state.request_engine(|config| {
+        if let Some(true) = req.only_main_content {
+            config.content.preprocessing_preset = "aggressive".to_owned();
+        }
+        if let Some(concurrency) = req.concurrency {
+            config.max_concurrent = Some(concurrency);
+        }
+        Ok(())
+    })?;
 
     let job_id = state.jobs.create_job();
     spawn_batch_scrape_job(job_id, state.jobs.clone(), engine, req.urls.clone());
@@ -536,15 +530,14 @@ pub async fn download_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let result = if let Some(max_size) = req.max_size {
-        let mut config = state.engine.config.clone();
-        config.download_documents = true;
-        config.document_max_size = Some(max_size);
-        let engine = rebuild_engine_with_config(&state.engine, config)?;
-        engine.scrape(&req.url).await?
-    } else {
-        state.engine.scrape(&req.url).await?
-    };
+    let engine = state.request_engine(|config| {
+        if let Some(max_size) = req.max_size {
+            config.download_documents = true;
+            config.document_max_size = Some(max_size);
+        }
+        Ok(())
+    })?;
+    let result = engine.scrape(&req.url).await?;
 
     let value = serde_json::to_value(&result).map_err(|e| ApiError::internal(format!("serialization error: {e}")))?;
 
@@ -618,21 +611,6 @@ fn job_state_to_response(state: &JobState) -> JobStatusResponse {
             error: None,
         },
     }
-}
-
-/// Build a new [`CrawlEngine`] with an overridden [`CrawlConfig`], keeping all
-/// trait implementations from the original engine.
-///
-/// This is used to apply per-request config overrides (max_depth, max_pages, etc.)
-/// without mutating the shared engine.
-fn rebuild_engine_with_config(
-    _engine: &crate::engine::CrawlEngine,
-    config: CrawlConfig,
-) -> Result<crate::engine::CrawlEngine, ApiError> {
-    crate::engine::CrawlEngine::builder()
-        .config(config)
-        .build()
-        .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
 }
 
 #[cfg(test)]

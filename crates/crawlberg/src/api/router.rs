@@ -53,7 +53,7 @@ const AUTH_EXEMPT_PATH: &str = "/health";
 ///
 /// # Arguments
 ///
-/// * `engine` - A shared [`CrawlEngine`] that powers scrape, crawl, and map operations.
+/// * `engine` - The [`CrawlEngine`] whose configuration each request builds its own engine from.
 pub(crate) fn create_router_with_security(engine: Arc<CrawlEngine>, security: ApiSecurityConfig) -> Router {
     // ~keep Capture config before moving the engine so MCP sessions use the same crawl settings.
     #[cfg(feature = "mcp")]
@@ -738,6 +738,278 @@ mod tests {
             urls,
             vec!["https://example.com/keep-1".to_owned()],
             "an ASCII search term must still match case-insensitively, got {urls:?}"
+        );
+    }
+
+    /// A site whose `/set` sets the cookie `user=alice` and whose other pages set none.
+    async fn cookie_site() -> MockServer {
+        let site = MockServer::start().await;
+        let html = |body: &str| {
+            ResponseTemplate::new(200).set_body_raw(format!("<html><body>{body}</body></html>"), "text/html")
+        };
+        Mock::given(method("GET"))
+            .and(path("/set"))
+            .respond_with(html("set").append_header("set-cookie", "user=alice; Path=/"))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET")).respond_with(html("page")).mount(&site).await;
+        site
+    }
+
+    /// The `(path, Cookie header)` of each request the site received after `mark` that has a
+    /// `Cookie` header.
+    async fn cookies_sent_since(site: &MockServer, mark: usize) -> Vec<(String, String)> {
+        let requests = site.received_requests().await.expect("request recording is on");
+        requests[mark..]
+            .iter()
+            .filter_map(|seen| {
+                let cookie = seen.headers.get("cookie")?.to_str().expect("an ASCII cookie");
+                Some((seen.url.path().to_owned(), cookie.to_owned()))
+            })
+            .collect()
+    }
+
+    /// Wait until the job that `response` created is complete.
+    async fn wait_for_job(router: &Router, status_route: &str, response: Response) {
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "the job must be created");
+        let id = body_json(response).await["id"].as_str().expect("a job id").to_owned();
+        for _ in 0..200 {
+            let status = call(
+                router.clone(),
+                json_request("GET", &format!("{status_route}/{id}"), None),
+            )
+            .await;
+            if body_json(status).await["status"] == "completed" {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the job {id} of {status_route} did not complete");
+    }
+
+    // ~keep One router serves both requests, as one server serves two API clients. The first
+    // ~keep request receives a cookie; the second request must not send it (crawlberg#652).
+    #[tokio::test]
+    async fn no_route_sends_the_cookie_that_an_earlier_request_received() {
+        let site = cookie_site().await;
+        let config = CrawlConfig {
+            cookies_enabled: true,
+            browser: crate::types::BrowserConfig {
+                mode: crate::types::BrowserMode::Never,
+                ..Default::default()
+            },
+            ..local_test_config()
+        };
+        let url = |at: &str| format!("{}{at}", site.uri());
+        // ~keep The request body of a form for a URL.
+        type Body = fn(String) -> serde_json::Value;
+        let forms: [(&str, Body, Option<&str>); 7] = [
+            ("/v1/scrape", |url| serde_json::json!({ "url": url }), None),
+            ("/v1/download", |url| serde_json::json!({ "url": url }), None),
+            (
+                "/v1/download",
+                |url| serde_json::json!({ "url": url, "maxSize": 1_000_000 }),
+                None,
+            ),
+            ("/v1/map", |url| serde_json::json!({ "url": url }), None),
+            (
+                "/v1/map",
+                |url| serde_json::json!({ "url": url, "search": "page" }),
+                None,
+            ),
+            (
+                "/v1/crawl",
+                |url| serde_json::json!({ "url": url, "maxDepth": 0 }),
+                Some("/v1/crawl"),
+            ),
+            (
+                "/v1/batch/scrape",
+                |url| serde_json::json!({ "urls": [url] }),
+                Some("/v1/batch/scrape"),
+            ),
+        ];
+
+        let mut leaks = Vec::new();
+        for (route, body, status_route) in forms {
+            let engine = test_engine_with_config(config.clone());
+            let router = create_router_with_security(engine, ApiSecurityConfig::default());
+            for at in ["/set", "/after"] {
+                let mark = site.received_requests().await.expect("request recording is on").len();
+                let response = call(router.clone(), json_post(route, body(url(at)))).await;
+                match status_route {
+                    Some(status_route) => wait_for_job(&router, status_route, response).await,
+                    None => assert_eq!(response.status(), StatusCode::OK, "{route} {at} must succeed"),
+                }
+                let requests = site.received_requests().await.expect("request recording is on");
+                assert!(
+                    requests[mark..].iter().any(|seen| seen.url.path() == at),
+                    "{route} must fetch {at}"
+                );
+                // ~keep The request for `/set` can send its own cookie on a later fetch of its own.
+                let sent = cookies_sent_since(&site, mark).await;
+                if at == "/after" && !sent.is_empty() {
+                    leaks.push(format!("{route} {} sent {sent:?}", body(at.to_owned())));
+                }
+            }
+        }
+
+        assert_eq!(
+            leaks,
+            Vec::<String>::new(),
+            "a request sent a cookie of an earlier request"
+        );
+    }
+
+    /// A rate limiter that counts the requests it admits.
+    struct CountingLimiter(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl crate::traits::RateLimiter for CountingLimiter {
+        async fn acquire(&self, _domain: &str) -> Result<(), crate::error::CrawlError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn record_response(&self, _domain: &str, _status: u16) -> Result<(), crate::error::CrawlError> {
+            Ok(())
+        }
+
+        async fn set_crawl_delay(&self, _domain: &str, _delay: Duration) -> Result<(), crate::error::CrawlError> {
+            Ok(())
+        }
+    }
+
+    // ~keep The default throttle spaces the requests of one host. Each request has its own
+    // ~keep engine, so the throttle must be the one of the server.
+    #[tokio::test]
+    async fn sequential_download_requests_to_one_host_are_spaced_by_the_configured_delay() {
+        let site = cookie_site().await;
+        let config = CrawlConfig {
+            rate_limit_ms: Some(150),
+            ..local_test_config()
+        };
+        let engine = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+
+        let started = std::time::Instant::now();
+        for _ in 0..5 {
+            let response = call(
+                router.clone(),
+                json_post(
+                    "/v1/download",
+                    serde_json::json!({ "url": format!("{}/page", site.uri()) }),
+                ),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_millis(4 * 150),
+            "5 requests to one host took {:?}, less than 4 delays of 150 ms",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_download_requests_to_one_host_are_spaced_by_the_configured_delay() {
+        let site = cookie_site().await;
+        let config = CrawlConfig {
+            rate_limit_ms: Some(150),
+            ..local_test_config()
+        };
+        let engine = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+        let download = || {
+            call(
+                router.clone(),
+                json_post(
+                    "/v1/download",
+                    serde_json::json!({ "url": format!("{}/page", site.uri()) }),
+                ),
+            )
+        };
+
+        let started = std::time::Instant::now();
+        let responses = tokio::join!(download(), download(), download(), download(), download());
+        let elapsed = started.elapsed();
+
+        for response in [responses.0, responses.1, responses.2, responses.3, responses.4] {
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        assert!(
+            elapsed >= Duration::from_millis(4 * 150),
+            "5 concurrent requests to one host took {elapsed:?}, less than 4 delays of 150 ms"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_routes_that_fetch_a_page_use_the_rate_limiter_of_the_server() {
+        let site = cookie_site().await;
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let engine = Arc::new(
+            CrawlEngine::builder()
+                .config(local_test_config())
+                .rate_limiter(CountingLimiter(count.clone()))
+                .build()
+                .expect("engine"),
+        );
+        let router = create_router_with_security(engine, ApiSecurityConfig::default());
+        let calls = || count.load(std::sync::atomic::Ordering::SeqCst);
+
+        let mut silent = Vec::new();
+        for route in ["/v1/scrape", "/v1/download"] {
+            let before = calls();
+            let response = call(
+                router.clone(),
+                json_post(route, serde_json::json!({ "url": format!("{}/page", site.uri()) })),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK, "{route} must succeed");
+            if calls() == before {
+                silent.push(route);
+            }
+        }
+
+        assert_eq!(silent, Vec::<&str>::new(), "routes that did not call the rate limiter");
+    }
+
+    // ~keep Each map request reads robots.txt once for its sitemap hints, with no cache. The
+    // ~keep judgment of the seed URL uses the cache of the server, so it fetches once for all
+    // ~keep requests: 5 hint fetches and 1 judgment fetch, as before each request had an engine.
+    #[tokio::test]
+    async fn sequential_map_requests_judge_a_site_with_one_shared_robots_txt_fetch() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("User-agent: *\nAllow: /\n", "text/plain"))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            rate_limit_ms: Some(0),
+            ..local_test_config()
+        };
+        let router = create_router_with_security(test_engine_with_config(config), ApiSecurityConfig::default());
+
+        for _ in 0..5 {
+            let response = call(
+                router.clone(),
+                json_post("/v1/map", serde_json::json!({ "url": format!("{}/page", site.uri()) })),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let requests = site.received_requests().await.expect("request recording is on");
+        let robots = requests.iter().filter(|seen| seen.url.path() == "/robots.txt").count();
+        assert_eq!(
+            robots, 6,
+            "want 5 hint fetches and 1 shared judgment fetch, got {robots}"
         );
     }
 

@@ -69,6 +69,8 @@ impl std::fmt::Debug for CrawlConfig {
             ssrf_deny_private_explicit,
             dispatch,
             credential_scope,
+            #[cfg(not(target_arch = "wasm32"))]
+            cookie_store,
             #[cfg(feature = "browser")]
             browser_pool,
             proxy_provider,
@@ -133,6 +135,9 @@ impl std::fmt::Debug for CrawlConfig {
         debug.field("ssrf_deny_private_explicit", ssrf_deny_private_explicit);
         debug.field("dispatch", dispatch);
         debug.field("credential_scope", credential_scope);
+        // ~keep Whether the engine holds a store, never the store: its cookies are session secrets.
+        #[cfg(not(target_arch = "wasm32"))]
+        debug.field("cookie_store", &cookie_store.is_some());
         #[cfg(feature = "browser")]
         debug.field("browser_pool", browser_pool);
         debug.field("proxy_provider", proxy_provider);

@@ -102,6 +102,28 @@ All notable changes to crawlberg are documented here.
   mode.
 - Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
   letters. The entry now holds the decoded text and its character set.
+- With `cookies_enabled`, a new engine in HTTP mode sent the cookies that an earlier engine with
+  the same configuration had received. A program that makes one engine for each user sent the
+  session cookie of one user in the crawl of the next user. Each engine now has its own cookie
+  store, and a new engine starts with no cookie. One engine still sends the cookies it received
+  on its later requests. This changes the behaviour of a program that relied on two engines
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
 - Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
   scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
   that error for the page, follows no links from it, and continues; a failed seed is the error of
