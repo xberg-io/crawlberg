@@ -147,6 +147,6 @@ The pipeline uses several heuristics to classify responses:
 - **`is_html_content`** -- checks Content-Type header and body sniffing for HTML indicators.
 - **`is_pdf_content` / `is_pdf_url`** -- detects PDF via Content-Type or `.pdf` URL extension.
 - **`is_binary_content_type` / `is_binary_url`** -- identifies binary content (images, archives, etc.).
-- **`detect_charset`** -- extracts character encoding from Content-Type header or `<meta charset>` tags.
+- **`decode_page`** -- decides the character set of a page as a browser does (byte-order mark, Content-Type header, `<meta>` tag or XML declaration, then detection from the bytes) and decodes the body once. Undeclared UTF-8 stays UTF-8, and JSON is UTF-8. Text that a browser, a bypass vendor or the cache holds decoded is not decoded again.
 - **`detect_meta_refresh`** -- finds `<meta http-equiv="refresh">` redirect directives.
 - **`detect_noindex` / `detect_nofollow`** -- checks robots meta directives.

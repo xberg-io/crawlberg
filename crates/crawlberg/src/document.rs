@@ -16,6 +16,7 @@ use opentelemetry::KeyValue;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::html::media_type_essence;
 use crate::telemetry::attributes::{CRAWL_MIME_TYPE, CRAWL_SIZE_BYTES, URL_FULL};
 use crate::telemetry::metrics::registry;
 use crate::types::{CrawlConfig, DocumentContentEncoding, DownloadedDocument};
@@ -44,9 +45,10 @@ pub(crate) struct DocumentInput<'a> {
 /// Fallback extension used when a document has no filename hint to derive one from.
 const DEFAULT_DOCUMENT_EXTENSION: &str = "bin";
 
-/// Strip any `;charset=...` (or other) parameter from a `Content-Type` header value.
+/// The media type of a `Content-Type` header value: in lowercase, without any `;charset=...` (or
+/// other) parameter.
 fn normalize_mime_type(content_type: &str) -> Cow<'static, str> {
-    Cow::Owned(content_type.split(';').next().unwrap_or(content_type).trim().to_owned())
+    Cow::Owned(media_type_essence(content_type))
 }
 
 /// Whether a document with this normalized `mime_type` should be downloaded.
@@ -407,6 +409,22 @@ mod tests {
         );
         assert_eq!(doc.filename.as_deref(), Some("report.pdf"));
         assert_eq!(doc.content_hash.len(), 64, "sha-256 hex digest is 64 chars");
+    }
+
+    #[tokio::test]
+    async fn the_mime_type_of_a_document_is_in_lowercase() {
+        let config = CrawlConfig::default();
+        let doc = build_downloaded_document(
+            pdf_url().as_str(),
+            &pdf_url(),
+            "Application/PDF; Charset=Binary",
+            b"%PDF-1.4 body",
+            true,
+            &config,
+        )
+        .await
+        .expect("a document is expected");
+        assert_eq!(&*doc.mime_type, "application/pdf", "a media type has no case");
     }
 
     #[tokio::test]

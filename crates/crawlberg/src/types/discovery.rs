@@ -14,7 +14,7 @@ pub enum LinkType {
     Internal,
     /// A link to a different domain.
     External,
-    /// A fragment-only link (e.g., `#section`).
+    /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
     Anchor,
     /// A link to a downloadable document (PDF, DOC, etc.).
     Document,

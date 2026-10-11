@@ -562,17 +562,24 @@ impl Stream for Handler {
 
                     // poll the target's event listeners
                     target.event_listeners_mut().poll(cx);
-                    // poll the handler's event listeners
-                    pin.event_listeners_mut().poll(cx);
 
                     pin.targets.insert(id, target);
                     pin.target_ids.push(target_id);
                 }
             }
 
+            // Poll the handler's event listeners on every pass, with or without a target: the
+            // event that reports a browser's last target destroyed is queued when no target is left.
+            pin.event_listeners_mut().poll(cx);
+
             let mut done = true;
 
-            while let Poll::Ready(Some(ev)) = Pin::new(&mut pin.conn).poll_next(cx) {
+            loop {
+                let ev = match Pin::new(&mut pin.conn).poll_next(cx) {
+                    Poll::Ready(Some(ev)) => ev,
+                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Pending => break,
+                };
                 match ev {
                     Ok(Message::Response(resp)) => {
                         pin.on_response(resp);

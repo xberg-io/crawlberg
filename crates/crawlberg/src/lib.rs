@@ -1,4 +1,11 @@
 //! crawlberg -- A Rust crawling engine for turning websites into structured data.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "tests send requests to a local mock server and need no cookie store"
+    )
+)]
 
 #[cfg(feature = "api")]
 pub(crate) mod api;
@@ -115,7 +122,7 @@ pub use telemetry::{current_traceparent, with_traceparent};
 pub use types::antibot::{AntibotError, AntibotStrategy, Decision, DefaultAntibotStrategy, DynAntibotStrategy};
 pub use types::{
     ActionResult, ArticleMetadata, AssetCategory, AttemptOutcome, AuthConfig, BrowserBackend, BrowserConfig,
-    BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassProvider, BypassResponse, CachedPage,
+    BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassBody, BypassProvider, BypassResponse, CachedPage,
     ContentConfig, ContentFilterKind, CookieInfo, CrawlConfig, CrawlConfigBuilder, CrawlPageResult, CrawlResult,
     CrawlStrategyKind, DispatchProfile, DispatchProfileBuilder, DocumentContentEncoding, DomainObservation,
     DomainRecommendation, DomainStatePort, DownloadedAsset, DownloadedDocument, DynBypassProvider, DynDomainStatePort,

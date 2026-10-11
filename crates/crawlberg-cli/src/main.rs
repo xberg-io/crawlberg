@@ -486,6 +486,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::time::Duration;
 
     use super::{CliBrowserMode, build_browser_config, merge_json_config, proxy_config};
@@ -577,14 +578,50 @@ mod tests {
     }
 
     #[test]
-    fn merge_json_config_applies_explicit_null_and_rejects_non_object() {
+    fn merge_json_config_applies_explicit_null() {
         let mut config = CrawlConfig {
             max_depth: Some(2),
             ..Default::default()
         };
         merge_json_config(&mut config, r#"{"max_depth":null}"#).expect("valid null override");
         assert_eq!(config.max_depth, None);
+    }
+
+    #[test]
+    fn merge_json_config_rejects_non_object() {
+        let mut config = CrawlConfig::default();
         assert!(merge_json_config(&mut config, "[]").is_err());
+    }
+
+    #[test]
+    fn merge_json_config_rejects_unknown_top_level_key() {
+        let mut config = CrawlConfig::default();
+        let error = merge_json_config(&mut config, r#"{"nope":1}"#).expect_err("an unknown key is not a setting");
+        let error = error
+            .downcast_ref::<serde_json::Error>()
+            .expect("the typed config read refuses the key");
+        assert_eq!(error.classify(), serde_json::error::Category::Data);
+        let message = error.to_string();
+        assert!(
+            message.starts_with("unknown field `nope`, expected one of "),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[test]
+    fn merge_json_config_adds_entry_to_map_setting() {
+        let mut config = CrawlConfig {
+            custom_headers: HashMap::from([("X-B".to_string(), "2".to_string())]),
+            ..Default::default()
+        };
+        merge_json_config(&mut config, r#"{"custom_headers":{"X-A":"1"}}"#).expect("valid map entry");
+        assert_eq!(
+            config.custom_headers,
+            HashMap::from([
+                ("X-A".to_string(), "1".to_string()),
+                ("X-B".to_string(), "2".to_string()),
+            ])
+        );
     }
 
     #[test]

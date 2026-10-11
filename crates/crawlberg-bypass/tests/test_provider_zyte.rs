@@ -143,4 +143,9 @@ async fn fetch_extracts_browser_html_json_field() {
     let response = provider.fetch("https://example.com").await.unwrap();
     assert_eq!(response.body, "<html>js-rendered</html>");
     assert_eq!(response.body_bytes, b"<html>js-rendered</html>");
+    assert_eq!(
+        response.body_kind,
+        crawlberg::BypassBody::Text,
+        "a page read from a JSON field is text the vendor decoded"
+    );
 }

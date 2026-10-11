@@ -448,6 +448,71 @@ async fn pool_shutdown_leaves_the_external_chrome_running() {
     chrome.assert_still_serving(Duration::from_secs(1), pages_before).await;
 }
 
+/// Fifty fetches of one site through a pool on `browser_endpoint`, with a session pool and
+/// `session_affinity` on, all succeed on the page the first fetch keeps: the external Chrome has
+/// as many tabs after the last fetch as after the first.
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(external_chrome)]
+async fn fifty_fetches_of_one_site_keep_one_tab_in_the_external_chrome() {
+    let test_name = "fifty_fetches_of_one_site_keep_one_tab_in_the_external_chrome";
+    let Some(chrome) = ExternalChrome::start(test_name) else {
+        return;
+    };
+    let pages_before = chrome.page_count();
+    let server = page_server().await;
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some(chrome.ws_url.clone()),
+        ..BrowserPoolConfig::default()
+    });
+    let sessions = std::sync::Arc::new(crawlberg::BrowserSessionPool::new());
+    let mut config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Chromiumoxide,
+            mode: BrowserMode::Always,
+            ..BrowserConfig::default()
+        },
+        respect_robots_txt: false,
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    config.browser.session_affinity = true;
+    config.browser_pool = Some(std::sync::Arc::clone(&pool));
+    config.browser_session_pool = Some(std::sync::Arc::clone(&sessions));
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let mut failures = Vec::new();
+    let mut pages_after_first = 0;
+    for index in 0..50 {
+        let url = format!("{}/page-{index}", server.uri());
+        if let Err(error) = crawlberg::scrape(&engine, &url).await {
+            failures.push(format!("fetch {index}: {error:?}"));
+        }
+        if index == 0 {
+            pages_after_first = chrome.page_count();
+        }
+    }
+    let pages_at_end = chrome.page_count();
+    let kept = sessions.size().await;
+    sessions.shutdown().await;
+    pool.shutdown().await;
+    let pages_after_shutdown = chrome.page_count();
+    let tabs = format!(
+        "tabs before={pages_before} after_first={pages_after_first} at_end={pages_at_end} \
+         after_shutdown={pages_after_shutdown}"
+    );
+
+    assert!(
+        failures.is_empty(),
+        "{test_name}: {} of 50 fetches failed ({tabs}); the first: {:?}",
+        failures.len(),
+        failures.first()
+    );
+    assert_eq!(kept, 1, "{test_name}: one site keeps one page ({tabs})");
+    assert_eq!(
+        pages_at_end, pages_after_first,
+        "{test_name}: the tabs of the external Chrome must not grow with the fetches ({tabs})"
+    );
+}
+
 /// A pooled page dropped without `close().await` still has its tab closed in the external
 /// Chrome, because pool shutdown waits for the close `Drop` spawned.
 ///

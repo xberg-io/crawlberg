@@ -51,6 +51,8 @@ pub struct CrawlEngineBuilder {
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     native_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
     proxy_provider: Option<Arc<dyn crate::ProxyProvider>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    robots_cache: Option<Arc<super::robots_cache::RobotsCache>>,
 }
 
 impl CrawlEngineBuilder {
@@ -74,7 +76,17 @@ impl CrawlEngineBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_executor: None,
             proxy_provider: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            robots_cache: None,
         }
+    }
+
+    /// Share the rate limiter and the robots.txt cache of another engine.
+    #[cfg(feature = "api")]
+    pub(crate) fn politeness(mut self, politeness: super::Politeness) -> Self {
+        self.rate_limiter = Some(politeness.rate_limiter);
+        self.robots_cache = Some(politeness.robots_cache);
+        self
     }
 
     /// Set the crawl configuration.
@@ -245,6 +257,13 @@ impl CrawlEngineBuilder {
 
         resolve_ssrf_deny_private(&mut config);
 
+        // ~keep Always replaced, never kept: a configuration cloned from another engine carries
+        // ~keep that engine's store, and a new engine must start with no cookie.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            config.cookie_store = config.cookies_enabled.then(Default::default);
+        }
+
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
         let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
         let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
@@ -283,7 +302,7 @@ impl CrawlEngineBuilder {
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
-            robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
+            robots_cache: self.robots_cache.unwrap_or_default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
         })
@@ -425,6 +444,77 @@ fn build_native_browser_executor(
 impl Default for CrawlEngineBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod cookie_store_tests {
+    use std::sync::Arc;
+
+    use crate::engine::CrawlEngine;
+    use crate::types::CrawlConfig;
+
+    fn engine_with(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("the engine builds")
+    }
+
+    // ~keep The API server builds the engine of each request from the configuration of its
+    // ~keep long-lived engine, so a store that the builder kept would be one store for every
+    // ~keep request of every API client.
+    #[test]
+    fn an_engine_built_from_the_configuration_of_another_engine_has_a_store_of_its_own() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(first.config.clone());
+
+        let first = first
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        let second = second
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        assert!(!Arc::ptr_eq(&first, &second), "each engine must have its own store");
+    }
+
+    #[test]
+    fn an_engine_with_cookies_off_drops_the_store_its_configuration_carries() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(CrawlConfig {
+            cookies_enabled: false,
+            ..first.config.clone()
+        });
+
+        assert!(second.config.cookie_store.is_none());
+    }
+
+    #[test]
+    fn a_clone_of_an_engine_is_the_same_cookie_session() {
+        let engine = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let clone = engine.clone();
+
+        let (first, second) = (engine.config.cookie_store, clone.config.cookie_store);
+        assert!(
+            Arc::ptr_eq(&first.expect("a store"), &second.expect("a store")),
+            "a clone of an engine must share its store"
+        );
+    }
+
+    #[test]
+    fn an_engine_with_default_configuration_has_no_store() {
+        assert!(engine_with(CrawlConfig::default()).config.cookie_store.is_none());
     }
 }
 

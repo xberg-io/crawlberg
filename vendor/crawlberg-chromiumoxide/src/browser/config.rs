@@ -394,15 +394,18 @@ impl BrowserConfigBuilder {
 
 impl BrowserConfig {
     pub fn launch(&self) -> io::Result<Child> {
-        self.launch_command(false).spawn()
+        self.command().spawn()
     }
 
-    #[cfg(unix)]
-    pub(crate) fn launch_pipe(&self) -> io::Result<(Child, std::os::unix::net::UnixStream)> {
-        self.launch_command(true).spawn_pipe()
-    }
-
-    fn launch_command(&self, pipe: bool) -> async_process::Command {
+    /// The command that [`Self::launch`] spawns. A caller that stops the browser process itself
+    /// changes the command first, with [`async_process::Command::kill_on_drop`].
+    ///
+    /// On Unix the command starts the browser on a private debugging pipe, unless the config asks
+    /// for a debugging port or for the WebSocket transport. The child that the command spawns
+    /// holds the caller's end of the pipe, and [`Browser::launch_with`](crate::Browser::launch_with)
+    /// speaks the protocol over it.
+    pub fn command(&self) -> async_process::Command {
+        let pipe = self.private_pipe && self.port == 0;
         let mut builder = ArgsBuilder::new();
 
         if self.disable_default_args {
@@ -485,7 +488,13 @@ impl BrowserConfig {
         if let Some(ref envs) = self.process_envs {
             cmd.envs(envs);
         }
-        cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+        // The browser gets no standard handle of the caller: it would hold a caller's pipe open
+        // for as long as it runs.
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+        #[cfg(unix)]
+        if pipe {
+            cmd.debugging_pipe();
+        }
         cmd
     }
 }

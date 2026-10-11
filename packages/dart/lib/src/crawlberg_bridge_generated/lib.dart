@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
@@ -1563,6 +1564,13 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.dataLoss({required String message}) =
       CrawlError_DataLoss;
 
+  /// The page was fetched but could not be converted to Markdown.
+  ///
+  /// A crawl event and a batch item carry an error as text only. There, the text starts with
+  /// `conversion_failed:`, and that tag is stable.
+  const factory CrawlError.conversionFailed({required String message}) =
+      CrawlError_ConversionFailed;
+
   /// The browser failed to launch, connect, or navigate.
   const factory CrawlError.browserError({required String message}) =
       CrawlError_BrowserError;
@@ -2423,7 +2431,7 @@ enum LinkType {
   /// A link to a different domain.
   external_,
 
-  /// A fragment-only link (e.g., `#section`).
+  /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
   anchor,
 
   /// A link to a downloadable document (PDF, DOC, etc.).

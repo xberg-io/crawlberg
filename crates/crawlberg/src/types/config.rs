@@ -349,6 +349,15 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub credential_scope: Option<crate::net::CredentialScope>,
+    /// The cookie store of the engine that holds this configuration.
+    ///
+    /// Set by the engine when it is built: a new store when `cookies_enabled` is on, `None` when
+    /// it is off. A caller leaves it `None`.
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub cookie_store: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -432,6 +441,8 @@ impl Default for CrawlConfig {
             ssrf_deny_private_explicit: None,
             dispatch: None,
             credential_scope: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            cookie_store: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]
