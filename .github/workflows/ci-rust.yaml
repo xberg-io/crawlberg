@@ -38,6 +38,7 @@ on:
   #   branches: [main]
   #   paths:
   #     - "crates/**"
+  #     - "vendor/crawlberg-chromiumoxide/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "fuzz/Cargo.toml"

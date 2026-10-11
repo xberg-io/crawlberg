@@ -591,7 +591,7 @@ mod job {
         use std::os::windows::process::CommandExt;
         use std::process::Command;
         use std::time::Duration;
-        use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
 
         struct Children(Vec<std::process::Child>);
 
@@ -620,7 +620,7 @@ mod job {
                 children.0.push(
                     Command::new("powershell.exe")
                         .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
-                        .creation_flags(CREATE_SUSPENDED)
+                        .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
                         .spawn()
                         .expect("spawn suspended process"),
                 );
