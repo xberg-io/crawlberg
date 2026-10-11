@@ -82,6 +82,7 @@ impl From<CrawlError> for ApiError {
             CrawlError::Dns { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DNS_ERROR"),
             CrawlError::Ssl { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SSL_ERROR"),
             CrawlError::DataLoss { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATA_LOSS"),
+            CrawlError::ConversionFailed { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CONVERSION_FAILED"),
             CrawlError::BrowserError { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "BROWSER_ERROR"),
             CrawlError::Unsupported { .. } => (StatusCode::NOT_IMPLEMENTED, "UNSUPPORTED"),
             CrawlError::SsrfPolicyViolation { .. } => (StatusCode::FORBIDDEN, "SSRF_POLICY_VIOLATION"),
@@ -93,5 +94,22 @@ impl From<CrawlError> for ApiError {
             code,
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_conversion_has_its_own_code_and_keeps_its_text() {
+        let error = CrawlError::conversion_failed("could not convert https://example.com/ to Markdown: refused");
+        let text = error.to_string();
+
+        let api_error = ApiError::from(error);
+
+        assert_eq!(api_error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(api_error.code, "CONVERSION_FAILED");
+        assert_eq!(api_error.message, text);
     }
 }

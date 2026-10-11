@@ -47,7 +47,7 @@ while let Some(event) = stream.next().await {
 `CrawlEvent` has three struct variants:
 
 - `Page { result }` — a successfully crawled page (`result` is a boxed `CrawlPageResult` with the same fields as in collected crawls).
-- `Error { url, error }` — a failed page fetch with the URL and error message.
+- `Error { url, error }` — a page that failed, with its URL and the error text. The text starts with the stable tag of the error: `conversion_failed:` for a page that was fetched but not converted to Markdown, `timeout:` or `dns:` for a failed fetch.
 - `Complete { pages_crawled }` — terminal event signaling the crawl finished. Always emitted, even on seed-level errors.
 
 Use `batch_crawl_stream()` for multiple seed URLs:

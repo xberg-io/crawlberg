@@ -1527,6 +1527,13 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.dataLoss({required String message}) =
       CrawlError_DataLoss;
 
+  /// The page was fetched but could not be converted to Markdown.
+  ///
+  /// A crawl event and a batch item carry an error as text only. There, the text starts with
+  /// `conversion_failed:`, and that tag is stable.
+  const factory CrawlError.conversionFailed({required String message}) =
+      CrawlError_ConversionFailed;
+
   /// The browser failed to launch, connect, or navigate.
   const factory CrawlError.browserError({required String message}) =
       CrawlError_BrowserError;
