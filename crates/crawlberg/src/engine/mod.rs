@@ -79,7 +79,29 @@ pub struct CrawlEngine {
     pub(crate) native_browser_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
 }
 
+/// The parts of an engine that keep the politeness toward a host: the rate limiter with its
+/// per-host throttle state, and the robots.txt cache. Neither holds a cookie.
+///
+/// ~keep A server takes this from its own engine and gives it to the engine of each request,
+/// ~keep so that the requests share the throttle and the robots rules while each keeps its own
+/// ~keep cookie store.
+#[cfg(feature = "api")]
+#[derive(Clone)]
+pub(crate) struct Politeness {
+    rate_limiter: Arc<dyn RateLimiter>,
+    robots_cache: Arc<robots_cache::RobotsCache>,
+}
+
 impl CrawlEngine {
+    /// The politeness parts of this engine, for another engine to share.
+    #[cfg(feature = "api")]
+    pub(crate) fn politeness(&self) -> Politeness {
+        Politeness {
+            rate_limiter: self.rate_limiter.clone(),
+            robots_cache: self.robots_cache.clone(),
+        }
+    }
+
     /// Create a new [`CrawlEngineBuilder`].
     pub fn builder() -> CrawlEngineBuilder {
         CrawlEngineBuilder::new()

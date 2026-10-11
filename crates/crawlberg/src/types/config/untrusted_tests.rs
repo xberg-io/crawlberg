@@ -314,6 +314,8 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         ssrf_deny_private_explicit: _,
         dispatch: _,
         credential_scope: _,
+        #[cfg(not(target_arch = "wasm32"))]
+            cookie_store: _,
         #[cfg(feature = "browser")]
             browser_pool: _,
         proxy_provider: _,

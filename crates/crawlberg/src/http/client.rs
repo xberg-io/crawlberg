@@ -4,18 +4,16 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::error::CrawlError;
-use crate::types::{AuthConfig, CrawlConfig};
+use crate::types::CrawlConfig;
 
 /// Identity of the `reqwest::Client` configuration knobs that legitimately vary per
-/// fetch — timeout, cookie jar, proxy, and auth — used to key the shared client cache
+/// fetch — timeout, proxy, and SSRF policy — used to key the shared client cache
 /// in [`build_client`] so that requests sharing an identity reuse one connection pool
 /// instead of paying a fresh TCP/TLS handshake on every call.
 ///
-/// Auth is included even though it is applied as a per-request header (not baked into
-/// the `reqwest::Client` itself) because a shared client's cookie jar (when
-/// `cookies_enabled`) must not be reused across distinct credentials — otherwise two
-/// concurrent sessions to the same host with different auth would leak session cookies
-/// between them.
+/// ~keep A cached client is shared by every engine whose configuration has this identity, so
+/// ~keep it holds nothing that belongs to one caller: no cookie store (the engine owns it, see
+/// ~keep [`send_with_cookies`]) and no credential (auth is a per-request header).
 ///
 /// Runtime identity is included because hyper drives each pooled connection with a task
 /// spawned on the runtime that built the client. When that runtime is dropped the
@@ -28,9 +26,7 @@ use crate::types::{AuthConfig, CrawlConfig};
 struct ClientCacheKey {
     runtime: Option<tokio::runtime::Id>,
     timeout_micros: u128,
-    cookies_enabled: bool,
     proxy: String,
-    auth: String,
     ssrf: String,
 }
 
@@ -39,9 +35,7 @@ impl ClientCacheKey {
         Self {
             runtime: tokio::runtime::Handle::try_current().map(|handle| handle.id()).ok(),
             timeout_micros: config.request_timeout.as_micros(),
-            cookies_enabled: config.cookies_enabled,
             proxy: proxy_identity(config),
-            auth: auth_identity(config),
             ssrf: ssrf_identity(config),
         }
     }
@@ -82,24 +76,13 @@ fn proxy_identity(config: &CrawlConfig) -> String {
     }
 }
 
-/// Encode `config`'s auth configuration as an opaque identity string.
-fn auth_identity(config: &CrawlConfig) -> String {
-    match &config.auth {
-        Some(AuthConfig::Basic { username, password }) => format!("basic:{username}:{password}"),
-        Some(AuthConfig::Bearer { token }) => format!("bearer:{token}"),
-        Some(AuthConfig::Header { name, value }) => format!("header:{name}:{value}"),
-        None => "none".to_owned(),
-    }
-}
-
 /// Built `reqwest::Client`s, keyed by [`ClientCacheKey`].
 ///
 /// ~keep `build_client` is called on the hot fetch path (once per tier attempt in
 /// `engine/mod.rs::run_tier`), so without this cache every HTTP request pays a fresh
 /// TCP/TLS handshake and gets no connection-pool reuse. `reqwest::Client` is
 /// `Arc`-backed internally, so cloning a cached entry is cheap, and each distinct
-/// proxy/auth/timeout/cookie identity still gets its own client rather than one client
-/// silently serving unrelated sessions (see [`ClientCacheKey`]).
+/// proxy/timeout/SSRF identity still gets its own client (see [`ClientCacheKey`]).
 #[derive(Default)]
 struct ClientCache {
     clients: Mutex<HashMap<ClientCacheKey, std::sync::Arc<StaticClients>>>,
@@ -148,18 +131,14 @@ impl ClientCache {
 #[cfg(not(target_arch = "wasm32"))]
 struct StaticClients {
     client: reqwest::Client,
-    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     environment: Mutex<HashMap<EnvironmentProxyIdentity, reqwest::Client>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl StaticClients {
     fn new(config: &CrawlConfig) -> Result<Self, CrawlError> {
-        let jar = new_cookie_jar(config);
-        let client = build_static_client(config, jar.clone())?;
         Ok(Self {
-            client,
-            jar,
+            client: build_static_client(config)?,
             environment: Mutex::new(HashMap::new()),
         })
     }
@@ -175,7 +154,7 @@ impl StaticClients {
         {
             return Ok(client.clone());
         }
-        let client = configure_environment_client(config, proxy, self.jar.clone())?
+        let client = configure_environment_client(config, proxy)?
             .build()
             .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
         if let Ok(mut clients) = self.environment.lock() {
@@ -282,14 +261,13 @@ fn ensure_proxy_can_enforce_denials(config: &CrawlConfig, url: &url::Url) -> Res
 /// The clients of one `proxy_provider` config: one for each proxy it picked, and one for
 /// requests that go direct.
 ///
-/// ~keep They share one cookie jar, so a cookie set through one proxy is sent through the
-/// ~keep next, as it was when one client served every proxy.
+/// ~keep None of them holds a cookie store: the engine's store serves every one, so a cookie
+/// ~keep set through one proxy is sent through the next (see [`send_with_cookies`]).
 #[cfg(not(target_arch = "wasm32"))]
 struct ProviderClients {
     /// ~keep Held so the provider's address, which keys this entry, is not reused by another
     /// ~keep provider while the entry is cached.
     _provider: std::sync::Arc<dyn crate::ProxyProvider>,
-    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     clients: Mutex<HashMap<String, reqwest::Client>>,
 }
 
@@ -307,7 +285,7 @@ impl ProviderClients {
         {
             return Ok(client.clone());
         }
-        let client = configure_client(config, proxy, self.jar.clone())?
+        let client = configure_client(config, proxy)?
             .build()
             .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
         if let Ok(mut clients) = self.clients.lock() {
@@ -395,7 +373,6 @@ fn provider_clients(
     let fresh = || {
         std::sync::Arc::new(ProviderClients {
             _provider: std::sync::Arc::clone(provider),
-            jar: new_cookie_jar(config),
             clients: Mutex::new(HashMap::new()),
         })
     };
@@ -421,43 +398,63 @@ fn build_static_client(_config: &CrawlConfig) -> Result<reqwest::Client, CrawlEr
 
 /// Build the client for a config with at most a static proxy.
 #[cfg(not(target_arch = "wasm32"))]
-fn build_static_client(
-    config: &CrawlConfig,
-    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
-) -> Result<reqwest::Client, CrawlError> {
+fn build_static_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
     let proxy = config.proxy.as_ref().map(crate::proxy::admit_proxy).transpose()?;
-    configure_client(config, proxy.as_ref(), jar)?
+    configure_client(config, proxy.as_ref())?
         .build()
         .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))
 }
 
-/// A fresh cookie jar when `config` enables cookies.
+/// Send `request` with the cookies that the engine of `config` holds for its URL, and store the
+/// cookies that the response sets.
 ///
-/// ~keep `cookie_provider`, not `cookie_store(true)`: reqwest's default jar loads no
-/// ~keep public-suffix list, so a host may set Domain= to a shared multi-tenant suffix
-/// ~keep (herokuapp.com, github.io, a bare TLD). One client is reused across a whole crawl
-/// ~keep that can span hosts, so that would be a supercookie leak between unrelated tenants.
-#[cfg(not(target_arch = "wasm32"))]
-fn new_cookie_jar(config: &CrawlConfig) -> Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>> {
-    config
-        .cookies_enabled
-        .then(|| std::sync::Arc::new(crate::net::cookie::PolicyCookieStore::default()))
+/// ~keep The store is the engine's, not the client's: a client is cached for the process and
+/// ~keep serves every engine whose configuration has its [`ClientCacheKey`], so a store inside
+/// ~keep it sent the cookies of one engine in the requests of the next (crawlberg#652). This is
+/// ~keep what reqwest does for a client that has a store, and it is exact here because no client
+/// ~keep follows a redirect itself: every hop is one request through this function.
+///
+/// ~keep A request that already carries a `Cookie` header keeps it, as it does in reqwest.
+///
+/// ~keep The one function that may call the raw send: `clippy.toml` bans it everywhere else.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "this function adds the Cookie header and stores the Set-Cookie headers"
+)]
+pub(crate) async fn send_with_cookies(
+    request: reqwest::RequestBuilder,
+    config: &CrawlConfig,
+) -> Result<reqwest::Response, reqwest::Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = &config.cookie_store {
+        use reqwest::cookie::CookieStore as _;
+        use reqwest::header::{COOKIE, SET_COOKIE};
+
+        let (client, request) = request.build_split();
+        let mut request = request?;
+        let url = request.url().clone();
+        if !request.headers().contains_key(COOKIE)
+            && let Some(cookies) = store.cookies(&url)
+        {
+            request.headers_mut().insert(COOKIE, cookies);
+        }
+        let response = client.execute(request).await?;
+        store.set_cookies(&mut response.headers().get_all(SET_COOKIE).iter(), &url);
+        return Ok(response);
+    }
+    let _ = config;
+    request.send().await
 }
 
-/// Apply `config`, `proxy` and `jar` to a fresh `reqwest::ClientBuilder`.
+/// Apply `config` and `proxy` to a fresh `reqwest::ClientBuilder`.
 #[cfg(not(target_arch = "wasm32"))]
 fn configure_client(
     config: &CrawlConfig,
     proxy: Option<&crate::proxy::AdmittedProxy>,
-    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
 ) -> Result<reqwest::ClientBuilder, CrawlError> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(config.request_timeout);
-
-    if let Some(jar) = jar {
-        builder = builder.cookie_provider(jar);
-    }
 
     // ~keep Closes the DNS-rebinding TOCTOU: `validate_url` resolves the host and checks
     // the answers, then hyper resolves it *again* to connect, so the checked addresses are
@@ -488,16 +485,11 @@ fn configure_client(
 fn configure_environment_client(
     config: &CrawlConfig,
     proxy: &EnvironmentProxy,
-    jar: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
 ) -> Result<reqwest::ClientBuilder, CrawlError> {
-    let mut builder = reqwest::Client::builder()
+    Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(config.request_timeout)
-        .proxy(proxy.reqwest_proxy()?);
-    if let Some(jar) = jar {
-        builder = builder.cookie_provider(jar);
-    }
-    Ok(builder)
+        .proxy(proxy.reqwest_proxy()?))
 }
 
 /// Insert `value` under `key`, clearing `cache` wholesale once it holds [`MAX_CACHED_CLIENTS`].
@@ -958,13 +950,12 @@ mod tests {
             },
             ..CrawlConfig::default()
         };
-        let planted = configure_client(&restrictive, None, None)
+        let planted = configure_client(&restrictive, None)
             .expect("restrictive builder must configure")
             .build()
             .expect("restrictive client must build");
         let planted = std::sync::Arc::new(StaticClients {
             client: planted,
-            jar: None,
             environment: Mutex::new(HashMap::new()),
         });
         cache.insert(ClientCacheKey::from_config(&permissive), &planted);

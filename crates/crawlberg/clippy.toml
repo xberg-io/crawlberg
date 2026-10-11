@@ -1,0 +1,6 @@
+# ~keep Applies to this crate only: clippy reads the nearest clippy.toml above the crate manifest.
+disallowed-methods = [
+  { path = "reqwest::RequestBuilder::send", reason = "send through `http::client::send_with_cookies`: it adds the `Cookie` header from the cookie store of the engine and stores the `Set-Cookie` headers of the response" },
+  { path = "reqwest::Client::execute", reason = "send through `http::client::send_with_cookies`: it adds the `Cookie` header from the cookie store of the engine and stores the `Set-Cookie` headers of the response" },
+  { path = "reqwest::get", reason = "send through `http::client::send_with_cookies`: it adds the `Cookie` header from the cookie store of the engine and stores the `Set-Cookie` headers of the response" },
+]
