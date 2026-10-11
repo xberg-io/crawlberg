@@ -133,9 +133,9 @@ pub(crate) struct BrowserPage {
 
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
-/// When `pool` is `Some`, acquires a page from the pool, uses it, and returns
-/// it on completion. When `pool` is `None`, launches a one-shot browser
-/// instance and tears it down afterwards.
+/// When `config.browser_pool` is set, acquires a page from the pool, uses it, and returns
+/// it on completion. Otherwise launches a one-shot browser instance and tears it down
+/// afterwards.
 ///
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
 /// the redirects the browser followed to reach it. The page's status is handled the way
@@ -148,7 +148,6 @@ pub(crate) async fn browser_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
-    pool: Option<&BrowserPool>,
     want_screenshot: bool,
     rate_limiter: &dyn crate::traits::RateLimiter,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
@@ -161,7 +160,6 @@ pub(crate) async fn browser_fetch(
             config,
             prior_cookies,
             crawl_cookies,
-            pool,
             want_screenshot,
             rate_limiter,
             #[cfg(feature = "browser-native")]
@@ -202,11 +200,11 @@ async fn browser_fetch_once(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
-    pool: Option<&BrowserPool>,
     want_screenshot: bool,
     rate_limiter: &dyn crate::traits::RateLimiter,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
+    let pool = config.browser_pool.as_deref();
     let page = match config.browser.backend {
         BrowserBackend::Chromiumoxide => {
             let given = crawl_cookies.map(CrawlCookies::given);
@@ -921,7 +919,6 @@ mod tests {
         browser_fetch(
             &format!("{}{route}", site.uri()),
             &config,
-            None,
             None,
             None,
             false,

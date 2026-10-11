@@ -80,18 +80,23 @@ impl CrawlEngine {
     ) -> Result<crate::browser::BrowserPage, CrawlError> {
         // ~keep Boxed: each caller's future holds this one inline, and one more level of it pushed
         // ~keep the generated dart binding's async dispatch past rustc's query depth limit.
-        Box::pin(crate::browser::browser_fetch(
-            url,
-            &self.config,
-            prior_cookies,
-            self.crawl_cookies.as_deref(),
-            self.config.browser_pool.as_deref(),
-            want_screenshot,
-            self.rate_limiter.as_ref(),
-            #[cfg(feature = "browser-native")]
-            self.native_browser_executor.as_deref(),
-        ))
-        .await
+        // ~keep The box is a `dyn Future + Send`, not the future's own type: a caller that needs
+        // ~keep its future to be `Send` (`tokio::spawn`) then proves it for this box, not for
+        // ~keep every type under the browser fetch. The retry loop of `browser_fetch` and the
+        // ~keep cookie step of this wrapper each add one level to that type, and the proof for
+        // ~keep the own type ran past rustc's recursion limit in the caller.
+        let fetch: futures::future::BoxFuture<'_, Result<crate::browser::BrowserPage, CrawlError>> =
+            Box::pin(crate::browser::browser_fetch(
+                url,
+                &self.config,
+                prior_cookies,
+                self.crawl_cookies.as_deref(),
+                want_screenshot,
+                self.rate_limiter.as_ref(),
+                #[cfg(feature = "browser-native")]
+                self.native_browser_executor.as_deref(),
+            ));
+        fetch.await
     }
 
     /// Dispatch a single fetch attempt to the given tier.
