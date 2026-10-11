@@ -213,3 +213,59 @@ async fn should_allow_script_navigation_to_a_delayed_refresh_target() {
         .expect("script browser navigation");
     assert_eq!(result.final_url, format!("{}/target", server.uri()));
 }
+
+fn http_only_config() -> CrawlConfig {
+    let mut config = config();
+    config.browser.mode = crawlberg::BrowserMode::Never;
+    config.respect_robots_txt = false;
+    config
+}
+
+#[tokio::test]
+async fn should_refuse_a_scraped_body_left_compressed() {
+    let server = MockServer::start().await;
+    Mock::given(path("/left-compressed"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html")
+                .insert_header("Content-Encoding", "DEFLATE")
+                .set_body_string("<p>page body words</p>"),
+        )
+        .mount(&server)
+        .await;
+    let engine = create_engine(Some(http_only_config())).expect("engine");
+    let error = scrape(&engine, &format!("{}/left-compressed", server.uri()))
+        .await
+        .expect_err("a body that is still compressed");
+    assert!(matches!(error, CrawlError::Unsupported { .. }), "{error}");
+    assert!(error.to_string().contains("DEFLATE"), "{error}");
+}
+
+#[tokio::test]
+async fn should_report_timeout_and_address_when_a_scraped_body_stalls() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("http://{}/slow-body", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        let mut open = Vec::new();
+        loop {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).await.expect("read request") > 0);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 1000\r\n\r\nstart")
+                .await
+                .expect("headers");
+            open.push(socket);
+        }
+    });
+    let mut config = http_only_config();
+    config.request_timeout = std::time::Duration::from_millis(300);
+    config.retry_count = 0;
+    let engine = create_engine(Some(config)).expect("engine");
+    let error = scrape(&engine, &url).await.expect_err("body deadline");
+    assert!(matches!(error, CrawlError::Timeout { .. }), "{error}");
+    assert!(error.to_string().contains(&url), "{error}");
+    server.abort();
+}
