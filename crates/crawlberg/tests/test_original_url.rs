@@ -69,6 +69,27 @@ async fn assert_original_link_spelling(mode: BrowserMode) {
     }
 }
 
+/// The seed is written with a dot segment and a fragment, so the fetched address is another text.
+#[tokio::test]
+async fn the_seed_page_gives_the_address_as_the_caller_passed_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>page</p>", "text/html"))
+        .mount(&server)
+        .await;
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        respect_robots_txt: false,
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = CrawlEngine::builder().config(config).build().expect("engine");
+    let seed = format!("{}/d/%2e%2e/#seed", server.uri());
+    let result = engine.crawl(&seed).await.expect("crawl");
+    assert_eq!(result.pages.len(), 1, "crawl error: {:?}", result.error);
+    assert_ne!(result.pages[0].url, seed, "the fetched address has no dot segment");
+    assert_eq!(result.pages[0].original_url, seed);
+}
+
 #[tokio::test]
 async fn should_preserve_link_spelling_in_http_results_after_normalization_and_redirects() {
     assert_original_link_spelling(BrowserMode::Never).await;
