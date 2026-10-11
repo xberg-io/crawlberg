@@ -120,7 +120,7 @@ jobs:
       - name: Setup Zig
         uses: xberg-io/actions/setup-zig@v1
         with:
-          version: "0.16.0"
+          version: "0.17.0"
 
       # ~keep ubuntu-latest preinstalls JDK 17, which is too old twice over for the java
       # session `alef.toml` runs (`mvn -q -DskipTests compile dependency:copy-dependencies`

@@ -23,8 +23,9 @@ use std::time::{Duration, Instant};
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::browser::{BrowserContextId, CloseParams as CloseBrowserParams};
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, ContinueResponseParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, FulfillRequestParams, HeaderEntry, RequestId as FetchRequestId, RequestPattern, RequestStage,
+    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
+    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
+    RequestId as FetchRequestId, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
@@ -422,6 +423,9 @@ struct Registry {
     /// popups it opened. A target of an ended watch stays until Chrome destroys it, its
     /// requests refused, and interception stays on until then.
     targets: Vec<(TargetId, Arc<WatchedPage>)>,
+    /// ~keep Tabs contain pages and iframes belong to pages; closing either independently
+    /// ~keep can destroy a parked root. Keep their policy ownership without popup teardown.
+    structural_targets: HashSet<TargetId>,
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
@@ -579,7 +583,9 @@ impl Registry {
         self.others.remove(&target);
         self.targets.retain(|(id, _)| *id != target);
         self.target_generations.insert(target.clone(), Arc::new(()));
-        self.targets.push((target.clone(), Arc::clone(&owner)));
+        if !self.structural_targets.contains(&target) {
+            self.targets.push((target.clone(), Arc::clone(&owner)));
+        }
         self.ownership.insert(target, TargetOwnership::Watched(owner));
     }
 
@@ -625,6 +631,7 @@ impl Registry {
         self.others.remove(target);
         self.context_targets.remove(target);
         self.ownership.remove(target);
+        self.structural_targets.remove(target);
         self.other_candidates.retain(|candidate| candidate != target);
         self.target_generations.remove(target);
     }
@@ -667,6 +674,9 @@ impl Registry {
             .retain(|(target, _)| self.context_targets.get(target) != Some(context));
         self.frames
             .retain(|_, frame| self.context_targets.get(&frame.source) != Some(context));
+        // ~keep No destroy event reaches the listener for a tab, so its entry ends with its context.
+        self.structural_targets
+            .retain(|target| self.context_targets.get(target) != Some(context));
         for (target, ownership) in &mut self.ownership {
             if self.context_targets.get(target) == Some(context) {
                 *ownership = TargetOwnership::Quarantined;
@@ -1148,8 +1158,8 @@ impl Drop for BrowserFirewall {
     // ~keep The stop repeats `stop`'s for the path that never reaches it: a cancelled fetch
     // ~keep future drops the firewall without stopping it, and interception left on with no
     // ~keep listener pauses the whole browser. The listener keeps answering until its authoritative
-    // ~keep census proves every owned target is gone, then ends and lets go of the browser. External
-    // ~keep sessions lose interception on detach; launched and killed browsers retain it until exit.
+    // ~keep census proves every owned target is gone, then turns interception off, ends and lets go of
+    // ~keep the browser. A killed browser and a check in the browser's own context retain it until exit.
     fn drop(&mut self) {
         if !self.stopped {
             self.handle.shared.stopping.store(true, Ordering::Release);
@@ -2258,7 +2268,10 @@ where
                                 return false;
                             }
                             armed_targets.insert(target.clone());
-                            if waiting_for_debugger {
+                            // ~keep Chrome reports a page under a debugger-held tab as not waiting,
+                            // ~keep but resuming only the tab leaves window.open blocked. Resume the
+                            // ~keep child session after its recursive interception boundary is armed.
+                            if waiting_for_debugger || structural_parent.is_some() {
                                 let Some(id) = child_command_id(&mut next_id) else { return false };
                                 if let Err(write_error) = child_socket_write(&mut socket, child_message(
                                     id,
@@ -2469,11 +2482,23 @@ where
                         matches!(registry.ownership.get(&target), Some(TargetOwnership::Other)),
                     )
                 };
-                if !(attached.waiting_for_debugger || permitted || other) {
+                let structural_parent = parent_session.filter(|session| structural_sessions.contains_key(session));
+                if !(attached.waiting_for_debugger || structural_parent.is_some() || permitted || other) {
                     return false;
                 }
                 if !(permitted || other) {
                     if attached.target_info.r#type != "iframe" {
+                        if lock(&shared.registry).opened.contains_key(&target) {
+                            return false;
+                        }
+                        // ~keep Closing a page under a paused tab destroys that tab too. Retire
+                        // ~keep its pending boundary before the expected detach and late arm ACK.
+                        if let Some(parent) = &structural_parent {
+                            structural_sessions.remove(parent);
+                            pending.retain(|_, command| {
+                                !matches!(&command.kind, ChildPendingKind::StructuralArm { session } if session == parent)
+                            });
+                        }
                         let Some(id) = child_command_id(&mut next_id) else { return false };
                         if child_socket_write(&mut socket, child_message(
                                     id,
@@ -2487,7 +2512,6 @@ where
                     }
                     continue;
                 }
-                let structural_parent = parent_session.filter(|session| structural_sessions.contains_key(session));
                 if let Some(parent) = structural_parent
                     .as_deref()
                     .and_then(|session| structural_sessions.get_mut(session))
@@ -2533,8 +2557,8 @@ enum TargetLookup {
 /// once every page of the check is dropped and every answer and every watch end already
 /// started has finished, and on an external browser once every target of a closed page is
 /// destroyed. It is never turned off when the pages share the browser's own context, when the
-/// browser is killed, or on an external browser whose debugging-session detach removes the
-/// interception and every `dispose_on_detach` context together. ~keep
+/// browser is killed. An external browser is disabled only after its owned contexts and
+/// targets are authoritatively absent and the pending refusals have been delivered. ~keep
 async fn serve(
     browser: Arc<Browser>,
     shared: Arc<Shared>,
@@ -2569,6 +2593,19 @@ async fn serve(
             {
                 stopping = Some(stopped);
                 continue;
+            }
+            // ~keep Only the completed context-disposal census makes disabling safe: Chrome
+            // ~keep otherwise releases requests from a watched page that has not died yet.
+            if shared.context != PageContext::Shared
+                && shared.origin != BrowserOrigin::Killed
+                && !tokio::time::timeout(
+                    CONTROLLER_TEARDOWN_TIMEOUT,
+                    browser.execute(FetchDisableParams::default()),
+                )
+                .await
+                .is_ok_and(|disabled| disabled.is_ok())
+            {
+                return false;
             }
             for done in stopped {
                 let _ = done.send(());
@@ -2941,6 +2978,9 @@ fn install_watch(registry: &mut Registry, page: &Arc<WatchedPage>) -> Result<(),
 /// ~keep the targets as before.
 fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     let mut registry = lock(&shared.registry);
+    if matches!(info.r#type.as_str(), "tab" | "iframe") {
+        registry.structural_targets.insert(info.target_id.clone());
+    }
     let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
         (None, Some(parent)) => {
@@ -3010,7 +3050,7 @@ fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     }
     let ending = owner.ending.load(Ordering::Acquire);
     registry.register_watched(info.target_id.clone(), owner);
-    ending.then(|| info.target_id.clone())
+    (ending && !registry.structural_targets.contains(&info.target_id)).then(|| info.target_id.clone())
 }
 
 /// A main-frame commit of a watched page: the page and the navigation event.
@@ -4089,6 +4129,7 @@ mod tests {
         let address = listener.local_addr().expect("test socket address");
         let accepted = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept child controller");
+            stream.set_nodelay(true).expect("disable test server Nagle delay");
             async_tungstenite::tokio::accept_async(stream)
                 .await
                 .expect("accept WebSocket")
@@ -4096,6 +4137,11 @@ mod tests {
         let (client, _) = async_tungstenite::tokio::connect_async(format!("ws://{address}"))
             .await
             .expect("connect child controller WebSocket");
+        client
+            .get_ref()
+            .get_ref()
+            .set_nodelay(true)
+            .expect("disable test client Nagle delay");
         let mut server = accepted.await.expect("WebSocket accept task");
         let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
         let controller = tokio::spawn(async move {
@@ -4410,6 +4456,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_ending_owned_root_under_a_paused_tab_is_not_closed_or_resumed() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        begin_ending(&page);
+        let (mut socket, _commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let arm = next_child_message(&mut socket).await;
+        assert_eq!(arm["method"], "Target.setAutoAttach");
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-ROOT",
+            "ROOT",
+            "page",
+            None,
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
+        assert!(!controller.await.expect("the controller must fail closed"));
+        let remaining = tokio::time::timeout(Duration::from_millis(100), socket.next())
+            .await
+            .expect("the controller socket must end");
+        assert!(
+            !matches!(remaining, Some(Ok(async_tungstenite::tungstenite::Message::Text(_)))),
+            "an ending owned root must receive neither a close nor a resume command"
+        );
+        assert!(lock(&shared.registry).opened.contains_key(&page.root));
+    }
+
+    #[tokio::test]
+    async fn an_ending_watch_popup_under_a_paused_tab_is_closed_without_resuming() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        begin_ending(&page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let tab_arm = next_child_message(&mut socket).await;
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-POPUP",
+            "POPUP",
+            "page",
+            Some("ROOT"),
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
+        let close = next_child_message(&mut socket).await;
+        assert_eq!(close["method"], "Target.closeTarget");
+        assert_eq!(close["params"]["targetId"], "POPUP");
+        answer_child_command(&mut socket, &tab_arm).await;
+        answer_child_command(&mut socket, &close).await;
+        for (session, target) in [("S-POPUP", "POPUP"), ("S-TAB", "TAB")] {
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "method": "Target.detachedFromTarget", "params": { "sessionId": session, "targetId": target },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("the popup page and tab must detach");
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err()
+        );
+        assert!(lock(&shared.registry).opened.contains_key(&page.root));
+        commands.send(super::ChildCommand::Stop).await.expect("stop controller");
+        assert!(controller.await.expect("controller task"));
+    }
+
+    #[tokio::test]
     async fn a_structural_tab_stays_paused_until_its_context_bearing_child_boundary_is_acknowledged() {
         let page = watched("ROOT");
         let shared = Arc::new(shared_with(&page, "OTHER"));
@@ -4443,7 +4570,17 @@ mod tests {
         let page_arm = next_child_message(&mut socket).await;
         assert_eq!(page_arm["method"], "Target.setAutoAttach");
         assert_eq!(page_arm["sessionId"], "S-PAGE");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the child resumed before its recursive interception boundary was acknowledged"
+        );
         answer_child_command(&mut socket, &page_arm).await;
+        let page_resume = next_child_message(&mut socket).await;
+        assert_eq!(page_resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(page_resume["sessionId"], "S-PAGE");
+        answer_child_command(&mut socket, &page_resume).await;
         assert!(
             tokio::time::timeout(Duration::from_millis(25), socket.next())
                 .await
@@ -5088,6 +5225,92 @@ mod tests {
             !child_policy_acknowledged(&registry, &TargetId::new("CONFLICT")),
             "a conflicting child must stay paused"
         );
+    }
+
+    #[test]
+    fn structural_targets_keep_their_policy_without_becoming_popup_teardown_targets() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("OWNED-CONTEXT");
+        {
+            let mut registry = lock(&shared.registry);
+            registry.register_context(context.clone(), Some(&page.config.ssrf));
+            registry.opened.insert(page.root.clone(), Some(context.clone()));
+        }
+        for (id, kind) in [("TAB", "tab"), ("FRAME", "iframe"), ("POPUP", "page")] {
+            let mut event = target_created_in_context(id, None, &context);
+            event.target_info.r#type = kind.to_owned();
+            assert_eq!(adopt_target(&shared, &event.target_info), None);
+        }
+        let mut registry = lock(&shared.registry);
+        install_watch(&mut registry, &page).expect("install context policy");
+        for id in ["TAB", "FRAME", "POPUP"] {
+            let target = TargetId::new(id);
+            assert!(Arc::ptr_eq(&registry.owner_of_target(id).expect("policy owner"), &page));
+            assert_eq!(registry.context_targets.get(&target), Some(&context));
+            assert!(registry.target_generations.contains_key(&target));
+        }
+        let mut closed_targets = registry
+            .targets
+            .iter()
+            .map(|(id, _)| id.inner().as_str())
+            .collect::<Vec<_>>();
+        closed_targets.sort_unstable();
+        assert_eq!(closed_targets, ["POPUP", "ROOT"]);
+        registry.remove_target(&TargetId::new("TAB"));
+        assert!(!registry.structural_targets.contains(&TargetId::new("TAB")));
+    }
+
+    /// The listener closes what `reconcile_created` returns. A tab of an ending watch holds the
+    /// parked root, so it is never returned; a popup of the same watch is.
+    #[test]
+    fn a_tab_of_an_ending_watch_is_not_returned_for_closing() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = register_owned_context(&shared, &page);
+        page.ending.store(true, Ordering::Release);
+        let tab = in_context(target_created("TAB", "tab", None, None, None), &context);
+        let popup = in_context(target_created("POPUP", "page", Some("ROOT"), None, None), &context);
+
+        assert_eq!(reconcile_created(&shared, Some(&tab.target_info)), None);
+        assert_eq!(
+            reconcile_created(&shared, Some(&popup.target_info)),
+            Some(TargetId::new("POPUP"))
+        );
+        let registry = lock(&shared.registry);
+        assert!(Arc::ptr_eq(
+            &registry.owner_of_target("TAB").expect("policy owner"),
+            &page
+        ));
+        assert!(!owned(&registry).contains(&"TAB"));
+    }
+
+    /// The listener gets no destroy event for a tab. The end of its browser context removes it
+    /// from the structural targets; its ownership stays quarantined, as for every retired target.
+    #[test]
+    fn a_retired_context_takes_its_structural_tab_with_it() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = register_owned_context(&shared, &page);
+        let tab = in_context(target_created("TAB", "tab", None, None, None), &context);
+        assert_eq!(adopt_target(&shared, &tab.target_info), None);
+
+        let mut registry = lock(&shared.registry);
+        assert!(registry.structural_targets.contains(&TargetId::new("TAB")));
+        registry
+            .contexts
+            .get_mut(&context)
+            .expect("the context is registered")
+            .disposal_acknowledged = true;
+        assert!(registry.retire_context(&context));
+        assert!(
+            !registry.structural_targets.contains(&TargetId::new("TAB")),
+            "a tab of a retired context must leave the structural targets"
+        );
+        assert!(matches!(
+            registry.ownership.get(&TargetId::new("TAB")),
+            Some(TargetOwnership::Quarantined)
+        ));
     }
 
     #[test]
@@ -6716,7 +6939,32 @@ mod race_tests {
     /// browser client's unrestricted target. ~keep
     #[tokio::test(flavor = "multi_thread")]
     async fn an_external_browser_keeps_a_popup_fail_closed_during_policy_handoff() {
-        let test_name = "an_external_browser_keeps_a_popup_fail_closed_during_policy_handoff";
+        popup_during_policy_handoff(
+            "an_external_browser_keeps_a_popup_fail_closed_during_policy_handoff",
+            false,
+        )
+        .await;
+    }
+
+    /// The same handoff with the popup opened by a direct `window.open` call. The popup is
+    /// closed and nothing reaches the denied server, as for a popup from a timer.
+    ///
+    /// ~keep Known limit, pinned here: Chrome does not answer the call once the held popup is
+    /// ~keep closed, and the page answers no later script within `SYNCHRONOUS_OPEN_LIMIT`. The
+    /// ~keep next watch of that page still starts and closes, and the check still stops.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_synchronous_window_open_during_policy_handoff_loses_only_its_page() {
+        popup_during_policy_handoff(
+            "a_synchronous_window_open_during_policy_handoff_loses_only_its_page",
+            true,
+        )
+        .await;
+    }
+
+    /// How long the test waits for an answer from the page that made a direct `window.open` call.
+    const SYNCHRONOUS_OPEN_LIMIT: Duration = Duration::from_secs(5);
+
+    async fn popup_during_policy_handoff(test_name: &str, synchronous: bool) {
         let Some(browser) = launch(test_name).await else {
             return;
         };
@@ -6803,9 +7051,22 @@ mod race_tests {
                     .event_listener::<EventTargetDestroyed>()
                     .await
                     .expect("listen for the popup close");
-                page.evaluate("window.open('about:blank'); 1")
-                    .await
-                    .expect("open the popup");
+                // ~keep Chrome 155 never replies to a synchronous window.open when its
+                // ~keep debugger-held popup is closed. Observe creation and destruction instead
+                // ~keep of waiting for that script while the policy handoff remains gated.
+                let direct_call = if synchronous {
+                    let opener = page.clone();
+                    Some(tokio::spawn(async move {
+                        tokio::time::timeout(SYNCHRONOUS_OPEN_LIMIT, opener.evaluate("window.open('about:blank'); 1"))
+                            .await
+                            .is_ok()
+                    }))
+                } else {
+                    page.evaluate("setTimeout(() => window.open('about:blank'), 0); 1")
+                        .await
+                        .expect("schedule the popup");
+                    None
+                };
                 let popup = tokio::time::timeout(Duration::from_secs(10), async {
                     while let Some(event) = created.next().await {
                         if event.target_info.opener_id.as_ref() == Some(&root) {
@@ -6865,6 +7126,48 @@ mod race_tests {
                     "{test_name}: the parked root reached the denied server"
                 );
 
+                assert!(!firewall.has_failed(), "the refused popup must not stop either security controller");
+                let unaffected: String = other
+                    .evaluate(format!(
+                        "fetch({denied:?}, {{ mode: 'no-cors' }}).then(() => 'reached', () => 'refused')"
+                    ))
+                    .await
+                    .expect("the other client's tab must remain responsive")
+                    .into_value()
+                    .expect("the other client's fetch result must be a string");
+                assert_eq!(unaffected, "reached", "the popup refusal must preserve another client's tab");
+                if let Some(direct_call) = direct_call {
+                    let answered = direct_call.await.expect("the direct call task must finish");
+                    assert!(
+                        !answered,
+                        "{test_name}: Chrome answered the direct window.open call; the known limit in the changelog \
+                         no longer holds"
+                    );
+                    // ~keep The blocked script holds the page's thread. Each step has its own bound,
+                    // ~keep so the page that never answers cannot hang the test.
+                    gate.permits.add_permits(1);
+                    let second = tokio::time::timeout(Duration::from_secs(20), watching)
+                        .await
+                        .expect("the strict watch must not wait for the blocked script")
+                        .expect("the watch task must finish")
+                        .expect("the strict watch must start");
+                    let next_script = tokio::time::timeout(SYNCHRONOUS_OPEN_LIMIT, page.evaluate("1 + 1"))
+                        .await
+                        .is_ok_and(|reply| reply.is_ok());
+                    assert!(
+                        !next_script,
+                        "{test_name}: the page answered a script after the unanswered window.open; the known limit in \
+                         the changelog no longer holds"
+                    );
+                    tokio::time::timeout(Duration::from_secs(20), second.close())
+                        .await
+                        .expect("the watch of the lost page must close");
+                    tokio::time::timeout(Duration::from_secs(30), firewall.stop())
+                        .await
+                        .expect("the check must stop with the lost page");
+                    drop(page);
+                    return;
+                }
                 gate.permits.add_permits(1);
                 let second = watching
                     .await

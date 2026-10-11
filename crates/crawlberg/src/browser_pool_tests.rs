@@ -1182,18 +1182,20 @@ async fn a_pool_whose_chrome_was_killed_relaunches_it_and_shuts_down() {
     if expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
         return;
     }
+    let original_handler = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .expect("a warm pool must hold a browser")
+        .handler_handle
+        .abort_handle();
     kill_pool_chrome(&pool).await;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut handler_finished = false;
     while tokio::time::Instant::now() < deadline {
-        if pool
-            .state
-            .lock()
-            .await
-            .as_ref()
-            .is_some_and(|state| state.handler_handle.is_finished())
-        {
+        if original_handler.is_finished() {
             handler_finished = true;
             break;
         }
@@ -1450,7 +1452,7 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
             .map_err(|_| "the pool warm timed out".to_owned())?
             .map_err(|error| format!("the pool must connect to the external Chrome: {error}"))?;
 
-        {
+        let original_handler_end = {
             let state = pool.state.lock().await;
             let Some(state) = state.as_ref() else {
                 return Err("a warm pool must hold a browser connection".to_owned());
@@ -1461,15 +1463,10 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
             let old_handler = state.handler_handle.abort_handle();
             old_handler.abort();
             pool_handlers.push(old_handler);
-        }
+            state.handler_end.clone()
+        };
         tokio::time::timeout(PROCESS_TEST_WAIT, async {
-            while !pool
-                .state
-                .lock()
-                .await
-                .as_ref()
-                .is_some_and(|state| state.handler_end.has_ended())
-            {
+            while !original_handler_end.has_ended() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -1491,7 +1488,10 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
             }
         }
 
-        let page = tokio::time::timeout(operation_timeout, pool.acquire_page())
+        let config = crate::types::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .build();
+        let page = tokio::time::timeout(operation_timeout, pool.acquire_page_with_config(&config))
             .await
             .map_err(|_| "page acquisition after relaunch timed out".to_owned())?
             .map_err(|error| format!("the relaunched connection must open a page: {error}"))?;
@@ -1604,33 +1604,37 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
         return;
     }
     let old = pool_profile_dir(&pool).await;
+    let before = profile_drops_here();
     // ~keep A relaunch replaces only a Chrome whose handler has ended.
-    if let Some(state) = pool.state.lock().await.as_ref() {
-        state.handler_handle.abort();
-    }
-    let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
-    while !pool
+    let original_handler = pool
         .state
         .lock()
         .await
         .as_ref()
-        .is_some_and(|state| state.handler_handle.is_finished())
-    {
+        .expect("a warm pool must hold a browser")
+        .handler_handle
+        .abort_handle();
+    original_handler.abort();
+    let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
+    while !original_handler.is_finished() {
         assert!(tokio::time::Instant::now() < deadline, "the aborted handler must end");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let before = profile_drops_here();
     let relaunched = pool.relaunch_browser().await;
-    assert_profile_teardown_left_this_thread(before);
+    assert_eq!(
+        profile_drops_here().1,
+        before.1,
+        "profile removal must not run on this executor thread"
+    );
     let new = pool_profile_dir(&pool).await;
-    pool.shutdown().await;
-
     assert!(relaunched.is_ok(), "the relaunch must succeed: {relaunched:?}");
     assert_ne!(old, new, "the relaunched Chrome must use a new profile directory");
     tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&old))
         .await
         .expect("a relaunch must stop the old Chrome and remove its profile directory");
+    assert_profile_teardown_left_this_thread(before);
+    pool.shutdown().await;
 }
 
 /// A launch that fails removes its profile directory, off the executor thread.
@@ -3210,4 +3214,93 @@ fn a_chrome_that_is_not_a_snap_gets_its_scratch_profile_in_the_temp_directory() 
         "a scratch profile for a Chrome that is not a snap must be in the temp directory: {}",
         dir.path().display()
     );
+}
+
+#[tokio::test]
+async fn a_closed_cdp_socket_ends_its_handler_without_another_command() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind CDP socket");
+    let address = listener.local_addr().expect("CDP address");
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept CDP socket");
+        let mut socket = async_tungstenite::tokio::accept_async(stream)
+            .await
+            .expect("accept WebSocket");
+        let message = socket.next().await.expect("discovery command").expect("valid command");
+        let command: serde_json::Value =
+            serde_json::from_str(message.to_text().expect("text command")).expect("command JSON");
+        assert_eq!(command["method"], "Target.setDiscoverTargets");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({"id": command["id"], "result": {}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("answer discovery");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .expect("close socket");
+        let _ = socket.next().await;
+    });
+    let (browser, mut handler) = Browser::connect(format!("ws://{address}")).await.expect("connect CDP");
+    let ended = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = handler.next().await {
+            event.expect("the orderly close must not be a transport error");
+        }
+    })
+    .await;
+    server.abort();
+    drop(browser);
+    assert!(
+        ended.is_ok(),
+        "a Close frame must end the handler without a new command"
+    );
+}
+
+#[tokio::test]
+async fn a_closed_cdp_socket_cancels_a_command_waiting_for_its_response() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind CDP socket");
+    let address = listener.local_addr().expect("CDP address");
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept CDP socket");
+        let mut socket = async_tungstenite::tokio::accept_async(stream)
+            .await
+            .expect("accept WebSocket");
+        for expected in ["Target.setDiscoverTargets", "Browser.getVersion"] {
+            let message = socket.next().await.expect("CDP command").expect("valid command");
+            let command: serde_json::Value =
+                serde_json::from_str(message.to_text().expect("text command")).expect("command JSON");
+            assert_eq!(command["method"], expected);
+            if expected == "Target.setDiscoverTargets" {
+                socket
+                    .send(async_tungstenite::tungstenite::Message::Text(
+                        serde_json::json!({"id": command["id"], "result": {}})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .expect("answer discovery");
+            }
+        }
+        socket
+            .send(async_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .expect("close socket");
+        let _ = socket.next().await;
+    });
+    let (browser, handler) = Browser::connect(format!("ws://{address}")).await.expect("connect CDP");
+    let handler = spawn_handler(handler);
+    let response = tokio::time::timeout(Duration::from_secs(2), browser.version()).await;
+    server.abort();
+    let ended = tokio::time::timeout(Duration::from_secs(2), handler).await;
+    assert!(
+        matches!(response, Ok(Err(chromiumoxide::error::CdpError::ChannelSendError(_)))),
+        "the unanswered command must be canceled, got {response:?}"
+    );
+    assert!(matches!(ended, Ok(Ok(()))), "the handler must end, got {ended:?}");
 }

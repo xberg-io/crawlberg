@@ -4,6 +4,25 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Fixed
+
+- A browser command no longer waits for its full timeout after Chrome closes the DevTools
+  connection. The command fails at once, and a browser pool that is dropped lets go of its
+  Chrome.
+- A stop of the SSRF check turns request interception off again on a browser that crawlberg
+  launched, and on a `browser.endpoint` browser after the last refusal is delivered. Before,
+  interception stayed on with nothing to answer, and every other tab of that browser waited
+  without end. A browser that crawlberg kills when it is done, and a check that runs in the
+  default context of the browser, keep interception on, as before.
+- A popup that a page opens while its SSRF check ends is closed, and the page stays usable for
+  the next check. Before, the browser session failed, or the close of the popup's tab closed
+  the page with it.
+- Known limit: a script that calls `window.open` directly at the moment the SSRF check of its
+  page ends gets no answer after the popup is closed, and that page runs no further script
+  (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
+  gets past the check, the next check of the page still starts and ends, and other tabs are
+  not affected. A `window.open` from a timer or an event handler does not block its page.
+
 ## [1.10.2] - 2026-10-06
 
 ### Changed

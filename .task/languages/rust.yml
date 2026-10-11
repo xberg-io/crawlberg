@@ -23,6 +23,11 @@ vars:
       ' 2>/dev/null || echo ""
 
 tasks:
+  chrome:prepare:
+    desc: Preserve the macOS Chrome app bundle for browser tests
+    cmds:
+      - bash scripts/ci/rust/prepare-chrome.sh
+
   install:
     desc: Install Rust toolchain and tools (rustup, cargo-deny)
     cmds:
