@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `Browser::launch_with` to start the child process through a function of the caller
+- Add `BrowserConfig::command` and `async_process::Command::kill_on_drop`, for a caller that stops
+  the browser process family itself
+- Add `async_process::ProcessTree` and `Child::tree`. On Windows the browser process starts in a
+  job object that ends it and every process it started when the launching process ends
+
+### Changed
+
+- The browser process gets the null device as its standard input
+- On Windows a launch fails when the browser process cannot join its job object
+- Only the process that spawned the browser waits for it or ends it. In a process forked from
+  that one, `Browser::get_mut_child`, `wait`, `try_wait` and `kill` answer as for a connected
+  browser, and a dropped `Browser` leaves the browser process running. `Child::spawned_here`
+  tells the two apart
+- A dropped `Browser` no longer warns that the runtime kills the browser process when the caller
+  asked for no kill on drop. `Child::killed_on_drop` tells which was asked
+
+### Fixed
+
+- Browser-level events are passed to their listeners when the browser has no target left
+
 ## [0.9.1] 2026-02-25
 
 ### Fixed

@@ -203,6 +203,32 @@ title: "Changelog"
   (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
   gets past the check, the next check of the page still starts and ends, and other tabs are
   not affected. A `window.open` from a timer or an event handler does not block its page.
+- An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
+  profile directory is removed, when the last clone of the engine handle is dropped, and when the
+  process exits through the C runtime with an engine still alive or with its Chrome still
+  launching. No new call is needed. Only the process that launched a Chrome stops it: a process
+  forked from that one, such as a `multiprocessing` worker, holds a copy of the engine, and
+  dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
+  and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
+  `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
+  nothing ends that Chrome for it. A Python program that ends with an unhandled
+  `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
+  Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
+  them when the process ends in any way. (#594)
+- On Linux and macOS a browser launch fails with an error when the process table does not show
+  the Chrome it started, and it stops that Chrome at once. Without that entry the engine cannot
+  stop the Chrome later, and the Chrome ran on after its engine was gone. The error says what to
+  do: on Linux, run the program where the `/proc` of its own process id namespace is mounted; on
+  macOS, let the sandbox profile allow the program to read process information. A Chrome that
+  ended at once is reported with its exit status instead. The engine knows its Chrome by the
+  process id and a start value that a later change of the system clock does not move. (#594)
+- On Windows a program that captures the output of a crawling child process returns when that
+  child has exited. A Chrome the child left running kept the output pipes open.
+- Chrome no longer gets the standard input of the process that launched it.
+- The browser driver now reports the close of a browser's last page at once. It held that event
+  back until the next page opened, so a page closed outside the request check kept its browser
+  context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
+  already ended for pooled pages. (#595)
 
 ## [1.10.2] - 2026-10-06
 
