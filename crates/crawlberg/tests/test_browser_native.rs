@@ -1181,7 +1181,7 @@ async fn native_scrapes_of_one_host_keep_the_delay_of_the_domain() {
         .await;
     let config = CrawlConfig {
         respect_robots_txt: false,
-        rate_limit_ms: Some(1500),
+        rate_limit_ms: Some(1200),
         rate_limit_jitter_ratio: 0.0,
         ..native_config(|c| c)
     };
@@ -1194,7 +1194,7 @@ async fn native_scrapes_of_one_host_keep_the_delay_of_the_domain() {
     assert_eq!(arrivals.len(), 2, "each page is asked for once");
     let gap = arrivals[1].duration_since(arrivals[0]);
     assert!(
-        gap >= Duration::from_millis(1300),
-        "the two pages must arrive about one delay of 1500 ms apart, got {gap:?}"
+        gap >= Duration::from_millis(1100),
+        "the two pages must arrive about one delay of 1200 ms apart, got {gap:?}"
     );
 }
