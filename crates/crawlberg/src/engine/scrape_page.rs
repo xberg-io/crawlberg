@@ -221,6 +221,17 @@ impl CrawlEngine {
         #[cfg(not(feature = "browser-native"))]
         let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
 
+        // ~keep This fetch does not go through `follow_redirects`, so it applies the rule of the
+        // ~keep chain for a redirect that Chrome stopped on.
+        let landed = &page.response.final_url;
+        if let Some(error) = super::redirect::unfollowed_redirect_error(&page.response, landed, |target| {
+            [url, landed.as_str()]
+                .iter()
+                .any(|seen| url::Url::parse(seen).is_ok_and(|seen| seen == *target))
+        }) {
+            return Err(error);
+        }
+
         let screenshot = page.response.screenshot.take();
         let final_url = page.response.final_url.clone();
         let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);

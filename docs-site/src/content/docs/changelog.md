@@ -33,6 +33,25 @@ title: "Changelog"
 
 ### Changed
 
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, in HTTP mode and in
+  browser mode, with or without a screenshot. A crawl reports the error for that address and no
+  page. `interact` still returns a result with no document, and each action fails with an error
+  that names the status. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page. A body that the server
+  compressed with deflate is now decoded. (#614)
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result, in HTTP mode and in browser mode. The target of the meta tag is one of its
+  links. (#605)
+- The error for an HTTP error status names the status and the address, for example
+  `forbidden: HTTP 403 for https://example.com/page`. The address has its credentials removed.
+  The error class of each status is the same. (#611)
+- A response body that does not end before `request_timeout` fails as a timeout that names the
+  address. It failed as a data loss. (#623)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.

@@ -154,12 +154,18 @@ fn assert_no_document(
 async fn interact_stops_a_chain_longer_than_max_redirects_where_scrape_does() {
     let test_name = "interact_stops_a_chain_longer_than_max_redirects_where_scrape_does";
     let http_site = redirect_chain(5).await;
-    let expected = scrape_outcome(2, &format!("{}/", http_site.uri()), &http_site.uri()).await;
-    assert_eq!(
-        expected,
-        ("/r2".to_owned(), String::new()),
-        "scrape stops on the 3xx at the limit"
+    let engine = create_engine(Some(config(BrowserMode::Never, 2))).expect("engine must build");
+    let error = scrape(&engine, &format!("{}/", http_site.uri()))
+        .await
+        .expect_err("scrape fails on the 3xx at the limit (#613)");
+    assert!(
+        matches!(&error, CrawlError::SsrfPolicyViolation { url, reason, .. }
+            if reason == "redirect limit exceeded" && url.ends_with("/r3")),
+        "the error must name the redirect limit and the address not followed: {error:?}"
     );
+    // ~keep `interact` reports the same stop as a result: no document, and each action fails
+    // ~keep with an error that names the status.
+    let expected = ("/r2".to_owned(), String::new());
 
     let site = redirect_chain(5).await;
     let Some((result, _)) =
