@@ -233,7 +233,9 @@ impl RateLimiter for PerDomainThrottle {
         // ~keep The requests of one domain queue on `turn` in the order of arrival, and the one
         // ~keep that holds it sleeps out the gap. A cancelled request drops its place in the
         // ~keep queue, or the turn itself, so it costs the requests behind it nothing. The delay
-        // ~keep is read when the turn comes, so a backoff reaches the requests that already wait.
+        // ~keep is read when the turn comes. A backoff therefore reaches the requests that wait
+        // ~keep behind the one that holds the turn, not the one that holds it: that one has read
+        // ~keep its delay already, and the next one takes the turn at the moment of its grant.
         let _turn = turn.lock().await;
         let wait = {
             let mut state = self.state.lock().expect("lock poisoned");
@@ -708,6 +710,36 @@ mod tests {
         assert!(
             near(waited, GAP),
             "the waiter behind a cancelled one must be let through after one gap of {GAP:?}, it waited {waited:?}"
+        );
+    }
+
+    // ~keep The second caller is queued and does not hold the turn when it is dropped. The first
+    // ~keep caller keeps the turn, and the third is let through one gap after the first send.
+    #[tokio::test(start_paused = true)]
+    async fn a_queued_waiter_that_is_cancelled_costs_the_caller_behind_it_no_gap() {
+        let throttle = PerDomainThrottle::new(GAP);
+        throttle.acquire(HOST).await.expect("the first request does not wait");
+        let started = tokio::time::Instant::now();
+
+        let mut first = Box::pin(throttle.acquire(HOST));
+        assert!(still_waits(&mut first).await, "the first waiter must wait");
+        let mut queued = Box::pin(throttle.acquire(HOST));
+        assert!(still_waits(&mut queued).await, "the second waiter must wait");
+        let mut third = Box::pin(throttle.acquire(HOST));
+        assert!(still_waits(&mut third).await, "the third waiter must wait");
+        drop(queued);
+        first.await.expect("acquire must succeed");
+        let first_sent = started.elapsed();
+        third.await.expect("acquire must succeed");
+        let third_sent = started.elapsed();
+
+        assert!(
+            near(first_sent, GAP),
+            "the first waiter must be let through after one gap of {GAP:?}, it waited {first_sent:?}"
+        );
+        assert!(
+            near(third_sent - first_sent, GAP),
+            "the third waiter must be let through one gap of {GAP:?} after the first, got {first_sent:?} and {third_sent:?}"
         );
     }
 
