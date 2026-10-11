@@ -11,9 +11,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-from typing_extensions import override
 
 import crawlberg
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 
 class _Server(HTTPServer):
