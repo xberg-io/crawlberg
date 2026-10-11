@@ -572,7 +572,12 @@ impl Stream for Handler {
 
             let mut done = true;
 
-            while let Poll::Ready(Some(ev)) = Pin::new(&mut pin.conn).poll_next(cx) {
+            loop {
+                let ev = match Pin::new(&mut pin.conn).poll_next(cx) {
+                    Poll::Ready(Some(ev)) => ev,
+                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Pending => break,
+                };
                 match ev {
                     Ok(Message::Response(resp)) => {
                         pin.on_response(resp);

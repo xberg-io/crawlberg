@@ -933,24 +933,10 @@ const HANDLER_WAKE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Run the CDP handler of a browser on its own task, until its websocket fails.
 ///
-/// ~keep chromiumoxide 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) reports a broken
-/// ~keep websocket, as when Chrome dies, as one `CdpError::Ws` error, and then returns
-/// ~keep `Poll::Pending` for good without failing the commands still waiting on it. Its 30 s request
-/// ~keep timeout is checked only when the handler wakes, which a dead connection never does again. A
-/// ~keep loop that went on past the error kept the handler, and with it every pending command, alive:
-/// ~keep an interact session whose Chrome died waited forever for the reply to the dispose of its
-/// ~keep page's context (xberg-io/crawlberg#577). Ending the task drops the handler, so every command
-/// ~keep and event stream of the browser ends with an error at once. The handler's other errors leave
-/// ~keep the connection usable (a binary frame is `CdpError::UnexpectedWsMessage`, `src/conn.rs`), so
-/// ~keep the loop goes on past them. Every `CdpError::Ws` is final here: async-tungstenite 0.32.1
-/// ~keep ends its stream at any read error (`WebSocketStream::poll_next` sets `ended`), and the
-/// ~keep write errors that leave a socket open (`Capacity`, `WriteBufferFull`) cannot happen,
-/// ~keep because chromiumoxide sets no message or frame limit (`src/conn.rs`) and tungstenite
-/// ~keep 0.28.0's write buffer has none. The pool launches a new browser only once this handler has
-/// ~keep ended, so a parked loop also kept a crashed Chrome in the pool for good
-/// ~keep (xberg-io/crawlberg#581). A websocket closed with a Close handshake gives no error: the
-/// ~keep handler stays pending until the next command, whose send fails with `CdpError::Ws`, and
-/// ~keep the loop ends then.
+/// ~keep A terminal websocket error ends the task immediately so dropping the handler fails
+/// ~keep every pending command and event stream. Other handler errors leave the connection
+/// ~keep usable (a binary frame is `CdpError::UnexpectedWsMessage`), so the loop continues past
+/// ~keep them. An orderly websocket close ends the handler stream without an error.
 pub(crate) fn spawn_handler(handler: Handler) -> JoinHandle<()> {
     spawn_watched_handler(handler).0
 }
@@ -1775,13 +1761,17 @@ impl BrowserPool {
         let generation = current.generation;
         let handler_end = current.handler_end.clone();
         let firewall = current.firewall.handle();
-        let state = Arc::clone(&self.state);
+        // ~keep A waiting supervisor must not retain the browser after the last pool is dropped.
+        let state = Arc::downgrade(&self.state);
         let healthy = Arc::clone(&self.healthy);
         tokio::spawn(async move {
             tokio::select! {
                 () = handler_end.ended() => {}
                 () = firewall.failed() => {}
             }
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             let failed = {
                 let mut guard = state.lock().await;
                 if mark_unhealthy_if_current(guard.as_ref().map(|browser| browser.generation), generation, &healthy) {

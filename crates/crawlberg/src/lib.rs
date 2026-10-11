@@ -1,4 +1,11 @@
 //! crawlberg -- A Rust crawling engine for turning websites into structured data.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "tests send requests to a local mock server and need no cookie store"
+    )
+)]
 
 #[cfg(feature = "api")]
 pub(crate) mod api;

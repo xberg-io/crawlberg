@@ -61,6 +61,9 @@ title: "Changelog"
 
 ### Fixed
 
+- With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
+  kept for a site failed at once with a browser error: every second fetch of the site. The engine
+  closed the page it kept. The kept page now serves the next fetch. (#653)
 - A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
   `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
   An escape of a reserved character, such as `%2F`, still names its own page. (#615)
@@ -114,6 +117,28 @@ title: "Changelog"
   call failed with a browser timeout after the full `browser.timeout`. The page is now
   returned, with U+FFFD in place of the unpaired half, as a browser shows it. The same holds
   for an attribute, for the title and for the result of an `interact` script. (#631)
+- With `cookies_enabled`, a new engine in HTTP mode sent the cookies that an earlier engine with
+  the same configuration had received. A program that makes one engine for each user sent the
+  session cookie of one user in the crawl of the next user. Each engine now has its own cookie
+  store, and a new engine starts with no cookie. One engine still sends the cookies it received
+  on its later requests. This changes the behaviour of a program that relied on two engines
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
 - Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
   scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
   that error for the page, follows no links from it, and continues; a failed seed is the error of
@@ -140,6 +165,22 @@ title: "Changelog"
   only in a parameter is no longer binary by its type.
 - Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
   `application/pdf`. A document filter gets the same lowercase value.
+- A browser command no longer waits for its full timeout after Chrome closes the DevTools
+  connection. The command fails at once, and a browser pool that is dropped lets go of its
+  Chrome.
+- A stop of the SSRF check turns request interception off again on a browser that crawlberg
+  launched, and on a `browser.endpoint` browser after the last refusal is delivered. Before,
+  interception stayed on with nothing to answer, and every other tab of that browser waited
+  without end. A browser that crawlberg kills when it is done, and a check that runs in the
+  default context of the browser, keep interception on, as before.
+- A popup that a page opens while its SSRF check ends is closed, and the page stays usable for
+  the next check. Before, the browser session failed, or the close of the popup's tab closed
+  the page with it.
+- Known limit: a script that calls `window.open` directly at the moment the SSRF check of its
+  page ends gets no answer after the popup is closed, and that page runs no further script
+  (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
+  gets past the check, the next check of the page still starts and ends, and other tabs are
+  not affected. A `window.open` from a timer or an event handler does not block its page.
 
 ## [1.10.2] - 2026-10-06
 
