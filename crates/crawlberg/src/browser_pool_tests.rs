@@ -1445,7 +1445,7 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
     }
     let helper_ran = helper.is_some_and(|helper| ChromeFamily::running(&[helper], |_| {}) == 1);
     if let Some(profile) = live_profiles().get_mut(&path) {
-        profile.launched = Some(launcher.id());
+        profile.launched = LaunchedProcess::of(launcher.id());
     }
 
     let (taken, others): (Vec<_>, Vec<_>) = live_profile_teardowns_of(&live_profiles(), std::process::id())
@@ -1636,7 +1636,7 @@ pub(crate) fn try_a_profile_and_a_launch_after_the_exit_hook() -> std::path::Pat
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
                 let _entered = runtime.as_ref().map(tokio::runtime::Runtime::enter);
                 let outcome = match start_listed_chrome(dir.path(), &config) {
-                    Ok(mut child) => {
+                    Ok((mut child, _)) => {
                         let _ = child.inner.start_kill();
                         "started"
                     }
@@ -4038,7 +4038,7 @@ fn a_teardown_dropped_in_a_forked_process_leaves_its_parents_chrome_and_director
         std::thread::sleep(Duration::from_millis(10));
     }
     dir.record_chrome(chrome.id());
-    dir.0.as_mut().expect("the teardown is there").launched = Some(chrome.id());
+    dir.0.as_mut().expect("the teardown is there").launched = LaunchedProcess::of(chrome.id());
     let recorded = dir.teardown().chrome.is_some();
     let (mut from_list, others): (Vec<_>, Vec<_>) = live_profile_teardowns_of(&live_profiles(), std::process::id())
         .into_iter()
@@ -4097,7 +4097,8 @@ fn the_teardown_leaves_a_launched_pid_that_is_no_child_of_this_process() {
     let mut dir =
         ScratchProfileDir::create("crawlberg-stranger-pid-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
-    dir.0.as_mut().expect("the teardown is there").launched = Some(stranger);
+    let recorded = LaunchedProcess::of(stranger);
+    dir.0.as_mut().expect("the teardown is there").launched = recorded;
 
     // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
     drop(dir.0.take());
@@ -4112,6 +4113,10 @@ fn the_teardown_leaves_a_launched_pid_that_is_no_child_of_this_process() {
     assert!(
         ran_before,
         "the stranger must run before the teardown, or the test shows nothing"
+    );
+    assert!(
+        recorded.is_some(),
+        "the stranger must be recorded as the launched process, or the test shows nothing"
     );
     assert_eq!(
         (runs_after, stopped_after),
@@ -4235,6 +4240,314 @@ fn a_browser_killed_in_a_forked_process_leaves_its_parents_chrome_and_profile_di
     );
     assert_profile_directory_is_gone_for_good(&path);
     drop(runtime);
+}
+
+/// The teardown stops the launched process only while the process with the recorded id is the one
+/// the launch started. Another child of this process that got the id keeps running, and is not
+/// stopped by a signal on the way (xberg-io/crawlberg#657).
+///
+/// ~keep The `sleep` is a live child of this process, so the parent test passes for it. The
+/// ~keep recorded start time is one second before its own: it stands for the Chrome that had the
+/// ~keep id first, ended and was reaped.
+#[cfg(unix)]
+#[test]
+fn the_teardown_leaves_a_child_that_got_the_pid_of_the_launched_process() {
+    let mut reuser = std::process::Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("sleep must start");
+    let reuser_pid = Pid::from_u32(reuser.id());
+    let now = LaunchedProcess::of(reuser.id());
+    let mut dir =
+        ScratchProfileDir::create("crawlberg-reused-pid-test-", None).expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    dir.0.as_mut().expect("the teardown is there").launched = now.map(|now| LaunchedProcess {
+        started: now.started - 1,
+        ..now
+    });
+
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(dir.0.take());
+
+    let runs_after = ChromeFamily::running(&[reuser_pid], |_| {});
+    let stopped_after = stopped_count(reuser_pid);
+    let _ = reuser.kill();
+    let _ = reuser.wait();
+    assert!(
+        now.is_some(),
+        "the start time of the child must be readable, or the test shows nothing"
+    );
+    assert_eq!(
+        (runs_after, stopped_after),
+        (1, 0),
+        "the teardown must not stop or kill a child that only has the process id of the launched process"
+    );
+    assert!(!path.exists(), "the teardown must still remove the directory");
+}
+
+/// A process forked while another thread holds the list of live profiles, as a launch does while
+/// it starts Chrome, lists a directory of its own at once: it has a list that nothing holds, with
+/// no directory of its parent in it (xberg-io/crawlberg#658).
+///
+/// ~keep The thread that holds the list does not exist in the forked process. With one list for
+/// ~keep both, the forked process waited on it until the test killed it.
+#[cfg(unix)]
+#[test]
+fn a_process_forked_while_the_list_is_held_lists_a_directory_of_its_own() {
+    const LIMIT: Duration = Duration::from_secs(5);
+    let (locked, wait) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _held = live_profiles();
+        let _ = locked.send(());
+        let _ = released.recv();
+    });
+    wait.recv().expect("the holder must take the list");
+
+    let started = std::time::Instant::now();
+    let status = in_a_forked_process(|| {
+        let listed = list_live_profile(
+            std::path::Path::new("/crawlberg-forked-list-test"),
+            &ProfileTurn::default(),
+        );
+        assert!(listed, "the forked process must list its directory");
+        assert_eq!(
+            live_profiles().len(),
+            1,
+            "the list of the forked process must hold its own directory alone"
+        );
+    });
+    let waited = started.elapsed();
+    drop(release);
+    holder.join().expect("the holder must end");
+
+    assert_eq!(
+        status, 0,
+        "the forked process must list a directory while its parent holds the list"
+    );
+    assert!(
+        waited < LIMIT,
+        "the forked process must not wait on the list of its parent: it took {waited:?}"
+    );
+}
+
+/// The CI cache of macOS keeps the bundle of Chrome under a name without `.app`.
+const UNNAMED_BUNDLE: &str = "/Users/runner/hostedtoolcache/setup-chrome/chrome/stable/arm64";
+
+/// The executable of the helper `kind` inside the Chrome bundle `bundle`, as macOS lays it out.
+fn helper_in(bundle: &str, kind: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!(
+        "{bundle}/Contents/Frameworks/Google Chrome Framework.framework/Versions/155.0.1/Helpers/Google Chrome Helper{kind}.app/Contents/MacOS/Google Chrome Helper{kind}"
+    ))
+}
+
+/// A helper's executable lies in a bundle of its own inside the browser's bundle. The Chrome of
+/// the helper is the browser's bundle, also with a space in its path.
+#[test]
+fn a_helper_in_a_nested_bundle_runs_the_browsers_bundle() {
+    let bundle = "/Applications/My Tools/Google Chrome.app";
+    for kind in ["", " (Renderer)", " (GPU)"] {
+        assert_eq!(
+            outermost_bundle(&helper_in(bundle, kind)),
+            std::path::Path::new(bundle),
+            "the helper{kind} must name the bundle of its browser"
+        );
+    }
+    assert_eq!(
+        outermost_bundle(std::path::Path::new(
+            "/Applications/My Tools/Google Chrome.app/Contents/MacOS/Google Chrome"
+        )),
+        std::path::Path::new(bundle),
+        "the browser must name its own bundle"
+    );
+}
+
+/// A browser bundle whose directory is not named `.app` still holds the browser and every
+/// helper: the Chrome read from any one of them matches all of them.
+///
+/// ~keep A search for the `.app` name gave the bundle of the helper that was read. The teardown
+/// ~keep then left the browser and the two other kinds of helper: three processes on macOS CI.
+#[test]
+fn a_bundle_without_the_app_name_holds_its_browser_and_every_helper() {
+    let browser = std::path::PathBuf::from(format!("{UNNAMED_BUNDLE}/Contents/MacOS/Google Chrome for Testing"));
+    let family = [
+        browser,
+        helper_in(UNNAMED_BUNDLE, ""),
+        helper_in(UNNAMED_BUNDLE, " (Renderer)"),
+        helper_in(UNNAMED_BUNDLE, " (GPU)"),
+    ];
+    for read in &family {
+        let chrome = outermost_bundle(read);
+        assert_eq!(
+            chrome,
+            std::path::Path::new(UNNAMED_BUNDLE),
+            "{} must name the bundle of the browser",
+            read.display()
+        );
+        let outside: Vec<_> = family.iter().filter(|member| !member.starts_with(chrome)).collect();
+        assert!(
+            outside.is_empty(),
+            "the Chrome read from {} must hold every process of the launch, not {outside:?}",
+            read.display()
+        );
+    }
+}
+
+/// An executable in no bundle is its own Chrome, and a directory is a bundle only by its layout.
+#[test]
+fn an_executable_outside_a_bundle_is_its_own_chrome() {
+    for executable in [
+        "/opt/google/chrome/chrome",
+        "/home/user/my chrome/chrome-headless-shell",
+        "/srv/Contents/chrome",
+        "/srv/tools.app/chrome",
+    ] {
+        let executable = std::path::Path::new(executable);
+        assert_eq!(outermost_bundle(executable), executable);
+    }
+    assert_eq!(
+        outermost_bundle(std::path::Path::new(
+            "/Users/me/Contents/Chromium.app/Contents/MacOS/Chromium"
+        )),
+        std::path::Path::new("/Users/me/Contents/Chromium.app"),
+        "a directory named Contents above the bundle is not a bundle"
+    );
+}
+
+/// The path of a link names no bundle. The path the link leads to, which is the one the process
+/// table gives, names the bundle.
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_bundled_executable_names_the_bundle_once_followed() {
+    let root = tempfile::tempdir().expect("the directory must be creatable");
+    let root_path = root.path().canonicalize().expect("the directory must resolve");
+    let bundle = root_path.join("Chrome Cache");
+    let executable = bundle.join("Contents/MacOS/Chromium");
+    std::fs::create_dir_all(executable.parent().expect("the executable has a parent"))
+        .expect("the bundle must be creatable");
+    std::fs::write(&executable, b"").expect("the executable must be writable");
+    let link = root_path.join("chromium");
+    std::os::unix::fs::symlink(&executable, &link).expect("the link must be creatable");
+
+    assert_eq!(outermost_bundle(&link), link, "the link itself lies in no bundle");
+    let followed = link.canonicalize().expect("the link must resolve");
+    assert_eq!(outermost_bundle(&followed), bundle);
+}
+
+/// A profile directory and the config of a launch on it whose "Chrome" is a script that sleeps,
+/// whatever its arguments. The script lies in the returned directory.
+#[cfg(unix)]
+fn a_listed_launch_of_a_sleeping_script(prefix: &str) -> (tempfile::TempDir, ScratchProfileDir, BrowserConfig) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("the directory of the script must be creatable");
+    let script = root.path().join("chrome-that-sleeps.sh");
+    std::fs::write(&script, "#!/bin/sh\nexec sleep 300\n").expect("the script must be writable");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("the script must be executable");
+    let dir = ScratchProfileDir::create(prefix, None).expect("the directory must be creatable");
+    let config = BrowserConfig::builder()
+        .no_sandbox()
+        .user_data_dir(dir.path())
+        .chrome_executable(&script)
+        .build()
+        .expect("the config names its executable");
+    (root, dir, config)
+}
+
+/// Wait up to [`PROCESS_TEST_WAIT`] until the process `pid` has ended. Returns whether it has.
+#[cfg(unix)]
+fn ended_within_the_wait(pid: u32) -> bool {
+    let pid = Pid::from_u32(pid);
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    loop {
+        let mut system = System::new();
+        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
+        if !ChromeFamily::is_running(&system, pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A launch whose process the process table does not show stops that process through its handle
+/// and fails. Recorded with no start time, the process was one that no teardown stopped: the
+/// binding's Chrome ran on after its engine was gone (xberg-io/crawlberg#594).
+///
+/// ~keep The read is made to fail here; the process is a script that sleeps, with no process tree.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_launch_whose_process_cannot_be_read_stops_it_and_fails() {
+    let (_root, mut dir, config) = a_listed_launch_of_a_sleeping_script("crawlberg-unread-launch-test-");
+    let path = dir.path().to_path_buf();
+    let mut asked = None;
+
+    let outcome = start_listed_chrome_reading(&path, &config, |pid| {
+        asked = Some(pid);
+        None
+    });
+
+    let ended = asked.map(ended_within_the_wait);
+    let recorded = live_profiles().get(&path).map(|profile| profile.launched);
+    let error = match outcome {
+        Ok((mut child, _)) => {
+            let _ = child.inner.start_kill();
+            None
+        }
+        Err(error) => Some(error.to_string()),
+    };
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(dir.0.take());
+    assert_eq!(
+        ended,
+        Some(true),
+        "the launch must start the process, ask for it, and stop it when the answer is none"
+    );
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.contains("it was stopped right after its start")),
+        "the launch must fail and say that the Chrome was stopped, got {error:?}"
+    );
+    assert_eq!(
+        recorded,
+        Some(None),
+        "a launch that failed must record no process for the teardown"
+    );
+    assert!(!path.exists(), "the teardown must still remove the directory");
+}
+
+/// A launch records the process it started, with its start time, in the list and for its caller,
+/// and the teardown of the directory stops that process.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_launch_records_the_process_it_started_and_the_teardown_stops_it() {
+    let (_root, mut dir, config) = a_listed_launch_of_a_sleeping_script("crawlberg-read-launch-test-");
+    let path = dir.path().to_path_buf();
+
+    let (child, launched) = start_listed_chrome(&path, &config).expect("the script must start");
+    let started = child.inner.id();
+    let listed = live_profiles().get(&path).and_then(|profile| profile.launched);
+    dir.0.as_mut().expect("the teardown is there").launched = launched;
+    // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
+    drop(dir.0.take());
+
+    let ended = started.map(ended_within_the_wait);
+    drop(child);
+    assert!(started.is_some(), "the started process must have an id");
+    assert_eq!(
+        launched.map(|launched| launched.pid),
+        started,
+        "the launch must return the process it started"
+    );
+    assert_eq!(listed, launched, "the list must hold the same process");
+    assert_eq!(ended, Some(true), "the teardown must stop the recorded process");
+    assert!(!path.exists(), "the teardown must remove the directory");
 }
 
 #[tokio::test]

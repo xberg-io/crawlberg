@@ -181,6 +181,9 @@ title: "Changelog"
   `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
   Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
   them when the process ends in any way. (#594)
+- On Linux and macOS a browser launch fails with an error when the process table does not show
+  the Chrome it started, and it stops that Chrome at once. Without that entry the engine cannot
+  stop the Chrome later, and the Chrome ran on after its engine was gone. (#594)
 - On Windows a program that captures the output of a crawling child process returns when that
   child has exited. A Chrome the child left running kept the output pipes open.
 - Chrome no longer gets the standard input of the process that launched it.

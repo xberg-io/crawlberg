@@ -370,11 +370,12 @@ pub(crate) struct ScratchProfileDir(Option<ProfileTeardown>);
 
 /// A [`ScratchProfileDir`] whose teardown has not finished.
 struct LiveProfile {
-    /// The process that created the directory. A forked child inherits the list, and the
-    /// directories in it are its parent's.
+    /// The process that created the directory. A process made without the `fork` hook
+    /// ([`forget_inherited_profiles`]) still inherits the list, and the directories in it are
+    /// its parent's.
     owner: u32,
     /// The process a launch started on the directory, as [`ProfileTeardown::launched`].
-    launched: Option<u32>,
+    launched: Option<LaunchedProcess>,
     /// The process tree of that launch, as [`ProfileTeardown::tree`].
     tree: Option<chromiumoxide::async_process::ProcessTree>,
     /// The Chrome launched on the directory, as [`ProfileTeardown::chrome`].
@@ -399,42 +400,104 @@ static EXITING: AtomicBool = AtomicBool::new(false);
 /// Chrome process.
 const PROFILE_LIST_EXIT_WAIT: Duration = Duration::from_secs(1);
 
-/// Every [`ScratchProfileDir`] whose teardown has not finished, by its directory.
-static LIVE_PROFILES: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, LiveProfile>>,
-> = std::sync::LazyLock::new(Default::default);
+/// The profile directories of one process whose teardown has not finished, by directory.
+type ProfileList = std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, LiveProfile>>;
+
+/// Every [`ScratchProfileDir`] of this process whose teardown has not finished. Null until the
+/// process lists its first directory.
+///
+/// ~keep A list belongs to the process that made it. `fork` copies a lock in the state it has, and
+/// ~keep the thread that holds the list while it starts Chrome does not exist in the copy: a list
+/// ~keep inherited there stayed locked for good, and the first launch of the forked process never
+/// ~keep returned (xberg-io/crawlberg#658). A forked process starts with no list
+/// ~keep ([`forget_inherited_profiles`]) and makes its own. A list is never freed.
+static LIVE_PROFILES: std::sync::atomic::AtomicPtr<ProfileList> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// The list of this process, when it has made one.
+#[allow(unsafe_code)]
+fn listed_profiles() -> Option<&'static ProfileList> {
+    // ~keep SAFETY: a value that is not null is a leaked box, which nothing frees or moves.
+    unsafe { LIVE_PROFILES.load(Ordering::Acquire).as_ref() }
+}
+
+/// The `fork` hook that runs in the new process: it starts with no list.
+///
+/// ~keep One atomic store, which is all a process may do between `fork` and its return when other
+/// ~keep threads existed. The inherited list stays allocated: its lock may be held.
+#[cfg(unix)]
+extern "C" fn forget_inherited_profiles() {
+    LIVE_PROFILES.store(std::ptr::null_mut(), Ordering::Release);
+}
+
+/// The list of this process. The call that makes it also registers the hook that tears down what
+/// is left in it when the process exits, and on Unix the hook that takes it from a forked process.
+///
+/// ~keep Both hooks are registered before the list is published, so no fork can copy a list that
+/// ~keep the hook does not take away. A call that loses the race to publish, and a forked process
+/// ~keep that makes its own list, register them again: each hook does nothing the second time.
+/// ~keep Windows has no `fork`, so it needs no second hook.
+#[allow(unsafe_code)]
+fn profile_list() -> &'static ProfileList {
+    // ~keep Declared here: the `libc` crate is a dependency on iOS alone. Every C runtime that
+    // ~keep `std` links against has `int atexit(void (*)(void))`, and every Unix one has
+    // ~keep `pthread_atfork`.
+    unsafe extern "C" {
+        fn atexit(hook: extern "C" fn()) -> std::ffi::c_int;
+        #[cfg(unix)]
+        fn pthread_atfork(
+            prepare: Option<extern "C" fn()>,
+            parent: Option<extern "C" fn()>,
+            child: Option<extern "C" fn()>,
+        ) -> std::ffi::c_int;
+    }
+    loop {
+        if let Some(list) = listed_profiles() {
+            return list;
+        }
+        // ~keep SAFETY: the declaration matches C's `atexit`, and `tear_down_live_profiles` lives
+        // ~keep as long as this code is loaded, takes no argument and does not unwind.
+        if unsafe { atexit(tear_down_live_profiles) } != 0 {
+            tracing::warn!("no exit hook for Chrome profile teardown; a Chrome still running at exit is left");
+        }
+        // ~keep SAFETY: the declaration matches POSIX `pthread_atfork`, and
+        // ~keep `forget_inherited_profiles` lives as long as this code is loaded, takes no argument
+        // ~keep and does not unwind.
+        #[cfg(unix)]
+        {
+            if unsafe { pthread_atfork(None, None, Some(forget_inherited_profiles)) } != 0 {
+                tracing::warn!(
+                    "no fork hook for the Chrome profile list; a forked process can wait on the list of its parent"
+                );
+            }
+        }
+        let fresh = Box::into_raw(Box::<ProfileList>::default());
+        if LIVE_PROFILES
+            .compare_exchange(std::ptr::null_mut(), fresh, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            // ~keep SAFETY: `fresh` came from `Box::into_raw` above and was not published.
+            drop(unsafe { Box::from_raw(fresh) });
+        }
+    }
+}
 
 fn live_profiles() -> std::sync::MutexGuard<'static, std::collections::HashMap<std::path::PathBuf, LiveProfile>> {
-    match LIVE_PROFILES.lock() {
+    match profile_list().lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
 }
 
-/// List `dir` in [`LIVE_PROFILES`], and on the first call register the hook that tears down
-/// what is left in the list when the process exits. Returns `false`, and lists nothing, once that
-/// hook has started.
+/// List `dir` in [`LIVE_PROFILES`]. Returns `false`, and lists nothing, once the exit hook has
+/// started.
 ///
 /// ~keep The hook runs on a return from `main` and on `exit`, in any language that ends its
 /// ~keep process through the C library. It does not run when the process is killed by a signal,
 /// ~keep aborts, or leaves through `_exit`, nor on Windows when a Rust program calls
 /// ~keep `std::process::exit`, which is `ExitProcess`. On Windows the system still ends the Chrome
 /// ~keep of such a process, through the launch's process tree, and the directory stays.
-#[allow(unsafe_code)]
 fn list_live_profile(dir: &std::path::Path, turn: &ProfileTurn) -> bool {
-    // ~keep Declared here: the `libc` crate is a dependency on iOS alone. Every C runtime that
-    // ~keep `std` links against has `int atexit(void (*)(void))`.
-    unsafe extern "C" {
-        fn atexit(hook: extern "C" fn()) -> std::ffi::c_int;
-    }
-    static EXIT_HOOK: std::sync::Once = std::sync::Once::new();
-    EXIT_HOOK.call_once(|| {
-        // ~keep SAFETY: the declaration matches C's `atexit`, and `tear_down_live_profiles` lives
-        // ~keep as long as this code is loaded, takes no argument and does not unwind.
-        if unsafe { atexit(tear_down_live_profiles) } != 0 {
-            tracing::warn!("no exit hook for Chrome profile teardown; a Chrome still running at exit is left");
-        }
-    });
     let mut profiles = live_profiles();
     if EXITING.load(Ordering::Acquire) {
         return false;
@@ -456,25 +519,54 @@ fn list_live_profile(dir: &std::path::Path, turn: &ProfileTurn) -> bool {
 /// [`LIVE_PROFILES`] before the list is released.
 ///
 /// ~keep The exit hook reads the list under the same lock, after it has set [`EXITING`], so it sees
-/// ~keep either the process, or no process, and then none is started after it. A launch takes up
+/// ~keep either the process, or no process, and then none is started after it. That is why the
+/// ~keep lock spans the start of the process; a forked process never meets it
+/// ~keep ([`LIVE_PROFILES`]). A launch takes up
 /// ~keep to its timeout to report the Chrome it started; an exit inside that time left the Chrome
 /// ~keep running, and removed the directory under it.
 fn start_listed_chrome(
     dir: &std::path::Path,
     config: &BrowserConfig,
-) -> std::io::Result<chromiumoxide::async_process::Child> {
+) -> std::io::Result<(chromiumoxide::async_process::Child, Option<LaunchedProcess>)> {
+    start_listed_chrome_reading(dir, config, LaunchedProcess::of)
+}
+
+/// [`start_listed_chrome`], with the started process read through `read`, so that a test can
+/// make that read fail.
+///
+/// ~keep The process is read while its handle is held: a child that is not reaped keeps its id,
+/// ~keep so what `read` returns is the started process. Where the system keeps no process tree,
+/// ~keep the teardown stops the process by that record alone, and a process with no record is one
+/// ~keep that no teardown stops. Such a process is stopped here, through its handle, which cannot
+/// ~keep name another process, and the launch fails. The record is `None` only with a tree, which
+/// ~keep stops every process of the launch without it.
+fn start_listed_chrome_reading(
+    dir: &std::path::Path,
+    config: &BrowserConfig,
+    read: impl FnOnce(u32) -> Option<LaunchedProcess>,
+) -> std::io::Result<(chromiumoxide::async_process::Child, Option<LaunchedProcess>)> {
     let mut profiles = live_profiles();
     if EXITING.load(Ordering::Acquire) {
         return Err(std::io::Error::other("the process is exiting"));
     }
     // ~keep Not killed when its handle drops: the directory's teardown stops it, and finds its
     // ~keep helpers through it, which a main process that is already dead no longer leads to.
-    let child = config.command().kill_on_drop(false).spawn()?;
+    let mut child = config.command().kill_on_drop(false).spawn()?;
+    let launched = child.inner.id().and_then(read);
+    if launched.is_none() && child.tree().is_none() {
+        let outcome = match child.inner.start_kill() {
+            Ok(()) => "it was stopped right after its start".to_owned(),
+            Err(error) => format!("it can still run, because the attempt to stop it failed: {error}"),
+        };
+        return Err(std::io::Error::other(format!(
+            "the process table does not show the Chrome that was started, so it could not be stopped later; {outcome}"
+        )));
+    }
     if let Some(profile) = profiles.get_mut(dir) {
-        profile.launched = child.inner.id();
+        profile.launched = launched;
         profile.tree = child.tree().cloned();
     }
-    Ok(child)
+    Ok((child, launched))
 }
 
 /// The teardown of every profile directory in `profiles` that the process `owner` created.
@@ -503,7 +595,18 @@ extern "C" fn tear_down_live_profiles() {
     // ~keep hold up the exit for good. A panic must not unwind into the C library's exit.
     let _ = std::panic::catch_unwind(|| {
         EXITING.store(true, Ordering::Release);
-        let left = lock_within(&LIVE_PROFILES, PROFILE_LIST_EXIT_WAIT)
+        // ~keep A process that listed no directory, as a forked one before its first launch, has
+        // ~keep no list and nothing to tear down.
+        let Some(list) = listed_profiles() else {
+            return;
+        };
+        let held = lock_within(list, PROFILE_LIST_EXIT_WAIT);
+        if held.is_none() {
+            tracing::warn!(
+                "the list of Chrome profiles stayed locked at exit; a Chrome still running is left with its profile directory"
+            );
+        }
+        let left = held
             .map(|profiles| live_profile_teardowns_of(&profiles, std::process::id()))
             .unwrap_or_default();
         // ~keep Each teardown runs as it drops, after the lock is released.
@@ -571,14 +674,14 @@ impl ScratchProfileDir {
         // ~keep pushed the generated dart binding's async dispatch past rustc's query depth limit.
         let teardown = self.0.as_mut().expect("the teardown is taken only once");
         let (browser, handler) = Box::pin(Browser::launch_with(config, |config| {
-            let child = start_listed_chrome(&teardown.dir, config)?;
-            teardown.launched = child.inner.id();
+            let (child, launched) = start_listed_chrome(&teardown.dir, config)?;
+            teardown.launched = launched;
             teardown.tree = child.tree().cloned();
             Ok(child)
         }))
         .await?;
-        if let Some(pid) = teardown.launched {
-            self.record_chrome(pid);
+        if let Some(launched) = teardown.launched {
+            self.record_chrome(launched.pid);
         }
         Ok((browser, handler, self))
     }
@@ -662,7 +765,7 @@ impl Drop for ScratchProfileDir {
 /// ~keep refuses a thread.
 ///
 /// ~keep It does that work only in the process that created the directory. A process forked from
-/// ~keep that one holds a copy of every teardown and of [`LIVE_PROFILES`]. Dropped there, a copy
+/// ~keep that one holds a copy of every teardown. Dropped there, a copy
 /// ~keep killed the Chrome of the parent by the directory's flag and removed the directory under
 /// ~keep it, so in any other process the drop does nothing.
 #[derive(Debug)]
@@ -671,8 +774,9 @@ struct ProfileTeardown {
     owner: u32,
     dir: std::path::PathBuf,
     /// The process a launch started on `dir`, from the moment it exists. While it runs, the
-    /// teardown stops it and every process below it.
-    launched: Option<u32>,
+    /// teardown stops it and every process below it. A Chrome that runs with no `tree` has one
+    /// ([`start_listed_chrome_reading`]).
+    launched: Option<LaunchedProcess>,
     /// The process tree of that launch, where the operating system keeps one (Windows). It holds
     /// the Chrome and every helper from the moment the process exists, and the teardown stops
     /// them through it.
@@ -733,8 +837,8 @@ impl Drop for ProfileTeardown {
             // ~keep First the launched process and every process below it, while it runs. Then
             // ~keep what still names the directory: the helpers of a Chrome whose main process
             // ~keep was gone before this teardown, after a crash or an explicit kill.
-            if let Some(pid) = self.launched {
-                stop_launched_family(&self.dir, pid);
+            if let Some(launched) = self.launched {
+                stop_launched_family(&self.dir, launched);
             }
             if let Some(chrome) = &self.chrome {
                 stop_chrome_processes_using(&self.dir, chrome);
@@ -763,8 +867,8 @@ impl Drop for ProfileTeardown {
 
 /// The executables of the Chrome that the launched process `pid` started on `dir`: the executable
 /// of the deepest process below `pid` whose command line names `dir` as its profile, or on macOS
-/// the outermost `.app` bundle that holds it. `None` when `pid` names no such process or that
-/// executable cannot be read.
+/// the outermost bundle that holds it ([`outermost_bundle`]). `None` when `pid` names no such
+/// process or that executable cannot be read.
 ///
 /// ~keep The launched process is Chrome only when every launcher on the way execs. Debian's
 /// ~keep `/usr/bin/chromium` and Google's `google-chrome` scripts do; a script that runs Chrome as
@@ -785,12 +889,30 @@ fn chrome_started_by(pid: u32, dir: &std::path::Path) -> Option<std::path::PathB
             None => break,
         }
     }
-    let executable = chrome.exe()?;
-    let bundle = executable
+    Some(outermost_bundle(chrome.exe()?).to_path_buf())
+}
+
+/// The outermost macOS bundle that holds `executable`, or `executable` when no bundle holds it.
+///
+/// ~keep A bundle is a directory that holds `Contents/MacOS` or `Contents/Frameworks`, whatever
+/// ~keep its name. Chrome's helpers are bundles inside the browser's bundle, and the browser's
+/// ~keep bundle is not always named `.app`: a CI cache keeps it as `arm64`. A search for the name
+/// ~keep stopped at the bundle of the one helper it read, so the teardown stopped only that
+/// ~keep kind of helper and left the browser and the other helpers. Only the path is read, as
+/// ~keep the process table gives it, with every link already followed.
+fn outermost_bundle(executable: &std::path::Path) -> &std::path::Path {
+    executable
         .ancestors()
-        .filter(|dir| dir.extension().is_some_and(|extension| extension == "app"))
-        .last();
-    Some(bundle.unwrap_or(executable).to_path_buf())
+        .filter(|bundle| {
+            executable.strip_prefix(bundle).is_ok_and(|inside| {
+                let mut inside = inside.components().map(std::path::Component::as_os_str);
+                let (first, second) = (inside.next(), inside.next());
+                first.is_some_and(|name| name == "Contents")
+                    && second.is_some_and(|name| name == "MacOS" || name == "Frameworks")
+            })
+        })
+        .last()
+        .unwrap_or(executable)
 }
 
 /// The flag a Chrome process using `dir` as its profile carries on its command line.
@@ -881,7 +1003,40 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
     }
 }
 
-/// Stop the launched process `pid` of the directory `dir` and every process below it, and wait
+/// The process a launch started: its process id with the time the process started.
+///
+/// ~keep The system gives the id of a reaped process to a new one, and the teardown of a Chrome
+/// ~keep that ended early then stopped another child of this program (xberg-io/crawlberg#657).
+/// ~keep The start time tells the two apart on Linux, macOS and Windows alike, so one comparison
+/// ~keep serves all three. A pidfd pins a process only on Linux, and the family below it is still
+/// ~keep found by process id. The start time has a resolution of 1 second: a child that gets the
+/// ~keep id in the second in which the launched process started is not told apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LaunchedProcess {
+    pid: u32,
+    /// The start time of the process, as sysinfo reports it: seconds since the epoch.
+    started: u64,
+}
+
+impl LaunchedProcess {
+    /// The process that has the id `pid` now. `None` when the process table does not show it.
+    fn of(pid: u32) -> Option<Self> {
+        let process = Pid::from_u32(pid);
+        let mut system = System::new();
+        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[process]));
+        system.process(process).map(|found| Self {
+            pid,
+            started: found.start_time(),
+        })
+    }
+
+    /// Whether `process` is this one, not a later process with the same id.
+    fn is(self, process: &Process) -> bool {
+        process.pid() == Pid::from_u32(self.pid) && process.start_time() == self.started
+    }
+}
+
+/// Stop the launched process of the directory `dir` and every process below it, and wait
 /// until each has ended, with all its threads.
 ///
 /// ~keep The processes are found through their parent, from `pid` down, and each is stopped as it
@@ -891,20 +1046,20 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
 /// ~keep directory after its removal (6 of 40 runs). A process that is replacing its program, as
 /// ~keep the launcher does when it execs Chrome, shows an empty command line, and a Chrome that is
 /// ~keep starting forks helpers until it is killed (4 helpers seen only after the kill in one run).
-/// ~keep `pid` counts only while it is a live child of this process: once it is reaped, the number
-/// ~keep can belong to another process.
-fn stop_launched_family(dir: &std::path::Path, pid: u32) {
-    let launched = Pid::from_u32(pid);
+/// ~keep The process id counts only while its process is the launched one ([`LaunchedProcess`]),
+/// ~keep and a live child of this process: once it is reaped, the number can belong to another
+/// ~keep process, also to another child of this one.
+fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) {
+    let pid = Pid::from_u32(launched.pid);
     let mut system = System::new();
-    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[launched]));
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
     let this_process = Pid::from_u32(std::process::id());
-    if !system
-        .process(launched)
-        .is_some_and(|process| process.parent() == Some(this_process) && ChromeFamily::is_running(&system, launched))
-    {
+    if !system.process(pid).is_some_and(|process| {
+        launched.is(process) && process.parent() == Some(this_process) && ChromeFamily::is_running(&system, pid)
+    }) {
         return;
     }
-    let family = ChromeFamily::freeze(pid);
+    let family = ChromeFamily::freeze(launched.pid);
     family.kill();
     if !family.wait(PROFILE_USERS_EXIT_TIMEOUT) {
         tracing::warn!(dir = %dir.display(), "Chrome processes still run after their process family was killed");
