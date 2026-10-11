@@ -92,6 +92,15 @@ fn seed_page(result: &CrawlResult) -> &CrawlPageResult {
     })
 }
 
+/// The error of a crawl whose seed chain failed, without the address of the site, and the
+/// count of its pages.
+fn chain_failure(result: &CrawlResult, base: &str) -> (Option<String>, usize) {
+    (
+        result.error.as_ref().map(|error| error.replace(base, "")),
+        result.pages.len(),
+    )
+}
+
 /// What a crawl reports about its seed's redirect chain.
 fn chain_outcome(result: &CrawlResult, base: &str) -> (usize, String, u16) {
     let page = seed_page(result);
@@ -113,11 +122,14 @@ async fn browser_mode_stops_a_chain_longer_than_max_redirects_where_http_mode_do
     )
     .await
     .expect("HTTP mode needs no Chrome");
-    let http_outcome = chain_outcome(&http, &http_site.uri());
+    let http_outcome = chain_failure(&http, &http_site.uri());
     assert_eq!(
         http_outcome,
-        (2, "/r2".to_owned(), 301),
-        "HTTP mode stops on the 3xx at the limit"
+        (
+            Some("ssrf_policy_violation: /r3 - redirect limit exceeded".to_owned()),
+            0
+        ),
+        "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
     let browser_site = redirect_chain(5).await;
@@ -131,7 +143,7 @@ async fn browser_mode_stops_a_chain_longer_than_max_redirects_where_http_mode_do
         return;
     };
     assert_eq!(
-        chain_outcome(&browser, &browser_site.uri()),
+        chain_failure(&browser, &browser_site.uri()),
         http_outcome,
         "browser mode must report the chain the way HTTP mode does"
     );
@@ -384,13 +396,14 @@ async fn a_script_navigation_during_the_extra_wait_counts_as_one_redirect() {
     assert_eq!(chain_outcome(&result, &site.uri()), (1, "/after".to_owned(), 200));
 }
 
-/// `/` redirects twice to `/m`, whose meta refresh (too slow for Chrome to act on before the
-/// page is read) points at `/n`, which starts a second chain of two redirects.
+/// `/` redirects twice to `/m`, whose meta refresh (in a `<noscript>`, so Chrome does not act
+/// on it) points at `/n`, which starts a second chain of two redirects.
 ///
-/// ~keep The 30-second delay is deliberate: Chrome never acts on the refresh, so the second
-/// ~keep chain is walked by the crawl's own chain, one browser fetch per hop. A refresh Chrome
-/// ~keep does act on is covered by the meta-refresh tests above; shortening the delay here would
-/// ~keep change what this test measures.
+/// ~keep The `<noscript>` is deliberate: Chrome runs scripts and never acts on the refresh, and
+/// ~keep the crawl reads the page with scripting off, so the second chain is walked by the
+/// ~keep crawl's own chain, one browser fetch per hop. A refresh Chrome does act on is covered by
+/// ~keep the meta-refresh tests above. A delay above zero cannot keep Chrome off the refresh
+/// ~keep here: the crawl does not follow a delayed refresh either (#605).
 async fn chain_with_a_meta_refresh() -> MockServer {
     let mock = MockServer::start().await;
     for (from, to) in [("/", "/r1"), ("/r1", "/m"), ("/n", "/n1"), ("/n1", "/n2")] {
@@ -403,7 +416,7 @@ async fn chain_with_a_meta_refresh() -> MockServer {
     Mock::given(method("GET"))
         .and(path("/m"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-            r#"<html><head><meta http-equiv="refresh" content="30; url=/n"></head><body>m</body></html>"#,
+            r#"<html><head><noscript><meta http-equiv="refresh" content="0; url=/n"></noscript></head><body>m</body></html>"#,
             "text/html",
         ))
         .mount(&mock)
@@ -424,11 +437,14 @@ async fn a_later_browser_hop_gets_only_the_redirects_the_chain_has_left() {
     )
     .await
     .expect("HTTP mode needs no Chrome");
-    let http_outcome = chain_outcome(&http, &http_site.uri());
+    let http_outcome = chain_failure(&http, &http_site.uri());
     assert_eq!(
         http_outcome,
-        (3, "/n".to_owned(), 301),
-        "HTTP mode stops on the 3xx at the limit"
+        (
+            Some("ssrf_policy_violation: /n1 - redirect limit exceeded".to_owned()),
+            0
+        ),
+        "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
     let browser_site = chain_with_a_meta_refresh().await;
@@ -441,7 +457,7 @@ async fn a_later_browser_hop_gets_only_the_redirects_the_chain_has_left() {
     else {
         return;
     };
-    assert_eq!(chain_outcome(&browser, &browser_site.uri()), http_outcome);
+    assert_eq!(chain_failure(&browser, &browser_site.uri()), http_outcome);
     let requested = requested_paths(&browser_site).await;
     assert!(
         !requested.iter().any(|p| p == "/n1"),

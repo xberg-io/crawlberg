@@ -429,12 +429,8 @@ pub(crate) enum Hop {
 ///
 /// # Errors
 ///
-/// Returns `Err` only on network-level failures (DNS, connection refused, timeout, …).
-/// Reaching `max_redirects` or detecting a cycle is **not** an error — the loop
-/// stops and the most recent response (the 3xx that would have redirected further)
-/// is returned to the caller. This matches the historical behavior of
-/// [`CrawlEngine::resolve_initial_redirects`], where the crawl would stop and
-/// surface a soft `state.error` rather than aborting the request.
+/// Returns `Err` on a network-level failure (DNS, connection refused, timeout, …), and when the
+/// chain ends on an HTTP redirect it may not follow: see [`unfollowed_redirect_error`].
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
 /// cannot reach a URL the configuration forbids, whatever order it does its own work in.
 ///
@@ -539,15 +535,13 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        if let Some(target) = http_redirect_target(&resp, &chain.current_url) {
-            crate::http::reject_redirect(
-                &target,
-                chain.unseen_key(target.as_str()).is_some(),
-                chain.redirect_count < max_redirects,
-            )?;
-        }
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
+            if let Some(error) = unfollowed_redirect_error(&resp, &chain.current_url, |target| {
+                chain.unseen_key(target.as_str()).is_none()
+            }) {
+                return Err(error);
+            }
             prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
@@ -670,6 +664,24 @@ impl RedirectChain {
             page_scan,
         }
     }
+}
+
+/// The error for a chain that ends on `resp`, when `resp` is an HTTP redirect to an address the
+/// crawl can fetch. `visited` says whether the chain has requested the target.
+///
+/// A redirect with no page behind it is a failure, not a page (#613). The chain ends on such a
+/// response when the target is an address it has requested (a redirect loop) or when
+/// `max_redirects` leaves no hop.
+///
+/// ~keep Called once no redirect source of `resp` names a next hop, so a `Location` that loops
+/// ~keep back is an error only when no `Refresh` header and no meta refresh supersedes it.
+pub(crate) fn unfollowed_redirect_error<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    visited: impl Fn(&Url) -> bool,
+) -> Option<CrawlError> {
+    let target = http_redirect_target(resp, current_url)?;
+    crate::http::reject_redirect(&target, !visited(&target), false).err()
 }
 
 /// The response a 404 further down a redirect chain is reported as.

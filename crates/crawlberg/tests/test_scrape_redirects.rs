@@ -108,7 +108,7 @@ async fn scrape_follows_chain_302_302_200() {
 }
 
 /// When the redirect chain forms a cycle (A→B→A), scrape() must stop without
-/// looping and return the most recent 3xx response (not raise).
+/// looping and fail with an error that names the redirect loop (#613).
 #[tokio::test]
 async fn scrape_stops_on_redirect_cycle() {
     let mock = MockServer::start().await;
@@ -177,24 +177,33 @@ async fn crawl_stops_on_redirect_cycle_seeded_at_bare_origin() {
     let url = mock.uri();
     let result = crawl(&handle, &url).await;
 
+    let crawl_result = result.expect("a redirect cycle is reported in the result of the crawl");
+    let error = crawl_result.error.as_deref().unwrap_or_default();
     assert!(
-        result.is_ok(),
-        "crawl must not raise on a redirect cycle: {:?}",
-        result.err()
+        error.contains("redirect loop"),
+        "the crawl must name the redirect loop: {error:?}"
     );
-    let crawl_result = result.unwrap();
+    assert!(
+        crawl_result.pages.is_empty(),
+        "a redirect with no page behind it is not a page: {:?}",
+        crawl_result.pages.iter().map(|page| page.status_code).collect::<Vec<_>>()
+    );
+    let requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
     assert_eq!(
-        crawl_result.redirect_count, 1,
+        requested,
+        ["/", "/a"],
         "cycle must be detected on the first return to the seed URL"
-    );
-    assert_eq!(
-        crawl_result.pages[0].status_code, 302,
-        "final status must be the unfollowed 3xx"
     );
 }
 
 /// When a redirect chain exceeds `max_redirects`, scrape() must stop and
-/// return the last 3xx response (not raise).
+/// fail with an error that names the redirect limit (#613).
 #[tokio::test]
 async fn scrape_stops_at_max_redirects() {
     let mock = MockServer::start().await;
