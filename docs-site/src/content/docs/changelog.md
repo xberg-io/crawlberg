@@ -19,6 +19,15 @@ title: "Changelog"
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+- **`CrawlPageResult`, `LinkInfo`, `FrontierEntry` and `ContentConfig` have new public fields.**
+  The first three have `original_url`. `ContentConfig` has `strip_newlines`, `bullets`,
+  `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
+  struct literal that names every field must add them. `..Default::default()` needs no change
+  for `CrawlPageResult`, `LinkInfo` and `ContentConfig`; for `FrontierEntry` set
+  `original_url: None`. In Java, Swift and Dart, a call that builds one of these types with every
+  field must pass the new ones. In Kotlin and Go, a call that passes the fields by position must
+  change, because `original_url` is the second field. A `Frontier` that stores its entries reads
+  an entry of an earlier release with no change.
 
 ### Added
 
@@ -30,10 +39,19 @@ title: "Changelog"
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
-- Content conversion options for paragraph newlines, list bullets and indentation, emphasis
-  markers, compact tables, and inline images in headings. (#612)
-- `original_url` preserves the resolved link spelling on crawl pages and discovered links,
-  separately from fetch and normalized addresses. URL credentials remain redacted. (#626)
+- `ContentConfig` has six options for the form of the Markdown. `strip_newlines` writes a line
+  break in the HTML source of a paragraph as a space. `bullets` sets the list markers for each
+  level of nesting, and `list_indent_width` the spaces for each level. `strong_em_symbol` sets the
+  emphasis marker. `compact_tables` writes table cells with no padding. `keep_inline_images_in`
+  names the elements in which an image stays an image. Each default is the default of the
+  converter, so a page converts as before. `bullets` accepts `-`, `*` and `+`,
+  `list_indent_width` accepts 1 to 256, and `strong_em_symbol` accepts `*` or `_`. Another value
+  is a configuration error. (#612)
+- `CrawlPageResult.original_url` and `LinkInfo.original_url` give the address as the link wrote
+  it. The link is resolved against the base address of its page, with no other change: no
+  percent-encoding, no change of a backslash, no removal of dot segments. For the start page it
+  is the address that the caller passed. A redirect does not change it. Credentials in the
+  address are removed. (#626)
 
 ### Changed
 
