@@ -105,6 +105,14 @@ def _threads() -> int:
     return len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
 
 
+def _settled_threads(expected: int) -> int:
+    """Count the threads, and give a joined thread up to five seconds to leave the task list of the OS."""
+    deadline = time.monotonic() + 5
+    while (count := _threads()) != expected and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return count
+
+
 def _fds() -> int:
     return len(list(Path("/proc/self/fd" if sys.platform == "linux" else "/dev/fd").iterdir()))
 
@@ -134,7 +142,7 @@ def test_should_release_native_runtime_resources_and_restart(local_server: _Serv
         assert result.status_code == 200
         assert _threads() > threads
         crawlberg.shutdown_async_runtime()
-        assert _threads() == threads
+        assert _settled_threads(threads) == threads
         # ~keep Tokio's process-global signal registry retains two descriptors on first use.
         assert _fds() <= fds + 2
         fds = _fds()
@@ -142,12 +150,12 @@ def test_should_release_native_runtime_resources_and_restart(local_server: _Serv
             result = await crawlberg.scrape(engine, local_server.url + "/ok")
             assert result.status_code == 200
             crawlberg.shutdown_async_runtime()
-            assert _threads() == threads
+            assert _settled_threads(threads) == threads
             assert _fds() == fds
         events = [event async for event in crawlberg.crawl_stream(engine, local_server.url + "/stream")]
         assert [event.type for event in events] == ["page", "complete"]
         crawlberg.shutdown_async_runtime()
-        assert _threads() == threads
+        assert _settled_threads(threads) == threads
         assert _fds() == fds
         pending = asyncio.create_task(crawlberg.scrape(engine, local_server.url + "/slow"))
         await asyncio.sleep(0.05)
@@ -155,7 +163,7 @@ def test_should_release_native_runtime_resources_and_restart(local_server: _Serv
             crawlberg.shutdown_async_runtime()
         assert (await pending).status_code == 200
         crawlberg.shutdown_async_runtime()
-        assert _threads() == threads
+        assert _settled_threads(threads) == threads
         assert _fds() == fds
         stream = crawlberg.crawl_stream(engine, local_server.url + "/slow-stream")
         assert isinstance(stream, AsyncGenerator)
@@ -170,12 +178,12 @@ def test_should_release_native_runtime_resources_and_restart(local_server: _Serv
         await asyncio.wait_for(_shutdown_when_idle(), timeout=5)
 
         await asyncio.wait_for(_wait_for_resources(threads, fds), timeout=5)
-        assert _threads() == threads
+        assert _settled_threads(threads) == threads
         assert _fds() == fds
         result = await crawlberg.scrape(engine, local_server.url + "/after-cancellation")
         assert result.status_code == 200
         crawlberg.shutdown_async_runtime()
-        assert _threads() == threads
+        assert _settled_threads(threads) == threads
         assert _fds() == fds
 
     asyncio.run(verify())
@@ -242,6 +250,7 @@ import atexit
 import ctypes
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 def threads():
@@ -258,8 +267,15 @@ def threads():
     assert libproc.proc_pidinfo(os.getpid(), proc_pidworkqueueinfo, 0, ctypes.byref(workqueue_info), size) == size
     return total - workqueue_info[0]
 
+def settled_threads():
+    # ~keep: a joined thread can stay in the task list of the OS for a moment.
+    deadline = time.monotonic() + 5
+    while (count := threads()) != 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return count
+
 def after_runtime_close():
-    assert threads() == 1
+    assert settled_threads() == 1, threads()
     async def rejected():
         try:
             await crawlberg.scrape(engine(), sys.argv[1])
@@ -268,7 +284,7 @@ def after_runtime_close():
         else:
             raise AssertionError("runtime restarted during interpreter exit")
     asyncio.run(rejected())
-    assert threads() == 1
+    assert settled_threads() == 1, threads()
     if "exit_started" in globals():
         assert time.monotonic() - exit_started[0] < 6
     print("exit checked", flush=True)
