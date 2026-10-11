@@ -1679,6 +1679,16 @@ mod tests {
         );
     }
 
+    /// A `Refresh` header with a delay leaves the chain on the page that carries it (#605).
+    #[test]
+    fn a_delayed_refresh_header_is_not_a_hop() {
+        assert_eq!(refresh_hop(Some("5; url=/later"), &[]), None);
+        assert_eq!(
+            refresh_hop(Some("0; url=/now"), &[]),
+            Some("https://example.com/now".to_owned())
+        );
+    }
+
     /// A `javascript:` refresh target is ignored; the next immediate refresh is used,
     /// and a lone one leaves the chain where it is (#279). ~keep
     #[test]

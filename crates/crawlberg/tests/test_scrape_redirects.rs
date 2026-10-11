@@ -186,7 +186,11 @@ async fn crawl_stops_on_redirect_cycle_seeded_at_bare_origin() {
     assert!(
         crawl_result.pages.is_empty(),
         "a redirect with no page behind it is not a page: {:?}",
-        crawl_result.pages.iter().map(|page| page.status_code).collect::<Vec<_>>()
+        crawl_result
+            .pages
+            .iter()
+            .map(|page| page.status_code)
+            .collect::<Vec<_>>()
     );
     let requested: Vec<String> = mock
         .received_requests()

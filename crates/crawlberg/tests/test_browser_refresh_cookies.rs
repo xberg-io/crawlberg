@@ -82,10 +82,32 @@ async fn chromiumoxide_keeps_source_page_cookies_across_a_meta_refresh() {
         test_name,
         r#"<noscript><meta http-equiv="refresh" content="0; url=/target"></noscript>"#,
     )
-    .await else {
+    .await
+    else {
         return;
     };
     let paths = requested_paths(&site).await;
+    let requests = site.received_requests().await.expect("request recording is on");
+    let target = requests
+        .iter()
+        .find(|request| request.url.path() == "/target")
+        .unwrap_or_else(|| {
+            panic!(
+                "the scrape must request the refresh target; final_url={}, body={:?}, paths={paths:?}",
+                page.final_url, page.html
+            )
+        });
+    let sent = target
+        .headers
+        .get("cookie")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        sent.split("; ").any(|cookie| cookie == "source=1"),
+        "the refresh target must receive the source page's cookie; sent={sent:?}, final_url={}, body={:?}",
+        page.final_url,
+        page.html
+    );
     assert_eq!(
         page.final_url,
         format!("{}/target", site.uri()),
@@ -104,7 +126,9 @@ async fn chromiumoxide_keeps_source_page_cookies_across_a_meta_refresh() {
 #[tokio::test]
 async fn chromiumoxide_keeps_the_source_page_of_a_delayed_meta_refresh() {
     let test_name = "chromiumoxide_keeps_the_source_page_of_a_delayed_meta_refresh";
-    let Some((page, site)) = scrape_refresh(test_name, r#"<meta http-equiv="refresh" content="60; url=/target">"#).await else {
+    let Some((page, site)) =
+        scrape_refresh(test_name, r#"<meta http-equiv="refresh" content="60; url=/target">"#).await
+    else {
         return;
     };
     let paths = requested_paths(&site).await;
