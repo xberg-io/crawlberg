@@ -3,7 +3,7 @@ PATH
   specs:
     crawlberg (1.10.3)
       rb_sys (>= 0.9.130, < 0.10)
-      sorbet-runtime (~> 0.5)
+      sorbet-runtime (~> 0.6)
 
 GEM
   remote: https://rubygems.org/
