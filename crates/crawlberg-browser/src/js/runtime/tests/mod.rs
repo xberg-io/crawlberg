@@ -2,6 +2,7 @@ use super::*;
 use crate::dom::parse_html;
 
 mod document;
+mod timers;
 
 fn setup_runtime(html: &str) -> BrowserJsRuntime {
     let dom = parse_html(html);

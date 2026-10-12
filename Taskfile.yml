@@ -74,6 +74,21 @@ vars:
   RUST_LOG: info
 
 tasks:
+  ci:chrome:runtime:
+    desc: Prepare Chromium snap runtime providers on Linux ARM runners
+    platforms: [linux/arm64]
+    vars:
+      PROVIDERS: gnome-46-2404 mesa-2404
+      MAX_ATTEMPTS: 5
+      RETRY_DELAY: 5
+    cmds:
+      - bash scripts/ci/prepare-chrome-runtime.sh {{.MAX_ATTEMPTS}} {{.RETRY_DELAY}} {{.PROVIDERS}}
+
+  ci:chrome:runtime:test:
+    desc: Test Chromium snap runtime preparation
+    cmds:
+      - python3 scripts/ci/test_chrome_runtime.py
+
   setup:
     desc: "Install all dependencies and dev tools"
     cmds:
