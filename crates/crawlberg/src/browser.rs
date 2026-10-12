@@ -513,6 +513,7 @@ async fn release_pooled_page(
         && let Ok(proxy) = crate::proxy::chrome_proxy_for(config)
         && let Ok(session_key) = session_key(url, proxy.as_ref())
         && let Some(session_pool) = config.browser_session_pool.as_deref()
+        && navigation::clear_blocked_urls(&page, config).await
     {
         tracing::debug!("parking a pooled browser page for session reuse");
         watch.park().await;
@@ -973,6 +974,54 @@ mod tests {
         );
         let direct = native_fetch_route(&site, "/missing", &executor).await;
         assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
+    }
+
+    /// A native fetch through `browser_fetch` fails at `overall_timeout` when the page takes
+    /// longer: a page of 4 s with a deadline of 1 s.
+    #[tokio::test]
+    async fn a_native_fetch_fails_at_the_overall_deadline() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw("<html><body>slow</body></html>", "text/html")
+                    .set_delay(Duration::from_secs(4)),
+            )
+            .mount(&site)
+            .await;
+        let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
+            .expect("single-worker executor should start");
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                overall_timeout: Duration::from_secs(1),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let started = std::time::Instant::now();
+        let fetched = browser_fetch(
+            &format!("{}/slow", site.uri()),
+            &config,
+            None,
+            None,
+            false,
+            &crate::defaults::NoopRateLimiter,
+            Some(&executor),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        assert!(
+            matches!(&fetched, Err(CrawlError::BrowserTimeout { message, .. }) if message.contains("overall deadline of 1s")),
+            "the fetch must fail on its deadline: {:?}",
+            fetched.err()
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "the fetch must end at the deadline, not with the page: {elapsed:?}"
+        );
     }
 
     /// A rate limiter that records the domain of each turn it is asked for.
