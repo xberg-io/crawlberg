@@ -58,6 +58,12 @@ pub struct CrawlEngine {
     pub(crate) config: CrawlConfig,
     pub(crate) frontier: Arc<dyn Frontier>,
     pub(crate) rate_limiter: Arc<dyn RateLimiter>,
+    /// The rate limiter of the browser paths (the Chrome page and the native render). It is
+    /// `rate_limiter` when the caller set `rate_limit_ms` or installed a limiter, and a limiter
+    /// that grants every turn at once otherwise: with the default settings, browser mode loads
+    /// the pages of one host with no delay, as it did before the delay reached the browser paths.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    pub(crate) browser_rate_limiter: Arc<dyn RateLimiter>,
     pub(crate) store: Arc<dyn CrawlStore>,
     pub(crate) event_emitter: Arc<dyn EventEmitter>,
     pub(crate) strategy: Arc<dyn CrawlStrategy>,
@@ -94,6 +100,8 @@ pub struct CrawlEngine {
 #[derive(Clone)]
 pub(crate) struct Politeness {
     rate_limiter: Arc<dyn RateLimiter>,
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    browser_rate_limiter: Arc<dyn RateLimiter>,
     robots_cache: Arc<robots_cache::RobotsCache>,
 }
 
@@ -103,6 +111,8 @@ impl CrawlEngine {
     pub(crate) fn politeness(&self) -> Politeness {
         Politeness {
             rate_limiter: self.rate_limiter.clone(),
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter: self.browser_rate_limiter.clone(),
             robots_cache: self.robots_cache.clone(),
         }
     }

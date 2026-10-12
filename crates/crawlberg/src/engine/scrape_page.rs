@@ -185,7 +185,7 @@ impl CrawlEngine {
             .and_then(|url| url.host_str().map(str::to_owned));
         for attempt in 0..=self.config.retry_count {
             if let Some(domain) = domain.as_deref() {
-                self.rate_limiter.acquire(domain).await?;
+                self.browser_rate_limiter.acquire(domain).await?;
             }
             match self.native_render_once(url, state).await {
                 Err(error)

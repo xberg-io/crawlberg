@@ -92,7 +92,7 @@ impl CrawlEngine {
                 prior_cookies,
                 self.crawl_cookies.as_deref(),
                 want_screenshot,
-                self.rate_limiter.as_ref(),
+                self.browser_rate_limiter.as_ref(),
                 #[cfg(feature = "browser-native")]
                 self.native_browser_executor.as_deref(),
             ));

@@ -179,7 +179,8 @@ pub struct CrawlConfig {
     #[serde(with = "duration_ms")]
     pub request_timeout: Duration,
     /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-    /// between requests to the same domain. Defaults to 200ms when `None`.
+    /// between requests to the same domain, in HTTP mode and before each page load in
+    /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
     pub rate_limit_ms: Option<u64>,
     /// Maximum number of redirects to follow.
     pub max_redirects: usize,
