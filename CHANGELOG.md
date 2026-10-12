@@ -67,7 +67,7 @@ All notable changes to crawlberg are documented here.
   error source. A chain that reaches its final page within the limit and a redirect without
   `Location` still succeed. (#695)
 - Link results remove credentials from `original_url` even when a link uses backslashes or
-  embedded tabs and newlines. Query strings, fragments and other link spelling are kept. (#696)
+  embedded tabs and newlines. Query strings and fragments are kept, with that normalization. (#696)
 - **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
   page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
   `/item?` are two pages. The same parameters in a different order are still one page. A site

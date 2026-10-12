@@ -6,6 +6,9 @@ title: "Changelog"
 
 ### Upgrading
 
+- **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
+  it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
+  for the new variant. (#695)
 - **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
   `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
   `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
@@ -60,6 +63,11 @@ title: "Changelog"
 
 ### Changed
 
+- Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
+  error source. A chain that reaches its final page within the limit and a redirect without
+  `Location` still succeed. (#695)
+- Link results remove credentials from `original_url` even when a link uses backslashes or
+  embedded tabs and newlines. Query strings and fragments are kept, with that normalization. (#696)
 - **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
   page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
   `/item?` are two pages. The same parameters in a different order are still one page. A site
