@@ -225,6 +225,29 @@ jobs:
         run: cargo check -p crawlberg --target wasm32-unknown-unknown --locked
         shell: bash
 
+  windows-browser:
+    name: Windows browser lifecycle
+    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@7c5c5d0e97742aad77838328385086d7c48735ba
+        with:
+          cache-key-prefix: windows-browser
+      - name: Install Task
+        uses: xberg-io/actions/install-task@7c5c5d0e97742aad77838328385086d7c48735ba
+      - name: Setup Chrome
+        id: chrome
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
+      - name: Run Windows browser tests
+        run: task rust:test:windows-browser
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+
   # ~keep Every feature-configuration bug this workflow has accumulated a step for was the
   # ~keep same bug: a configuration nothing compiled. --all-features forces `browser` on,
   # ~keep --no-default-features turns everything off, so the single-feature sets in between were
