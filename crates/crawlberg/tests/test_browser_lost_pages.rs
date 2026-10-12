@@ -609,7 +609,8 @@ async fn popup_was_requested(site: &MockServer) -> bool {
 /// A dialog that a popup opens does not hold the page that opened the popup: the popup of the
 /// same site, of another site, one that the page opens with `noopener`, and one that opens two
 /// dialogs. Each row also checks that the popup was loaded, so the row is not a page with no
-/// popup at all.
+/// popup at all. The `noopener` row, and on Chrome the row of another site, pass without the
+/// answer: they guard that the answer breaks no popup that does not need it.
 #[tokio::test]
 async fn a_dialog_in_a_popup_does_not_hold_the_page() {
     let mut rows = Rows::new("a_dialog_in_a_popup_does_not_hold_the_page");
@@ -661,6 +662,53 @@ async fn a_dialog_in_a_popup_does_not_hold_the_page() {
             let row = format!("{row}, in an interact session");
             rows.interact(&row, &site.uri(), vec![PageAction::Scrape], &expected)
                 .await;
+        }
+    }
+    rows.finish();
+}
+
+/// A frame name or a popup window name that holds half of a surrogate pair does not lose the
+/// page: Chrome writes the name into events of the page and of the popup, and each reader of
+/// those events reads the half as U+FFFD. The popups here open no dialog.
+#[tokio::test]
+async fn a_name_that_holds_half_of_a_surrogate_pair_does_not_lose_the_page() {
+    let mut rows = Rows::new("a_name_that_holds_half_of_a_surrogate_pair_does_not_lose_the_page");
+    let named_frame = concat!(
+        r"<script>const frame = document.createElement('iframe'); frame.name = 'half \ud83d name'; ",
+        "frame.src = '/frame'; document.body.appendChild(frame);</script>"
+    );
+    let cases = [
+        (
+            "a frame of the page with such a name, no popup",
+            named_frame,
+            "<p>an offer</p>",
+        ),
+        (
+            "a popup with such a window name",
+            r"<script>window.open('/popup', 'name \ud83d');</script>",
+            "<p>an offer</p>",
+        ),
+        (
+            "a popup that holds a frame with such a name",
+            "<script>window.open('/popup');</script>",
+            named_frame,
+        ),
+    ];
+    let expected = ["host text", "text after the script"];
+    for (row, script, popup_body) in cases {
+        let host =
+            format!("<!doctype html><html><body><p>host text</p>{script}<p>text after the script</p></body></html>");
+        let popup = format!("<!doctype html><html><body>{popup_body}</body></html>");
+        let frame = "<!doctype html><html><body><p>frame text</p></body></html>".to_owned();
+        let site = html_site(&[("/", host), ("/popup", popup), ("/frame", frame)]).await;
+        if !rows
+            .scrape(row, config(BrowserMode::Always), &site.uri(), &expected)
+            .await
+        {
+            return;
+        }
+        if script.contains("window.open") && !popup_was_requested(&site).await {
+            rows.failures.push(format!("{row}: the popup was not loaded"));
         }
     }
     rows.finish();

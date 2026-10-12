@@ -163,7 +163,7 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
 ///
 /// A message that `serde_json` reads is returned as `serde_json` read it: the text is searched
 /// and parsed a second time only after a refusal.
-fn parse_message<M: serde::de::DeserializeOwned>(text: &str) -> serde_json::Result<M> {
+pub fn parse_message<M: serde::de::DeserializeOwned>(text: &str) -> serde_json::Result<M> {
     serde_json::from_str(text).or_else(|error| match replace_unpaired_surrogate_escapes(text) {
         Some(repaired) => serde_json::from_str(&repaired),
         None => Err(error),

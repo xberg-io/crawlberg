@@ -2379,7 +2379,9 @@ where
                     async_tungstenite::tungstenite::Message::Close(_) => return false,
                     _ => continue,
                 };
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(text.as_ref()) else {
+                // ~keep The driver's reader: a Page event of a popup can hold half of a surrogate
+                // ~keep pair (a frame name, a window name), which `serde_json` alone refuses.
+                let Ok(value) = chromiumoxide::conn::parse_message::<serde_json::Value>(text.as_ref()) else {
                     return false;
                 };
                 if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
@@ -2729,10 +2731,10 @@ where
                 // ~keep Chrome reports a dialog only to a session that has the Page domain on, and
                 // ~keep does not report an open dialog again. The popup is still held here, so the
                 // ~keep domain is on before the resume and no dialog of it can open unreported.
-                if permitted
-                    && attached.target_info.r#type == "page"
-                    && !lock(&shared.registry).opened.contains_key(&target)
-                {
+                // ~keep A popup is told by its opener: a page of the check attaches here before
+                // ~keep the check records it as opened, and it has no opener. Its watch answers
+                // ~keep its dialogs, so its Page events stay off this socket.
+                if permitted && attached.target_info.r#type == "page" && attached.target_info.opener_id.is_some() {
                     let Some(id) = child_command_id(&mut next_id) else { return false };
                     if child_socket_write(
                         &mut socket,
@@ -5478,9 +5480,6 @@ mod tests {
             Some("S-TAB"),
         )
         .await;
-        let page_dialogs = next_child_message(&mut socket).await;
-        assert_eq!(page_dialogs["method"], "Page.enable");
-        assert_eq!(page_dialogs["sessionId"], "S-PAGE");
         let page_arm = next_child_message(&mut socket).await;
         assert_eq!(page_arm["method"], "Target.setAutoAttach");
         assert_eq!(page_arm["sessionId"], "S-PAGE");
@@ -5719,8 +5718,7 @@ mod tests {
     }
 
     /// A popup reports its dialogs from its first script: the Page domain of its session is on
-    /// before the popup is resumed. The watched page gets no such command: its watch has a
-    /// listener of its own.
+    /// before the popup is resumed.
     #[tokio::test]
     async fn a_popup_reports_its_dialogs_before_it_is_resumed() {
         let (mut socket, commands, controller, written) =
@@ -5740,6 +5738,73 @@ mod tests {
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
         assert_eq!(resume["sessionId"], "S-POPUP");
         answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A page of the check gets no Page domain command from the controller, also when it attaches
+    /// before the check records it as opened, as it does in a browser: it has no opener, and its
+    /// watch has a dialog listener of its own.
+    #[tokio::test]
+    async fn a_page_of_the_check_gets_no_page_domain_command() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        lock(&shared.registry).opened.remove(&page.root);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), socket.next())
+                .await
+                .is_err(),
+            "the controller wrote one more command for the page of the check"
+        );
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A Page event of a popup can hold half of a surrogate pair, in a frame name or a window
+    /// name. The controller reads it and goes on; a message it cannot read stops it, and a
+    /// stopped controller fails the browser.
+    #[tokio::test]
+    async fn an_event_that_holds_half_of_a_surrogate_pair_does_not_stop_the_controller() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        let event = concat!(
+            r#"{"method":"Page.windowOpen","sessionId":"S-POPUP","params":{"url":"http://a.localhost/","#,
+            r#""windowName":"name \ud83d","windowFeatures":[],"userGesture":false}}"#
+        );
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(event.to_owned().into()))
+            .await
+            .expect("send the event");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !controller.is_finished(),
+            "the controller stopped on an event that holds half of a surrogate pair"
+        );
 
         commands
             .send(super::ChildCommand::Stop)
