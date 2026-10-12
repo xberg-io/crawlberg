@@ -352,9 +352,9 @@ const PROFILE_REMOVAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// ~keep helper processes (renderers, the GPU process, the network and storage services) outlive
 /// ~keep the browser process for a moment and keep writing into the directory, so a removal made
 /// ~keep while they run fails part-way or is undone, which left a profile behind in 6 of 20 drops
-/// ~keep on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
-/// ~keep process group and kills only the browser process, which orphans the helpers: their
-/// ~keep parent is then init or a subreaper, so no parent pid or process group leads back to the
+/// ~keep on Linux (xberg-io/crawlberg#415). Upstream chromiumoxide 0.9.1 started Chrome in the
+/// ~keep caller's process group and killed only the browser process, orphaning helpers: their
+/// ~keep parent became init or a subreaper, so no parent pid or process group led back to the
 /// ~keep browser. They are found by the `--user-data-dir` flag that Chrome passes to each of them,
 /// ~keep which still names them after the browser process is gone, and by the executable of the
 /// ~keep Chrome that [`Self::launch`] started, which each of them runs.
@@ -554,17 +554,24 @@ fn start_listed_chrome_reading(
     let mut child = config.command().kill_on_drop(false).spawn()?;
     let launched = child.inner.id().and_then(read);
     if launched.is_none() && child.tree().is_none() {
-        // ~keep A Chrome that has ended is no longer shown on macOS. Its exit is the cause of
-        // ~keep the failed launch then, not the read.
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(std::io::Error::other(format!(
-                "the Chrome that was started ended at once ({status})"
-            )));
-        }
-        let outcome = match child.inner.start_kill() {
+        // ~keep Stop the owned group before reaping its leader: a non-exec launcher can have
+        // ~keep exited while its Chrome still runs (#674), and reaping can release the group id.
+        #[cfg(unix)]
+        let stopped = child.start_kill_group();
+        #[cfg(not(unix))]
+        let stopped = child.inner.start_kill();
+        let outcome = match stopped {
             Ok(()) => "it was stopped right after its start".to_owned(),
             Err(error) => format!("it can still run, because the attempt to stop it failed: {error}"),
         };
+        // ~keep Preserve a natural launcher's exit as the cause; a signal sent above is cleanup.
+        if let Ok(Some(status)) = child.try_wait()
+            && status.code().is_some()
+        {
+            return Err(std::io::Error::other(format!(
+                "the Chrome that was started ended at once ({status}); {outcome}"
+            )));
+        }
         return Err(std::io::Error::other(format!(
             "the process table does not show the Chrome that was started, so it could not be stopped later; {outcome}. \
              On Linux, run this program where the `/proc` of its own process id namespace is mounted. \

@@ -129,6 +129,41 @@ impl Child {
         self.inner.kill().await
     }
 
+    /// Signal this launch's Unix process group, before waiting for its leader.
+    ///
+    /// ~keep An unreaped leader retains its pid even after it exits, so the group id cannot
+    /// ~keep name a later launch. A launcher that does not exec can leave children behind it.
+    #[cfg(unix)]
+    #[allow(unsafe_code)]
+    pub fn start_kill_group(&mut self) -> std::io::Result<()> {
+        if !self.spawned_here() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the browser group belongs to another process",
+            ));
+        }
+        let pid = self
+            .inner
+            .id()
+            .ok_or_else(|| std::io::Error::other("the browser leader was already reaped"))?;
+        let pid =
+            i32::try_from(pid).map_err(|_| std::io::Error::other("the browser pid does not fit a process group"))?;
+        const SIGKILL: i32 = 9;
+        const ESRCH: i32 = 3;
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+        // SAFETY: Command starts this unreaped child in group `pid`; a negative id signals only
+        // that group. SIGKILL is 9 on Unix. This process owns the child and has not waited for it.
+        if unsafe { kill(-pid, SIGKILL) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(ESRCH) {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     /// Asynchronously wait for the child process to exit
     pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
         self.inner.wait().await
@@ -208,6 +243,8 @@ impl ProcessTree {
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
 #[cfg(not(windows))]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
+    #[cfg(unix)]
+    command.process_group(0);
     Ok((command.spawn()?, None))
 }
 
@@ -275,6 +312,50 @@ fn job_process_ids(list: &[u8], id_width: usize) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::job_process_ids;
+
+    // ~keep The refusal signals a group before waiting; prove Tokio retains an exited leader.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exited_group_leader_is_not_reaped_until_its_handle_is_waited() {
+        let mut command = super::Command::new("sh");
+        command.args(["-c", "exit 3"]).kill_on_drop(false);
+        let mut child = command.spawn().expect("launcher must start");
+        let pid = child.inner.id().expect("unwaited child must have a pid");
+        let mut peer = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("peer must start");
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        let zombie = loop {
+            let state = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .expect("process status must be readable");
+            if String::from_utf8_lossy(&state.stdout).trim().starts_with('Z') {
+                break true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        let held_id = child.inner.id();
+        let status = child.try_wait().expect("exited leader must be waitable");
+        let cleared_id = child.inner.id();
+        let after_reap = child.start_kill_group();
+        let peer_running = peer.try_wait().expect("peer must be waitable").is_none();
+        let _ = peer.kill();
+        let _ = peer.wait();
+        assert!(zombie, "runtime must leave the held leader unreaped after SIGCHLD");
+        assert_eq!(held_id, Some(pid));
+        assert_eq!(status.and_then(|status| status.code()), Some(3));
+        assert_eq!(cleared_id, None);
+        assert!(
+            after_reap.is_err(),
+            "reaped leader must never supply a recycled group id"
+        );
+        assert!(peer_running, "unrelated group must stay alive");
+    }
 
     /// The bytes of a list with the two counts `assigned` and `listed`, then `ids` at `id_width` bytes each.
     fn list(assigned: u32, listed: u32, ids: &[u64], id_width: usize) -> Vec<u8> {

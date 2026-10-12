@@ -12,6 +12,8 @@ so its security controller is the sole owner of paused child-target sessions.
 
 More changes against upstream:
 
+- Unix launches start in a process group of their own. `Child::start_kill_group` signals that
+  group before its leader is reaped, so a refused launcher cannot leave its children running.
 - On Windows the browser process starts suspended, joins a job object with kill-on-close and is
   then resumed, so the system ends it and its helper processes with the launching process.
   `Child::tree` hands that job to the caller as a `ProcessTree`.
