@@ -81,6 +81,7 @@ pub struct Page {
     pub context: Arc<BrowserContext>,
     pub title: String,
     pub network_events: Vec<NetworkEvent>,
+    pub(crate) unfollowed_redirect: Option<PageError>,
     network_event_counter: u32,
     pub intercept_enabled: bool,
     pub intercept_block_patterns: Vec<String>,
@@ -124,6 +125,7 @@ impl Page {
             context,
             title: String::new(),
             network_events: Vec::new(),
+            unfollowed_redirect: None,
             network_event_counter: 0,
             intercept_enabled: false,
             intercept_block_patterns: Vec::new(),
@@ -585,6 +587,15 @@ pub enum PageError {
 
     #[error("Too many redirects (limit {0})")]
     TooManyRedirects(usize),
+
+    /// A counted navigation ended on a redirect response instead of a document.
+    #[error("Unfollowed redirect to {target}")]
+    UnfollowedRedirect {
+        /// The redirect target, without credentials.
+        target: Url,
+        /// Whether the HTTP chain already requested the target.
+        visited: bool,
+    },
 
     /// The render configuration cannot be used, so nothing was fetched.
     #[error("Invalid configuration: {0}")]

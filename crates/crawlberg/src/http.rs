@@ -409,18 +409,22 @@ pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 pub(crate) fn reject_redirect(target: &url::Url, unseen: bool, hop_left: bool) -> Result<(), CrawlError> {
     if !unseen || !hop_left {
-        let mut error = CrawlError::from(crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target));
-        if let CrawlError::SsrfPolicyViolation { reason, .. } = &mut error {
-            *reason = if !unseen {
-                "redirect loop"
-            } else {
-                "redirect limit exceeded"
-            }
-            .to_owned();
-        }
-        return Err(error);
+        return Err(redirect_error(target, unseen));
     }
     Ok(())
+}
+
+pub(crate) fn redirect_error(target: &url::Url, unseen: bool) -> CrawlError {
+    let mut error = CrawlError::from(crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target));
+    if let CrawlError::SsrfPolicyViolation { reason, .. } = &mut error {
+        *reason = if unseen {
+            "redirect limit exceeded"
+        } else {
+            "redirect loop"
+        }
+        .to_owned();
+    }
+    error
 }
 
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
