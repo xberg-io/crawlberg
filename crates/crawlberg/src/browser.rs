@@ -152,21 +152,52 @@ pub(crate) async fn browser_fetch(
     rate_limiter: &dyn crate::traits::RateLimiter,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
-    for attempt in 0..=config.retry_count {
-        // ~keep Bound the retry future's layout: generated Dart wrappers otherwise exceed
-        // ~keep Rust's default recursion limit when this attempt is inlined into their future.
-        let result = Box::pin(browser_fetch_once(
+    retry_browser_fetch(url, config, rate_limiter, |deadline| {
+        Box::pin(browser_fetch_once(
             url,
             config,
             prior_cookies,
             crawl_cookies,
             want_screenshot,
-            rate_limiter,
+            deadline,
             #[cfg(feature = "browser-native")]
             native_executor,
         ))
-        .await;
-        match result {
+    })
+    .await
+}
+
+// ~keep Erase each attempt future: downstream Send proofs otherwise exceed Rust's recursion limit.
+async fn retry_browser_fetch<'a, T, F>(
+    url: &str,
+    config: &CrawlConfig,
+    rate_limiter: &dyn crate::traits::RateLimiter,
+    mut fetch: F,
+) -> Result<T, CrawlError>
+where
+    F: FnMut(
+        tokio::time::Instant,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, CrawlError>> + Send + 'a>>,
+{
+    let overall_timeout = config.browser.overall_timeout;
+    let mut deadline = tokio::time::Instant::now() + overall_timeout;
+    for attempt in 0..=config.retry_count {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(overall_deadline_error(overall_timeout));
+        }
+        if let Some(domain) = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+        {
+            // ~keep Host pacing consumes neither browser capacity nor the retry budget.
+            let wait_started = tokio::time::Instant::now();
+            rate_limiter.acquire(&domain).await?;
+            deadline += wait_started.elapsed();
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(overall_deadline_error(overall_timeout));
+        }
+        match fetch(deadline).await {
             Err(error) if attempt < config.retry_count && browser_error_is_retryable(&error, config) => {
                 let delay = crate::defaults::dispatch::compute_backoff_ms(
                     u32::try_from(attempt).unwrap_or(u32::MAX),
@@ -174,7 +205,12 @@ pub(crate) async fn browser_fetch(
                     config.retry_max_delay_ms,
                 );
                 tracing::debug!(attempt, delay_ms = delay, "retrying browser fetch");
-                tokio::time::sleep(Duration::from_millis(delay)).await;
+                if tokio::time::timeout_at(deadline, tokio::time::sleep(Duration::from_millis(delay)))
+                    .await
+                    .is_err()
+                {
+                    return Err(overall_deadline_error(overall_timeout));
+                }
             }
             outcome => return outcome,
         }
@@ -201,7 +237,7 @@ async fn browser_fetch_once(
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
+    deadline: tokio::time::Instant,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
     let pool = config.browser_pool.as_deref();
@@ -209,19 +245,13 @@ async fn browser_fetch_once(
         BrowserBackend::Chromiumoxide => {
             let given = crawl_cookies.map(CrawlCookies::given);
             let prior_cookies = given.as_deref().or(prior_cookies);
-            let page = chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot, rate_limiter).await?;
+            let page = chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot, deadline).await?;
             if let (Some(crawl_cookies), Some(given)) = (crawl_cookies, &given) {
                 crawl_cookies.absorb(given, &page.cookies);
             }
             page
         }
         BrowserBackend::Native => {
-            if let Some(host) = url::Url::parse(url)
-                .ok()
-                .and_then(|url| url.host_str().map(str::to_owned))
-            {
-                rate_limiter.acquire(&host).await?;
-            }
             // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
             // ~keep (`page_fetch`, in `browser/navigation.rs`); the native backend lives in the
             // ~keep off-limits `crawlberg-browser` crate. Warn instead of silently dropping the
@@ -234,9 +264,14 @@ async fn browser_fetch_once(
             }
             #[cfg(feature = "browser-native")]
             let (response, refused, redirects, charset) =
-                native_fetch(url, config, prior_cookies, native_executor).await?;
+                tokio::time::timeout_at(deadline, native_fetch(url, config, prior_cookies, native_executor))
+                    .await
+                    .unwrap_or_else(|_| Err(overall_deadline_error(config.browser.overall_timeout)))?;
             #[cfg(not(feature = "browser-native"))]
-            let (response, refused, redirects, charset) = native_fetch(url, config, prior_cookies).await?;
+            let (response, refused, redirects, charset) =
+                tokio::time::timeout_at(deadline, native_fetch(url, config, prior_cookies))
+                    .await
+                    .unwrap_or_else(|_| Err(overall_deadline_error(config.browser.overall_timeout)))?;
             BrowserPage {
                 redirected: response.final_url != url,
                 response,
@@ -264,7 +299,7 @@ async fn chromiumoxide_fetch(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let session_id = BROWSER_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
@@ -285,7 +320,7 @@ async fn chromiumoxide_fetch(
     }
     let _guard = SessionGuard;
 
-    chromiumoxide_fetch_inner(url, config, prior_cookies, pool, want_screenshot, rate_limiter)
+    chromiumoxide_fetch_inner(url, config, prior_cookies, pool, want_screenshot, deadline)
         .instrument(span)
         .await
 }
@@ -296,16 +331,17 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[BrowserCookie]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
-    validate_url(&target, &config.ssrf)
+    tokio::time::timeout_at(deadline, validate_url(&target, &config.ssrf))
         .await
+        .map_err(|_| overall_deadline_error(config.browser.overall_timeout))?
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
     match pool {
-        Some(pool) => pooled_fetch(url, config, prior_cookies, pool, want_screenshot, rate_limiter).await,
-        None => one_shot_fetch(url, config, prior_cookies, want_screenshot, rate_limiter).await,
+        Some(pool) => pooled_fetch(url, config, prior_cookies, pool, want_screenshot, deadline).await,
+        None => one_shot_fetch(url, config, prior_cookies, want_screenshot, deadline).await,
     }
 }
 
@@ -320,21 +356,17 @@ fn overall_deadline_error(overall_timeout: Duration) -> CrawlError {
 /// Fetch using a page borrowed from a shared [`BrowserPool`], returning the page
 /// to the session pool on success when session affinity is enabled.
 ///
-/// Page acquisition is bounded by a `BrowserConfig::overall_timeout` deadline, closing the gap
-/// where an unbounded semaphore wait could hold a fetch open indefinitely. The page then waits
-/// for the turn of its domain and gets a deadline of its own for its setup, navigation and
-/// rendering (`page_fetch`). The page release that follows runs on every path including the
-/// deadline paths, and is bounded by `BrowserConfig::shutdown_timeout`.
+/// Acquisition, setup and rendering share the fetch deadline, after its domain turn is granted.
+/// Page release runs on every path, including timeouts, within `BrowserConfig::shutdown_timeout`.
 async fn pooled_fetch(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     pool: &BrowserPool,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
-    let deadline = tokio::time::Instant::now() + overall_timeout;
 
     if !pool.uses_launch_options(&config.browser) {
         let reason = if config.browser.endpoint.is_some() {
@@ -385,10 +417,7 @@ async fn pooled_fetch(
             });
         }
     };
-    // ~keep `page_fetch` waits for the turn of the page's domain, then bounds the page by a
-    // ~keep deadline of its own: the page gets its whole time once its turn comes, however long
-    // ~keep the wait was. `deadline` above bounds the acquisition of the page only.
-    let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter).await;
+    let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, deadline).await;
 
     let result = result.map_err(|error| match handler_end.as_ref() {
         Some(end) => connection_closed_error(error, end),
@@ -595,9 +624,8 @@ async fn teardown_unclaimed_launch(
 
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
 ///
-/// `BrowserConfig::overall_timeout` bounds launch and page creation as one deadline. The page
-/// then waits for the turn of its domain and gets a deadline of its own for its setup,
-/// navigation, rendering and screenshot capture (`page_fetch`). Shutdown runs
+/// Launch, page creation and rendering share the fetch deadline. The domain turn is granted
+/// before launching or acquiring a page. Shutdown runs
 /// afterward in the background: a completed page result is returned to the
 /// caller without waiting for a Chrome process that refuses to exit. A browser
 /// closed normally gets `BrowserConfig::shutdown_timeout` to exit before it is
@@ -612,10 +640,9 @@ async fn one_shot_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
-    let deadline = tokio::time::Instant::now() + overall_timeout;
     let _ = crate::net::egress::socket_policy(
         &config.ssrf,
         config.browser.endpoint.as_deref(),
@@ -627,16 +654,7 @@ async fn one_shot_fetch(
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(overall_deadline_error(overall_timeout)),
     };
-    fetch_launched(
-        launched,
-        deadline,
-        url,
-        config,
-        prior_cookies,
-        want_screenshot,
-        rate_limiter,
-    )
-    .await
+    fetch_launched(launched, deadline, url, config, prior_cookies, want_screenshot).await
 }
 
 /// Fetch `url` in a browser [`launch_or_connect`] returned, before `deadline`, then tear the
@@ -648,7 +666,6 @@ async fn fetch_launched(
     config: &CrawlConfig,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
-    rate_limiter: &dyn crate::traits::RateLimiter,
 ) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let (handler_handle, handler_end) = spawn_watched_handler(handler);
@@ -672,9 +689,7 @@ async fn fetch_launched(
         let (page, watch) = tokio::time::timeout_at(deadline, session.open_watched_page(config))
             .await
             .unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))?;
-        // ~keep `page_fetch` waits for the turn of the page's domain, then bounds the page by a
-        // ~keep deadline of its own: `deadline` bounds the launch and the page creation only.
-        let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter).await;
+        let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, deadline).await;
         let shutdown_timeout = config.browser.shutdown_timeout;
         if tokio::time::timeout(shutdown_timeout, watch.close()).await.is_err() {
             tracing::warn!(
@@ -1074,7 +1089,14 @@ mod launch_supervision_tests {
             ..Default::default()
         };
         let fetch = tokio::spawn(async move {
-            one_shot_fetch("about:blank", &config, None, false, &crate::defaults::NoopRateLimiter).await
+            one_shot_fetch(
+                "about:blank",
+                &config,
+                None,
+                false,
+                tokio::time::Instant::now() + config.browser.overall_timeout,
+            )
+            .await
         });
         let completed = tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, completed_rx)
             .await
@@ -1111,6 +1133,130 @@ mod launch_supervision_tests {
 mod retry_policy_tests {
     use super::{BrowserConnectionClosed, browser_error_is_retryable};
     use crate::{CrawlConfig, CrawlError};
+
+    #[tokio::test(start_paused = true)]
+    async fn should_share_one_deadline_across_browser_retry_attempts() {
+        let mut config = CrawlConfig {
+            retry_count: 2,
+            retry_initial_delay_ms: 0,
+            retry_max_delay_ms: 0,
+            ..CrawlConfig::default()
+        };
+        config.browser.overall_timeout = std::time::Duration::from_secs(60);
+        let start = tokio::time::Instant::now();
+        let result: Result<(), CrawlError> = super::retry_browser_fetch(
+            "https://example.com",
+            &config,
+            &crate::defaults::NoopRateLimiter,
+            |deadline| {
+                Box::pin(async move {
+                    tokio::time::timeout_at(deadline, tokio::time::sleep(std::time::Duration::from_secs(40)))
+                        .await
+                        .map_err(|_| CrawlError::browser_timeout("deadline"))?;
+                    Err(CrawlError::browser_error_with_source(
+                        "disconnect",
+                        BrowserConnectionClosed { source: None },
+                    ))
+                })
+            },
+        )
+        .await;
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(60));
+        assert!(matches!(result, Err(CrawlError::BrowserTimeout { .. })), "{result:?}");
+    }
+
+    struct DelayedTurn {
+        permits: std::sync::Arc<tokio::sync::Semaphore>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::traits::RateLimiter for DelayedTurn {
+        async fn acquire(&self, domain: &str) -> Result<(), CrawlError> {
+            assert_eq!(domain, "example.com");
+            assert_eq!(
+                self.permits.available_permits(),
+                1,
+                "domain wait must precede page acquisition"
+            );
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tokio::time::sleep(std::time::Duration::from_secs(100)).await;
+            Ok(())
+        }
+        async fn record_response(&self, _: &str, _: u16) -> Result<(), CrawlError> {
+            Ok(())
+        }
+        async fn set_crawl_delay(&self, _: &str, _: std::time::Duration) -> Result<(), CrawlError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_exclude_domain_waits_from_one_budget_without_holding_a_page_permit() {
+        let mut config = CrawlConfig {
+            retry_count: 2,
+            retry_initial_delay_ms: 0,
+            retry_max_delay_ms: 0,
+            ..CrawlConfig::default()
+        };
+        config.browser.overall_timeout = std::time::Duration::from_secs(60);
+        let limiter = DelayedTurn {
+            permits: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            calls: Default::default(),
+        };
+        let start = tokio::time::Instant::now();
+        let result: Result<(), CrawlError> =
+            super::retry_browser_fetch("https://example.com", &config, &limiter, |deadline| {
+                let permits = limiter.permits.clone();
+                Box::pin(async move {
+                    let _permit = permits.acquire_owned().await.unwrap();
+                    tokio::time::timeout_at(deadline, tokio::time::sleep(std::time::Duration::from_secs(40)))
+                        .await
+                        .map_err(|_| CrawlError::browser_timeout("deadline"))?;
+                    Err(CrawlError::browser_error_with_source(
+                        "disconnect",
+                        BrowserConnectionClosed { source: None },
+                    ))
+                })
+            })
+            .await;
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(260));
+        assert_eq!(limiter.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(limiter.permits.available_permits(), 1);
+        assert!(matches!(result, Err(CrawlError::BrowserTimeout { .. })), "{result:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_stop_retry_backoff_at_the_shared_deadline() {
+        let mut config = CrawlConfig {
+            retry_count: 2,
+            retry_initial_delay_ms: 30_000,
+            retry_max_delay_ms: 30_000,
+            ..CrawlConfig::default()
+        };
+        config.browser.overall_timeout = std::time::Duration::from_secs(60);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let start = tokio::time::Instant::now();
+        let result: Result<(), CrawlError> = super::retry_browser_fetch(
+            "https://example.com",
+            &config,
+            &crate::defaults::NoopRateLimiter,
+            |_| {
+                Box::pin(async {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tokio::time::sleep(std::time::Duration::from_secs(40)).await;
+                    Err(CrawlError::browser_error_with_source(
+                        "disconnect",
+                        BrowserConnectionClosed { source: None },
+                    ))
+                })
+            },
+        )
+        .await;
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(60));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(matches!(result, Err(CrawlError::BrowserTimeout { .. })), "{result:?}");
+    }
 
     #[test]
     fn should_retry_disconnected_browser_but_not_other_browser_errors() {

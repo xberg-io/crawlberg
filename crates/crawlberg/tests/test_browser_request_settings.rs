@@ -278,3 +278,133 @@ async fn should_send_matching_client_hints_to_start_redirect_and_cross_host_scri
         }
     }
 }
+
+#[tokio::test]
+async fn should_stop_real_browser_retries_at_one_overall_deadline() {
+    const ATTEMPT_DELAY: Duration = Duration::from_secs(2);
+    const FETCH_BUDGET: Duration = Duration::from_secs(3);
+    let site = MockServer::start().await;
+    Mock::given(path("/warm"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>ready</p>", "text/html"))
+        .mount(&site)
+        .await;
+    Mock::given(path("/retry"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_raw("<p>retry</p>", "text/html")
+                .set_delay(ATTEMPT_DELAY),
+        )
+        .mount(&site)
+        .await;
+    let mut settings = config();
+    settings.retry_count = 2;
+    settings.retry_codes = vec![429];
+    settings.retry_initial_delay_ms = 0;
+    settings.retry_max_delay_ms = 0;
+    settings.browser.overall_timeout = FETCH_BUDGET;
+    settings.browser.wait = crawlberg::BrowserWait::Selector;
+    settings.browser.wait_selector = Some("body".into());
+    settings.browser.extra_wait = Some(Duration::ZERO);
+    settings.browser.session_affinity = false;
+    let mut warm_settings = settings.clone();
+    warm_settings.browser.overall_timeout = Duration::from_secs(20);
+    let (warm_engine, pool) = engine_with_rate_limiter(warm_settings, PerDomainThrottle::new(Duration::ZERO));
+    scrape(&warm_engine, &format!("{}/warm", site.uri()))
+        .await
+        .expect("warm the pool");
+    let engine = CrawlEngineHandle::from_engine(
+        CrawlEngine::builder()
+            .config(settings)
+            .rate_limiter(PerDomainThrottle::new(Duration::ZERO))
+            .with_browser_pool(pool.clone())
+            .build()
+            .expect("engine"),
+    );
+    let started = Instant::now();
+    let outcome = scrape(&engine, &format!("{}/retry", site.uri())).await;
+    let elapsed = started.elapsed();
+    pool.shutdown().await;
+    let retries = paths_the_page_asked_for(&site)
+        .await
+        .into_iter()
+        .filter(|path| path == "/retry")
+        .count();
+    assert!(
+        matches!(outcome, Err(crawlberg::CrawlError::BrowserTimeout { .. })),
+        "{outcome:?}, {retries} requests in {elapsed:?}"
+    );
+    assert!(
+        elapsed < ATTEMPT_DELAY * 2,
+        "fetch exceeded its shared budget: {elapsed:?}"
+    );
+    assert_eq!(retries, 2);
+}
+
+struct HeldDomainTurn {
+    waiting: Arc<tokio::sync::Notify>,
+    released: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl RateLimiter for HeldDomainTurn {
+    async fn acquire(&self, domain: &str) -> Result<(), crawlberg::CrawlError> {
+        if domain == "localhost" {
+            self.waiting.notify_one();
+            self.released.notified().await;
+        }
+        Ok(())
+    }
+    async fn record_response(&self, _: &str, _: u16) -> Result<(), crawlberg::CrawlError> {
+        Ok(())
+    }
+    async fn set_crawl_delay(&self, _: &str, _: Duration) -> Result<(), crawlberg::CrawlError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn should_leave_the_only_browser_pool_page_free_while_waiting_for_a_domain() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>ready</p>", "text/html"))
+        .mount(&site)
+        .await;
+    let waiting = Arc::new(tokio::sync::Notify::new());
+    let released = Arc::new(tokio::sync::Notify::new());
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        max_pages: 1,
+        ..BrowserPoolConfig::default()
+    });
+    let mut settings = config();
+    settings.browser.session_affinity = false;
+    let engine = CrawlEngineHandle::from_engine(
+        CrawlEngine::builder()
+            .config(settings)
+            .rate_limiter(HeldDomainTurn {
+                waiting: waiting.clone(),
+                released: released.clone(),
+            })
+            .with_browser_pool(pool.clone())
+            .build()
+            .expect("engine"),
+    );
+    scrape(&engine, &format!("{}/warm", site.uri()))
+        .await
+        .expect("warm pool");
+    let slow_engine = engine.clone();
+    let slow_url = format!("{}/slow", site.uri().replace("127.0.0.1", "localhost"));
+    let slow = tokio::spawn(async move { scrape(&slow_engine, &slow_url).await });
+    tokio::time::timeout(Duration::from_secs(5), waiting.notified())
+        .await
+        .expect("domain waiter reached");
+    let fast = tokio::time::timeout(Duration::from_secs(3), scrape(&engine, &format!("{}/fast", site.uri()))).await;
+    released.notify_one();
+    let slow = slow.await.expect("slow task");
+    pool.shutdown().await;
+    fast.expect("free host must obtain the pool page before the delayed host is released")
+        .expect("fast page");
+    slow.expect("delayed page");
+    let mut paths = paths_the_page_asked_for(&site).await;
+    paths.sort_unstable();
+    assert_eq!(paths, ["/fast", "/slow", "/warm"]);
+}
