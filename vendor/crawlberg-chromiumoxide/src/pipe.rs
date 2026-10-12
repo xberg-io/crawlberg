@@ -318,6 +318,16 @@ struct Router {
 
 impl PipeHub {
     pub(crate) fn start(socket: tokio::net::UnixStream) -> (Self, RawConnection) {
+        let (reader, writer) = socket.into_split();
+        Self::start_on(reader, writer)
+    }
+
+    /// The hub on any reader and writer. A test gives it a stream whose buffer it knows, or a
+    /// writer that fails, so that the test does not depend on the socket buffer of the host.
+    fn start_on(
+        reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+        writer: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
+    ) -> (Self, RawConnection) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let hub = Self(sender);
         let mut router = Router {
@@ -330,7 +340,7 @@ impl PipeHub {
         };
         let client = router.add_client(None);
         tokio::spawn(async move {
-            if let Err(error) = router.run(socket, receiver).await {
+            if let Err(error) = router.run(reader, writer, receiver).await {
                 tracing::debug!(%error, "private browser pipe closed");
             }
         });
@@ -489,8 +499,13 @@ impl Router {
         let _ = state.incoming.send(Ok(Message::Text(text.into())));
     }
 
-    async fn run(&mut self, socket: tokio::net::UnixStream, commands: mpsc::UnboundedReceiver<Command>) -> Result<()> {
-        let result = self.run_inner(socket, commands).await;
+    async fn run(
+        &mut self,
+        reader: impl tokio::io::AsyncRead + Unpin,
+        writer: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
+        commands: mpsc::UnboundedReceiver<Command>,
+    ) -> Result<()> {
+        let result = self.run_inner(reader, writer, commands).await;
         if let Err(error) = &result {
             for state in self.clients.values() {
                 let failure = match error {
@@ -505,10 +520,10 @@ impl Router {
 
     async fn run_inner(
         &mut self,
-        socket: tokio::net::UnixStream,
+        mut reader: impl tokio::io::AsyncRead + Unpin,
+        writer: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
         mut commands: mpsc::UnboundedReceiver<Command>,
     ) -> Result<()> {
-        let (mut reader, writer) = socket.into_split();
         let (writes, queued) = mpsc::unbounded_channel();
         let mut writer = WriterTask(tokio::spawn(Self::write_commands(writer, queued)));
         let mut pending_bytes = Vec::with_capacity(READ_BUFFER_SIZE);
@@ -965,12 +980,15 @@ mod tests {
     /// ~keep each round of the scheduler. Under a flood that needs an answer for each request the
     /// ~keep answers left at a few hundred a second, and each read of the page waited behind them
     /// ~keep until its timeout (the two flood tests of `test_browser_ssrf_whole_fetch`). The test
-    /// ~keep gives the hub and the writer three rounds for a thousand commands.
+    /// ~keep gives the hub and the writer three rounds for a thousand commands. The stream is an
+    /// ~keep in-memory one whose buffer holds every command: a socket's buffer depends on the host
+    /// ~keep (macOS takes 70 of the 1000 before the peer reads).
     #[tokio::test]
     async fn every_queued_command_is_written_within_three_rounds_of_the_scheduler() {
         const COMMANDS: u64 = 1000;
-        let (socket, peer) = tokio::net::UnixStream::pair().expect("socket pair");
-        let (_, mut client) = PipeHub::start(socket);
+        let (stream, mut peer) = tokio::io::duplex(4 * 1024 * 1024);
+        let (reader, writer) = tokio::io::split(stream);
+        let (_, mut client) = PipeHub::start_on(reader, writer);
         for number in 0..COMMANDS {
             let command = serde_json::json!({
                 "id": number,
@@ -988,11 +1006,10 @@ mod tests {
         }
         let mut received = 0;
         let mut buffer = [0; READ_BUFFER_SIZE];
-        loop {
-            match peer.try_read(&mut buffer) {
+        while let Some(read) = peer.read(&mut buffer).now_or_never() {
+            match read {
                 Ok(0) => panic!("the pipe stays open"),
                 Ok(count) => received += buffer[..count].iter().filter(|byte| **byte == 0).count() as u64,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(error) => panic!("read commands: {error}"),
             }
         }
@@ -1137,15 +1154,39 @@ mod tests {
         );
     }
 
-    /// ~keep The peer stops reading and keeps its writing end open, so only the write fails.
+    /// ~keep The writer fails with BrokenPipe on the real writer task and hub path, while the
+    /// ~keep reader stays open: only the write fails. A socket whose peer shut its read side does
+    /// ~keep not fail the write on every host (macOS keeps it pending).
     #[tokio::test]
     async fn a_failed_write_reaches_the_client_as_an_error_on_its_stream() {
-        let (socket, peer) = tokio::net::UnixStream::pair().expect("socket pair");
-        let peer = peer.into_std().expect("std socket");
-        peer.shutdown(std::net::Shutdown::Read).expect("the peer stops reading");
-        let (_, mut client) = PipeHub::start(socket);
+        struct BrokenWriter;
+
+        impl tokio::io::AsyncWrite for BrokenWriter {
+            fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<std::io::Result<usize>> {
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "the peer is gone",
+                )))
+            }
+
+            fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let (stream, _peer_keeps_the_read_side_open) = tokio::io::duplex(READ_BUFFER_SIZE);
+        let (reader, _) = tokio::io::split(stream);
+        let (_, mut client) = PipeHub::start_on(reader, BrokenWriter);
         client
-            .send(large_command())
+            .send(Message::Text(
+                "{\"id\":1,\"method\":\"Browser.getVersion\",\"params\":{}}"
+                    .to_owned()
+                    .into(),
+            ))
             .now_or_never()
             .expect("the sink takes a command with no wait for the peer")
             .expect("command queued");
