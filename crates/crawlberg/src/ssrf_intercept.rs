@@ -2565,6 +2565,43 @@ where
                         }
                         continue;
                     }
+                    Some("Page.javascriptDialogOpening") => {
+                        // ~keep Close a dialog that a popup opened. A popup shares the renderer of
+                        // ~keep its page, so its open dialog stops every read of that page until the
+                        // ~keep browser timeout (xberg-io/crawlberg#683). The watch answers the
+                        // ~keep dialogs of the page it opened; two answers could close a later dialog
+                        // ~keep with the wrong choice. The reply is not awaited: a popup can close
+                        // ~keep under its dialog, and a reply with an unknown id is skipped above.
+                        let popup = value
+                            .get("sessionId")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|session| {
+                                session_targets
+                                    .get(*session)
+                                    .is_some_and(|target| !lock(&shared.registry).opened.contains_key(target))
+                            });
+                        if let Some(session) = popup {
+                            let accept = serde_json::from_value::<DialogType>(value["params"]["type"].clone())
+                                .is_ok_and(|kind| dialog_is_accepted(&kind));
+                            let Some(id) = child_command_id(&mut next_id) else { return false };
+                            if child_socket_write(
+                                &mut socket,
+                                child_message(
+                                    id,
+                                    "Page.handleJavaScriptDialog",
+                                    serde_json::json!({ "accept": accept }),
+                                    Some(session),
+                                ),
+                                command_timeout,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                return false;
+                            }
+                        }
+                        continue;
+                    }
                     Some("Target.attachedToTarget") => {}
                     _ => continue,
                 }
@@ -2688,6 +2725,25 @@ where
                     .and_then(|session| structural_sessions.get_mut(session))
                 {
                     parent.authorized = true;
+                }
+                // ~keep Chrome reports a dialog only to a session that has the Page domain on, and
+                // ~keep does not report an open dialog again. The popup is still held here, so the
+                // ~keep domain is on before the resume and no dialog of it can open unreported.
+                if permitted
+                    && attached.target_info.r#type == "page"
+                    && !lock(&shared.registry).opened.contains_key(&target)
+                {
+                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    if child_socket_write(
+                        &mut socket,
+                        child_message(id, "Page.enable", serde_json::json!({}), Some(&attached.session_id)),
+                        command_timeout,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return false;
+                    }
                 }
                 let Some(id) = child_command_id(&mut next_id) else { return false };
                 if child_socket_write(&mut socket, child_message(
@@ -5422,6 +5478,9 @@ mod tests {
             Some("S-TAB"),
         )
         .await;
+        let page_dialogs = next_child_message(&mut socket).await;
+        assert_eq!(page_dialogs["method"], "Page.enable");
+        assert_eq!(page_dialogs["sessionId"], "S-PAGE");
         let page_arm = next_child_message(&mut socket).await;
         assert_eq!(page_arm["method"], "Target.setAutoAttach");
         assert_eq!(page_arm["sessionId"], "S-PAGE");
@@ -5597,6 +5656,173 @@ mod tests {
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
         assert_eq!(resume["sessionId"], "S-NOOPENER");
         answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A controller with the watched page `ROOT` armed and resumed, and its popup `POPUP` attached
+    /// on the session `S-POPUP`. Returns the commands the controller wrote for the popup before
+    /// its arm was answered, and the arm.
+    async fn child_controller_with_a_popup(
+        command_timeout: Duration,
+    ) -> (
+        TestChildSocket,
+        mpsc::Sender<super::ChildCommand>,
+        tokio::task::JoinHandle<bool>,
+        Vec<serde_json::Value>,
+    ) {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, command_timeout).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        send_attached_target_of_type(&mut socket, "S-POPUP", "POPUP", "page", Some("ROOT"), &context).await;
+        let before_the_arm_reply = vec![
+            next_child_message(&mut socket).await,
+            next_child_message(&mut socket).await,
+        ];
+        (socket, commands, controller, before_the_arm_reply)
+    }
+
+    async fn send_dialog_opening(socket: &mut TestChildSocket, session: &str, kind: &str) {
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "method": "Page.javascriptDialogOpening",
+                    "sessionId": session,
+                    "params": {
+                        "url": "http://a.localhost/popup",
+                        "frameId": "POPUP",
+                        "message": "a",
+                        "type": kind,
+                        "hasBrowserHandledBeforeUnload": false,
+                    },
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send the dialog event");
+    }
+
+    /// A popup reports its dialogs from its first script: the Page domain of its session is on
+    /// before the popup is resumed. The watched page gets no such command: its watch has a
+    /// listener of its own.
+    #[tokio::test]
+    async fn a_popup_reports_its_dialogs_before_it_is_resumed() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        assert_eq!(written[0]["method"], "Page.enable");
+        assert_eq!(written[0]["sessionId"], "S-POPUP");
+        assert_eq!(written[1]["method"], "Target.setAutoAttach");
+        assert_eq!(written[1]["sessionId"], "S-POPUP");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the popup resumed before its recursive boundary was acknowledged"
+        );
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-POPUP");
+        answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A dialog of a popup is closed on the popup's session: an alert is dismissed and a
+    /// `beforeunload` dialog is accepted, as the watch does for its page. A dialog of the watched
+    /// page, and one of a session the controller does not know, get no answer from the controller.
+    #[tokio::test]
+    async fn a_dialog_of_a_popup_is_closed_on_its_session() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        for (kind, accept) in [
+            ("alert", false),
+            ("confirm", false),
+            ("prompt", false),
+            ("beforeunload", true),
+        ] {
+            send_dialog_opening(&mut socket, "S-POPUP", kind).await;
+            let answer = next_child_message(&mut socket).await;
+            assert_eq!(answer["method"], "Page.handleJavaScriptDialog", "{kind}");
+            assert_eq!(answer["sessionId"], "S-POPUP", "{kind}");
+            assert_eq!(answer["params"], serde_json::json!({ "accept": accept }), "{kind}");
+            answer_child_command(&mut socket, &answer).await;
+        }
+        for session in ["S-ROOT", "S-UNKNOWN"] {
+            send_dialog_opening(&mut socket, session, "alert").await;
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), socket.next())
+                    .await
+                    .is_err(),
+                "the controller answered a dialog of {session}"
+            );
+        }
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A popup can close under its open dialog. The error reply to the answer, the error reply to
+    /// the Page domain command and a reply that never comes do not stop the controller.
+    #[tokio::test]
+    async fn a_refused_answer_to_a_popup_dialog_does_not_stop_the_controller() {
+        let timeout = Duration::from_millis(100);
+        let (mut socket, commands, controller, written) = child_controller_with_a_popup(timeout).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        send_dialog_opening(&mut socket, "S-POPUP", "alert").await;
+        let refused = next_child_message(&mut socket).await;
+        assert_eq!(refused["method"], "Page.handleJavaScriptDialog");
+        send_dialog_opening(&mut socket, "S-POPUP", "alert").await;
+        let unanswered = next_child_message(&mut socket).await;
+        assert_eq!(unanswered["method"], "Page.handleJavaScriptDialog");
+        for command in [&written[0], &refused] {
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "id": command["id"],
+                        "error": { "code": -32000, "message": "No dialog is showing" },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("send the error reply");
+        }
+        tokio::time::sleep(timeout * 3).await;
+        assert!(
+            !controller.is_finished(),
+            "the controller stopped on a reply to a dialog command, or on its missing reply"
+        );
 
         commands
             .send(super::ChildCommand::Stop)

@@ -592,3 +592,76 @@ async fn a_script_result_that_holds_half_of_a_surrogate_pair_is_returned() {
     }
     rows.finish();
 }
+
+/// Whether `site` got a request for the popup. The popup loads beside the page, so the request
+/// can come a moment after the page is returned.
+async fn popup_was_requested(site: &MockServer) -> bool {
+    for _ in 0..40 {
+        let requests = site.received_requests().await.unwrap_or_default();
+        if requests.iter().any(|request| request.url.path() == "/popup") {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// A dialog that a popup opens does not hold the page that opened the popup: the popup of the
+/// same site, of another site, one that the page opens with `noopener`, and one that opens two
+/// dialogs. Each row also checks that the popup was loaded, so the row is not a page with no
+/// popup at all.
+#[tokio::test]
+async fn a_dialog_in_a_popup_does_not_hold_the_page() {
+    let mut rows = Rows::new("a_dialog_in_a_popup_does_not_hold_the_page");
+    let two = "[alert('a'), confirm('b')].length";
+    let cases = DIALOG_CALLS
+        .into_iter()
+        .map(|(call, _)| (call, "the same site", ""))
+        .chain([
+            ("alert('a')", "another site", ""),
+            ("alert('a')", "the same site", ", '_blank', 'noopener'"),
+            (two, "the same site", ""),
+        ]);
+    let expected = ["host text", "text after the popup"];
+    for (call, popup_site, features) in cases {
+        let site = MockServer::start().await;
+        let popup_origin = if popup_site == "another site" {
+            as_another_site(&site)
+        } else {
+            site.uri()
+        };
+        let host = format!(
+            "<!doctype html><html><body><p>host text</p>\
+             <script>window.open('{popup_origin}/popup'{features});</script>\
+             <p>text after the popup</p></body></html>"
+        );
+        for (route, body) in [("/", host), ("/popup", dialog_page(call))] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/html; charset=utf-8"))
+                .mount(&site)
+                .await;
+        }
+        let noopener = if features.is_empty() {
+            ""
+        } else {
+            " opened with noopener"
+        };
+        let row = format!("{call} in a popup of {popup_site}{noopener}");
+        if !rows
+            .scrape(&row, config(BrowserMode::Always), &site.uri(), &expected)
+            .await
+        {
+            return;
+        }
+        if !popup_was_requested(&site).await {
+            rows.failures.push(format!("{row}: the popup was not loaded"));
+        }
+        if call == "alert('a')" && popup_site == "the same site" && features.is_empty() {
+            let row = format!("{row}, in an interact session");
+            rows.interact(&row, &site.uri(), vec![PageAction::Scrape], &expected)
+                .await;
+        }
+    }
+    rows.finish();
+}

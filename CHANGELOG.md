@@ -170,6 +170,11 @@ All notable changes to crawlberg are documented here.
   from the `confirm` and `null` from the `prompt`. A `beforeunload` dialog is accepted, so the
   navigation that opened it goes on. The text of a dialog is not part of the page and is not
   returned. (#602)
+- Browser mode lost a page that opens a popup window when the popup opens a JavaScript dialog.
+  The popup runs beside the page that opened it, and nothing answered its dialog, so `scrape`,
+  `crawl` and `interact` failed with a browser timeout after the full `browser.timeout`. Browser
+  mode now closes a dialog of a popup by the same rule as a dialog of the page, and returns the
+  page. (#683)
 - Browser mode lost a page whose text holds one half of a surrogate pair, such as a string that
   a script cut in the middle of an emoji. The reply from Chrome could not be read, and the
   call failed with a browser timeout after the full `browser.timeout`. The page is now
