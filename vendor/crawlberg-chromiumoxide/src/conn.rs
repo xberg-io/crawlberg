@@ -157,7 +157,9 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
     }
 }
 
-/// Parse one protocol message, as the connection parses each message it receives.
+/// Parse one protocol message, as the connection parses each message it receives. The private
+/// pipe of an owned Chrome parses each of its frames with it too, so both transports read a
+/// message the same way.
 ///
 /// Chrome writes a JavaScript string as the page built it, so one half of a surrogate pair
 /// arrives as a lone `\ud83d` escape. `serde_json` refuses that escape in a `String`, so the
@@ -167,7 +169,7 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
 ///
 /// A message that `serde_json` reads is returned as `serde_json` read it: the text is searched
 /// and parsed a second time only after a refusal.
-fn parse_message<M: serde::de::DeserializeOwned>(text: &str) -> serde_json::Result<M> {
+pub(crate) fn parse_message<M: serde::de::DeserializeOwned>(text: &str) -> serde_json::Result<M> {
     serde_json::from_str(text).or_else(|error| match replace_unpaired_surrogate_escapes(text) {
         Some(repaired) => serde_json::from_str(&repaired),
         None => Err(error),
