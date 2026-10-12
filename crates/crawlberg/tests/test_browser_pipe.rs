@@ -234,7 +234,7 @@ async fn browser_firewall_keeps_child_requests_guarded_over_the_private_pipe() {
 /// its profile. A process of its own runs the crawl, so that a test can end that process.
 #[cfg(feature = "browser")]
 mod engine_crawl {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
     use super::test_chrome;
@@ -260,6 +260,43 @@ mod engine_crawl {
                 Some((pid.parse().ok()?, args.trim_start().to_owned()))
             })
             .collect()
+    }
+
+    /// The profile directory of the Chrome that the crawl process `owner` started: the
+    /// `--user-data-dir` of the browser process among the descendants of `owner`. `scratch` is
+    /// the `TMPDIR` of the crawl process, and the profile of a Chrome that is not a snap must be
+    /// under it. A snap has a private `/tmp`, so crawlberg puts its profile in the snap's own
+    /// directory, which `scratch` does not name.
+    fn crawl_profile(chrome: &Path, owner: &std::process::Child, scratch: &Path) -> Option<PathBuf> {
+        let table = std::process::Command::new("ps")
+            .args(["-A", "-ww", "-o", "pid=", "-o", "ppid=", "-o", "args="])
+            .output()
+            .expect("ps must be installed to read the process table");
+        assert!(table.status.success(), "ps must list the processes");
+        let table = String::from_utf8_lossy(&table.stdout);
+        let rows: Vec<(u32, u32, &str)> = table
+            .lines()
+            .filter_map(|line| {
+                let (pid, rest) = line.trim_start().split_once(' ')?;
+                let (parent, args) = rest.trim_start().split_once(' ')?;
+                Some((pid.parse().ok()?, parent.parse().ok()?, args))
+            })
+            .collect();
+        let mut family = vec![owner.id()];
+        let mut next = 0;
+        while let Some(&parent) = family.get(next) {
+            family.extend(rows.iter().filter(|row| row.1 == parent).map(|row| row.0));
+            next += 1;
+        }
+        let profile = rows
+            .iter()
+            .filter(|(pid, _, args)| family.iter().skip(1).any(|member| member == pid) && !args.contains("--type="))
+            .find_map(|(_, _, args)| {
+                args.split_whitespace()
+                    .find_map(|arg| arg.strip_prefix("--user-data-dir="))
+            })
+            .map(PathBuf::from)?;
+        (profile.starts_with(scratch) || super::common::is_snap_executable(chrome)).then_some(profile)
     }
 
     /// The TCP sockets that the process `pid` listens on, as `lsof` prints them.
@@ -350,12 +387,13 @@ mod engine_crawl {
         let scratch = tempfile::tempdir().expect("scratch directory");
         let root = scratch.path().canonicalize().expect("scratch path");
         let mut owner = start_crawl_owner(&chrome, &root, false).await;
-        let processes = processes_naming(&root);
+        let profile = crawl_profile(&chrome, &owner, &root).unwrap_or_else(|| root.clone());
+        let processes = processes_naming(&profile);
         let _ = owner.kill();
         let _ = owner.wait();
-        stop_processes_naming(&root);
+        stop_processes_naming(&profile);
 
-        let profile_flag = format!("--user-data-dir={}", root.display());
+        let profile_flag = format!("--user-data-dir={}", profile.display());
         let browsers: Vec<&String> = processes
             .iter()
             .map(|(_, args)| args)
@@ -394,7 +432,8 @@ mod engine_crawl {
         let scratch = tempfile::tempdir().expect("scratch directory");
         let root = scratch.path().canonicalize().expect("scratch path");
         let mut owner = start_crawl_owner(&chrome, &root, true).await;
-        let processes = processes_naming(&root);
+        let profile = crawl_profile(&chrome, &owner, &root).unwrap_or_else(|| root.clone());
+        let processes = processes_naming(&profile);
         let listening: Vec<String> = processes
             .iter()
             .map(|(pid, _)| listening_sockets(*pid))
@@ -402,9 +441,9 @@ mod engine_crawl {
             .collect();
         let _ = owner.kill();
         let _ = owner.wait();
-        stop_processes_naming(&root);
+        stop_processes_naming(&profile);
 
-        let profile_flag = format!("--user-data-dir={}", root.display());
+        let profile_flag = format!("--user-data-dir={}", profile.display());
         let browsers: Vec<&String> = processes
             .iter()
             .map(|(_, args)| args)
@@ -441,7 +480,8 @@ mod engine_crawl {
             let scratch = tempfile::tempdir().expect("scratch directory");
             let root = scratch.path().canonicalize().expect("scratch path");
             let mut owner = start_crawl_owner(&chrome, &root, true).await;
-            let started = processes_naming(&root);
+            let profile = crawl_profile(&chrome, &owner, &root).unwrap_or_else(|| root.clone());
+            let started = processes_naming(&profile);
             // SAFETY: the pid is the one of the live crawl process that this test started. ~keep
             let sent = unsafe { libc::kill(i32::try_from(owner.id()).expect("pid fits"), signal) };
             owner.wait().expect("reap the crawl process");
@@ -452,12 +492,12 @@ mod engine_crawl {
             );
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
-                let left = processes_naming(&root);
+                let left = processes_naming(&profile);
                 if left.is_empty() {
                     break;
                 }
                 if Instant::now() >= deadline {
-                    stop_processes_naming(&root);
+                    stop_processes_naming(&profile);
                     panic!("signal {signal} ended the crawl process, and 10 s later its Chrome still runs: {left:?}");
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
