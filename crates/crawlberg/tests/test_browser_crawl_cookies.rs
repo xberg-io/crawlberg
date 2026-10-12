@@ -607,8 +607,8 @@ async fn last_page_cookies_after_an_http_hop(test_name: &str, hop_cookie: &str) 
 
     assert_eq!(
         pages,
-        owned(&[("/first", 200), ("/last", 200)]),
-        "the first page and the last page are the pages; the hop is a redirect to the last page"
+        owned(&[("/first", 200), ("/hop", 200)]),
+        "the first page and the hop are the pages; the hop is reported by the address the crawl requested (#643) and its chain ends on the last page"
     );
     assert_eq!(
         cookies_sent_by(&site, "/first", true).await.len(),
