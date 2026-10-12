@@ -215,32 +215,36 @@ globalThis.console = {
 
 let _tid = 0;
 const _pendingTimers = new Map();
-const _clearedTimers = new Set();
 
-globalThis.setTimeout = (fn, delay = 0, ...args) => {
-  if (typeof fn !== "function") return ++_tid;
+function _scheduleTimer(fn, delay, args, repeat) {
   const id = ++_tid;
-  _pendingTimers.set(id, { fn, args, delay });
-  Promise.resolve().then(() => {
-    if (!_clearedTimers.has(id) && _pendingTimers.has(id)) {
-      _pendingTimers.delete(id);
+  if (typeof fn !== "function") return id;
+  const timer = Deno.core.createTimer(
+    () => {
+      if (!repeat) _pendingTimers.delete(id);
       try {
         fn(...args);
       } catch (e) {
         console.error("Timer error:", e);
       }
-    }
-  });
+    },
+    delay,
+    undefined,
+    repeat,
+    true,
+    false,
+  );
+  _pendingTimers.set(id, timer);
   return id;
-};
+}
 
+globalThis.setTimeout = (fn, delay = 0, ...args) => _scheduleTimer(fn, delay, args, false);
 globalThis.clearTimeout = (id) => {
-  _clearedTimers.add(id);
+  const timer = _pendingTimers.get(id);
+  if (timer) Deno.core.cancelTimer(timer);
   _pendingTimers.delete(id);
 };
-globalThis.setInterval = (fn, delay, ...args) => {
-  return setTimeout(fn, delay, ...args);
-};
+globalThis.setInterval = (fn, delay = 0, ...args) => _scheduleTimer(fn, delay, args, true);
 globalThis.clearInterval = globalThis.clearTimeout;
 globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
 globalThis.cancelAnimationFrame = globalThis.clearTimeout;
