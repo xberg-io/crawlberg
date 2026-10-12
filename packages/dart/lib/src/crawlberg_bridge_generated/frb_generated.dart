@@ -2816,8 +2816,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 17)
-      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2836,6 +2836,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sessionAffinity: dco_decode_bool(arr[14]),
       chromePath: dco_decode_opt_String(arr[15]),
       chromeArgs: dco_decode_list_String(arr[16]),
+      privatePipe: dco_decode_bool(arr[17]),
     );
   }
 
@@ -4277,6 +4278,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_sessionAffinity = sse_decode_bool(deserializer);
     var var_chromePath = sse_decode_opt_String(deserializer);
     var var_chromeArgs = sse_decode_list_String(deserializer);
+    var var_privatePipe = sse_decode_bool(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4295,6 +4297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sessionAffinity: var_sessionAffinity,
       chromePath: var_chromePath,
       chromeArgs: var_chromeArgs,
+      privatePipe: var_privatePipe,
     );
   }
 
@@ -6261,6 +6264,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.sessionAffinity, serializer);
     sse_encode_opt_String(self.chromePath, serializer);
     sse_encode_list_String(self.chromeArgs, serializer);
+    sse_encode_bool(self.privatePipe, serializer);
   }
 
   @protected
