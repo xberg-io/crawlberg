@@ -352,6 +352,52 @@ mod redirect_error_tests {
     use super::*;
 
     #[test]
+    fn should_return_no_unfollowed_redirect_for_success_with_location() {
+        let response = Response {
+            url: Url::parse("http://example.test/a").expect("response URL"),
+            status: 200,
+            headers: std::collections::HashMap::from([("location".to_owned(), "/b".to_owned())]),
+            body: Vec::new(),
+            redirected_from: Vec::new(),
+        };
+        assert_eq!(unfollowed_redirect(&response).map(|error| error.to_string()), None);
+    }
+
+    #[test]
+    fn should_return_no_unfollowed_redirect_for_non_http_location() {
+        for location in [
+            "mailto:help@example.test",
+            "javascript:alert(1)",
+            "data:text/plain,redirect",
+        ] {
+            let response = Response {
+                url: Url::parse("http://example.test/a").expect("response URL"),
+                status: 301,
+                headers: std::collections::HashMap::from([("location".to_owned(), location.to_owned())]),
+                body: Vec::new(),
+                redirected_from: Vec::new(),
+            };
+            assert_eq!(
+                unfollowed_redirect(&response).map(|error| error.to_string()),
+                None,
+                "location: {location}",
+            );
+        }
+    }
+
+    #[test]
+    fn should_return_no_unfollowed_redirect_without_location() {
+        let response = Response {
+            url: Url::parse("http://example.test/a").expect("response URL"),
+            status: 301,
+            headers: std::collections::HashMap::new(),
+            body: Vec::new(),
+            redirected_from: Vec::new(),
+        };
+        assert_eq!(unfollowed_redirect(&response).map(|error| error.to_string()), None);
+    }
+
+    #[test]
     fn should_compare_credential_free_canonical_redirect_keys() {
         for (earlier, location, visited) in [
             (
