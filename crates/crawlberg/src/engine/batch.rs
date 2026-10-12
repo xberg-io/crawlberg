@@ -777,3 +777,100 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod scheduling_regression_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    #[serial_test::serial(engine_tracing_callsites)]
+    async fn should_preserve_the_callers_trace_scope_when_dispatching_a_ready_batch_operation() {
+        use tracing::Instrument;
+        use tracing::instrument::WithSubscriber;
+        let engine = CrawlEngine::builder().build().unwrap();
+        let results = async {
+            tracing::callsite::rebuild_interest_cache();
+            let parent = tracing::info_span!("batch_operation_parent");
+            assert!(!parent.is_disabled(), "the trace scope control must be active");
+            engine
+                .run_batch(&["https://one.example/"], |_, _| async {
+                    Ok::<_, CrawlError>(
+                        tracing::Span::current()
+                            .metadata()
+                            .map(|metadata| metadata.name().to_owned()),
+                    )
+                })
+                .instrument(parent)
+                .await
+        }
+        .with_subscriber(tracing_subscriber::registry())
+        .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].1.as_ref().unwrap().as_deref(),
+            Some("batch_operation_parent")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn should_run_ready_batch_operations_on_multiple_runtime_workers() {
+        let engine = CrawlEngine::builder().build().unwrap();
+        let live = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let peak = maximum.clone();
+        let results = engine
+            .run_batch(&["https://one.example/", "https://two.example/"], move |_, _| {
+                let live = live.clone();
+                let maximum = maximum.clone();
+                async move {
+                    let active = live.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(active, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    live.fetch_sub(1, Ordering::SeqCst);
+                    Ok::<_, CrawlError>(42)
+                }
+            })
+            .await;
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(_, result)| result.as_ref().unwrap() == &42));
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            2,
+            "ready CPU work must not serialize on the batch coordinator"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn should_bound_engine_batch_operations_by_configured_concurrency() {
+        const CONCURRENCY: usize = 2;
+        const URLS: usize = 7;
+        let config = CrawlConfig::builder().max_concurrent(CONCURRENCY).build();
+        let engine = CrawlEngine::builder().config(config).build().unwrap();
+        let live = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let peak = maximum.clone();
+        let remaining = live.clone();
+        let urls = (0..URLS)
+            .map(|host| format!("https://host{host}.example/"))
+            .collect::<Vec<_>>();
+        let refs = urls.iter().map(String::as_str).collect::<Vec<_>>();
+        let results = engine
+            .run_batch(&refs, move |_, _| {
+                let live = live.clone();
+                let maximum = maximum.clone();
+                async move {
+                    let active = live.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(active, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    live.fetch_sub(1, Ordering::SeqCst);
+                    Ok::<_, CrawlError>(42)
+                }
+            })
+            .await;
+        assert_eq!(results.len(), URLS);
+        assert!(results.iter().all(|(_, result)| result.as_ref().unwrap() == &42));
+        assert_eq!(peak.load(Ordering::SeqCst), CONCURRENCY);
+        assert_eq!(remaining.load(Ordering::SeqCst), 0);
+    }
+}

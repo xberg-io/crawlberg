@@ -94,10 +94,15 @@ pub(super) struct CooperativeContext {
     progress: Option<Arc<SeedProgress>>,
 }
 
+type SeedAcquisition = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<OwnedSemaphorePermit, tokio::sync::AcquireError>> + Send>,
+>;
+
 #[derive(Default)]
 struct ContextState {
     lease: Option<OwnedSemaphorePermit>,
-    acquiring: bool,
+    acquiring: Option<SeedAcquisition>,
+    acquisition_waiters: usize,
     waiting: usize,
     completed: bool,
     parent: std::sync::Weak<ActivityGuard>,
@@ -181,61 +186,65 @@ impl CooperativeContext {
     }
 
     pub(super) async fn activity(self: &Arc<Self>) -> Result<Arc<ActivityGuard>, CrawlError> {
+        let _acquisition = AcquisitionGuard::new(self.clone());
         loop {
             let changed = self.changed.notified();
-            let acquisition = {
-                let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if state.completed {
-                    return Err(CrawlError::other("crawl schedule completed"));
-                }
-                if state.lease.is_some() {
-                    return Ok(self.new_activity());
-                }
-                if state.acquiring {
-                    None
-                } else {
-                    state.acquiring = true;
-                    Some(AcquisitionGuard {
-                        context: self.clone(),
-                        completed: false,
-                    })
-                }
-            };
-            if let Some(mut acquisition) = acquisition {
-                let permit = tokio::select! {
-                    biased;
-                    _ = changed => continue,
-                    permit = self.seeds.clone().acquire_owned() => {
-                        permit.map_err(|_| CrawlError::other("seed slots closed"))?
-                    }
-                };
-                let activity = {
-                    let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if state.completed {
-                        return Err(CrawlError::other("crawl schedule completed"));
-                    }
-                    state.lease = Some(permit);
-                    state.acquiring = false;
-                    self.new_activity()
-                };
-                acquisition.completed = true;
-                self.changed.notify_waiters();
-                return Ok(activity);
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            tokio::select! {
+                biased;
+                result = futures::future::poll_fn(|cx| self.poll_activity(cx)) => return result,
+                () = changed => {}
             }
-            changed.await;
         }
     }
 
+    fn poll_activity(
+        self: &Arc<Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<Arc<ActivityGuard>, CrawlError>> {
+        use std::task::Poll;
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.completed {
+            return Poll::Ready(Err(CrawlError::other("crawl schedule completed")));
+        }
+        if state.lease.is_some() {
+            return Poll::Ready(Ok(self.new_activity()));
+        }
+        // ~keep Any caller must drive the one shared reservation: the first caller may be
+        // parked in an inner host stream while the outer crawl waits for this same lease.
+        let acquiring = state
+            .acquiring
+            .get_or_insert_with(|| Box::pin(self.seeds.clone().acquire_owned()));
+        let permit = match acquiring.as_mut().poll(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(permit) => permit,
+        };
+        state.acquiring.take();
+        let result = permit
+            .map(|permit| {
+                state.lease = Some(permit);
+                self.new_activity()
+            })
+            .map_err(|_| CrawlError::other("seed slots closed"));
+        drop(state);
+        self.changed.notify_waiters();
+        Poll::Ready(result)
+    }
+
     pub(super) fn complete(&self) {
-        let permit = {
+        let (permit, acquiring) = {
             let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             state.completed = true;
-            if self.active.load(Ordering::SeqCst) == 0 {
+            let acquiring = state.acquiring.take();
+            let permit = if self.active.load(Ordering::SeqCst) == 0 {
                 state.lease.take()
             } else {
                 None
-            }
+            };
+            (permit, acquiring)
         };
+        drop(acquiring);
         drop(permit);
         self.changed.notify_waiters();
         self.wake_progress();
@@ -282,19 +291,38 @@ impl Drop for HostWait {
 
 struct AcquisitionGuard {
     context: Arc<CooperativeContext>,
-    completed: bool,
+}
+
+impl AcquisitionGuard {
+    fn new(context: Arc<CooperativeContext>) -> Self {
+        context
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .acquisition_waiters += 1;
+        Self { context }
+    }
 }
 
 impl Drop for AcquisitionGuard {
     fn drop(&mut self) {
-        if !self.completed {
-            self.context
+        let acquiring = {
+            let mut state = self
+                .context
                 .state
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .acquiring = false;
-            self.context.changed.notify_waiters();
-        }
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.acquisition_waiters -= 1;
+            if state.acquisition_waiters == 0 {
+                state.acquiring.take()
+            } else {
+                None
+            }
+        };
+        drop(acquiring);
+        // ~keep The shared reservation holds the latest poller's waker, which may have
+        // been cancelled. Surviving callers must repoll to register a live waker.
+        self.context.changed.notify_waiters();
     }
 }
 
@@ -813,5 +841,80 @@ mod tests {
         occupied.complete();
         drop(live);
         assert_eq!(seeds.available_permits(), 1);
+    }
+}
+
+#[cfg(test)]
+mod acquisition_progress_regressions {
+    use super::*;
+    use futures::FutureExt;
+
+    #[tokio::test]
+    async fn should_finish_a_context_acquisition_from_any_waiter_when_its_first_waiter_is_parked() {
+        let slots = Arc::new(Semaphore::new(1));
+        let occupied = slots.clone().acquire_owned().await.unwrap();
+        let context = CooperativeContext::new(slots.clone());
+        let mut first = Box::pin(context.activity());
+        assert!(first.as_mut().now_or_never().is_none());
+        drop(occupied);
+        assert_eq!(slots.available_permits(), 0, "the first waiter owns a reserved permit");
+        let second = tokio::time::timeout(std::time::Duration::from_millis(100), context.activity())
+            .await
+            .expect("another waiter must drive the reserved acquisition without polling the parked caller")
+            .unwrap();
+        let first = first.await.unwrap();
+        assert_eq!(context.active.load(Ordering::SeqCst), 2);
+        assert_eq!(slots.available_permits(), 0);
+        context.complete();
+        drop(first);
+        drop(second);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_wake_a_surviving_waiter_when_the_last_poller_is_cancelled() {
+        let slots = Arc::new(Semaphore::new(1));
+        let occupied = slots.clone().acquire_owned().await.unwrap();
+        let context = CooperativeContext::new(slots.clone());
+        let first_context = context.clone();
+        let mut first = tokio::spawn(async move { first_context.activity().await });
+        tokio::task::yield_now().await;
+        assert_eq!(context.state.lock().unwrap().acquisition_waiters, 1);
+        let second_context = context.clone();
+        let second = tokio::spawn(async move { second_context.activity().await });
+        tokio::task::yield_now().await;
+        assert_eq!(context.state.lock().unwrap().acquisition_waiters, 2);
+        second.abort();
+        assert!(matches!(second.await, Err(error) if error.is_cancelled()));
+        assert_eq!(context.state.lock().unwrap().acquisition_waiters, 1);
+        drop(occupied);
+        let admitted = tokio::time::timeout(std::time::Duration::from_millis(100), &mut first).await;
+        if admitted.is_err() {
+            first.abort();
+            assert!(matches!(first.await, Err(error) if error.is_cancelled()));
+        }
+        let admitted = admitted
+            .expect("the surviving waiter must receive the permit after its latest poller is cancelled")
+            .unwrap()
+            .unwrap();
+        assert_eq!(context.active.load(Ordering::SeqCst), 1);
+        assert_eq!(slots.available_permits(), 0);
+        context.complete();
+        drop(admitted);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_release_a_reserved_seed_slot_when_the_last_activity_waiter_is_cancelled() {
+        let slots = Arc::new(Semaphore::new(1));
+        let occupied = slots.clone().acquire_owned().await.unwrap();
+        let context = CooperativeContext::new(slots.clone());
+        let mut pending = Box::pin(context.activity());
+        assert!(pending.as_mut().now_or_never().is_none());
+        drop(occupied);
+        assert_eq!(slots.available_permits(), 0);
+        drop(pending);
+        assert_eq!(slots.available_permits(), 1);
+        context.complete();
     }
 }

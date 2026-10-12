@@ -241,7 +241,8 @@ where
     Fut: Future<Output = Result<super::host_turn::HostStep<J, T>, CrawlError>> + Send + 'static,
 {
     use super::host_turn::{HostJob, HostStep, HostTurns};
-    use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
+    use futures::FutureExt;
+    use tracing::{Instrument, instrument::WithSubscriber};
     let mut turns = HostTurns::new(limiter);
     for (id, job) in jobs.into_iter().enumerate() {
         turns.push(
@@ -259,21 +260,28 @@ where
         );
     }
     let operation = Arc::new(operation);
-    let mut active = FuturesUnordered::new();
+    let mut active = tokio::task::JoinSet::new();
+    let mut task_inputs = std::collections::HashMap::new();
     let mut results = Vec::new();
     while !active.is_empty() || !turns.is_empty() {
         tokio::select! {
             turn = turns.next(), if active.len() < concurrency && !turns.is_empty() => {
                 let (id, job, grant) = turn.expect("a pending continuation host turn");
                 let operation = Arc::clone(&operation);
-                active.push(async move {
+                let task = active.spawn(async move {
                     let context = job.context.clone();
                     let result = std::panic::AssertUnwindSafe(advance_job(job, grant, operation)).catch_unwind().await;
-                    (id, result.unwrap_or_else(|_| Err(TurnError::Panicked.into_error(&context))))
-                });
+                    result.unwrap_or_else(|_| Err(TurnError::Panicked.into_error(&context)))
+                }.in_current_span().with_current_subscriber());
+                task_inputs.insert(task.id(), id);
             }
-            completed = active.next(), if !active.is_empty() => {
-                let (id, result) = completed.expect("an active continuation");
+            completed = active.join_next_with_id(), if !active.is_empty() => {
+                let completed = completed.expect("an active continuation task");
+                let task_id = match &completed { Ok((task_id, _)) => *task_id, Err(error) => error.id() };
+                let id = task_inputs.remove(&task_id).expect("each spawned continuation retains its input");
+                let result = completed.map(|(_, result)| result).unwrap_or_else(|error| {
+                    Err(CrawlError::other_with_source(format!("batch task failed while processing {}", context(id)), error))
+                });
                 match result {
                     Ok(HostStep::Continue(job)) => {
                         let limiter = match &job.data.state {
