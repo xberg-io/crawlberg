@@ -218,6 +218,10 @@ pub(crate) trait HopPolicy {
     /// `Err` refuses `url`, which is then never requested, and ends the fetch with that error.
     /// `is_redirect_hop` is `false` for the URL the fetch starts from and `true` for each hop.
     async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError>;
+
+    async fn received(&mut self, _url: &url::Url, _status: u16) -> Result<(), CrawlError> {
+        Ok(())
+    }
 }
 
 /// A fetch with no check beyond the SSRF policy.
@@ -225,6 +229,36 @@ pub(crate) struct AdmitEvery;
 
 impl HopPolicy for AdmitEvery {
     async fn admit(&mut self, _url: &url::Url, _is_redirect_hop: bool) -> Result<(), CrawlError> {
+        Ok(())
+    }
+}
+
+/// Apply an engine's politeness to every hop of a substrate fetch.
+pub(crate) struct RateLimited<'a, P> {
+    inner: P,
+    limiter: Option<&'a dyn crate::traits::RateLimiter>,
+}
+
+impl<'a, P> RateLimited<'a, P> {
+    pub(crate) fn new(inner: P, limiter: Option<&'a dyn crate::traits::RateLimiter>) -> Self {
+        Self { inner, limiter }
+    }
+}
+
+impl<P: HopPolicy> HopPolicy for RateLimited<'_, P> {
+    async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError> {
+        self.inner.admit(url, is_redirect_hop).await?;
+        if let (Some(limiter), Some(host)) = (self.limiter, url.host_str()) {
+            limiter.acquire(host).await?;
+        }
+        Ok(())
+    }
+
+    async fn received(&mut self, url: &url::Url, status: u16) -> Result<(), CrawlError> {
+        self.inner.received(url, status).await?;
+        if let (Some(limiter), Some(host)) = (self.limiter, url.host_str()) {
+            limiter.record_response(host, status).await?;
+        }
         Ok(())
     }
 }
@@ -292,10 +326,11 @@ pub(crate) async fn http_fetch_with(
 
 /// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
 /// without its whole-line comments, at any size up to the classifier's body limit.
-pub(crate) async fn http_fetch_robots_txt(
+pub(crate) async fn http_fetch_robots_txt_with_policy(
     url: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    policy: &mut impl HopPolicy,
 ) -> Result<HttpResponse, CrawlError> {
     fetch_as(
         url,
@@ -304,7 +339,7 @@ pub(crate) async fn http_fetch_robots_txt(
         client,
         RefreshRedirects::Ignore,
         Fetched::RobotsTxt,
-        &mut AdmitEvery,
+        policy,
     )
     .await
     .map(|page| page.response)
@@ -312,10 +347,11 @@ pub(crate) async fn http_fetch_robots_txt(
 
 /// [`http_fetch`] for a sitemap: a 2xx body that reads as a sitemap document is returned whatever
 /// its URLs say, and any other body gets the page decision.
-pub(crate) async fn http_fetch_sitemap(
+pub(crate) async fn http_fetch_sitemap_with_policy(
     url: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    policy: &mut impl HopPolicy,
 ) -> Result<HttpResponse, CrawlError> {
     fetch_as(
         url,
@@ -324,7 +360,7 @@ pub(crate) async fn http_fetch_sitemap(
         client,
         RefreshRedirects::Ignore,
         Fetched::Sitemap,
-        &mut AdmitEvery,
+        policy,
     )
     .await
     .map(|page| page.response)
@@ -360,7 +396,7 @@ async fn fetch_as(
         policy.admit(&current_url, redirects_followed > 0).await?;
         let hop_left = redirects_followed < config.max_redirects;
         let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
-        let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
+        let outcome = match fetch_one_hop(&context, &current_url, follows_location, policy).await {
             Ok(outcome) => outcome,
             Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
                 return Ok(FetchedPage::unread(not_found_response(&current_url)));
@@ -394,7 +430,7 @@ async fn fetch_as(
         // fixtures/schema.json contract) and is not read at runtime -- SSRF safety itself is
         // unaffected because every redirect target is still validated by `validate_url` above.
         if redirects_followed > config.max_redirects {
-            return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
+            reject_redirect(&next_url, true, false)?;
         }
 
         rules.insert(&next_url);
@@ -415,16 +451,12 @@ pub(crate) fn reject_redirect(target: &url::Url, unseen: bool, hop_left: bool) -
 }
 
 pub(crate) fn redirect_error(target: &url::Url, unseen: bool) -> CrawlError {
-    let mut error = CrawlError::from(crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target));
-    if let CrawlError::SsrfPolicyViolation { reason, .. } = &mut error {
-        *reason = if unseen {
-            "redirect limit exceeded"
-        } else {
-            "redirect loop"
-        }
-        .to_owned();
-    }
-    error
+    let message = if unseen {
+        "redirect limit exceeded"
+    } else {
+        "redirect loop"
+    };
+    CrawlError::too_many_redirects_with_source(message, crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target))
 }
 
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
@@ -504,10 +536,12 @@ async fn fetch_one_hop(
     context: &FetchContext<'_>,
     current_url: &url::Url,
     follows_location: impl Fn(u16, &url::Url) -> Result<bool, CrawlError>,
+    policy: &mut impl HopPolicy,
 ) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     body::validate_content_encoding(resp.headers())?;
     let head = ResponseHead::from_response(&resp);
+    policy.received(current_url, head.status).await?;
 
     if (300..400).contains(&head.status)
         && let Some(target) = redirect_target(current_url, &head.headers)
@@ -771,6 +805,25 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    #[test]
+    fn redirect_exhaustion_preserves_redacted_network_source() {
+        use std::error::Error as _;
+        let target = url::Url::parse("https://user:secret@example.com/hop").expect("valid target");
+        for (unseen, hop_left, expected) in [(false, true, "redirect loop"), (true, false, "redirect limit exceeded")] {
+            let error = reject_redirect(&target, unseen, hop_left).expect_err("must reject exhaustion");
+            assert!(matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == expected));
+            let source = error
+                .source()
+                .and_then(|source| source.source())
+                .and_then(|source| source.downcast_ref::<crate::error::UrlSsrfError>())
+                .expect("URL-aware network source must survive");
+            assert_eq!(source.url, "https://***:***@example.com/hop");
+            assert!(matches!(source.source, crate::net::ssrf::SsrfError::TooManyRedirects));
+            assert!(!format!("{error:?}").contains("secret"));
+        }
+        assert!(reject_redirect(&target, true, true).is_ok());
+    }
+
     async fn truncated_body_reqwest_error() -> reqwest::Error {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
         let address = listener.local_addr().expect("listener must have an address");
@@ -1000,8 +1053,8 @@ mod tests {
             Ok(_) => panic!("must stop once the second hop exceeds max_redirects(1), got Ok"),
         };
         assert!(
-            matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
-            "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
+            matches!(err, CrawlError::TooManyRedirects { ref message, .. } if message == "redirect limit exceeded"),
+            "expected TooManyRedirects, got {err:?}"
         );
     }
 

@@ -139,7 +139,7 @@ async fn scrape_stops_on_redirect_cycle() {
 
     let error = result.expect_err("a redirect cycle must fail the scrape");
     assert!(
-        matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect loop"),
+        matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == "redirect loop"),
         "the error must name the redirect loop: {error:?}"
     );
 }
@@ -244,7 +244,7 @@ async fn scrape_stops_at_max_redirects() {
 
     let error = result.expect_err("a chain longer than max_redirects must fail the scrape");
     assert!(
-        matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect limit exceeded"),
+        matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == "redirect limit exceeded"),
         "the error must name the redirect limit: {error:?}"
     );
 }

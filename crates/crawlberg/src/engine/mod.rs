@@ -58,6 +58,7 @@ pub struct CrawlEngine {
     pub(crate) config: CrawlConfig,
     pub(crate) frontier: Arc<dyn Frontier>,
     pub(crate) rate_limiter: Arc<dyn RateLimiter>,
+    pub(crate) map_rate_limiter: Arc<dyn RateLimiter>,
     /// The rate limiter of the browser paths (the Chrome page and the native render). It is
     /// `rate_limiter` when the caller set `rate_limit_ms` or installed a limiter, and a limiter
     /// that grants every turn at once otherwise: with the default settings, browser mode loads
@@ -100,6 +101,7 @@ pub struct CrawlEngine {
 #[derive(Clone)]
 pub(crate) struct Politeness {
     rate_limiter: Arc<dyn RateLimiter>,
+    map_rate_limiter: Arc<dyn RateLimiter>,
     #[cfg(any(feature = "browser", feature = "browser-native"))]
     browser_rate_limiter: Arc<dyn RateLimiter>,
     robots_cache: Arc<robots_cache::RobotsCache>,
@@ -111,10 +113,15 @@ impl CrawlEngine {
     pub(crate) fn politeness(&self) -> Politeness {
         Politeness {
             rate_limiter: self.rate_limiter.clone(),
+            map_rate_limiter: self.map_rate_limiter.clone(),
             #[cfg(any(feature = "browser", feature = "browser-native"))]
             browser_rate_limiter: self.browser_rate_limiter.clone(),
             robots_cache: self.robots_cache.clone(),
         }
+    }
+
+    pub(crate) fn map_rate_limiter(&self) -> &dyn RateLimiter {
+        self.map_rate_limiter.as_ref()
     }
 
     /// Create a new [`CrawlEngineBuilder`].

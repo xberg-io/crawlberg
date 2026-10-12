@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use url::{Position, Url};
 
 use crate::error::CrawlError;
-use crate::http::http_fetch_robots_txt;
 use crate::robots::{RobotsRules, is_path_allowed, parse_robots_txt};
 use crate::types::CrawlConfig;
 
@@ -458,6 +457,16 @@ pub(crate) async fn fetch_robots_document(
     client: &reqwest::Client,
     user_agent: &str,
 ) -> (RobotsOutcome, Option<String>) {
+    fetch_robots_document_with_policy(url, config, client, user_agent, &mut crate::http::AdmitEvery).await
+}
+
+pub(crate) async fn fetch_robots_document_with_policy(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+    user_agent: &str,
+    policy: &mut impl crate::http::HopPolicy,
+) -> (RobotsOutcome, Option<String>) {
     let Ok(parsed) = Url::parse(url) else {
         let outcome = RobotsOutcome::DisallowAll {
             reason: format!("invalid URL: {}", crate::net::redact_url_credentials(url)),
@@ -469,7 +478,7 @@ pub(crate) async fn fetch_robots_document(
     // from `host_str()` instead sent every port-bearing seed's robots request to the default
     // port, where it failed and silently degraded to "no rules".
     let robots_url = crate::normalize::robots_url(&parsed);
-    match http_fetch_robots_txt(&robots_url, config, client).await {
+    match crate::http::http_fetch_robots_txt_with_policy(&robots_url, config, client, policy).await {
         Ok(resp) if resp.status >= 500 => {
             let outcome = RobotsOutcome::DisallowAll {
                 reason: format!("robots.txt returned HTTP {}", resp.status),

@@ -10,7 +10,6 @@ use super::CrawlEngine;
 use super::chain_claim::ChainClaim;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
-use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
 use crate::html::{
     PageScan, effective_base_url, immediate_meta_refresh, immediate_refresh_target, mask_raw_text_markup,
@@ -141,6 +140,7 @@ pub(crate) struct RedirectPolicy<'a> {
     /// What this policy's one chain holds on the frontier: its starting URL and every hop it
     /// claimed.
     chain: ChainClaim,
+    pub(crate) robots_limiter: Option<&'a dyn crate::traits::RateLimiter>,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -161,6 +161,7 @@ impl<'a> RedirectPolicy<'a> {
             urls_filtered: 0,
             pending_user_agent: None,
             chain: ChainClaim::default(),
+            robots_limiter: None,
         }
     }
 
@@ -209,7 +210,17 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep rather than behind it. Publishing it before the block check above would make
         // ~keep a refused URL wait out a delay for a request that is never sent.
         if first_visit {
-            self.engine.apply_crawl_delay(&outcome, &parsed).await?;
+            if let Some(limiter) = self.robots_limiter {
+                if let Some(delay) = outcome.rules().and_then(|rules| rules.crawl_delay)
+                    && let Some(domain) = parsed.host_str()
+                {
+                    limiter
+                        .set_crawl_delay(domain, std::time::Duration::from_secs(delay))
+                        .await?;
+                }
+            } else {
+                self.engine.apply_crawl_delay(&outcome, &parsed).await?;
+            }
         }
         self.last_origin = Some(origin);
         self.pending_user_agent = Some(user_agent);
@@ -268,7 +279,15 @@ impl<'a> RedirectPolicy<'a> {
         let outcome = match self.outcomes.get(origin) {
             Some(outcome) => Arc::clone(outcome),
             None => {
-                let outcome = resolve_robots_outcome(self.engine, self.client, parsed, url, user_agent).await;
+                let outcome = resolve_robots_outcome_with_limiter(
+                    self.engine,
+                    self.client,
+                    parsed,
+                    url,
+                    user_agent,
+                    self.robots_limiter,
+                )
+                .await;
                 self.outcomes.insert(origin.clone(), Arc::clone(&outcome));
                 outcome
             }
@@ -351,31 +370,50 @@ impl crate::http::HopPolicy for RedirectPolicy<'_> {
 /// credentialed request (never shared with another caller of the same origin), and
 /// `AllowAll` when robots.txt is off.
 ///
-/// ~keep `pub(super)`: the one place that resolves a robots.txt outcome for an agent, shared by
+/// ~keep One robots outcome resolver serves extraction and admission for the chosen agent, shared by
 /// `admits` (judging the agent chosen for the current tier) and
 /// `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm (re-judging the browser's own agent on
 /// escalation), so the two can never resolve the same `(origin, agent)` two different ways
 /// (crawlberg#423).
-pub(super) async fn resolve_robots_outcome(
+pub(crate) async fn resolve_robots_outcome(
     engine: &CrawlEngine,
     client: &reqwest::Client,
     parsed: &Url,
     url: &str,
     agent: &str,
 ) -> Arc<RobotsOutcome> {
+    resolve_robots_outcome_with_limiter(engine, client, parsed, url, agent, None).await
+}
+
+async fn resolve_robots_outcome_with_limiter(
+    engine: &CrawlEngine,
+    client: &reqwest::Client,
+    parsed: &Url,
+    url: &str,
+    agent: &str,
+    limiter: Option<&dyn crate::traits::RateLimiter>,
+) -> Arc<RobotsOutcome> {
+    let fetch = || async {
+        crate::helpers::fetch_robots_document_with_policy(
+            url,
+            &engine.config,
+            client,
+            agent,
+            &mut crate::http::RateLimited::new(crate::http::AdmitEvery, limiter),
+        )
+        .await
+        .0
+    };
     if !engine.config.respect_robots_txt {
         return Arc::new(RobotsOutcome::AllowAll);
     }
     // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
     // ~keep would hand it to the next crawl of the same origin.
     if crate::net::credentials::is_credentialed(&engine.config, parsed) {
-        return Arc::new(fetch_robots_outcome(url, &engine.config, client, agent).await);
+        return Arc::new(fetch().await);
     }
     let key = RobotsCacheKey::new(parsed, agent);
-    engine
-        .robots_cache
-        .get_or_fetch(key, || fetch_robots_outcome(url, &engine.config, client, agent))
-        .await
+    engine.robots_cache.get_or_fetch(key, fetch).await
 }
 
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.

@@ -76,6 +76,7 @@ impl From<CrawlError> for ApiError {
             CrawlError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED"),
             CrawlError::ServerError { .. } => (StatusCode::BAD_GATEWAY, "SERVER_ERROR"),
             CrawlError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
+            CrawlError::TooManyRedirects { .. } => (StatusCode::BAD_GATEWAY, "TOO_MANY_REDIRECTS"),
             CrawlError::Gone { .. } => (StatusCode::GONE, "GONE"),
             CrawlError::InvalidConfig { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_CONFIG"),
             CrawlError::Connection { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CONNECTION_ERROR"),
@@ -100,6 +101,14 @@ impl From<CrawlError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_exhaustion_is_an_upstream_failure_not_an_ssrf_refusal() {
+        let error = ApiError::from(CrawlError::too_many_redirects("redirect loop"));
+        assert_eq!(error.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.code, "TOO_MANY_REDIRECTS");
+        assert_eq!(error.message, "too_many_redirects: redirect loop");
+    }
 
     #[test]
     fn a_failed_conversion_has_its_own_code_and_keeps_its_text() {

@@ -37,6 +37,7 @@ pub struct CrawlEngineBuilder {
     config: Option<CrawlConfig>,
     frontier: Option<Arc<dyn Frontier>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
+    map_rate_limiter: Option<Arc<dyn RateLimiter>>,
     /// The limiter of the browser paths, when it is not the decision of `build`: the one of
     /// another engine, shared through `politeness`.
     #[cfg(any(feature = "browser", feature = "browser-native"))]
@@ -66,6 +67,7 @@ impl CrawlEngineBuilder {
             config: None,
             frontier: None,
             rate_limiter: None,
+            map_rate_limiter: None,
             #[cfg(any(feature = "browser", feature = "browser-native"))]
             browser_rate_limiter: None,
             store: None,
@@ -91,6 +93,7 @@ impl CrawlEngineBuilder {
     #[cfg(feature = "api")]
     pub(crate) fn politeness(mut self, politeness: super::Politeness) -> Self {
         self.rate_limiter = Some(politeness.rate_limiter);
+        self.map_rate_limiter = Some(politeness.map_rate_limiter);
         #[cfg(any(feature = "browser", feature = "browser-native"))]
         {
             self.browser_rate_limiter = Some(politeness.browser_rate_limiter);
@@ -121,6 +124,7 @@ impl CrawlEngineBuilder {
         {
             self.browser_rate_limiter = Some(Arc::clone(&rate_limiter));
         }
+        self.map_rate_limiter = Some(Arc::clone(&rate_limiter));
         self.rate_limiter = Some(rate_limiter);
         self
     }
@@ -297,6 +301,13 @@ impl CrawlEngineBuilder {
             None if config.rate_limit_ms.is_some() => Arc::clone(&rate_limiter),
             None => Arc::new(defaults::NoopRateLimiter),
         };
+        // ~keep Maps retain their zero-delay default while honoring configured/custom pacing.
+        // ~keep The zero-delay throttle can adopt robots Crawl-delay; statuses still reach configured/custom backoff.
+        let map_rate_limiter: Arc<dyn RateLimiter> = match self.map_rate_limiter {
+            Some(shared) => shared,
+            None if config.rate_limit_ms.is_some() => Arc::clone(&rate_limiter),
+            None => Arc::new(default_rate_limiter(0, config.rate_limit_jitter_ratio)),
+        };
         let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
@@ -318,6 +329,7 @@ impl CrawlEngineBuilder {
                 self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
             ),
             rate_limiter,
+            map_rate_limiter,
             #[cfg(any(feature = "browser", feature = "browser-native"))]
             browser_rate_limiter,
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
@@ -855,5 +867,133 @@ mod browser_rate_limiter_tests {
             second_turn_of_the_browser_paths(&request).await,
             Duration::from_millis(300)
         );
+    }
+}
+
+#[cfg(test)]
+mod map_rate_limiter_tests {
+    use super::CrawlEngine;
+    use crate::types::CrawlConfig;
+    use std::time::Duration;
+
+    async fn second_map_turn(engine: &CrawlEngine) -> Duration {
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        limiter.acquire("example.com").await.expect("second turn");
+        start.elapsed()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn default_maps_have_no_host_delay_while_http_keeps_its_default() {
+        let engine = CrawlEngine::builder().build().expect("engine");
+        assert_eq!(second_map_turn(&engine).await, Duration::ZERO);
+        engine
+            .rate_limiter
+            .acquire("http.example.com")
+            .await
+            .expect("first HTTP turn");
+        let start = tokio::time::Instant::now();
+        engine
+            .rate_limiter
+            .acquire("http.example.com")
+            .await
+            .expect("second HTTP turn");
+        let waited = start.elapsed();
+        assert_eq!(waited, Duration::from_millis(200));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_map_delay_is_used_for_every_host_turn() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig {
+                rate_limit_ms: Some(150),
+                rate_limit_jitter_ratio: 0.0,
+                ..CrawlConfig::default()
+            })
+            .build()
+            .expect("engine");
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("robots turn");
+        for _ in 0..3 {
+            let start = tokio::time::Instant::now();
+            limiter.acquire("example.com").await.expect("sitemap turn");
+            assert_eq!(start.elapsed(), Duration::from_millis(150));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_map_pacing_backs_off_after_a_429_response() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig {
+                rate_limit_ms: Some(150),
+                rate_limit_jitter_ratio: 0.0,
+                ..CrawlConfig::default()
+            })
+            .build()
+            .expect("engine");
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("first turn");
+        limiter
+            .record_response("example.com", 429)
+            .await
+            .expect("response status");
+        let start = tokio::time::Instant::now();
+        limiter.acquire("example.com").await.expect("backoff turn");
+        assert_eq!(start.elapsed(), Duration::from_millis(300));
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test(start_paused = true)]
+    async fn api_map_pacing_shares_default_and_configured_limiter_state() {
+        for delay in [None, Some(150)] {
+            let server = CrawlEngine::builder()
+                .config(CrawlConfig {
+                    rate_limit_ms: delay,
+                    rate_limit_jitter_ratio: 0.0,
+                    ..CrawlConfig::default()
+                })
+                .build()
+                .expect("server engine");
+            let request = CrawlEngine::builder()
+                .politeness(server.politeness())
+                .build()
+                .expect("request engine");
+            server
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("server turn");
+            let start = tokio::time::Instant::now();
+            request
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("request turn");
+            assert_eq!(start.elapsed(), Duration::from_millis(delay.unwrap_or(0)));
+            server
+                .map_rate_limiter()
+                .set_crawl_delay("example.com", Duration::from_secs(2))
+                .await
+                .expect("robots delay");
+            let start = tokio::time::Instant::now();
+            request
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("shared robots turn");
+            assert_eq!(start.elapsed(), Duration::from_secs(2));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn default_map_limiter_honors_robots_crawl_delay() {
+        let engine = CrawlEngine::builder().build().expect("engine");
+        engine
+            .map_rate_limiter()
+            .set_crawl_delay("example.com", Duration::from_secs(2))
+            .await
+            .expect("robots delay");
+        assert_eq!(second_map_turn(&engine).await, Duration::from_secs(2));
     }
 }

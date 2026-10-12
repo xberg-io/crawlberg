@@ -141,6 +141,15 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Mapping keeps its zero-delay baseline when `rate_limit_ms` is unset. Configured and custom
+  limiters govern every map request, including robots, sitemap children and redirects, and receive
+  HTTP 429 reports. Shared engines retain their map pacing and robots Crawl-delay state.
+- Redirect cycles and exhausted hop limits return `TooManyRedirects`, including through the shared
+  browser boundary, with the network source preserved. The API returns status 502 for this error.
+- Headerless HTML fragments, Refresh header links and shared robots cache lookups now match the
+  page extraction path. CLI configuration errors name nested fields and their actual value types;
+  unknown nested content and SSRF options are rejected.
+
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
