@@ -1,16 +1,22 @@
-use std::collections::HashMap;
+//! The private debugging pipe of a launched browser: the hub that owns the pipe, the client of
+//! the hub, and the connection that the handler drives over a client. A browser with a
+//! debugging port uses nothing of this module.
+
+use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::ops::Range;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use async_tungstenite::tungstenite::Message;
+use chromiumoxide_cdp::cdp::browser_protocol::target::SessionId;
+use chromiumoxide_types::{CallId, EventMessage, MethodCall, MethodId};
 use futures::{Sink, Stream};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{CdpError, Result};
-use crate::raw_connection::{RawConnection, RawTransport};
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
@@ -192,7 +198,7 @@ pub(crate) struct PipeHub(mpsc::UnboundedSender<Command>);
 #[derive(Debug)]
 enum Command {
     Send(usize, Value),
-    Open(oneshot::Sender<Result<RawConnection>>),
+    Open(oneshot::Sender<Result<PipeClient>>),
     Close(usize),
 }
 
@@ -204,8 +210,10 @@ impl Drop for WriterTask {
     }
 }
 
+/// One CDP client of a browser on a private debugging pipe. It sends and receives the text
+/// messages of the protocol, as a WebSocket client of a browser with a debugging port does.
 #[derive(Debug)]
-pub(crate) struct PipeClient {
+pub struct PipeClient {
     id: usize,
     hub: PipeHub,
     incoming: mpsc::UnboundedReceiver<Result<Message>>,
@@ -303,7 +311,7 @@ enum Pending {
         original_id: String,
     },
     Open {
-        done: oneshot::Sender<Result<RawConnection>>,
+        done: oneshot::Sender<Result<PipeClient>>,
     },
 }
 
@@ -317,7 +325,7 @@ struct Router {
 }
 
 impl PipeHub {
-    pub(crate) fn start(socket: tokio::net::UnixStream) -> (Self, RawConnection) {
+    pub(crate) fn start(socket: tokio::net::UnixStream) -> (Self, PipeClient) {
         let (reader, writer) = socket.into_split();
         Self::start_on(reader, writer)
     }
@@ -327,7 +335,7 @@ impl PipeHub {
     fn start_on(
         reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
         writer: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
-    ) -> (Self, RawConnection) {
+    ) -> (Self, PipeClient) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let hub = Self(sender);
         let mut router = Router {
@@ -347,7 +355,7 @@ impl PipeHub {
         (hub, client)
     }
 
-    pub(crate) async fn open_client(&self) -> Result<RawConnection> {
+    pub(crate) async fn open_client(&self) -> Result<PipeClient> {
         let (sender, receiver) = oneshot::channel();
         self.0.send(Command::Open(sender)).map_err(|_| CdpError::NoResponse)?;
         receiver.await.map_err(|_| CdpError::NoResponse)?
@@ -355,7 +363,7 @@ impl PipeHub {
 }
 
 impl Router {
-    fn add_client(&mut self, root_session: Option<String>) -> RawConnection {
+    fn add_client(&mut self, root_session: Option<String>) -> PipeClient {
         let id = self.next_client;
         self.next_client += 1;
         let (incoming, receiver) = mpsc::unbounded_channel();
@@ -363,13 +371,11 @@ impl Router {
             self.sessions.insert(session.clone(), id);
         }
         self.clients.insert(id, ClientState { root_session, incoming });
-        RawConnection {
-            inner: RawTransport::Pipe(PipeClient {
-                id,
-                hub: self.hub.clone(),
-                incoming: receiver,
-                closing: false,
-            }),
+        PipeClient {
+            id,
+            hub: self.hub.clone(),
+            incoming: receiver,
+            closing: false,
         }
     }
 
@@ -610,12 +616,161 @@ impl Router {
     }
 }
 
+/// Why the private debugging pipe of a browser failed or closed. Only the connection of the
+/// pipe makes one, so [`CdpError::Pipe`] is never the error of a browser with a debugging port.
+#[derive(Debug)]
+pub struct PipeError(String);
+
+impl std::fmt::Display for PipeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PipeError {}
+
+fn pipe_error(error: CdpError) -> CdpError {
+    CdpError::Pipe(PipeError(error.to_string()))
+}
+
+/// The connection of the handler to a browser on a private debugging pipe: the queue of
+/// commands and the stream of messages over one [`PipeClient`]. A browser with a debugging
+/// port uses [`crate::conn::Connection`], which this type does not share code with.
+///
+/// ~keep One poll hands every queued command to the client, because the sink of the client is
+/// ~keep always ready. A send that fails, or an error that the hub reports, ends the stream
+/// ~keep with [`CdpError::Pipe`]: nothing reads the pipe after its hub has ended.
+#[must_use = "streams do nothing unless polled"]
+#[derive(Debug)]
+pub(crate) struct PipeConnection<T: EventMessage> {
+    pending_commands: VecDeque<MethodCall>,
+    client: PipeClient,
+    next_id: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T: EventMessage> PipeConnection<T> {
+    pub(crate) fn new(client: PipeClient) -> Self {
+        Self {
+            pending_commands: VecDeque::new(),
+            client,
+            next_id: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Queue the command and return its id, as [`crate::conn::Connection::submit_command`] does.
+    pub(crate) fn submit_command(
+        &mut self,
+        method: MethodId,
+        session_id: Option<SessionId>,
+        params: Value,
+    ) -> serde_json::Result<CallId> {
+        let id = CallId::new(self.next_id);
+        self.next_id = self.next_id.wrapping_add(1);
+        self.pending_commands.push_back(MethodCall {
+            id,
+            method,
+            session_id: session_id.map(Into::into),
+            params,
+        });
+        Ok(id)
+    }
+}
+
+impl<T: EventMessage + Unpin> Stream for PipeConnection<T> {
+    type Item = Result<chromiumoxide_types::Message<T>>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let pin = self.get_mut();
+        while let Some(call) = pin.pending_commands.pop_front() {
+            tracing::trace!("Sending {:?}", call);
+            let text = match serde_json::to_string(&call) {
+                Ok(text) => text,
+                Err(error) => return Poll::Ready(Some(Err(error.into()))),
+            };
+            if let Err(error) = Pin::new(&mut pin.client).start_send(Message::Text(text.into())) {
+                return Poll::Ready(Some(Err(pipe_error(error))));
+            }
+        }
+        match ready!(Pin::new(&mut pin.client).poll_next(cx)) {
+            Some(Ok(Message::Text(text))) => Poll::Ready(Some(
+                crate::conn::parse_message::<chromiumoxide_types::Message<T>>(&text).map_err(|error| {
+                    tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", %error, "failed to parse a private browser pipe message");
+                    CdpError::InvalidMessage(text.as_str().to_string(), error)
+                }),
+            )),
+            Some(Ok(message)) => Poll::Ready(Some(Err(CdpError::UnexpectedWsMessage(message)))),
+            Some(Err(error)) => Poll::Ready(Some(Err(pipe_error(error)))),
+            None => Poll::Ready(None),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chromiumoxide_cdp::cdp::CdpEventMessage;
     use futures::{FutureExt, SinkExt, StreamExt};
     use std::time::Duration;
     use tokio::time::timeout;
+
+    /// ~keep A page that floods requests needs one answer for each request, so the commands queue
+    /// ~keep up faster than the task of the connection wakes. A WebSocket takes the whole queue in
+    /// ~keep one poll. The pipe took one command for each poll, and the read of the document
+    /// ~keep waited behind the queue until its timeout (the two flood tests of
+    /// ~keep `test_browser_ssrf_whole_fetch`). The test polls the connection one time and never
+    /// ~keep again, with no Chrome: the peer is the other end of a socket pair.
+    #[tokio::test]
+    async fn one_poll_of_the_connection_hands_every_queued_command_to_the_pipe() {
+        const COMMANDS: usize = 200;
+        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_hub, client) = PipeHub::start(socket);
+        let mut connection = PipeConnection::<CdpEventMessage>::new(client);
+        for number in 0..COMMANDS {
+            connection
+                .submit_command(
+                    "Fetch.failRequest".into(),
+                    None,
+                    serde_json::json!({"requestId": number.to_string()}),
+                )
+                .expect("command queued");
+        }
+        assert!(
+            connection.next().now_or_never().is_none(),
+            "the peer sent nothing, so the poll has nothing to return"
+        );
+
+        let mut frames = 0;
+        let all_read = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut buffer = [0; 4096];
+            while frames < COMMANDS {
+                let count = peer.read(&mut buffer).await.expect("read commands");
+                assert_ne!(count, 0, "the pipe stays open");
+                frames += buffer[..count].iter().filter(|byte| **byte == 0).count();
+            }
+        })
+        .await;
+        assert!(
+            all_read.is_ok(),
+            "one poll must hand all {COMMANDS} commands to the pipe: the peer got {frames}"
+        );
+    }
+
+    /// The handler ends on [`CdpError::Pipe`] and on no other error of the pipe, so the error
+    /// that the hub reports when Chrome closes the pipe must reach the handler as that value.
+    #[tokio::test]
+    async fn the_end_of_the_pipe_reaches_the_connection_as_a_pipe_error() {
+        let (socket, peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_hub, client) = PipeHub::start(socket);
+        let mut connection = PipeConnection::<CdpEventMessage>::new(client);
+        drop(peer);
+        let failure = timeout(DEADLINE, connection.next()).await.expect("failure deadline");
+        assert!(
+            matches!(failure, Some(Err(CdpError::Pipe(_)))),
+            "the closed pipe must be a pipe error: {failure:?}"
+        );
+    }
 
     const DEADLINE: Duration = Duration::from_secs(2);
 
@@ -848,7 +1003,7 @@ mod tests {
         .expect("command deadline")
     }
 
-    async fn secondary_client(hub: &PipeHub, peer: &mut tokio::net::UnixStream) -> RawConnection {
+    async fn secondary_client(hub: &PipeHub, peer: &mut tokio::net::UnixStream) -> PipeClient {
         let hub = hub.clone();
         let opening = tokio::spawn(async move { hub.open_client().await });
         let command = read_command(peer).await;

@@ -31,7 +31,11 @@ async fn launched_browser_uses_a_private_pipe_without_a_debugging_port() {
         .expect("browser config");
     let (mut browser, mut handler) = Browser::launch(config).await.expect("browser launch");
     let driver = tokio::spawn(async move { while handler.next().await.is_some() {} });
-    let mut independent = browser.raw_connection().await.expect("independent private client");
+    let mut independent = browser
+        .pipe_client()
+        .expect("a browser on the private pipe opens clients of the pipe")
+        .await
+        .expect("independent private client");
     independent
         .send(async_tungstenite::tungstenite::Message::Text(
             r#"{"id":0,"method":"Browser.getVersion","params":{}}"#.into(),

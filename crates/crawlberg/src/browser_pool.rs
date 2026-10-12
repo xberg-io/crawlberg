@@ -24,6 +24,7 @@ use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
+#[cfg(unix)]
 mod profile_confirmation;
 
 /// Timeout for opening a new page (tab) in Chrome.
@@ -189,9 +190,10 @@ pub(crate) async fn confirm_profile_in_use(
     browser: &mut Browser,
     user_data_dir: &std::path::Path,
 ) -> Result<(), CrawlError> {
-    if browser.websocket_address() == "pipe" {
+    #[cfg(unix)]
+    if let Some(client) = browser.pipe_client() {
         // ~keep Keep this launch-only protocol exchange out of generated bindings' inline future layout.
-        let result = Box::pin(profile_confirmation::confirm(browser, user_data_dir)).await;
+        let result = Box::pin(profile_confirmation::confirm(browser, user_data_dir, client)).await;
         if result.is_err() {
             let _ = browser.kill().await;
         }
@@ -1506,19 +1508,18 @@ fn spawn_handler_then(
             let Some(event) = event else {
                 break;
             };
-            if let Err(error) = &event
-                && matches!(
-                    error,
-                    chromiumoxide::error::CdpError::Ws(_)
-                        | chromiumoxide::error::CdpError::Io(_)
-                        | chromiumoxide::error::CdpError::NoResponse
-                )
-            {
-                let cause = match error {
-                    chromiumoxide::error::CdpError::Ws(error) => websocket_error_text(error),
-                    _ => format!("the browser's CDP pipe connection closed: {error}"),
-                };
-                tracing::warn!(error = %cause, "the browser's CDP transport failed; its CDP handler ends");
+            if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
+                let cause = websocket_error_text(error);
+                tracing::warn!(error = %cause, "the browser's CDP websocket failed; its CDP handler ends");
+                let _ = watched.end.0.cause.set(cause);
+                break;
+            }
+            // ~keep Only the connection of a private debugging pipe makes this error, so this
+            // ~keep arm never runs for a browser with a debugging port.
+            #[cfg(unix)]
+            if let Err(chromiumoxide::error::CdpError::Pipe(error)) = &event {
+                let cause = format!("the browser's CDP pipe connection closed: {error}");
+                tracing::warn!(error = %cause, "the browser's CDP pipe failed; its CDP handler ends");
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }

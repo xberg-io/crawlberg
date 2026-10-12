@@ -1,13 +1,19 @@
 use std::path::Path;
 
 use chromiumoxide::Browser;
-use chromiumoxide::raw_connection::RawConnection;
+use chromiumoxide::pipe::PipeClient;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 
 use crate::CrawlError;
 
-pub(super) async fn confirm(browser: &Browser, profile: &Path) -> Result<(), CrawlError> {
+/// Confirm the profile of a Chrome on a private debugging pipe. `client` opens one more client
+/// of that pipe ([`Browser::pipe_client`]).
+pub(super) async fn confirm(
+    browser: &Browser,
+    profile: &Path,
+    client: impl Future<Output = chromiumoxide::error::Result<PipeClient>>,
+) -> Result<(), CrawlError> {
     if browser.config().and_then(|config| config.user_data_dir.as_deref()) != Some(profile) {
         return Err(profile_error("Chrome opened a different profile"));
     }
@@ -23,7 +29,7 @@ pub(super) async fn confirm(browser: &Browser, profile: &Path) -> Result<(), Cra
     // ~keep Profile confirmation precedes the main handler driver and the SSRF controller. This private client
     // ~keep drives only a blank page and a local blob; no untrusted page is opened before policy installation.
     let operation = async {
-        let mut connection = browser.raw_connection().await.map_err(profile_error)?;
+        let mut connection = client.await.map_err(profile_error)?;
         confirm_namespace(&mut connection, directory.path(), nonce).await
     };
     let result = tokio::time::timeout(super::PROFILE_CONFIRM_TIMEOUT, operation)
@@ -33,7 +39,7 @@ pub(super) async fn confirm(browser: &Browser, profile: &Path) -> Result<(), Cra
     directory.close().map_err(profile_error)
 }
 
-async fn confirm_namespace(connection: &mut RawConnection, directory: &Path, nonce: &str) -> Result<(), CrawlError> {
+async fn confirm_namespace(connection: &mut PipeClient, directory: &Path, nonce: &str) -> Result<(), CrawlError> {
     let target = command(connection, 0, "Target.createTarget", json!({"url":"about:blank"}), None).await?;
     let target = target["targetId"]
         .as_str()
@@ -74,7 +80,7 @@ async fn confirm_namespace(connection: &mut RawConnection, directory: &Path, non
 }
 
 async fn download_marker(
-    connection: &mut RawConnection,
+    connection: &mut PipeClient,
     directory: &Path,
     nonce: &str,
     session: &str,
@@ -108,7 +114,7 @@ async fn download_marker(
 }
 
 async fn command(
-    connection: &mut RawConnection,
+    connection: &mut PipeClient,
     id: u64,
     method: &str,
     params: Value,

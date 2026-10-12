@@ -2,9 +2,9 @@ use futures::{SinkExt, StreamExt};
 use tokio::io::AsyncReadExt;
 
 use super::{Child, LaunchConnection};
-use crate::conn::Connection;
 use crate::error::{CdpError, Result};
-use crate::pipe::PipeHub;
+use crate::handler::HandlerConnection;
+use crate::pipe::{PipeConnection, PipeHub};
 
 pub(super) async fn initialize(
     pipe: std::os::unix::net::UnixStream,
@@ -50,7 +50,7 @@ pub(super) async fn initialize(
         .map_err(|_| CdpError::Timeout)??;
     Ok(LaunchConnection {
         address: "pipe".into(),
-        connection: Connection::from_raw(connection),
+        connection: HandlerConnection::Pipe(PipeConnection::new(connection)),
         hub: Some(hub),
     })
 }

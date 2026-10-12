@@ -1027,10 +1027,19 @@ impl BrowserFirewall {
             .execute(fetch_enable_params())
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
-        let child_socket = tokio::time::timeout(CONTROLLER_TEARDOWN_TIMEOUT, browser.raw_connection())
-            .await
-            .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
-            .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
+        let child_socket = match open_pipe_child_socket(&browser).await? {
+            Some(socket) => socket,
+            None => {
+                let (child_socket, _) = tokio::time::timeout(
+                    CONTROLLER_TEARDOWN_TIMEOUT,
+                    async_tungstenite::tokio::connect_async(browser.websocket_address().as_str()),
+                )
+                .await
+                .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
+                .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
+                ControllerSocket::WebSocket(child_socket)
+            }
+        };
         let mut registry = Registry {
             shared_context: context == PageContext::Shared,
             ..Registry::default()
@@ -2103,28 +2112,120 @@ fn take_ready_structural(
     }
 }
 
-async fn child_socket_write<S, E>(
+/// The socket of the child-target controller: the three calls that the controller makes on it.
+///
+/// ~keep For a browser with a debugging port the socket is the WebSocket, and each method is
+/// ~keep the call of the same name on it. Only a browser that was launched on a private
+/// ~keep debugging pipe has the other socket.
+trait ChildSocket {
+    type Error: std::fmt::Display;
+
+    fn send(
+        &mut self,
+        message: async_tungstenite::tungstenite::Message,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Close the socket. The pipe has no close frame and ignores `frame`.
+    fn close(
+        &mut self,
+        frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    fn next(
+        &mut self,
+    ) -> impl Future<Output = Option<Result<async_tungstenite::tungstenite::Message, Self::Error>>> + Send;
+}
+
+impl<S> ChildSocket for async_tungstenite::WebSocketStream<S>
+where
+    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin + Send,
+{
+    type Error = async_tungstenite::tungstenite::Error;
+
+    async fn send(&mut self, message: async_tungstenite::tungstenite::Message) -> Result<(), Self::Error> {
+        async_tungstenite::WebSocketStream::send(self, message).await
+    }
+
+    async fn close(
+        &mut self,
+        frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
+    ) -> Result<(), Self::Error> {
+        async_tungstenite::WebSocketStream::close(self, frame).await
+    }
+
+    async fn next(&mut self) -> Option<Result<async_tungstenite::tungstenite::Message, Self::Error>> {
+        futures::StreamExt::next(self).await
+    }
+}
+
+#[cfg(unix)]
+impl ChildSocket for chromiumoxide::pipe::PipeClient {
+    type Error = chromiumoxide::error::CdpError;
+
+    async fn send(&mut self, message: async_tungstenite::tungstenite::Message) -> Result<(), Self::Error> {
+        futures::SinkExt::send(self, message).await
+    }
+
+    async fn close(
+        &mut self,
+        _frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
+    ) -> Result<(), Self::Error> {
+        futures::SinkExt::close(self).await
+    }
+
+    async fn next(&mut self) -> Option<Result<async_tungstenite::tungstenite::Message, Self::Error>> {
+        futures::StreamExt::next(self).await
+    }
+}
+
+/// The socket that the child-target controller starts on. It is matched one time, when the
+/// controller starts; the controller then runs on the socket of its transport.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value for each browser, moved one time into the controller's task; a box would put the WebSocket behind a pointer that it does not have without the pipe"
+)]
+enum ControllerSocket {
+    WebSocket(async_tungstenite::WebSocketStream<async_tungstenite::tokio::ConnectStream>),
+    #[cfg(unix)]
+    Pipe(chromiumoxide::pipe::PipeClient),
+}
+
+/// The controller's client of a browser that was launched on a private debugging pipe. `None`
+/// for every other browser: the controller connects to the WebSocket address of such a browser.
+async fn open_pipe_child_socket(browser: &Browser) -> Result<Option<ControllerSocket>, CrawlError> {
+    #[cfg(unix)]
+    if let Some(client) = browser.pipe_client() {
+        let client = tokio::time::timeout(CONTROLLER_TEARDOWN_TIMEOUT, client)
+            .await
+            .map_err(|_| CrawlError::browser_error("timed out starting the child-target controller"))?
+            .map_err(|e| CrawlError::browser_error(format!("failed to start the child-target controller: {e}")))?;
+        return Ok(Some(ControllerSocket::Pipe(client)));
+    }
+    #[cfg(not(unix))]
+    let _ = browser;
+    Ok(None)
+}
+
+async fn child_socket_write<S>(
     socket: &mut S,
     message: async_tungstenite::tungstenite::Message,
     command_timeout: Duration,
 ) -> Result<(), String>
 where
-    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E> + Unpin,
-    E: std::fmt::Display,
+    S: ChildSocket,
 {
-    match tokio::time::timeout(command_timeout, futures::SinkExt::send(socket, message)).await {
+    match tokio::time::timeout(command_timeout, socket.send(message)).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(format!("failed to write child-target controller command: {error}")),
         Err(_) => Err("timed out writing child-target controller command".to_owned()),
     }
 }
 
-async fn close_child_socket<S, E>(socket: &mut S, command_timeout: Duration) -> bool
+async fn close_child_socket<S>(socket: &mut S, command_timeout: Duration) -> bool
 where
-    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E> + Unpin,
-    E: std::fmt::Display,
+    S: ChildSocket,
 {
-    tokio::time::timeout(command_timeout, futures::SinkExt::close(socket))
+    tokio::time::timeout(command_timeout, socket.close(None))
         .await
         .is_ok_and(|closed| closed.is_ok())
 }
@@ -2162,24 +2263,29 @@ fn child_context_retired(registry: &Registry, context: &BrowserContextId) -> boo
 /// Hold every related target at `waitForDebugger` until its authoritative context has selected
 /// an immutable policy and any competing chromiumoxide page auto-attach has been disabled. ~keep
 async fn serve_child_targets(
-    socket: chromiumoxide::raw_connection::RawConnection,
+    socket: ControllerSocket,
     mut commands: mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
 ) -> bool {
-    serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+    match socket {
+        ControllerSocket::WebSocket(socket) => {
+            serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+        }
+        #[cfg(unix)]
+        ControllerSocket::Pipe(socket) => {
+            serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+        }
+    }
 }
 
-async fn serve_child_targets_with_timeout<S, E>(
+async fn serve_child_targets_with_timeout<S>(
     mut socket: S,
     commands: &mut mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
     command_timeout: Duration,
 ) -> bool
 where
-    S: futures::Sink<async_tungstenite::tungstenite::Message, Error = E>
-        + futures::Stream<Item = Result<async_tungstenite::tungstenite::Message, E>>
-        + Unpin,
-    E: std::fmt::Display,
+    S: ChildSocket,
 {
     let mut next_id = 1_u64;
     let mut pending = HashMap::<u64, ChildPending>::new();

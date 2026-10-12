@@ -4,10 +4,12 @@ use std::pin::Pin;
 use std::task::ready;
 
 use async_tungstenite::tungstenite::Message as WsMessage;
+use async_tungstenite::{WebSocketStream, tungstenite::protocol::WebSocketConfig};
 use futures::stream::Stream;
 use futures::task::{Context, Poll};
 use futures::{SinkExt, StreamExt};
 
+use async_tungstenite::tokio::ConnectStream;
 use chromiumoxide_cdp::cdp::browser_protocol::target::SessionId;
 use chromiumoxide_types::{CallId, EventMessage, Message, MethodCall, MethodId};
 
@@ -21,7 +23,7 @@ pub struct Connection<T: EventMessage> {
     /// Queue of commands to send.
     pending_commands: VecDeque<MethodCall>,
     /// The websocket of the chromium instance
-    ws: crate::raw_connection::RawConnection,
+    ws: WebSocketStream<ConnectStream>,
     /// The identifier for a specific command
     next_id: usize,
     needs_flush: bool,
@@ -32,20 +34,18 @@ pub struct Connection<T: EventMessage> {
 
 impl<T: EventMessage + Unpin> Connection<T> {
     pub async fn connect(debug_ws_url: impl AsRef<str>) -> Result<Self> {
-        Ok(Self::from_raw(
-            crate::raw_connection::RawConnection::connect(debug_ws_url.as_ref()).await?,
-        ))
-    }
+        let config = WebSocketConfig::default().max_message_size(None).max_frame_size(None);
 
-    pub(crate) fn from_raw(ws: crate::raw_connection::RawConnection) -> Self {
-        Self {
+        let (ws, _) = async_tungstenite::tokio::connect_async_with_config(debug_ws_url.as_ref(), Some(config)).await?;
+
+        Ok(Self {
             pending_commands: Default::default(),
             ws,
             next_id: 0,
             needs_flush: false,
             pending_flush: None,
             _marker: Default::default(),
-        }
+        })
     }
 }
 
@@ -79,8 +79,7 @@ impl<T: EventMessage> Connection<T> {
     /// sink
     fn start_send_next(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.needs_flush {
-            if let Poll::Ready(result) = self.ws.poll_flush_unpin(cx) {
-                result?;
+            if let Poll::Ready(Ok(())) = self.ws.poll_flush_unpin(cx) {
                 self.needs_flush = false;
             }
         }
@@ -110,10 +109,7 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
 
             // send the message
             if let Some(call) = pin.pending_flush.take() {
-                if let Poll::Ready(result) = pin.ws.poll_ready_unpin(cx) {
-                    if let Err(error) = result {
-                        return Poll::Ready(Some(Err(error)));
-                    }
+                if pin.ws.poll_ready_unpin(cx).is_ready() {
                     pin.needs_flush = true;
                     // try another flush
                     continue;
@@ -148,7 +144,7 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
                 Poll::Pending
             }
             Some(Ok(msg)) => Poll::Ready(Some(Err(CdpError::UnexpectedWsMessage(msg)))),
-            Some(Err(err)) => Poll::Ready(Some(Err(err))),
+            Some(Err(err)) => Poll::Ready(Some(Err(CdpError::Ws(err)))),
             None => {
                 // ws connection closed
                 Poll::Ready(None)
@@ -157,9 +153,7 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
     }
 }
 
-/// Parse one protocol message, as the connection parses each message it receives. The private
-/// pipe of an owned Chrome parses each of its frames with it too, so both transports read a
-/// message the same way.
+/// Parse one protocol message, as the connection parses each message it receives.
 ///
 /// Chrome writes a JavaScript string as the page built it, so one half of a surrogate pair
 /// arrives as a lone `\ud83d` escape. `serde_json` refuses that escape in a `String`, so the
@@ -429,60 +423,6 @@ mod tests {
         assert!(
             unchanged > 2_000 && repaired > 2_000,
             "{unchanged} unchanged, {repaired} repaired"
-        );
-    }
-}
-
-#[cfg(all(test, unix))]
-mod pipe_tests {
-    use std::time::Duration;
-
-    use chromiumoxide_cdp::cdp::CdpEventMessage;
-    use futures::{FutureExt, StreamExt};
-    use tokio::io::AsyncReadExt;
-
-    use super::Connection;
-    use crate::pipe::PipeHub;
-
-    /// ~keep A page that floods requests needs one answer for each request, so the commands queue
-    /// ~keep up faster than the task of the connection wakes. A WebSocket takes the whole queue in
-    /// ~keep one poll. The pipe took one command for each poll, and the read of the document
-    /// ~keep waited behind the queue until its timeout (the two flood tests of
-    /// ~keep `test_browser_ssrf_whole_fetch`). The test polls the connection one time and never
-    /// ~keep again, with no Chrome: the peer is the other end of a socket pair.
-    #[tokio::test]
-    async fn one_poll_of_the_connection_hands_every_queued_command_to_the_pipe() {
-        const COMMANDS: usize = 200;
-        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
-        let (_hub, client) = PipeHub::start(socket);
-        let mut connection = Connection::<CdpEventMessage>::from_raw(client);
-        for number in 0..COMMANDS {
-            connection
-                .submit_command(
-                    "Fetch.failRequest".into(),
-                    None,
-                    serde_json::json!({"requestId": number.to_string()}),
-                )
-                .expect("command queued");
-        }
-        assert!(
-            connection.next().now_or_never().is_none(),
-            "the peer sent nothing, so the poll has nothing to return"
-        );
-
-        let mut frames = 0;
-        let all_read = tokio::time::timeout(Duration::from_secs(2), async {
-            let mut buffer = [0; 4096];
-            while frames < COMMANDS {
-                let count = peer.read(&mut buffer).await.expect("read commands");
-                assert_ne!(count, 0, "the pipe stays open");
-                frames += buffer[..count].iter().filter(|byte| **byte == 0).count();
-            }
-        })
-        .await;
-        assert!(
-            all_read.is_ok(),
-            "one poll must hand all {COMMANDS} commands to the pipe: the peer got {frames}"
         );
     }
 }

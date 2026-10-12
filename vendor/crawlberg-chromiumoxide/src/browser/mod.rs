@@ -23,7 +23,7 @@ use crate::cmd::{CommandMessage, to_command_response};
 use crate::conn::Connection;
 use crate::error::{BrowserStderr, CdpError, Result};
 use crate::handler::browser::BrowserContext;
-use crate::handler::{Handler, HandlerConfig, HandlerMessage};
+use crate::handler::{Handler, HandlerConfig, HandlerConnection, HandlerMessage};
 use crate::listeners::{EventListenerRequest, EventStream};
 use crate::page::Page;
 use crate::utils;
@@ -53,7 +53,7 @@ pub struct Browser {
 
 struct LaunchConnection {
     address: String,
-    connection: Connection<CdpEventMessage>,
+    connection: HandlerConnection,
     #[cfg(unix)]
     hub: Option<crate::pipe::PipeHub>,
 }
@@ -198,7 +198,7 @@ impl Browser {
             let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
             Ok(LaunchConnection {
                 address: debug_ws_url,
-                connection: conn,
+                connection: HandlerConnection::WebSocket(conn),
                 #[cfg(unix)]
                 hub: None,
             })
@@ -248,7 +248,7 @@ impl Browser {
             manage_child_targets: config.manage_child_targets,
         };
 
-        let fut = Handler::new(launch.connection, rx, handler_config);
+        let fut = Handler::with_connection(launch.connection, rx, handler_config);
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
@@ -423,13 +423,13 @@ impl Browser {
         &self.debug_ws_url
     }
 
-    /// Open an independent CDP client without exposing a listening TCP socket.
-    pub async fn raw_connection(&self) -> Result<crate::raw_connection::RawConnection> {
-        #[cfg(unix)]
-        if let Some(hub) = &self.pipe_hub {
-            return hub.open_client().await;
-        }
-        crate::raw_connection::RawConnection::connect_with_default_limits(&self.debug_ws_url).await
+    /// For a browser that was launched on a private debugging pipe: a future that opens one
+    /// more CDP client of that pipe. `None` for every other browser: such a browser has a
+    /// WebSocket address, and a client connects to [`Self::websocket_address`].
+    #[cfg(unix)]
+    pub fn pipe_client(&self) -> Option<impl Future<Output = Result<crate::pipe::PipeClient>> + Send + use<>> {
+        let hub = self.pipe_hub.clone()?;
+        Some(async move { hub.open_client().await })
     }
 
     /// Whether the BrowserContext is incognito.
@@ -678,9 +678,9 @@ mod tests {
         format!("ws://{address}")
     }
 
-    /// An independent client of a browser with a debugging port keeps the default limits of the
+    /// An independent client of a browser with a debugging port has the default limits of the
     /// WebSocket: a message over the frame limit of 16 MiB ends the client with an error. The
-    /// child-target controller of the request firewall is such a client. The client of the
+    /// child-target controller of the request firewall is such a client. The connection of the
     /// handler has no limit and reads the same message whole.
     #[tokio::test]
     async fn an_independent_websocket_client_refuses_a_message_over_the_frame_limit() {
@@ -699,23 +699,28 @@ mod tests {
             pipe_hub: None,
         };
 
-        let mut independent = browser.raw_connection().await.expect("independent client");
+        // ~keep The firewall opens its client with this call, on the address of the browser.
+        let (mut independent, _) = async_tungstenite::tokio::connect_async(browser.websocket_address().as_str())
+            .await
+            .expect("independent client");
         let refused = tokio::time::timeout(WAIT, independent.next())
             .await
             .expect("the independent client must answer");
         assert!(
-            matches!(refused, Some(Err(CdpError::Ws(WsError::Capacity(_))))),
+            matches!(refused, Some(Err(WsError::Capacity(_)))),
             "a message over the frame limit must end the independent client with a capacity error"
         );
 
-        let mut handler_client = crate::raw_connection::RawConnection::connect(browser.websocket_address())
+        let mut handler_client = Connection::<CdpEventMessage>::connect(browser.websocket_address())
             .await
             .expect("client of the handler");
         let whole = tokio::time::timeout(WAIT, handler_client.next())
             .await
             .expect("the client of the handler must answer");
+        // ~keep The message is not a protocol message, so the connection gives its whole text
+        // ~keep back in the error.
         let whole_size = match whole {
-            Some(Ok(async_tungstenite::tungstenite::Message::Text(text))) => Some(text.len()),
+            Some(Err(CdpError::InvalidMessage(text, _))) => Some(text.len()),
             _ => None,
         };
         assert_eq!(

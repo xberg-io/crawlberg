@@ -72,7 +72,7 @@ pub struct Handler {
     /// There can be multiple sessions per target.
     sessions: HashMap<SessionId, Session>,
     /// The websocket connection to the chromium instance
-    conn: Connection<CdpEventMessage>,
+    conn: HandlerConnection,
     /// Evicts timed out requests periodically
     evict_command_timeout: PeriodicJob,
     /// The internal identifier for a specific navigation
@@ -88,8 +88,13 @@ pub struct Handler {
 impl Handler {
     /// Create a new `Handler` that drives the connection and listens for
     /// messages on the receiver `rx`.
-    pub(crate) fn new(
-        mut conn: Connection<CdpEventMessage>,
+    pub(crate) fn new(conn: Connection<CdpEventMessage>, rx: Receiver<HandlerMessage>, config: HandlerConfig) -> Self {
+        Self::with_connection(HandlerConnection::WebSocket(conn), rx, config)
+    }
+
+    /// Like [`Self::new`], on the connection that the launch chose.
+    pub(crate) fn with_connection(
+        mut conn: HandlerConnection,
         rx: Receiver<HandlerMessage>,
         config: HandlerConfig,
     ) -> Self {
@@ -619,6 +624,47 @@ impl Stream for Handler {
     }
 }
 
+/// The connection that the handler drives. It is chosen one time, when the handler is made: a
+/// browser with a debugging port, and a browser that the caller connects to, have the
+/// WebSocket. Only a browser that was launched on a private debugging pipe has the pipe.
+#[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a handler holds one connection for its whole life, and a box would put the WebSocket behind a pointer that it does not have without the pipe"
+)]
+pub(crate) enum HandlerConnection {
+    WebSocket(Connection<CdpEventMessage>),
+    #[cfg(unix)]
+    Pipe(crate::pipe::PipeConnection<CdpEventMessage>),
+}
+
+impl HandlerConnection {
+    fn submit_command(
+        &mut self,
+        method: MethodId,
+        session_id: Option<SessionId>,
+        params: serde_json::Value,
+    ) -> serde_json::Result<CallId> {
+        match self {
+            Self::WebSocket(conn) => conn.submit_command(method, session_id, params),
+            #[cfg(unix)]
+            Self::Pipe(conn) => conn.submit_command(method, session_id, params),
+        }
+    }
+}
+
+impl Stream for HandlerConnection {
+    type Item = Result<Message<CdpEventMessage>>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.get_mut() {
+            Self::WebSocket(conn) => Pin::new(conn).poll_next(cx),
+            #[cfg(unix)]
+            Self::Pipe(conn) => Pin::new(conn).poll_next(cx),
+        }
+    }
+}
+
 /// How to configure the handler
 #[derive(Debug, Clone)]
 pub struct HandlerConfig {
@@ -733,4 +779,97 @@ pub(crate) enum HandlerMessage {
     GetPage(TargetId, OneshotSender<Option<Page>>),
     AddEventListener(EventListenerRequest),
     CloseBrowser(OneshotSender<Result<CloseReturns>>),
+}
+
+/// A browser that is not launched on a private debugging pipe never gets the pipe connection.
+/// Each test fails if its browser gets a handler on the pipe, or can open a client of a pipe.
+#[cfg(all(test, unix))]
+mod connection_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use futures::StreamExt;
+
+    use super::HandlerConnection;
+    use crate::browser::{Browser, BrowserConfig};
+    use crate::error::CdpError;
+
+    /// The address of a WebSocket server that accepts every client and reads until it closes.
+    async fn websocket_server() -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    if let Ok(mut socket) = async_tungstenite::tokio::accept_async(stream).await {
+                        while let Some(Ok(_)) = socket.next().await {}
+                    }
+                });
+            }
+        });
+        address
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_the_caller_connects_to_has_the_websocket_connection() {
+        let address = websocket_server().await;
+
+        let (browser, handler) = Browser::connect(format!("ws://{address}/devtools/browser/external"))
+            .await
+            .expect("connect");
+
+        assert!(
+            matches!(handler.conn, HandlerConnection::WebSocket(_)),
+            "the handler of a browser that the caller connects to must drive the WebSocket"
+        );
+        assert!(
+            browser.pipe_client().is_none(),
+            "a browser that the caller connects to has no private pipe"
+        );
+    }
+
+    /// The launch is the launch of a caller that sets nothing. The executable is a script that
+    /// prints a WebSocket address as Chrome does and then waits, so the test needs no Chrome.
+    #[tokio::test]
+    async fn a_default_launch_has_the_websocket_connection_and_no_pipe() {
+        let address = websocket_server().await;
+        let directory = std::env::temp_dir().join(format!("chromiumoxide-default-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("test directory");
+        let executable = directory.join("chrome");
+        let script = format!(
+            "#!/bin/sh\n\
+             echo 'DevTools listening on ws://{address}/devtools/browser/default' >&2\n\
+             exec sleep 60\n"
+        );
+        std::fs::write(&executable, script).expect("executable");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).expect("executable mode");
+
+        let (mut browser, handler) = loop {
+            let config = BrowserConfig::builder()
+                .chrome_executable(&executable)
+                .user_data_dir(directory.join("profile"))
+                .build()
+                .expect("default config");
+            match Browser::launch(config).await {
+                // ~keep A test on another thread that forks while the script is written holds
+                // ~keep the script open for writing until its child calls `exec`.
+                Err(CdpError::Io(error)) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                launched => break launched.expect("default launch"),
+            }
+        };
+        let websocket = matches!(handler.conn, HandlerConnection::WebSocket(_));
+        let no_pipe = browser.pipe_client().is_none();
+        let address_of_the_browser = browser.websocket_address().clone();
+        let _ = browser.kill().await;
+        let _ = browser.wait().await;
+        let _ = std::fs::remove_dir_all(&directory);
+
+        assert!(websocket, "the handler of a default launch must drive the WebSocket");
+        assert!(no_pipe, "a default launch has no private pipe");
+        assert!(
+            address_of_the_browser.starts_with("ws://"),
+            "a default launch has a WebSocket address: {address_of_the_browser}"
+        );
+    }
 }
