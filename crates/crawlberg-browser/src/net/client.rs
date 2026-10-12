@@ -63,7 +63,10 @@ impl Response {
     }
 
     pub fn is_html(&self) -> bool {
-        self.content_type().map(|ct| ct.contains("text/html")).unwrap_or(false)
+        self.content_type().is_some_and(|content_type| {
+            let media_type = content_type.split(';').next().unwrap_or("").trim();
+            media_type.eq_ignore_ascii_case("text/html") || media_type.eq_ignore_ascii_case("application/xhtml+xml")
+        })
     }
 }
 
@@ -711,6 +714,29 @@ mod tests {
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn should_classify_html_by_case_insensitive_media_type_only() {
+        for (header, expected) in [
+            ("text/html", true),
+            ("Text/HTML; Charset=UTF-8", true),
+            ("application/xhtml+xml", true),
+            (" APPLICATION/XHTML+XML ; charset=utf-8", true),
+            ("text/plain; name=page.html", false),
+            ("text/plain; example=text/html", false),
+            ("text/htmlish", false),
+            ("", false),
+        ] {
+            let response = Response {
+                url: Url::parse("https://example.com").expect("URL"),
+                status: 200,
+                headers: HashMap::from([("content-type".to_string(), header.to_string())]),
+                body: Vec::new(),
+                redirected_from: Vec::new(),
+            };
+            assert_eq!(response.is_html(), expected, "header: {header}");
+        }
+    }
 
     /// Records every URL it is asked about, so a test can prove the policy was
     /// actually consulted rather than bypassed.
