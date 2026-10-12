@@ -102,11 +102,6 @@ title: "Changelog"
   The error class of each status is the same. (#611)
 - A response body that does not end before `request_timeout` fails as a timeout that names the
   address. It failed as a data loss. (#623)
-- **Browser mode keeps the default delay between requests to one domain.** With `rate_limit_ms`
-  unset, the pages of one host load 200 ms apart on the two browser backends, as in HTTP mode.
-  Before, browser mode loaded them with no delay at all. A batch of pages of one host with the
-  default settings takes longer in browser mode now. Set `rate_limit_ms` to 0 to load them with
-  no delay. (#622)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
@@ -173,10 +168,11 @@ title: "Changelog"
 - Browser mode applies the retry settings. A page that fails with a status in `retry_codes` is
   loaded again after the retry delay, up to `retry_count` times, on the two backends. A browser
   timeout is not retried. (#610)
-- Browser mode waits for the delay of the domain (`rate_limit_ms`) before each page load, on the
-  two backends. The delay applies to the page, not to the files that the page loads. The wait is
-  not counted against `browser.overall_timeout`: a page gets its whole deadline once its turn
-  comes. (#622)
+- Browser mode waits for the delay of the domain before each page load, on the two backends,
+  when `rate_limit_ms` is set. The delay applies to the page, not to the files that the page
+  loads. The wait is not counted against `browser.overall_timeout`: a page gets its whole
+  deadline once its turn comes. With `rate_limit_ms` unset, browser mode loads the pages of one
+  host with no delay, as before. (#622)
 - Browser mode sends client hints that agree with a configured Chrome user agent: the brands
   with its version, its platform and the mobile flag, on every request of the page. For a user
   agent that does not name Chrome on Android, Windows, macOS or Linux, Chrome sends no client
