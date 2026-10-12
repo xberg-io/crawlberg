@@ -2521,6 +2521,12 @@ where
                                 || infos.iter().any(|info| info.browser_context_id.as_ref() == Some(&context)) {
                                 return false;
                             }
+                            // ~keep Disposed sessions can lose Runtime resume replies. Both sockets
+                            // ~keep proved this exact context has no targets, so only its resumes are obsolete.
+                            pending.retain(|_, pending| {
+                                pending.context.as_ref() != Some(&context)
+                                    || !matches!(pending.kind, ChildPendingKind::Boundary)
+                            });
                             drains.push(ChildDrain { context, done, deadline: command.deadline });
                         }
 
@@ -5026,6 +5032,124 @@ mod tests {
         );
         assert!(!healthy, "the expired drain must fail the controller closed");
         assert!(acknowledged.is_err(), "an expired drain must never be acknowledged");
+    }
+
+    #[tokio::test]
+    async fn a_retired_context_census_retires_only_its_missing_resume_acknowledgement() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &context, true).await;
+        let recursive = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &recursive).await;
+        armed.await.expect("root sender").expect("root armed");
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        retire_child_test_context(&shared, &context);
+        let (done, mut drained) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Drain { context, done })
+            .await
+            .expect("drain retired context");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut drained)
+                .await
+                .is_err(),
+            "retirement alone cannot replace the child-target census"
+        );
+        answer_drain_census(&mut socket).await;
+        tokio::time::timeout(Duration::from_millis(100), drained)
+            .await
+            .expect("proven disposal retires the missing resume acknowledgement")
+            .expect("controller stays healthy");
+        commands.send(super::ChildCommand::Stop).await.expect("stop controller");
+        assert!(controller.await.expect("controller task"));
+    }
+
+    #[tokio::test]
+    async fn a_live_context_missing_resume_acknowledgement_still_fails_closed() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(100)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &context, true).await;
+        let recursive = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &recursive).await;
+        armed.await.expect("root sender").expect("root armed");
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert!(
+            !tokio::time::timeout(Duration::from_millis(250), controller)
+                .await
+                .expect("live boundary expires")
+                .expect("controller task"),
+            "a live context still requires every resume acknowledgement"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retired_context_census_keeps_another_contexts_resume_acknowledgement_required() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let other_context = BrowserContextId::new("LIVE-CONTEXT");
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(150)).await;
+        send_attached_target_with_waiting(&mut socket, "S-OTHER", "OTHER", "page", None, &other_context, true).await;
+        let recursive = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &recursive).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        retire_child_test_context(&shared, &context);
+        let (done, drained) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Drain { context, done })
+            .await
+            .expect("drain retired context");
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "id": census["id"], "result": { "targetInfos": [
+                        target_created_in_context("OTHER", None, &other_context).target_info
+                    ] }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("answer census with the other live target");
+        tokio::time::timeout(Duration::from_millis(100), drained)
+            .await
+            .expect("unrelated live work does not delay retirement")
+            .expect("retired drain");
+        assert!(
+            !tokio::time::timeout(Duration::from_millis(250), controller)
+                .await
+                .expect("other live boundary expires")
+                .expect("controller task"),
+            "the retired context census cannot retire another live context's resume"
+        );
     }
 
     #[tokio::test]
