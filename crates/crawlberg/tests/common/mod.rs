@@ -13,6 +13,34 @@
 #[cfg(all(feature = "api", feature = "mcp"))]
 pub mod mcp;
 
+/// The throttle of an engine, with the time of each turn it grants. An engine takes it through
+/// `CrawlEngine::builder().rate_limiter(...)`.
+pub struct RecordedTurns {
+    pub throttle: crawlberg::PerDomainThrottle,
+    pub turns: std::sync::Arc<std::sync::Mutex<Vec<(String, std::time::Instant)>>>,
+}
+
+#[async_trait::async_trait]
+impl crawlberg::traits::RateLimiter for RecordedTurns {
+    async fn acquire(&self, domain: &str) -> Result<(), crawlberg::CrawlError> {
+        self.throttle.acquire(domain).await?;
+        // ~keep Stamped in the poll that grants the turn: no await lies between the two.
+        self.turns
+            .lock()
+            .expect("turns")
+            .push((domain.to_owned(), std::time::Instant::now()));
+        Ok(())
+    }
+
+    async fn record_response(&self, domain: &str, status: u16) -> Result<(), crawlberg::CrawlError> {
+        self.throttle.record_response(domain, status).await
+    }
+
+    async fn set_crawl_delay(&self, domain: &str, delay: std::time::Duration) -> Result<(), crawlberg::CrawlError> {
+        self.throttle.set_crawl_delay(domain, delay).await
+    }
+}
+
 /// Whether an error message indicates the runner has no Chrome binary.
 ///
 /// ~keep Chromiumoxide reports this configuration-time error only when executable detection

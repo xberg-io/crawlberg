@@ -3,13 +3,16 @@
 use crawlberg::traits::RateLimiter;
 use crawlberg::{
     BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlEngine, CrawlEngineHandle,
-    CrawlError, PerDomainThrottle, create_engine, scrape,
+    PerDomainThrottle, create_engine, scrape,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+mod common;
+use common::RecordedTurns;
 
 fn config() -> CrawlConfig {
     CrawlConfig {
@@ -66,33 +69,6 @@ async fn should_retry_browser_rate_limits_with_the_configured_budget() {
         .expect("retry succeeds");
     assert_eq!(result.status_code, 200);
     assert_eq!(hits.load(Ordering::SeqCst), 3);
-}
-
-/// The throttle of the engine, with the time of each turn it grants.
-struct RecordedTurns {
-    throttle: PerDomainThrottle,
-    turns: Arc<Mutex<Vec<(String, Instant)>>>,
-}
-
-#[async_trait::async_trait]
-impl RateLimiter for RecordedTurns {
-    async fn acquire(&self, domain: &str) -> Result<(), CrawlError> {
-        self.throttle.acquire(domain).await?;
-        // ~keep Stamped in the poll that grants the turn: no await lies between the two.
-        self.turns
-            .lock()
-            .expect("turns")
-            .push((domain.to_owned(), Instant::now()));
-        Ok(())
-    }
-
-    async fn record_response(&self, domain: &str, status: u16) -> Result<(), CrawlError> {
-        self.throttle.record_response(domain, status).await
-    }
-
-    async fn set_crawl_delay(&self, domain: &str, delay: Duration) -> Result<(), CrawlError> {
-        self.throttle.set_crawl_delay(domain, delay).await
-    }
 }
 
 /// An engine with `rate_limiter` and a pool of pages on one Chrome, the shape `create_engine`
