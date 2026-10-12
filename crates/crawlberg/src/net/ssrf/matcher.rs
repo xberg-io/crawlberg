@@ -142,22 +142,20 @@ impl HostMatcher {
     }
 }
 
-/// Wire form accepted for [`HostMatcher`]: either the tagged object or a legacy bare
-/// string. Kept separate from `HostMatcher` so the tagged arm can run CIDR validation
-/// before a value exists.
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum HostMatcherWire {
-    Legacy(String),
-    Tagged(TaggedHostMatcher),
+#[serde(deny_unknown_fields)]
+struct TaggedHostMatcher {
+    #[serde(rename = "type")]
+    kind: HostMatcherKind,
+    value: String,
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum TaggedHostMatcher {
-    Exact { value: String },
-    Suffix { value: String },
-    Cidr { value: String },
+#[serde(rename_all = "snake_case")]
+enum HostMatcherKind {
+    Exact,
+    Suffix,
+    Cidr,
 }
 
 impl<'de> Deserialize<'de> for HostMatcher {
@@ -165,13 +163,31 @@ impl<'de> Deserialize<'de> for HostMatcher {
     where
         D: serde::Deserializer<'de>,
     {
-        match HostMatcherWire::deserialize(deserializer)? {
-            HostMatcherWire::Legacy(value) => Ok(HostMatcher::Exact { value }),
-            HostMatcherWire::Tagged(TaggedHostMatcher::Exact { value }) => Ok(HostMatcher::Exact { value }),
-            HostMatcherWire::Tagged(TaggedHostMatcher::Suffix { value }) => Ok(HostMatcher::Suffix { value }),
-            HostMatcherWire::Tagged(TaggedHostMatcher::Cidr { value }) => {
-                HostMatcher::cidr(value).map_err(serde::de::Error::custom)
-            }
+        deserializer.deserialize_any(HostMatcherVisitor)
+    }
+}
+
+struct HostMatcherVisitor;
+
+impl<'de> serde::de::Visitor<'de> for HostMatcherVisitor {
+    type Value = HostMatcher;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON string or object")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(HostMatcher::exact(value))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+        // ~keep Direct map deserialization preserves typed field errors lost by an untagged enum's trial arms.
+        let TaggedHostMatcher { kind, value } =
+            TaggedHostMatcher::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+        match kind {
+            HostMatcherKind::Exact => Ok(HostMatcher::Exact { value }),
+            HostMatcherKind::Suffix => Ok(HostMatcher::Suffix { value }),
+            HostMatcherKind::Cidr => HostMatcher::cidr(value).map_err(serde::de::Error::custom),
         }
     }
 }
