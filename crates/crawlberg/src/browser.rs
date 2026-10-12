@@ -1176,6 +1176,85 @@ mod launch_supervision_tests {
             "no Chrome process may keep using the cancelled fetch's profile"
         );
     }
+
+    /// A page that refuses the clear of its block patterns is not kept: it is closed and its
+    /// permit is released. A page that accepts the clear, with the same settings, is kept.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn a_page_that_refuses_the_clear_of_its_block_patterns_is_not_kept() {
+        use chromiumoxide::cdp::browser_protocol::target::CloseTargetParams;
+        use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
+
+        let test_name = "a_page_that_refuses_the_clear_of_its_block_patterns_is_not_kept";
+        let url = "http://example.com/";
+        let Some(chrome) = crate::browser_pool::chrome_executable(None) else {
+            eprintln!("skipping {test_name} because no usable Chrome was found");
+            return;
+        };
+        let wait = crate::browser_pool::tests::PROCESS_TEST_WAIT;
+        // ~keep One page at most: the second page below exists only if the first one gave its permit back.
+        let pool = BrowserPool::new(crate::browser_pool::BrowserPoolConfig {
+            max_pages: 1,
+            chrome_path: Some(chrome),
+            ..Default::default()
+        });
+        let sessions = Arc::new(crate::browser_session_pool::BrowserSessionPool::new());
+        let mut config = CrawlConfig::default();
+        config.browser.session_affinity = true;
+        config.browser.block_url_patterns = vec!["*.png".into()];
+        config.browser_session_pool = Some(sessions.clone());
+
+        let acquired = match pool.acquire_page_through(None, &config).await {
+            Ok(acquired) => acquired,
+            Err(error) => {
+                pool.shutdown().await;
+                eprintln!("skipping {test_name} because Chrome failed to launch: {error}");
+                return;
+            }
+        };
+        let (page, watch, permit, handler_end) = acquired.into_parts();
+        let closed_target = page.target_id().clone();
+
+        // ~keep A closed target answers no command, so the clear cannot succeed. The target is
+        // ~keep closed for sure only when a command on the page fails, not when the close returns.
+        page.execute(CloseTargetParams::new(closed_target.clone()))
+            .await
+            .expect("Chrome must close the target of the page");
+        let gone_by = tokio::time::Instant::now() + wait;
+        loop {
+            let answer = tokio::time::timeout(Duration::from_secs(1), page.execute(EvaluateParams::new("1"))).await;
+            if matches!(answer, Ok(Err(_))) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < gone_by,
+                "the closed target must refuse a command within the process-test bound"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        release_pooled_page(url, &config, page, watch, permit, Some(handler_end), true).await;
+        assert_eq!(
+            sessions.size().await,
+            0,
+            "a page that can still have the patterns must not be kept"
+        );
+
+        let next = tokio::time::timeout(wait, pool.acquire_page_through(None, &config))
+            .await
+            .expect("the page that was not kept must give its permit back")
+            .expect("the pool must open a new page");
+        let (page, watch, permit, handler_end) = next.into_parts();
+        assert_ne!(page.target_id(), &closed_target, "the next page must be a new one");
+        page.execute(EvaluateParams::new("1"))
+            .await
+            .expect("the new page must answer a command");
+        release_pooled_page(url, &config, page, watch, permit, Some(handler_end), true).await;
+        let kept = sessions.size().await;
+        sessions.shutdown().await;
+        pool.shutdown().await;
+        assert_eq!(kept, 1, "a page that accepts the clear is kept with the same settings");
+    }
 }
 
 #[cfg(test)]
