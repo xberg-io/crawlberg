@@ -37,6 +37,10 @@ impl Command {
         self
     }
 
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.inner.as_std().get_args()
+    }
+
     pub fn args<I, S>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
