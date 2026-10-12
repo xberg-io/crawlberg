@@ -169,7 +169,9 @@ title: "Changelog"
   loaded again after the retry delay, up to `retry_count` times, on the two backends. A browser
   timeout is not retried. (#610)
 - Browser mode waits for the delay of the domain (`rate_limit_ms`) before each page load, on the
-  two backends. The delay applies to the page, not to the files that the page loads. (#622)
+  two backends. The delay applies to the page, not to the files that the page loads. The wait is
+  not counted against `browser.overall_timeout`: a page gets its whole deadline once its turn
+  comes. (#622)
 - Browser mode sends client hints that agree with a configured Chrome user agent: the brands
   with its version, its platform and the mobile flag, on every request of the page. For a user
   agent that does not name Chrome on Android, Windows, macOS or Linux, Chrome sends no client
