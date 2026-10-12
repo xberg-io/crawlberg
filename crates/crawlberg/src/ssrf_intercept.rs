@@ -1688,6 +1688,7 @@ impl Watch {
         }
     }
 
+    #[cfg(feature = "browser")]
     pub(crate) fn has_intentional_terminal_response(&self) -> bool {
         lock(&self.page.outcome)
             .stopped_response

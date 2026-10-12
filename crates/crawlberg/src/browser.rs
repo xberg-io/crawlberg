@@ -450,12 +450,10 @@ async fn acquire_pooled_page(
     CrawlError,
 > {
     let proxy = crate::proxy::chrome_proxy_for(config)?;
-    if config.browser.session_affinity {
+    if config.browser.session_affinity
+        && let Some(session_pool) = config.browser_session_pool.as_deref()
+    {
         let session_key = session_key(url, proxy.as_ref())?;
-        let session_pool = config
-            .browser_session_pool
-            .as_deref()
-            .ok_or_else(|| CrawlError::browser_error("session_affinity enabled but session pool is not configured"))?;
 
         if let Some((page, permit, handler_end)) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
             if !handler_end.as_ref().is_some_and(HandlerEnd::has_ended) {
