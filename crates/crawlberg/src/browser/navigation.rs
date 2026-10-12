@@ -51,14 +51,13 @@ impl chromiumoxide::Command for BlockedUrls {
     type Response = chromiumoxide::cdp::browser_protocol::network::SetBlockedUrLsReturns;
 }
 
-/// The command that sets the blocked URL patterns of a page, or `None` when the list is empty.
+/// The command that replaces the blocked URL patterns of a page.
 ///
-/// ~keep A page starts with no blocked pattern, so an empty list needs no command, and a
-/// ~keep command that is not sent cannot fail the fetch.
-fn blocked_urls_command(patterns: &[String]) -> Option<BlockedUrls> {
-    (!patterns.is_empty()).then(|| BlockedUrls {
+/// ~keep Empty clears patterns left by a prior fetch on a retained session page.
+fn blocked_urls_command(patterns: &[String]) -> BlockedUrls {
+    BlockedUrls {
         urls: patterns.to_vec(),
-    })
+    }
 }
 
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
@@ -110,11 +109,9 @@ async fn fetch_in_turn(
     }
 
     apply_user_agent(page, config, stealth).await?;
-    if let Some(command) = blocked_urls_command(&config.browser.block_url_patterns) {
-        page.execute(command)
-            .await
-            .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
-    }
+    page.execute(blocked_urls_command(&config.browser.block_url_patterns))
+        .await
+        .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
 
     if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
@@ -531,11 +528,11 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_blocked_url_list_sends_no_command() {
-        assert!(blocked_urls_command(&[]).is_none());
+    fn should_send_empty_patterns_to_clear_a_retained_pages_previous_blocks() {
+        let empty = serde_json::to_value(blocked_urls_command(&[])).expect("serialize empty patterns");
+        assert_eq!(empty, serde_json::json!({"urls": []}));
         let patterns = ["*.png".to_owned(), "*://ads.example/*".to_owned()];
-        let command = blocked_urls_command(&patterns).expect("a list with patterns sends the command");
-        assert_eq!(command.urls, patterns);
+        assert_eq!(blocked_urls_command(&patterns).urls, patterns);
     }
 
     #[test]
