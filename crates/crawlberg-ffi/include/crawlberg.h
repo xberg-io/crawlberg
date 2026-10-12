@@ -290,6 +290,8 @@ enum CBERGAlefFfiErrorCode
   CbergAlefPanic = 3,
   CbergAlefInvalidHandle = 4,
   CbergAlefCancelled = 5,
+  CrawlbergCrawlErrorTooManyRedirects = 100,
+  CrawlbergSsrfErrorTooManyRedirects = 101,
 };
 #if __STDC_VERSION__ >= 202311L
 typedef enum CBERGAlefFfiErrorCode CBERGAlefFfiErrorCode;

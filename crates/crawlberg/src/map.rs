@@ -2028,19 +2028,34 @@ mod tests {
         assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
-    /// Where the crawl's own redirect chain stops for `url`: the final URL without `base`, and
-    /// its status. The crawl never fails on these chains, so neither may map.
+    // ~keep Compare map with the crawl redirect policy, not scrape's stricter HTTP error policy.
     async fn crawl_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
+        let engine = crate::CrawlEngine::builder()
+            .config(CrawlConfig {
+                max_depth: Some(0),
+                ..config.clone()
+            })
+            .build()
+            .expect("engine builds");
+        let result = engine.crawl(url).await.expect("crawl completes");
+        assert_eq!(result.pages.len(), 1, "crawl reports the seed's terminal response");
+        let page = &result.pages[0];
+        assert_eq!(result.error, None, "crawl accepts this bounded chain");
+        (page.final_url.replace(base, ""), page.status_code)
+    }
+
+    // ~keep Unlike crawl's page result, a refresh-following scrape retains a terminal 404 response.
+    async fn scrape_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
         let engine = crate::CrawlEngine::builder()
             .config(config.clone())
             .build()
             .expect("engine builds");
-        let page = engine.scrape(url).await.expect("the crawl does not fail on this chain");
+        let page = engine.scrape(url).await.expect("scrape returns the terminal response");
         (page.final_url.replace(base, ""), page.status_code)
     }
 
     #[tokio::test]
-    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         let start = r#"<html><head><meta http-equiv="refresh" content="0; url=/missing"></head>
@@ -2055,7 +2070,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/start"), &config).await,
+            scrape_stop(&base, &format!("{base}/start"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }
@@ -2268,7 +2283,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         mount_redirect(&mock, "/r0", "/missing").await;
@@ -2281,7 +2296,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            scrape_stop(&base, &format!("{base}/r0"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }

@@ -326,6 +326,8 @@ pub enum CrawlError {
     },
     /// The HTTP redirect chain exceeded the configured redirect limit.
     #[error("too_many_redirects: {message}")]
+    // ~keep Stable ABI code 100 distinguishes this error from SsrfError's same-named variant; never renumber.
+    #[cfg_attr(alef, alef(error_code = 100))]
     TooManyRedirects {
         /// Human-readable description of the exhausted redirect chain.
         message: String,

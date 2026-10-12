@@ -619,18 +619,11 @@ async fn too_many_redirects_refused() {
     let url_str = format!("{}/r1", mock.uri());
     let result = scrape(&engine(config), &url_str).await;
 
-    match result {
-        Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
-            assert!(
-                reason.contains("too many redirects"),
-                "SsrfPolicyViolation reason must contain 'too many redirects', got: '{reason}'"
-            );
-        }
-        Ok(ref page) if page.status_code == 302 => {}
-        other => {
-            panic!("expected SsrfPolicyViolation(too many redirects) or Ok(302), got: {other:?}");
-        }
-    }
+    let error = result.expect_err("a redirect loop must fail the HTTP scrape");
+    assert!(
+        matches!(error, CrawlError::TooManyRedirects { .. }),
+        "expected the dedicated redirect classification, got: {error:?}"
+    );
 }
 
 /// What the engine names a caller's address that does not parse, in place of its text.

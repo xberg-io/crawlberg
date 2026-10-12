@@ -111,6 +111,43 @@ async fn map_spaces_robots_and_three_advertised_sitemaps() {
 }
 
 #[tokio::test]
+async fn maps_use_the_default_host_delay_when_rate_limit_ms_is_unset() {
+    let site = MockServer::start().await;
+    Mock::given(path("/robots.txt"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!("User-agent: *\nAllow: /\nSitemap: {}/one.xml\n", site.uri())),
+        )
+        .expect(1)
+        .mount(&site)
+        .await;
+    Mock::given(path("/one.xml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            "<?xml version='1.0'?><urlset><url><loc>{}/page</loc></url></urlset>",
+            site.uri()
+        )))
+        .expect(1)
+        .mount(&site)
+        .await;
+    let engine = create_engine(Some(CrawlConfig {
+        respect_robots_txt: true,
+        rate_limit_ms: None,
+        rate_limit_jitter_ratio: 0.0,
+        ..config()
+    }))
+    .unwrap();
+    let start = std::time::Instant::now();
+    let result = crawlberg::map_urls(&engine, &site.uri()).await.unwrap();
+    assert_eq!(result.urls.len(), 1);
+    assert!(
+        start.elapsed() >= std::time::Duration::from_millis(200),
+        "the second same-host request must wait for the default delay: {:?}",
+        start.elapsed()
+    );
+    site.verify().await;
+}
+
+#[tokio::test]
 async fn a_redirect_loop_has_the_redirect_limit_classification() {
     let site = MockServer::start().await;
     Mock::given(path("/loop"))

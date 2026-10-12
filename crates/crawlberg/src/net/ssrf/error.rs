@@ -35,5 +35,7 @@ pub enum SsrfError {
 
     /// Too many HTTP redirects encountered during validation.
     #[error("too many redirects")]
+    // ~keep Stable ABI code 101 distinguishes this error from CrawlError's same-named variant; never renumber.
+    #[cfg_attr(alef, alef(error_code = 101))]
     TooManyRedirects,
 }
