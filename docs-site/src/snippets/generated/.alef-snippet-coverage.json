@@ -43,8 +43,10 @@
     "c/content/content-binary-skip.md",
     "c/content/content-charset-iso8859.md",
     "c/content/content-default-preset.md",
+    "c/content/content-drop-hidden-default.md",
     "c/content/content-empty-body.md",
     "c/content/content-gzip-compressed.md",
+    "c/content/content-keep-hidden.md",
     "c/content/content-large-page-limit.md",
     "c/content/content-main-only.md",
     "c/content/content-non-ascii-body-limit.md",
@@ -310,8 +312,10 @@
     "csharp/content/content-binary-skip.md",
     "csharp/content/content-charset-iso8859.md",
     "csharp/content/content-default-preset.md",
+    "csharp/content/content-drop-hidden-default.md",
     "csharp/content/content-empty-body.md",
     "csharp/content/content-gzip-compressed.md",
+    "csharp/content/content-keep-hidden.md",
     "csharp/content/content-large-page-limit.md",
     "csharp/content/content-main-only.md",
     "csharp/content/content-non-ascii-body-limit.md",
@@ -586,8 +590,10 @@
     "dart/content/content-binary-skip.md",
     "dart/content/content-charset-iso8859.md",
     "dart/content/content-default-preset.md",
+    "dart/content/content-drop-hidden-default.md",
     "dart/content/content-empty-body.md",
     "dart/content/content-gzip-compressed.md",
+    "dart/content/content-keep-hidden.md",
     "dart/content/content-large-page-limit.md",
     "dart/content/content-main-only.md",
     "dart/content/content-non-ascii-body-limit.md",
@@ -854,8 +860,10 @@
     "elixir/content/content-binary-skip.md",
     "elixir/content/content-charset-iso8859.md",
     "elixir/content/content-default-preset.md",
+    "elixir/content/content-drop-hidden-default.md",
     "elixir/content/content-empty-body.md",
     "elixir/content/content-gzip-compressed.md",
+    "elixir/content/content-keep-hidden.md",
     "elixir/content/content-large-page-limit.md",
     "elixir/content/content-main-only.md",
     "elixir/content/content-non-ascii-body-limit.md",
@@ -1127,8 +1135,10 @@
     "go/content/content-binary-skip.md",
     "go/content/content-charset-iso8859.md",
     "go/content/content-default-preset.md",
+    "go/content/content-drop-hidden-default.md",
     "go/content/content-empty-body.md",
     "go/content/content-gzip-compressed.md",
+    "go/content/content-keep-hidden.md",
     "go/content/content-large-page-limit.md",
     "go/content/content-main-only.md",
     "go/content/content-non-ascii-body-limit.md",
@@ -1403,8 +1413,10 @@
     "java/content/content-binary-skip.md",
     "java/content/content-charset-iso8859.md",
     "java/content/content-default-preset.md",
+    "java/content/content-drop-hidden-default.md",
     "java/content/content-empty-body.md",
     "java/content/content-gzip-compressed.md",
+    "java/content/content-keep-hidden.md",
     "java/content/content-large-page-limit.md",
     "java/content/content-main-only.md",
     "java/content/content-non-ascii-body-limit.md",
@@ -1679,8 +1691,10 @@
     "kotlin-android/content/content-binary-skip.md",
     "kotlin-android/content/content-charset-iso8859.md",
     "kotlin-android/content/content-default-preset.md",
+    "kotlin-android/content/content-drop-hidden-default.md",
     "kotlin-android/content/content-empty-body.md",
     "kotlin-android/content/content-gzip-compressed.md",
+    "kotlin-android/content/content-keep-hidden.md",
     "kotlin-android/content/content-large-page-limit.md",
     "kotlin-android/content/content-main-only.md",
     "kotlin-android/content/content-non-ascii-body-limit.md",
@@ -1955,8 +1969,10 @@
     "php/content/content-binary-skip.md",
     "php/content/content-charset-iso8859.md",
     "php/content/content-default-preset.md",
+    "php/content/content-drop-hidden-default.md",
     "php/content/content-empty-body.md",
     "php/content/content-gzip-compressed.md",
+    "php/content/content-keep-hidden.md",
     "php/content/content-large-page-limit.md",
     "php/content/content-main-only.md",
     "php/content/content-non-ascii-body-limit.md",
@@ -2231,8 +2247,10 @@
     "python/content/content-binary-skip.md",
     "python/content/content-charset-iso8859.md",
     "python/content/content-default-preset.md",
+    "python/content/content-drop-hidden-default.md",
     "python/content/content-empty-body.md",
     "python/content/content-gzip-compressed.md",
+    "python/content/content-keep-hidden.md",
     "python/content/content-large-page-limit.md",
     "python/content/content-main-only.md",
     "python/content/content-non-ascii-body-limit.md",
@@ -2507,8 +2525,10 @@
     "ruby/content/content-binary-skip.md",
     "ruby/content/content-charset-iso8859.md",
     "ruby/content/content-default-preset.md",
+    "ruby/content/content-drop-hidden-default.md",
     "ruby/content/content-empty-body.md",
     "ruby/content/content-gzip-compressed.md",
+    "ruby/content/content-keep-hidden.md",
     "ruby/content/content-large-page-limit.md",
     "ruby/content/content-main-only.md",
     "ruby/content/content-non-ascii-body-limit.md",
@@ -2783,8 +2803,10 @@
     "rust/content/content-binary-skip.md",
     "rust/content/content-charset-iso8859.md",
     "rust/content/content-default-preset.md",
+    "rust/content/content-drop-hidden-default.md",
     "rust/content/content-empty-body.md",
     "rust/content/content-gzip-compressed.md",
+    "rust/content/content-keep-hidden.md",
     "rust/content/content-large-page-limit.md",
     "rust/content/content-main-only.md",
     "rust/content/content-non-ascii-body-limit.md",
@@ -3051,8 +3073,10 @@
     "swift/content/content-binary-skip.md",
     "swift/content/content-charset-iso8859.md",
     "swift/content/content-default-preset.md",
+    "swift/content/content-drop-hidden-default.md",
     "swift/content/content-empty-body.md",
     "swift/content/content-gzip-compressed.md",
+    "swift/content/content-keep-hidden.md",
     "swift/content/content-large-page-limit.md",
     "swift/content/content-main-only.md",
     "swift/content/content-non-ascii-body-limit.md",
@@ -3324,8 +3348,10 @@
     "typescript/content/content-binary-skip.md",
     "typescript/content/content-charset-iso8859.md",
     "typescript/content/content-default-preset.md",
+    "typescript/content/content-drop-hidden-default.md",
     "typescript/content/content-empty-body.md",
     "typescript/content/content-gzip-compressed.md",
+    "typescript/content/content-keep-hidden.md",
     "typescript/content/content-large-page-limit.md",
     "typescript/content/content-main-only.md",
     "typescript/content/content-non-ascii-body-limit.md",
@@ -3600,8 +3626,10 @@
     "wasm/content/content-binary-skip.md",
     "wasm/content/content-charset-iso8859.md",
     "wasm/content/content-default-preset.md",
+    "wasm/content/content-drop-hidden-default.md",
     "wasm/content/content-empty-body.md",
     "wasm/content/content-gzip-compressed.md",
+    "wasm/content/content-keep-hidden.md",
     "wasm/content/content-large-page-limit.md",
     "wasm/content/content-main-only.md",
     "wasm/content/content-non-ascii-body-limit.md",
@@ -3859,8 +3887,10 @@
     "zig/content/content-binary-skip.md",
     "zig/content/content-charset-iso8859.md",
     "zig/content/content-default-preset.md",
+    "zig/content/content-drop-hidden-default.md",
     "zig/content/content-empty-body.md",
     "zig/content/content-gzip-compressed.md",
+    "zig/content/content-keep-hidden.md",
     "zig/content/content-large-page-limit.md",
     "zig/content/content-main-only.md",
     "zig/content/content-non-ascii-body-limit.md",
@@ -4598,6 +4628,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "c"
+      },
+      "path": "c/content/content-drop-hidden-default.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "c"
       },
@@ -4614,6 +4656,18 @@
         "language": "c"
       },
       "path": "c/content/content-gzip-compressed.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "c"
+      },
+      "path": "c/content/content-keep-hidden.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -7802,6 +7856,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "csharp"
+      },
+      "path": "csharp/content/content-drop-hidden-default.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "csharp"
       },
@@ -7818,6 +7884,18 @@
         "language": "csharp"
       },
       "path": "csharp/content/content-gzip-compressed.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "csharp"
+      },
+      "path": "csharp/content/content-keep-hidden.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -11114,6 +11192,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "dart"
+      },
+      "path": "dart/content/content-drop-hidden-default.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "dart"
       },
@@ -11130,6 +11220,18 @@
         "language": "dart"
       },
       "path": "dart/content/content-gzip-compressed.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "dart"
+      },
+      "path": "dart/content/content-keep-hidden.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -14330,6 +14432,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "elixir"
+      },
+      "path": "elixir/content/content-drop-hidden-default.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "elixir"
       },
@@ -14346,6 +14460,18 @@
         "language": "elixir"
       },
       "path": "elixir/content/content-gzip-compressed.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "elixir"
+      },
+      "path": "elixir/content/content-keep-hidden.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -17606,6 +17732,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "go"
+      },
+      "path": "go/content/content-drop-hidden-default.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "go"
       },
@@ -17622,6 +17760,18 @@
         "language": "go"
       },
       "path": "go/content/content-gzip-compressed.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "go"
+      },
+      "path": "go/content/content-keep-hidden.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -20918,6 +21068,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "java"
+      },
+      "path": "java/content/content-drop-hidden-default.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "java"
       },
@@ -20934,6 +21096,18 @@
         "language": "java"
       },
       "path": "java/content/content-gzip-compressed.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "java"
+      },
+      "path": "java/content/content-keep-hidden.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -24230,6 +24404,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/content/content-drop-hidden-default.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "kotlin_android"
       },
@@ -24246,6 +24432,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/content/content-gzip-compressed.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/content/content-keep-hidden.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -27542,6 +27740,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "php"
+      },
+      "path": "php/content/content-drop-hidden-default.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "php"
       },
@@ -27558,6 +27768,18 @@
         "language": "php"
       },
       "path": "php/content/content-gzip-compressed.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "php"
+      },
+      "path": "php/content/content-keep-hidden.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -30854,6 +31076,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "python"
+      },
+      "path": "python/content/content-drop-hidden-default.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "python"
       },
@@ -30870,6 +31104,18 @@
         "language": "python"
       },
       "path": "python/content/content-gzip-compressed.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "python"
+      },
+      "path": "python/content/content-keep-hidden.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -34166,6 +34412,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "ruby"
+      },
+      "path": "ruby/content/content-drop-hidden-default.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "ruby"
       },
@@ -34182,6 +34440,18 @@
         "language": "ruby"
       },
       "path": "ruby/content/content-gzip-compressed.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "ruby"
+      },
+      "path": "ruby/content/content-keep-hidden.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -37595,6 +37865,21 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "rust"
+      },
+      "path": "rust/content/content-drop-hidden-default.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "rust"
       },
@@ -37614,6 +37899,21 @@
         "language": "rust"
       },
       "path": "rust/content/content-gzip-compressed.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "rust"
+      },
+      "path": "rust/content/content-keep-hidden.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41458,6 +41758,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "swift"
+      },
+      "path": "swift/content/content-drop-hidden-default.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "swift"
       },
@@ -41474,6 +41786,18 @@
         "language": "swift"
       },
       "path": "swift/content/content-gzip-compressed.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "swift"
+      },
+      "path": "swift/content/content-keep-hidden.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -44734,6 +45058,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "node"
+      },
+      "path": "typescript/content/content-drop-hidden-default.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "node"
       },
@@ -44750,6 +45086,18 @@
         "language": "node"
       },
       "path": "typescript/content/content-gzip-compressed.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "node"
+      },
+      "path": "typescript/content/content-keep-hidden.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48046,6 +48394,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "wasm"
+      },
+      "path": "wasm/content/content-drop-hidden-default.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "wasm"
       },
@@ -48062,6 +48422,18 @@
         "language": "wasm"
       },
       "path": "wasm/content/content-gzip-compressed.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "wasm"
+      },
+      "path": "wasm/content/content-keep-hidden.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -51154,6 +51526,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_drop_hidden_default",
+        "language": "zig"
+      },
+      "path": "zig/content/content-drop-hidden-default.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "zig"
       },
@@ -51170,6 +51554,18 @@
         "language": "zig"
       },
       "path": "zig/content/content-gzip-compressed.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_keep_hidden",
+        "language": "zig"
+      },
+      "path": "zig/content/content-keep-hidden.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -56407,6 +56803,66 @@
       "language": "zig"
     },
     {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "zig"
+    },
+    {
       "fixture_id": "content_empty_body",
       "language": "c"
     },
@@ -56524,6 +56980,66 @@
     },
     {
       "fixture_id": "content_gzip_compressed",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
       "language": "zig"
     },
     {
@@ -72765,6 +73281,66 @@
       "language": "zig"
     },
     {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_drop_hidden_default",
+      "language": "zig"
+    },
+    {
       "fixture_id": "content_empty_body",
       "language": "c"
     },
@@ -72882,6 +73458,66 @@
     },
     {
       "fixture_id": "content_gzip_compressed",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_keep_hidden",
       "language": "zig"
     },
     {

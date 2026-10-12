@@ -15,6 +15,21 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
 /// (markdown, plain text, djot).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[cfg_attr(alef, alef(legacy_constructor_fields = [
+    "output_format",
+    "preprocessing_preset",
+    "remove_navigation",
+    "remove_forms",
+    "strip_tags",
+    "preserve_tags",
+    "exclude_selectors",
+    "skip_images",
+    "max_depth",
+    "wrap",
+    "wrap_width",
+    "include_document_structure",
+    "extract_metadata",
+]))]
 pub struct ContentConfig {
     /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
     pub output_format: String,
@@ -67,6 +82,9 @@ pub struct ContentConfig {
     /// is populated independently by `crate::html::metadata::extract_metadata` from the
     /// parsed DOM, so turning this off does not lose any metadata field. ~keep
     pub extract_metadata: bool,
+    /// Keep text hidden by HTML attributes or inline styles, including body templates.
+    /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
+    pub keep_hidden: bool,
 }
 
 impl Default for ContentConfig {
@@ -85,6 +103,7 @@ impl Default for ContentConfig {
             wrap_width: 80,
             include_document_structure: true,
             extract_metadata: true,
+            keep_hidden: false,
         }
     }
 }

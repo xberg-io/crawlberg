@@ -914,6 +914,8 @@ path_mappings = { "crawlberg::citations" = "crawlberg", "crawlberg::bindings" = 
 features = ["interact", "browser-chromiumoxide"]
 
 [crates.python]
+# ~keep Preserve interpreter shutdown and fork guards across the generator upgrade.
+async_runtime = "managed"
 module_name = "_crawlberg"
 send_sync_types = ["CrawlEngineHandle"]
 

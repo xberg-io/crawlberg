@@ -911,6 +911,10 @@ class ContentConfig {
   /// parsed DOM, so turning this off does not lose any metadata field.
   final bool extractMetadata;
 
+  /// Keep text hidden by HTML attributes or inline styles, including body templates.
+  /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
+  final bool keepHidden;
+
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -925,6 +929,7 @@ class ContentConfig {
     required this.wrapWidth,
     required this.includeDocumentStructure,
     required this.extractMetadata,
+    this.keepHidden = false,
   });
 
   @override
@@ -941,7 +946,8 @@ class ContentConfig {
       wrap.hashCode ^
       wrapWidth.hashCode ^
       includeDocumentStructure.hashCode ^
-      extractMetadata.hashCode;
+      extractMetadata.hashCode ^
+      keepHidden.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -960,7 +966,8 @@ class ContentConfig {
           wrap == other.wrap &&
           wrapWidth == other.wrapWidth &&
           includeDocumentStructure == other.includeDocumentStructure &&
-          extractMetadata == other.extractMetadata;
+          extractMetadata == other.extractMetadata &&
+          keepHidden == other.keepHidden;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.

@@ -1,0 +1,74 @@
+{
+	"id": "content_drop_hidden_default",
+	"description": "Drop hidden text by default",
+	"tags": [
+		"content",
+		"regression"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html"
+				},
+				"body_file": "html/hidden_content.html"
+			}
+		],
+		"config": {
+			"respect_robots_txt": false,
+			"browser": {
+				"mode": "never"
+			},
+			"content": {
+				"extract_metadata": false,
+				"remove_navigation": false,
+				"remove_forms": false,
+				"exclude_selectors": [],
+				"preprocessing_preset": "minimal"
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "Visible sentence one."
+		},
+		{
+			"type": "not_contains",
+			"field": "markdown.content",
+			"value": "Hidden attribute sentence."
+		},
+		{
+			"type": "not_contains",
+			"field": "markdown.content",
+			"value": "Display none sentence."
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "Aria hidden sentence."
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "Collapsed details sentence."
+		},
+		{
+			"type": "not_contains",
+			"field": "markdown.content",
+			"value": "Template sentence."
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "Visible sentence two."
+		}
+	],
+	"docs": {
+		"topic": "content",
+		"stem": "content-drop-hidden-default",
+		"title": "Drop hidden text by default"
+	}
+}

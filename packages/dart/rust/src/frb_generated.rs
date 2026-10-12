@@ -1940,6 +1940,7 @@ const _: fn() = || {
         let _: i64 = ContentConfig.wrap_width;
         let _: bool = ContentConfig.include_document_structure;
         let _: bool = ContentConfig.extract_metadata;
+        let _: bool = ContentConfig.keep_hidden;
     }
     {
         let CookieInfo = None::<crate::CookieInfo>.unwrap();
@@ -2754,6 +2755,7 @@ impl SseDecode for crate::ContentConfig {
         let mut var_wrapWidth = <i64>::sse_decode(deserializer);
         let mut var_includeDocumentStructure = <bool>::sse_decode(deserializer);
         let mut var_extractMetadata = <bool>::sse_decode(deserializer);
+        let mut var_keepHidden = <bool>::sse_decode(deserializer);
         return crate::ContentConfig {
             output_format: var_outputFormat,
             preprocessing_preset: var_preprocessingPreset,
@@ -2768,6 +2770,7 @@ impl SseDecode for crate::ContentConfig {
             wrap_width: var_wrapWidth,
             include_document_structure: var_includeDocumentStructure,
             extract_metadata: var_extractMetadata,
+            keep_hidden: var_keepHidden,
         };
     }
 }
@@ -4767,6 +4770,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.wrap_width.into_into_dart().into_dart(),
             self.0.include_document_structure.into_into_dart().into_dart(),
             self.0.extract_metadata.into_into_dart().into_dart(),
+            self.0.keep_hidden.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5947,6 +5951,7 @@ impl SseEncode for crate::ContentConfig {
         <i64>::sse_encode(self.wrap_width, serializer);
         <bool>::sse_encode(self.include_document_structure, serializer);
         <bool>::sse_encode(self.extract_metadata, serializer);
+        <bool>::sse_encode(self.keep_hidden, serializer);
     }
 }
 

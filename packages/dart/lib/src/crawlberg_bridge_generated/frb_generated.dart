@@ -2893,8 +2893,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2909,6 +2909,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrapWidth: dco_decode_i_64(arr[10]),
       includeDocumentStructure: dco_decode_bool(arr[11]),
       extractMetadata: dco_decode_bool(arr[12]),
+      keepHidden: dco_decode_bool(arr[13]),
     );
   }
 
@@ -4360,6 +4361,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_wrapWidth = sse_decode_i_64(deserializer);
     var var_includeDocumentStructure = sse_decode_bool(deserializer);
     var var_extractMetadata = sse_decode_bool(deserializer);
+    var var_keepHidden = sse_decode_bool(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4374,6 +4376,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrapWidth: var_wrapWidth,
       includeDocumentStructure: var_includeDocumentStructure,
       extractMetadata: var_extractMetadata,
+      keepHidden: var_keepHidden,
     );
   }
 
@@ -6320,6 +6323,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.wrapWidth, serializer);
     sse_encode_bool(self.includeDocumentStructure, serializer);
     sse_encode_bool(self.extractMetadata, serializer);
+    sse_encode_bool(self.keepHidden, serializer);
   }
 
   @protected

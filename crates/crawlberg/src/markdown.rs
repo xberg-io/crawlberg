@@ -57,6 +57,11 @@ fn convert_html_to_markdown(
         strip_tags: config.strip_tags.clone(),
         preserve_tags: config.preserve_tags.clone(),
         exclude_selectors: config.exclude_selectors.clone(),
+        hidden_content: if config.keep_hidden {
+            html_to_markdown_rs::options::HiddenContent::All
+        } else {
+            html_to_markdown_rs::options::HiddenContent::Drop
+        },
         skip_images: config.skip_images,
         inline_data_media: html_to_markdown_rs::options::InlineDataMedia::AltTextOnly,
         max_depth: config.max_depth,

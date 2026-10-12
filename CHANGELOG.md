@@ -22,6 +22,9 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- `ContentConfig.keep_hidden` keeps text in hidden elements and body templates in HTTP, browser
+  and cached responses. It defaults to `false`; explicit exclusions, scripts and styles remain excluded. (#625)
+
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
