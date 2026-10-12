@@ -11,6 +11,63 @@ use sysinfo::UpdateKind;
 
 use super::*;
 
+// ~keep #674: a non-exec launcher can leave its child outside any readable process family.
+#[cfg(unix)]
+fn assert_refused_launcher_stops_its_child(launcher_exits: bool) {
+    let ending = if launcher_exits { "exit 3" } else { "wait" };
+    let script = format!("#!/bin/sh\nsleep 300 &\necho $! > \"$0.child\"\n{ending}\n");
+    let (root, mut dir, config) = a_listed_launch_of_a_script("crawlberg-refused-descendant-test-", &script);
+    let marker = root.path().join("chrome-stand-in.sh.child");
+    let mut peer = std::process::Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("peer must start");
+    let mut asked = None;
+    let outcome = start_listed_chrome_reading(dir.path(), &config, |pid| {
+        asked = Some(pid);
+        let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists(), "launcher must start and report its child");
+        if launcher_exits {
+            assert!(ended_within_the_wait(pid), "launcher must exit before the failed read");
+        }
+        None
+    });
+    let descendant: u32 = std::fs::read_to_string(&marker)
+        .expect("launcher must report its child")
+        .trim()
+        .parse()
+        .expect("reported child must be a pid");
+    let stopped = ended_within_the_wait(descendant);
+    let peer_running = peer.try_wait().expect("peer status must be readable").is_none();
+    let mut system = System::new();
+    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[Pid::from_u32(descendant)]));
+    if let Some(process) = system.process(Pid::from_u32(descendant)) {
+        process.kill();
+    }
+    let _ = peer.kill();
+    let _ = peer.wait();
+    drop(dir.0.take());
+    assert!(asked.is_some(), "the refused launch must actually run");
+    assert!(outcome.is_err(), "unreadable launch must be refused");
+    assert!(stopped, "the refused launch must stop the child of its launcher");
+    assert!(peer_running, "refusal must leave an unrelated process alive");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn refusing_an_exited_launcher_stops_its_child_and_leaves_an_unrelated_process() {
+    assert_refused_launcher_stops_its_child(true);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn refusing_a_running_launcher_stops_its_child_and_leaves_an_unrelated_process() {
+    assert_refused_launcher_stops_its_child(false);
+}
+
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 pub(crate) fn expect_chrome_or_skip<T, E: std::fmt::Display>(test_name: &str, result: Result<T, E>) -> Option<T> {
     match result {
@@ -5007,61 +5064,4 @@ async fn a_dropped_page_retains_its_permit_until_its_context_is_disposed() {
         remaining, original,
         "the dropped page must leave no browser context behind"
     );
-}
-
-// ~keep #674: a non-exec launcher can leave its child outside any readable process family.
-#[cfg(unix)]
-fn assert_refused_launcher_stops_its_child(launcher_exits: bool) {
-    let ending = if launcher_exits { "exit 3" } else { "wait" };
-    let script = format!("#!/bin/sh\nsleep 300 &\necho $! > \"$0.child\"\n{ending}\n");
-    let (root, mut dir, config) = a_listed_launch_of_a_script("crawlberg-refused-descendant-test-", &script);
-    let marker = root.path().join("chrome-stand-in.sh.child");
-    let mut peer = std::process::Command::new("sleep")
-        .arg("300")
-        .spawn()
-        .expect("peer must start");
-    let mut asked = None;
-    let outcome = start_listed_chrome_reading(dir.path(), &config, |pid| {
-        asked = Some(pid);
-        let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
-        while !marker.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(marker.exists(), "launcher must start and report its child");
-        if launcher_exits {
-            assert!(ended_within_the_wait(pid), "launcher must exit before the failed read");
-        }
-        None
-    });
-    let descendant: u32 = std::fs::read_to_string(&marker)
-        .expect("launcher must report its child")
-        .trim()
-        .parse()
-        .expect("reported child must be a pid");
-    let stopped = ended_within_the_wait(descendant);
-    let peer_running = peer.try_wait().expect("peer status must be readable").is_none();
-    let mut system = System::new();
-    ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[Pid::from_u32(descendant)]));
-    if let Some(process) = system.process(Pid::from_u32(descendant)) {
-        process.kill();
-    }
-    let _ = peer.kill();
-    let _ = peer.wait();
-    drop(dir.0.take());
-    assert!(asked.is_some(), "the refused launch must actually run");
-    assert!(outcome.is_err(), "unreadable launch must be refused");
-    assert!(stopped, "the refused launch must stop the child of its launcher");
-    assert!(peer_running, "refusal must leave an unrelated process alive");
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn refusing_an_exited_launcher_stops_its_child_and_leaves_an_unrelated_process() {
-    assert_refused_launcher_stops_its_child(true);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn refusing_a_running_launcher_stops_its_child_and_leaves_an_unrelated_process() {
-    assert_refused_launcher_stops_its_child(false);
 }
