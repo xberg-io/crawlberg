@@ -5,18 +5,21 @@
 
 #![cfg(feature = "browser-native")]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, CrawlError, HostMatcher, batch_scrape, create_engine,
-    scrape,
+    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, CrawlEngine, CrawlEngineHandle, CrawlError, HostMatcher,
+    PerDomainThrottle, batch_scrape, create_engine, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+mod common;
+use common::RecordedTurns;
 
 /// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
 /// 127.0.0.1 servers and the loopback test server are reachable.
@@ -1198,35 +1201,60 @@ async fn native_scrape_retries_a_429_with_the_configured_budget() {
     assert_eq!(hits.load(Ordering::SeqCst), 3);
 }
 
-/// Two native scrapes of one host arrive one delay of the domain apart.
+/// Two native scrapes of one host, one after the other: the second gets its turn one delay of
+/// the domain after the first, and no page is asked for before its turn.
 #[tokio::test]
 async fn native_scrapes_of_one_host_keep_the_delay_of_the_domain() {
+    const DELAY: Duration = Duration::from_millis(1200);
     let site = MockServer::start().await;
-    let arrivals = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let arrivals = Arc::new(Mutex::new(Vec::new()));
     let record = Arc::clone(&arrivals);
     Mock::given(method("GET"))
         .respond_with(move |_: &wiremock::Request| {
-            record.lock().expect("record").push(std::time::Instant::now());
+            record.lock().expect("record").push(Instant::now());
             ResponseTemplate::new(200).set_body_raw("<html><body><p>paced</p></body></html>", "text/html")
         })
         .mount(&site)
         .await;
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let rate_limiter = RecordedTurns {
+        throttle: PerDomainThrottle::new(DELAY),
+        turns: Arc::clone(&turns),
+    };
     let config = CrawlConfig {
         respect_robots_txt: false,
-        rate_limit_ms: Some(1200),
-        rate_limit_jitter_ratio: 0.0,
         ..native_config(|c| c)
     };
-    let engine = engine_with(config);
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .rate_limiter(rate_limiter)
+        .build()
+        .expect("engine must build");
+    let engine = CrawlEngineHandle::from_engine(engine);
     scrape(&engine, &format!("{}/first", site.uri())).await.expect("first");
     scrape(&engine, &format!("{}/second", site.uri()))
         .await
         .expect("second");
+    let turns = turns.lock().expect("turns").clone();
     let arrivals = arrivals.lock().expect("arrivals").clone();
-    assert_eq!(arrivals.len(), 2, "each page is asked for once");
-    let gap = arrivals[1].duration_since(arrivals[0]);
+
+    let hosts: Vec<&str> = turns.iter().map(|(domain, _)| domain.as_str()).collect();
+    assert_eq!(
+        hosts,
+        ["127.0.0.1", "127.0.0.1"],
+        "each page takes one turn of its host"
+    );
+    // ~keep The product spaces the turns. The time from a turn to the arrival of the request is
+    // ~keep not the same for the two pages (the gap at the server was 1014 ms once at a delay of
+    // ~keep 1200 ms, at a host load of 50), so the gap at the server is not asserted.
+    let turn_gap = turns[1].1.duration_since(turns[0].1);
     assert!(
-        gap >= Duration::from_millis(1100),
-        "the two pages must arrive about one delay of 1200 ms apart, got {gap:?}"
+        turn_gap >= DELAY,
+        "the second turn must come one delay of {DELAY:?} after the first, got {turn_gap:?}"
+    );
+    assert_eq!(arrivals.len(), 2, "each page is asked for once");
+    assert!(
+        arrivals[0] >= turns[0].1 && arrivals[1] >= turns[1].1,
+        "no page is asked for before its turn: turns {turns:?}, arrivals {arrivals:?}"
     );
 }
