@@ -713,3 +713,91 @@ async fn the_ssrf_check_refuses_a_request_from_a_launched_page_behind_the_proxy(
         assert_refused_in_the_proxy_context(&label, &html, &refused, &denied, &seen, &accepted);
     }
 }
+
+async fn open_and_close_foreign_tabs(
+    chrome: Arc<chromiumoxide::Browser>,
+    count: usize,
+) -> Vec<chromiumoxide::cdp::browser_protocol::target::TargetId> {
+    use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, CreateTargetParams};
+    let mut closed = Vec::with_capacity(count);
+    for _ in 0..count {
+        let target = chrome
+            .execute(CreateTargetParams::new("about:blank"))
+            .await
+            .expect("foreign create");
+        chrome
+            .execute(CloseTargetParams::new(target.result.target_id.clone()))
+            .await
+            .expect("foreign close");
+        closed.push(target.result.target_id);
+    }
+    closed
+}
+
+#[tokio::test]
+async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
+    use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
+    const FOREIGN_TABS: usize = 200;
+    const INTERACTIONS: usize = 5;
+    let profile = tempfile::tempdir().expect("profile");
+    let Some((chrome, owner_handler)) = launch_endpoint_chrome(
+        "an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction",
+        profile.path(),
+        &[],
+    )
+    .await
+    else {
+        return;
+    };
+    let chrome = Arc::new(chrome);
+    let churn = tokio::spawn(open_and_close_foreign_tabs(Arc::clone(&chrome), FOREIGN_TABS));
+    let (configured, seen) = spawn_named_proxy("served-by-the-configured-proxy").await;
+    let mut config = render_config(proxy_at(configured, None, None));
+    config.ssrf.deny_private = false;
+    config.browser.endpoint = Some(chrome.websocket_address().clone());
+    let engine = create_engine(Some(config)).expect("engine");
+    let mut outcomes = Vec::new();
+    for _ in 0..INTERACTIONS {
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            interact(&engine, TARGET, vec![PageAction::Scrape]),
+        )
+        .await;
+        let failed = !matches!(&result, Ok(Ok(_)));
+        outcomes.push(result);
+        if failed {
+            break;
+        }
+    }
+    let closed = churn.await.expect("churn task");
+    let census = chrome
+        .execute(GetTargetsParams::default())
+        .await
+        .expect("foreign target census");
+    assert!(
+        closed
+            .iter()
+            .all(|target| census.result.target_infos.iter().all(|info| &info.target_id != target)),
+        "every acknowledged foreign close must remove its target"
+    );
+    let mut chrome = Arc::try_unwrap(chrome).expect("only owner remains");
+    let _ = chrome.close().await;
+    tokio::time::timeout(Duration::from_secs(5), chrome.wait())
+        .await
+        .expect("the fixture Chrome must exit")
+        .expect("wait for fixture Chrome");
+    owner_handler.abort();
+    assert_eq!(outcomes.len(), INTERACTIONS, "every owned interaction must finish");
+    for result in outcomes {
+        let html = result
+            .expect("interaction timeout")
+            .expect("external owner's unrelated tab teardown must not abort the owned page");
+        assert!(html.final_html.contains("served-by-the-configured-proxy"));
+    }
+    assert_eq!(
+        closed.len(),
+        FOREIGN_TABS,
+        "every foreign tab must be created and closed"
+    );
+    assert!(!target_requests(&seen).is_empty());
+}
