@@ -339,7 +339,12 @@ impl Router {
                     }
                     pending_bytes.extend_from_slice(&buffer[..count]);
                     while let Some(end) = next_frame_end(&pending_bytes, scanned) {
-                        self.deliver(serde_json::from_slice(&pending_bytes[..end])?)?;
+                        match serde_json::from_slice(&pending_bytes[..end]) {
+                            Ok(value) => self.deliver(value)?,
+                            Err(error) => {
+                                tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", %error, "skipped a private browser pipe frame that is not JSON");
+                            }
+                        }
                         pending_bytes.drain(..=end);
                         scanned = 0;
                     }
@@ -374,6 +379,24 @@ mod tests {
         let bytes = b"previous\0next\0";
         assert_eq!(next_frame_end(bytes, 9), Some(13));
         assert_eq!(next_frame_end(bytes, bytes.len()), None);
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_is_not_json_is_skipped_and_the_next_event_arrives() {
+        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_, mut client) = PipeHub::start(socket);
+        peer.write_all(
+            b"{\"method\":\"Test.half\",\"params\":{\"title\":\"\\ud83d\"}}\0not json\0{\"method\":\"Test.next\",\"params\":{}}\0",
+        )
+        .await
+        .expect("two bad frames and one good frame");
+        let event = timeout(DEADLINE, client.next())
+            .await
+            .expect("event deadline")
+            .expect("event")
+            .expect("the pipe stays open after a frame that is not JSON");
+        let value: Value = serde_json::from_str(event.to_text().expect("text")).expect("event JSON");
+        assert_eq!(value["method"], "Test.next");
     }
 
     #[tokio::test]
