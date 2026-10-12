@@ -24,10 +24,10 @@ title: "Changelog"
   `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
   struct literal that names every field must add them. `..Default::default()` needs no change
   for `CrawlPageResult`, `LinkInfo` and `ContentConfig`; for `FrontierEntry` set
-  `original_url: None`. In Java, Swift and Dart, a call that builds one of these types with every
-  field must pass the new ones. In Kotlin and Go, a call that passes the fields by position must
-  change, because `original_url` is the second field. A `Frontier` that stores its entries reads
-  an entry of an earlier release with no change.
+  `original_url: None`. In Java, Swift, Dart and Zig, a call that builds one of these types with
+  every field must pass the new ones. In Kotlin and Go, a call that passes the fields by
+  position must change, because `original_url` is the second field. A `Frontier` that stores
+  its entries reads an entry of an earlier release with no change.
 
 ### Added
 
