@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crawlberg_browser::adapter::{
     NativeActionResult, NativeBrowserExecutor, NativeInteractionResult, NativePageAction, NativeScrollDirection,
+    PageError,
 };
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
@@ -53,6 +54,9 @@ pub(super) async fn run(
         ))
     })?
     .map_err(|e| {
+        if let PageError::UnfollowedRedirect { target, visited } = e {
+            return crate::http::redirect_error(&target, !visited);
+        }
         let message = e.to_string();
         if message.contains("timed out") {
             CrawlError::browser_timeout(format!("browser timed out after {timeout:?}"))

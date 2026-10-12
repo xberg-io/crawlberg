@@ -1688,6 +1688,13 @@ impl Watch {
         }
     }
 
+    pub(crate) fn has_intentional_terminal_response(&self) -> bool {
+        lock(&self.page.outcome)
+            .stopped_response
+            .as_ref()
+            .is_some_and(|response| response.ready && response.terminal_intercepted)
+    }
+
     pub(crate) fn take_stopped_response(&self) -> Option<StoppedResponse> {
         let mut outcome = lock(&self.page.outcome);
         if outcome.stopped_response.as_ref().is_some_and(|response| response.ready) {
@@ -2027,8 +2034,14 @@ enum ChildPendingKind {
     StructuralArm {
         session: String,
     },
-    Boundary,
+    Boundary {
+        session: String,
+    },
     Close,
+    ForeignRetirementCensus {
+        target: TargetId,
+        session: String,
+    },
     DrainCensus {
         context: BrowserContextId,
         done: oneshot::Sender<()>,
@@ -2308,6 +2321,15 @@ fn child_policy_boundary_exists(registry: &Registry, target: &TargetId) -> bool 
     }
 }
 
+fn child_context_is_foreign(shared: &Shared, context: Option<&BrowserContextId>) -> bool {
+    if shared.origin != BrowserOrigin::External {
+        return false;
+    }
+    let Some(context) = context else { return false };
+    let registry = lock(&shared.registry);
+    !registry.shared_context && !registry.contexts.contains_key(context) && !registry.retired_contexts.contains(context)
+}
+
 fn child_context_retired(registry: &Registry, context: &BrowserContextId) -> bool {
     !registry.contexts.contains_key(context) && registry.retired_contexts.contains(context)
 }
@@ -2517,8 +2539,8 @@ where
                                 }
                             }
                             ChildPendingKind::StructuralArm { .. } => {}
-                            ChildPendingKind::Boundary | ChildPendingKind::Close
-                            | ChildPendingKind::DrainCensus { .. } => {}
+                            ChildPendingKind::Boundary { .. } | ChildPendingKind::Close
+                            | ChildPendingKind::DrainCensus { .. } | ChildPendingKind::ForeignRetirementCensus { .. } => {}
                         }
                     }
                     return false;
@@ -2551,6 +2573,35 @@ where
                     let command_context = command.context.clone();
                     let error = value.get("error").map(serde_json::Value::to_string);
                     let acknowledged = error.is_none() && value.get("result").is_some();
+                    // ~keep Chrome can return a removed session's error before either teardown event.
+                    // ~keep Only explicit foreign ownership plus an authoritative absent-target census
+                    // ~keep can retire it; an arbitrary command error never relaxes an owned boundary.
+                    if value["error"]["code"].as_i64() == Some(-32001)
+                        && child_context_is_foreign(shared, command_context.as_ref())
+                    {
+                        let ended = match &command.kind {
+                            ChildPendingKind::StructuralArm { session } => structural_sessions.get(session)
+                                .map(|tab| (tab.target.clone(), session.clone())),
+                            ChildPendingKind::RecursiveArm { target, session, .. } =>
+                                Some((target.clone(), session.clone())),
+                            ChildPendingKind::Boundary { session } => session_targets.get(session)
+                                .map(|target| (target.clone(), session.clone())),
+                            _ => None,
+                        };
+                        if let Some((target, session)) = ended {
+                            let Some(census_id) = child_command_id(&mut next_id) else { return false };
+                            if child_socket_write(&mut socket, child_message(census_id, "Target.getTargets",
+                                serde_json::json!({}), None), command_timeout).await.is_err() {
+                                return false;
+                            }
+                            let mut census = child_pending_in(
+                                ChildPendingKind::ForeignRetirementCensus { target, session },
+                                command_timeout, command_context);
+                            census.deadline = command.deadline;
+                            pending.insert(census_id, census);
+                            continue;
+                        }
+                    }
                     match command.kind {
                         ChildPendingKind::Enable { done } => {
                             if !acknowledged {
@@ -2603,7 +2654,7 @@ where
                                     }
                                     return false;
                                 }
-                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary, command_timeout, command_context.clone()));
+                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: session.clone() }, command_timeout, command_context.clone()));
                             }
                             let ready_parent = if let Some(parent_session) = structural_parent {
                                 let Some(parent) = structural_sessions.get_mut(&parent_session) else {
@@ -2633,7 +2684,7 @@ where
                                 {
                                     return false;
                                 }
-                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary, command_timeout, command_context.clone()));
+                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: parent.session.clone() }, command_timeout, command_context.clone()));
                             }
                             if let Some(waiter) = root_waiters.remove(&target) {
                                 if !child_policy_acknowledged(&lock(&shared.registry), &target) {
@@ -2671,11 +2722,33 @@ where
                                 {
                                     return false;
                                 }
-                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary, command_timeout, command_context.clone()));
+                                pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: target.session.clone() }, command_timeout, command_context.clone()));
                             }
                         }
-                        ChildPendingKind::Boundary | ChildPendingKind::Close if !acknowledged => return false,
-                        ChildPendingKind::Boundary | ChildPendingKind::Close => {}
+                        ChildPendingKind::Boundary { .. } | ChildPendingKind::Close if !acknowledged => return false,
+                        ChildPendingKind::Boundary { .. } | ChildPendingKind::Close => {}
+                        ChildPendingKind::ForeignRetirementCensus { target, session } => {
+                            let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
+                                else { return false };
+                            if !acknowledged || !child_context_is_foreign(shared, command_context.as_ref())
+                                || infos.iter().any(|info| info.target_id == target)
+                                || root_waiters.contains_key(&target) {
+                                return false;
+                            }
+                            structural_sessions.remove(&session);
+                            session_targets.remove(&session);
+                            armed_targets.remove(&target);
+                            pending.retain(|_, command| {
+                                let ended = match &command.kind {
+                                    ChildPendingKind::RecursiveArm { session: armed, structural_parent, .. } =>
+                                        armed == &session || structural_parent.as_ref() == Some(&session),
+                                    ChildPendingKind::StructuralArm { session: armed }
+                                    | ChildPendingKind::Boundary { session: armed } => armed == &session,
+                                    _ => false,
+                                };
+                                !(ended && child_context_is_foreign(shared, command.context.as_ref()))
+                            });
+                        }
                         ChildPendingKind::DrainCensus { context, done } => {
                             let Some(infos) = value["result"].get("targetInfos") else { return false };
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(infos.clone()) else { return false };
@@ -2687,7 +2760,7 @@ where
                             // ~keep proved this exact context has no targets, so only its resumes are obsolete.
                             pending.retain(|_, pending| {
                                 pending.context.as_ref() != Some(&context)
-                                    || !matches!(pending.kind, ChildPendingKind::Boundary)
+                                    || !matches!(pending.kind, ChildPendingKind::Boundary { .. })
                             });
                             drains.push(ChildDrain { context, done, deadline: command.deadline });
                         }
@@ -2700,9 +2773,37 @@ where
                         let Some(target) = value["params"]["targetId"].as_str().map(TargetId::new) else {
                             return false;
                         };
-                        if structural_sessions.values().any(|structural| structural.target == target) {
-                            return false;
+                        let ended_tabs = structural_sessions.values()
+                            .filter(|structural| structural.target == target)
+                            .map(|structural| (structural.session.clone(), structural.context.clone()))
+                            .collect::<Vec<_>>();
+                        for (session, context) in ended_tabs {
+                            if !child_context_is_foreign(shared, context.as_ref()) {
+                                return false;
+                            }
+                            structural_sessions.remove(&session);
+                            pending.retain(|_, command| {
+                                let ended_tab = match &command.kind {
+                                    ChildPendingKind::StructuralArm { session: armed }
+                                    | ChildPendingKind::Boundary { session: armed } => armed == &session,
+                                    ChildPendingKind::RecursiveArm { structural_parent, .. } =>
+                                        structural_parent.as_ref() == Some(&session),
+                                    _ => false,
+                                };
+                                !(ended_tab && child_context_is_foreign(shared, command.context.as_ref()))
+                            });
                         }
+                        let ended_sessions = session_targets.iter()
+                            .filter_map(|(session, attached)| (attached == &target).then_some(session.clone()))
+                            .collect::<HashSet<_>>();
+                        pending.retain(|_, command| {
+                            let ended = match &command.kind {
+                                ChildPendingKind::RecursiveArm { target: armed, .. } => armed == &target,
+                                ChildPendingKind::Boundary { session } => ended_sessions.contains(session),
+                                _ => false,
+                            };
+                            !(ended && child_context_is_foreign(shared, command.context.as_ref()))
+                        });
                         armed_targets.remove(&target);
                         session_targets.retain(|_, attached| attached != &target);
                         if let Some(waiter) = root_waiters.remove(&target) {
@@ -2715,9 +2816,35 @@ where
                         let Some(session) = value["params"]["sessionId"].as_str() else {
                             return false;
                         };
-                        if structural_sessions.remove(session).is_some() {
-                            return false;
+                        if let Some(structural) = structural_sessions.remove(session) {
+                            // ~keep Another client's tab may close while its recursive arm is queued.
+                            // ~keep Only an explicit foreign context on an external browser permits
+                            // ~keep retiring that tab's commands; an owned or missing context fails closed.
+                            let foreign = child_context_is_foreign(shared, structural.context.as_ref());
+                            if !foreign {
+                                return false;
+                            }
+                            pending.retain(|_, command| {
+                                let ended_tab = match &command.kind {
+                                    ChildPendingKind::StructuralArm { session: armed } => armed == session,
+                                    ChildPendingKind::RecursiveArm { structural_parent, .. } => {
+                                        structural_parent.as_deref() == Some(session)
+                                    }
+                                    _ => false,
+                                };
+                                !(ended_tab && child_context_is_foreign(shared, command.context.as_ref()))
+                            });
                         }
+                        pending.retain(|_, command| {
+                            let ended_session = match &command.kind {
+                                ChildPendingKind::RecursiveArm { session: armed, .. }
+                                | ChildPendingKind::StructuralArm { session: armed }
+                                | ChildPendingKind::Boundary { session: armed } => armed == session,
+                                _ => false,
+                            };
+                            let foreign = child_context_is_foreign(shared, command.context.as_ref());
+                            !(ended_session && foreign)
+                        });
                         if let Some(target) = session_targets.remove(session) {
                             armed_targets.remove(&target);
                             if let Some(waiter) = root_waiters.remove(&target) {
@@ -3795,7 +3922,7 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
 /// Answer one paused request. It is judged by the policy of the watched page it belongs to,
 /// and refused when its page's watch is ending. A request of another client's page on an
 /// external browser is continued untouched; any other request is refused. A document response
-/// of a watched page's main frame is judged by [`main_frame_verdict`], and a main-frame document
+/// of a watched page's main frame is judged by [`main_frame_response_verdict`], and a main-frame document
 /// request the policy allows by [`navigation_verdict`].
 async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, paused: Paused<'_>) {
     let paused_at = paused.at;
@@ -3996,7 +4123,13 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
         return Verdict::Refuse;
     }
     if is_response_stage(event) {
-        return main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome);
+        return main_frame_response_verdict(
+            event,
+            &page.main_frame,
+            page.redirect_limit,
+            &page.outcome,
+            !page.config.download_documents,
+        );
     }
     #[cfg(test)]
     {
@@ -4182,11 +4315,22 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep sandboxed `text/plain` header set. Chrome can neither wait on the origin body, follow
 /// ~keep the non-web `Location`, nor execute content; callers receive the original status,
 /// ~keep headers and URL with an empty body.
+#[cfg(test)]
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
     limit: usize,
     state: &Mutex<InterceptOutcome>,
+) -> Verdict {
+    main_frame_response_verdict(event, main_frame, limit, state, false)
+}
+
+fn main_frame_response_verdict(
+    event: &EventRequestPaused,
+    main_frame: &FrameId,
+    limit: usize,
+    state: &Mutex<InterceptOutcome>,
+    skip_pdf_body: bool,
 ) -> Verdict {
     if *main_frame != event.frame_id {
         return Verdict::Continue(None);
@@ -4229,6 +4373,17 @@ fn main_frame_verdict(
                 render_redirect = true;
                 code
             }
+        }
+        Some(code)
+            if skip_pdf_body
+                && headers.iter().any(|header| {
+                    header.name.eq_ignore_ascii_case("content-type") && crate::html::is_pdf_content(&header.value, "")
+                }) =>
+        {
+            // ~keep Chrome's PDF viewer is not the origin document and a download may never fire
+            // ~keep load. With downloading disabled, report its headers without entering either.
+            render_redirect = true;
+            code
         }
         Some(code) if NO_DOCUMENT_STATUSES.contains(&code) => {
             if state.first_document_arrived {
@@ -4366,10 +4521,10 @@ mod tests {
         FIREWALL_STOP_TIMEOUT, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome, Opening, Owner, PageContext,
         Registry, Shared, TargetId, TargetOwnership, TestDelays, Verdict, WatchedPage, adopt_target, begin_ending,
         child_policy_acknowledged, complete_stopped_response_outcome, controller_completed, events_of,
-        failed_document_response, install_watch, judge, lock, main_frame_verdict, navigation_verdict,
-        reconcile_created, reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit,
-        registered_context, release, require_main_frame, serve_child_targets_with_timeout, ssrf_verdict,
-        ssrf_verdict_for_browser,
+        failed_document_response, install_watch, judge, lock, main_frame_response_verdict, main_frame_verdict,
+        navigation_verdict, reconcile_created, reconcile_destroyed, record_document_failure_outcome,
+        record_main_frame_commit, registered_context, release, require_main_frame, serve_child_targets_with_timeout,
+        ssrf_verdict, ssrf_verdict_for_browser,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -4980,6 +5135,382 @@ mod tests {
     fn in_context(mut event: EventTargetCreated, context: &BrowserContextId) -> EventTargetCreated {
         event.target_info.browser_context_id = Some(context.clone());
         event
+    }
+
+    #[tokio::test]
+    async fn foreign_detach_retires_a_pending_tab_arm_without_ending_the_owned_controller() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let owned = register_owned_context(&shared, &page);
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "method": "Target.detachedFromTarget", "params": { "sessionId": "S-TAB", "targetId": "TAB" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("detach foreign tab");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "id": arm["id"], "error": { "code": -32001, "message": "Session with given id not found." }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("late arm error");
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+        let root_arm = next_child_message(&mut socket).await;
+        assert_eq!(root_arm["method"], "Target.setAutoAttach");
+        assert_eq!(root_arm["sessionId"], "S-ROOT");
+        answer_child_command(&mut socket, &root_arm).await;
+        commands.send(super::ChildCommand::Stop).await.expect("stop");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_destruction_before_detach_retires_only_the_destroyed_tab() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let owned = register_owned_context(&shared, &page);
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "method": "Target.targetDestroyed", "params": { "targetId": "TAB" } })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("destroy foreign tab before detach");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("late arm error");
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+        let root_arm = next_child_message(&mut socket).await;
+        assert_eq!(root_arm["sessionId"], "S-ROOT");
+        answer_child_command(&mut socket, &root_arm).await;
+        commands.send(super::ChildCommand::Stop).await.expect("stop");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_session_error_before_detach_requires_target_absence() {
+        for (target_present, waiting_root) in [(false, false), (true, false), (false, true)] {
+            let page = watched("ROOT");
+            let shared = Arc::new(shared_with(&page, "OTHER"));
+            let owned = register_owned_context(&shared, &page);
+            let foreign = BrowserContextId::new("FOREIGN");
+            let (mut socket, commands, controller) =
+                test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+            let target = if waiting_root { "ROOT" } else { "TAB" };
+            let (root_done, _root_armed) = oneshot::channel();
+            if waiting_root {
+                commands
+                    .send(super::ChildCommand::Arm {
+                        root: page.root.clone(),
+                        done: root_done,
+                    })
+                    .await
+                    .expect("wait for owned root arm");
+                let (done, enabled) = oneshot::channel();
+                commands
+                    .send(super::ChildCommand::Enable { done })
+                    .await
+                    .expect("root command barrier");
+                enabled.await.expect("command barrier").expect("enabled");
+            }
+            send_attached_target_with_waiting(&mut socket, "S-TAB", target, "tab", None, &foreign, false).await;
+            let arm = next_child_message(&mut socket).await;
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("late arm error");
+            let census = next_child_message(&mut socket).await;
+            assert_eq!(census["method"], "Target.getTargets");
+            let infos = if target_present {
+                serde_json::json!([{ "targetId": target, "type": "tab",
+            "title": "", "url": "", "attached": true, "canAccessOpener": false,
+            "browserContextId": foreign.inner() }])
+            } else {
+                serde_json::json!([])
+            };
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": census["id"], "result": { "targetInfos": infos } })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("answer authoritative target census");
+            if target_present || waiting_root {
+                assert!(
+                    !tokio::time::timeout(Duration::from_secs(1), controller)
+                        .await
+                        .expect("a live target or an owned root waiter must end the controller")
+                        .expect("controller")
+                );
+                continue;
+            }
+            send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+            let root_arm = next_child_message(&mut socket).await;
+            assert_eq!(root_arm["sessionId"], "S-ROOT");
+            answer_child_command(&mut socket, &root_arm).await;
+            commands.send(super::ChildCommand::Stop).await.expect("stop");
+            assert!(controller.await.expect("controller"));
+        }
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_releases_state_after_the_original_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(100)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("removed session");
+        let census = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("absent target");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !controller.is_finished(),
+            "a proven absent target must leave no expiring structural state"
+        );
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("controller still accepts stop");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_releases_capacity_for_later_targets() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_secs(10)).await;
+        for index in 0..=super::CHILD_CONTROLLER_PENDING_LIMIT {
+            let session = format!("SESSION-{index}");
+            let target = format!("TARGET-{index}");
+            send_attached_target_with_waiting(&mut socket, &session, &target, "page", None, &foreign, true).await;
+            let arm = next_child_message(&mut socket).await;
+            answer_child_command(&mut socket, &arm).await;
+            let resume = next_child_message(&mut socket).await;
+            assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": resume["id"], "error": { "code": -32001,
+                    "message": "Session with given id not found." } })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("removed foreign session");
+            let census = next_child_message(&mut socket).await;
+            assert_eq!(census["method"], "Target.getTargets");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("retired foreign target");
+        }
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("later targets must retain controller capacity");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_cannot_extend_an_arming_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, _commands, controller) = test_child_controller(shared, Duration::from_millis(200)).await;
+        send_attached_target_with_waiting(&mut socket, "S-PAGE", "OTHER", "page", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("removed session");
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert!(
+            !tokio::time::timeout(Duration::from_millis(160), controller)
+                .await
+                .expect("the original deadline must remain in force")
+                .expect("controller")
+        );
+    }
+
+    #[tokio::test]
+    async fn foreign_detach_retires_a_resume_only_for_the_ended_foreign_session() {
+        for (foreign, destroyed) in [(true, false), (false, false), (true, true), (false, true)] {
+            let page = watched("ROOT");
+            let shared = Arc::new(shared_with(&page, "OTHER"));
+            let owned = register_owned_context(&shared, &page);
+            let context = if foreign {
+                BrowserContextId::new("FOREIGN")
+            } else {
+                owned.clone()
+            };
+            let target = if foreign { "OTHER" } else { "ROOT" };
+            let (mut socket, commands, controller) =
+                test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+            send_attached_target_with_waiting(&mut socket, "S-ENDED", target, "page", None, &context, true).await;
+            let arm = next_child_message(&mut socket).await;
+            answer_child_command(&mut socket, &arm).await;
+            let resume = next_child_message(&mut socket).await;
+            assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "method": if destroyed { "Target.targetDestroyed" } else { "Target.detachedFromTarget" },
+                        "params": { "sessionId": "S-ENDED", "targetId": target }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("detach ended session");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "id": resume["id"], "error": { "code": -32001, "message": "Session with given id not found." }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("late resume error");
+            if !foreign {
+                assert!(
+                    !tokio::time::timeout(Duration::from_secs(1), controller)
+                        .await
+                        .expect("owned resume failure must end the controller")
+                        .expect("controller")
+                );
+                continue;
+            }
+            send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+            let root_arm = next_child_message(&mut socket).await;
+            assert_eq!(root_arm["sessionId"], "S-ROOT");
+            answer_child_command(&mut socket, &root_arm).await;
+            commands.send(super::ChildCommand::Stop).await.expect("stop");
+            assert!(controller.await.expect("controller"));
+        }
+    }
+
+    #[test]
+    fn foreign_detach_never_classifies_owned_missing_retired_or_launched_contexts_as_foreign() {
+        let page = watched("ROOT");
+        let mut shared = shared_with(&page, "OTHER");
+        let foreign = BrowserContextId::new("FOREIGN");
+        let owned = register_owned_context(&shared, &page);
+        assert!(super::child_context_is_foreign(&shared, Some(&foreign)));
+        assert!(!super::child_context_is_foreign(&shared, Some(&owned)));
+        assert!(!super::child_context_is_foreign(&shared, None));
+        lock(&shared.registry).retired_contexts.push_back(foreign.clone());
+        assert!(!super::child_context_is_foreign(&shared, Some(&foreign)));
+        lock(&shared.registry).retired_contexts.clear();
+        lock(&shared.registry).shared_context = true;
+        assert!(!super::child_context_is_foreign(&shared, Some(&foreign)));
+        lock(&shared.registry).shared_context = false;
+        shared.origin = BrowserOrigin::Killed;
+        assert!(!super::child_context_is_foreign(&shared, Some(&foreign)));
+    }
+
+    #[tokio::test]
+    async fn foreign_detach_cannot_retire_a_tab_with_an_owned_or_missing_context() {
+        for (owned, destroyed) in [(true, false), (false, false), (true, true), (false, true)] {
+            let page = watched("ROOT");
+            let shared = Arc::new(shared_with(&page, "OTHER"));
+            let context = register_owned_context(&shared, &page);
+            let (mut socket, _commands, controller) =
+                test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+            let mut info = serde_json::json!({ "targetId": "TAB", "type": "tab", "title": "", "url": "",
+                "attached": true, "canAccessOpener": false });
+            if owned {
+                info["browserContextId"] = context.inner().to_owned().into();
+            }
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "method": "Target.attachedToTarget", "params": { "sessionId": "S-TAB", "targetInfo": info,
+                            "waitingForDebugger": true }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("attach tab");
+            let arm = next_child_message(&mut socket).await;
+            assert_eq!(arm["method"], "Target.setAutoAttach");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "method": if destroyed { "Target.targetDestroyed" } else { "Target.detachedFromTarget" },
+                        "params": { "sessionId": "S-TAB", "targetId": "TAB" }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("end protected tab");
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(1), controller)
+                    .await
+                    .expect("protected detach must end the controller")
+                    .expect("controller")
+            );
+        }
     }
 
     fn register_owned_context(shared: &Shared, page: &Arc<WatchedPage>) -> BrowserContextId {
@@ -7100,6 +7631,38 @@ mod tests {
             "networkId": network_id,
         }))
         .expect("a paused response event")
+    }
+
+    #[test]
+    fn should_intercept_pdf_headers_only_when_document_downloading_is_disabled() {
+        let main_frame = FrameId::from("MAIN".to_owned());
+        for (mime, disabled, main, stopped) in [
+            ("application/pdf", true, true, true),
+            ("Application/PDF; charset=binary", true, true, true),
+            ("application/pdf", false, true, false),
+            ("application/pdf", true, false, false),
+            ("text/html", true, true, false),
+        ] {
+            let mut event = main_frame_response("PDF", 200);
+            event.response_headers = Some(vec![HeaderEntry::new("Content-Type", mime)]);
+            if !main {
+                event.frame_id = FrameId::from("CHILD".to_owned());
+            }
+            let state = Mutex::new(InterceptOutcome::default());
+            let verdict = main_frame_response_verdict(&event, &main_frame, 10, &state, disabled);
+            assert_eq!(
+                matches!(verdict, Verdict::RenderRedirect),
+                stopped,
+                "{mime}: {disabled}/{main}"
+            );
+            let state = state.into_inner().expect("outcome");
+            assert_eq!(state.stopped_response.is_some(), stopped);
+            if let Some(response) = state.stopped_response {
+                assert_eq!(response.status, 200);
+                assert_eq!(response.headers["content-type"], vec![mime.to_owned()]);
+                assert!(response.body_bytes.is_empty());
+            }
+        }
     }
 
     /// A paused main-frame document request for `url`, a redirect hop when `redirected` is set.

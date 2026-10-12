@@ -12,6 +12,15 @@ so its security controller is the sole owner of paused child-target sessions.
 
 More changes against upstream:
 
+- Unix launches join a process group held by a dedicated `/bin/sh` guardian. It detects parent
+  death by its PPID changing, independently of descriptors inherited by a surviving fork. This
+  requires `/bin/sh` and `/bin/sleep`: Linux reads the live parent from procfs with shell built-ins,
+  while macOS/BSD use their system `/bin/ps`. One guardian shell and timer remain per browser,
+  with a parent check every second. Startup validates the PPID probe and waits for a bounded readiness
+  acknowledgement before Chrome starts. Normal teardown sends TERM to the held group, stopping
+  its timer immediately; the guardian reaps that helper before killing only its held group.
+  Cleanup polls for at most two seconds after acquiring its ownership lock. `Child::tree` retains ownership across transfer, and
+  `Child::start_kill_group` preserves refusal cleanup for non-exec launchers.
 - On Windows the browser process starts suspended, joins a job object with kill-on-close and is
   then resumed, so the system ends it and its helper processes with the launching process.
   `Child::tree` hands that job to the caller as a `ProcessTree`.

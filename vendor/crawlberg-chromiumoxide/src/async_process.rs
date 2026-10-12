@@ -199,6 +199,28 @@ impl Child {
         self.inner.kill().await
     }
 
+    /// Signal this launch's Unix process group, before waiting for its leader.
+    ///
+    /// ~keep The guardian holds the group ID even when a non-exec launcher exits. The launch
+    /// ~keep handle must still be unreaped, so a completed handle cannot initiate teardown.
+    #[cfg(unix)]
+    pub fn start_kill_group(&mut self) -> std::io::Result<()> {
+        if !self.spawned_here() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the browser group belongs to another process",
+            ));
+        }
+        if self.inner.id().is_none() {
+            return Err(std::io::Error::other("the browser leader was already reaped"));
+        }
+        self.tree
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no owned browser group"))?
+            .0
+            .signal()
+    }
+
     /// Asynchronously wait for the child process to exit
     pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
         self.inner.wait().await
@@ -218,7 +240,7 @@ impl Child {
 
     /// Return the inner process
     ///
-    /// On Windows the process ends when the last clone of its [`ProcessTree`] is dropped. Clone
+    /// The process ends when the last clone of its [`ProcessTree`] is dropped. Clone
     /// [`Self::tree`] first to keep it running.
     pub fn into_inner(self) -> process::Child {
         let mut inner = self.inner;
@@ -250,12 +272,14 @@ impl futures::AsyncRead for ChildStderr {
 ///
 /// On Windows it is a job object that the child joins before it runs its first instruction, so
 /// every process the child starts is born in it. The system ends them all when the last clone is
-/// dropped and when the owning process ends, by any route. No other platform has one, and
-/// [`Child::tree`] is `None` there.
+/// dropped and when the owning process ends, by any route. On Unix a guardian owns the
+/// group and ends it when the guardian observes parent death, including signal termination.
+/// Other platforms return `None` from [`Child::tree`].
 #[derive(Debug, Clone)]
 pub struct ProcessTree(
     #[cfg(windows)] std::sync::Arc<job::Job>,
-    #[cfg(not(windows))] std::convert::Infallible,
+    #[cfg(unix)] std::sync::Arc<unix_group::Group>,
+    #[cfg(not(any(windows, unix)))] std::convert::Infallible,
 );
 
 impl ProcessTree {
@@ -267,7 +291,11 @@ impl ProcessTree {
         {
             self.0.stop(std::time::Instant::now() + limit)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            self.0.stop(limit)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = limit;
             match self.0 {}
@@ -276,7 +304,15 @@ impl ProcessTree {
 }
 
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
+    let group = std::sync::Arc::new(unix_group::Group::start()?);
+    command
+        .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
+    Ok((command.spawn()?, Some(ProcessTree(group))))
+}
+
+#[cfg(not(any(windows, unix)))]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
     Ok((command.spawn()?, None))
 }
@@ -422,6 +458,59 @@ mod tests {
             assert_eq!(calls, 2);
             assert_eq!(ids, [1100, 2200, 3300]);
         }
+    }
+
+    // ~keep The refusal signals a group before waiting; prove Tokio retains an exited leader.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exited_group_leader_is_not_reaped_until_its_handle_is_waited() {
+        let mut command = super::Command::new("sh");
+        command.args(["-c", "exit 3"]).kill_on_drop(false);
+        let mut child = command.spawn().expect("launcher must start");
+        let pid = child.inner.id().expect("unwaited child must have a pid");
+        let mut peer = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("peer must start");
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        let zombie = loop {
+            #[cfg(target_os = "linux")]
+            let zombie = std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .expect("process status must be readable")
+                .lines()
+                .any(|line| line.starts_with("State:") && line.split_whitespace().nth(1) == Some("Z"));
+            #[cfg(not(target_os = "linux"))]
+            let zombie = {
+                let state = std::process::Command::new("ps")
+                    .args(["-o", "stat=", "-p", &pid.to_string()])
+                    .output()
+                    .expect("process status must be readable");
+                String::from_utf8_lossy(&state.stdout).trim().starts_with('Z')
+            };
+            if zombie {
+                break true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        let held_id = child.inner.id();
+        let status = child.try_wait().expect("exited leader must be waitable");
+        let cleared_id = child.inner.id();
+        let after_reap = child.start_kill_group();
+        let peer_running = peer.try_wait().expect("peer must be waitable").is_none();
+        let _ = peer.kill();
+        let _ = peer.wait();
+        assert!(zombie, "runtime must leave the held leader unreaped after SIGCHLD");
+        assert_eq!(held_id, Some(pid));
+        assert_eq!(status.and_then(|status| status.code()), Some(3));
+        assert_eq!(cleared_id, None);
+        assert!(
+            after_reap.is_err(),
+            "reaped leader must never supply a recycled group id"
+        );
+        assert!(peer_running, "unrelated group must stay alive");
     }
 
     /// The bytes of a list with the two counts `assigned` and `listed`, then `ids` at `id_width` bytes each.
@@ -775,3 +864,11 @@ mod job {
         }
     }
 }
+
+#[cfg(all(unix, test))]
+#[path = "async_process/unix_tests.rs"]
+mod unix_tests;
+
+#[cfg(unix)]
+#[path = "async_process/unix_group.rs"]
+mod unix_group;

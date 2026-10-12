@@ -6,6 +6,9 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
+  it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
+  for the new variant. (#695)
 - **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
   `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
   `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
@@ -95,6 +98,11 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
+  error source. A chain that reaches its final page within the limit and a redirect without
+  `Location` still succeed. (#695)
+- Link results remove credentials from `original_url` even when a link uses backslashes or
+  embedded tabs and newlines. Query strings and fragments are kept, with that normalization. (#696)
 - **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
   page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
   `/item?` are two pages. The same parameters in a different order are still one page. A site
@@ -176,6 +184,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
+  terminal document responses finish without waiting for HTML readiness when downloads are disabled.
+  Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
+- Refused Unix browser launchers stop their descendants, and parent signal termination stops the
+  owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
+  parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
