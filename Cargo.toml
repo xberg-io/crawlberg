@@ -177,5 +177,5 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 
 [patch.crates-io]
-# ~keep Draft dependency for #625: replace with a published release containing html-to-markdown#788 before merge.
-html-to-markdown-rs = { git = "https://github.com/xberg-io/html-to-markdown", rev = "45cece85c7b087db0e3232eaa4f11aadbc6b49dd" }
+# ~keep Draft dependency for #625: replace with a published release containing html-to-markdown#788 and #874 before merge.
+html-to-markdown-rs = { git = "https://github.com/xberg-io/html-to-markdown", rev = "71b006db84473f848ff715351f6734d1e0db1be5" }

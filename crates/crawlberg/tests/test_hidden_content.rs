@@ -137,3 +137,55 @@ async fn should_apply_each_engines_hidden_content_choice_to_a_shared_cached_resp
         "both later engines must use the same cached HTML, not refetch it"
     );
 }
+
+const EXCLUSION_PAGE: &str = r#"<!doctype html><html><body>
+<p>Visible sentence.</p>
+<noscript><p>Excluded fallback sentence.</p></noscript>
+<template class="secret"><p>Private template sentence.</p></template>
+<template><p>Public template sentence.</p></template>
+</body></html>"#;
+
+async fn check_hidden_content_exclusions(mode: BrowserMode) {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(EXCLUSION_PAGE, "text/html"))
+        .mount(&site)
+        .await;
+    let defaults = ContentConfig::default().exclude_selectors;
+    assert_eq!(defaults, ["noscript"]);
+    let cases = [
+        (
+            defaults,
+            "Visible sentence.\n\nPrivate template sentence.\n\nPublic template sentence.",
+        ),
+        (
+            vec!["noscript".to_owned(), ".secret".to_owned()],
+            "Visible sentence.\n\nPublic template sentence.",
+        ),
+        (vec!["noscript".to_owned(), "template".to_owned()], "Visible sentence."),
+    ];
+    for (selectors, expected) in cases {
+        let mut configuration = config(true, mode.clone());
+        configuration.content.exclude_selectors = selectors.clone();
+        let engine = create_engine(Some(configuration)).expect("engine builds");
+        let result = scrape(&engine, &site.uri()).await.expect("scrape succeeds");
+        assert_eq!(result.browser_used, mode == BrowserMode::Always);
+        assert_eq!(
+            result.markdown.expect("markdown").content.trim(),
+            expected,
+            "{mode:?}, {selectors:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_apply_default_and_custom_exclusions_when_keeping_hidden_http_content() {
+    check_hidden_content_exclusions(BrowserMode::Never).await;
+}
+
+#[cfg(feature = "browser")]
+#[tokio::test]
+async fn should_apply_default_and_custom_exclusions_when_keeping_hidden_browser_content() {
+    check_hidden_content_exclusions(BrowserMode::Always).await;
+}
