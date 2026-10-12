@@ -1907,7 +1907,6 @@ const _: fn() = || {
         let _: bool = BrowserConfig.session_affinity;
         let _: Option<String> = BrowserConfig.chrome_path;
         let _: Vec<String> = BrowserConfig.chrome_args;
-        let _: bool = BrowserConfig.private_pipe;
     }
     {
         let BrowserExtras = None::<crate::BrowserExtras>.unwrap();
@@ -2650,7 +2649,6 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_sessionAffinity = <bool>::sse_decode(deserializer);
         let mut var_chromePath = <Option<String>>::sse_decode(deserializer);
         let mut var_chromeArgs = <Vec<String>>::sse_decode(deserializer);
-        let mut var_privatePipe = <bool>::sse_decode(deserializer);
         return crate::BrowserConfig {
             mode: var_mode,
             backend: var_backend,
@@ -2669,7 +2667,6 @@ impl SseDecode for crate::BrowserConfig {
             session_affinity: var_sessionAffinity,
             chrome_path: var_chromePath,
             chrome_args: var_chromeArgs,
-            private_pipe: var_privatePipe,
         };
     }
 }
@@ -4658,7 +4655,6 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.session_affinity.into_into_dart().into_dart(),
             self.0.chrome_path.into_into_dart().into_dart(),
             self.0.chrome_args.into_into_dart().into_dart(),
-            self.0.private_pipe.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5871,7 +5867,6 @@ impl SseEncode for crate::BrowserConfig {
         <bool>::sse_encode(self.session_affinity, serializer);
         <Option<String>>::sse_encode(self.chrome_path, serializer);
         <Vec<String>>::sse_encode(self.chrome_args, serializer);
-        <bool>::sse_encode(self.private_pipe, serializer);
     }
 }
 

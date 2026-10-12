@@ -652,13 +652,6 @@ class BrowserConfig {
   /// shared browser pool.
   final List<String> chromeArgs;
 
-  /// Launch Chrome on a private debugging pipe, not on a debugging port. Default: `false`.
-  /// With `true`, the launched Chrome listens on no TCP port and exits when the process that
-  /// started it ends, however that process ends. Unix only: on Windows the launch uses the
-  /// debugging port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is
-  /// set, with the native backend, and by scrapes and crawls that use a shared browser pool.
-  final bool privatePipe;
-
   const BrowserConfig({
     required this.mode,
     required this.backend,
@@ -677,7 +670,6 @@ class BrowserConfig {
     required this.sessionAffinity,
     this.chromePath,
     required this.chromeArgs,
-    required this.privatePipe,
   });
 
   @override
@@ -698,8 +690,7 @@ class BrowserConfig {
       captureNetworkEvents.hashCode ^
       sessionAffinity.hashCode ^
       chromePath.hashCode ^
-      chromeArgs.hashCode ^
-      privatePipe.hashCode;
+      chromeArgs.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -722,8 +713,7 @@ class BrowserConfig {
           captureNetworkEvents == other.captureNetworkEvents &&
           sessionAffinity == other.sessionAffinity &&
           chromePath == other.chromePath &&
-          chromeArgs == other.chromeArgs &&
-          privatePipe == other.privatePipe;
+          chromeArgs == other.chromeArgs;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
