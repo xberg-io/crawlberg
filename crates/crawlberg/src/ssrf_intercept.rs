@@ -871,6 +871,8 @@ struct TestDelays {
     opened_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Hold an installed watch before acknowledging its caller, to exercise cancellation. ~keep
     watch_ack_gate: Option<Arc<UrlGate>>,
+    /// Hold disposed-context cleanup before the listener releases its installed policy. ~keep
+    watch_end_gate: Option<Arc<UrlGate>>,
     /// After frame attribution snapshots target ownership, until the test gives one permit. ~keep
     attribute_snapshot_gate: Option<Arc<UrlGate>>,
     /// Before a lifecycle reconciliation queries Chrome, until the test gives one permit. ~keep
@@ -3587,6 +3589,13 @@ async fn end_watch(
             logged = LOGGED_REFUSALS,
             "the SSRF policy refused more requests the page sent; only the first were logged"
         );
+    }
+    #[cfg(test)]
+    if let Some(gate) = &shared.delays.watch_end_gate {
+        lock(&gate.held).push(page.root.inner().clone());
+        if let Ok(permit) = gate.permits.acquire().await {
+            permit.forget();
+        }
     }
     Done::Ended(page, keep_root, done)
 }
@@ -8808,12 +8817,7 @@ mod race_tests {
         opened.add_permits(1);
         let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let empty = lock(&handle.shared.registry).pages.is_empty();
-                let contexts = browser
-                    .execute(GetBrowserContextsParams::default())
-                    .await
-                    .expect("context census");
-                if empty && contexts.result.browser_context_ids.is_empty() {
+                if queued_watch_cleanup_complete(&handle.shared, no_browser_contexts(&browser)).await {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -8880,12 +8884,7 @@ mod race_tests {
             gate.permits.add_permits(1);
             let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    let empty = lock(&handle.shared.registry).pages.is_empty();
-                    let contexts = browser
-                        .execute(GetBrowserContextsParams::default())
-                        .await
-                        .expect("context census");
-                    if empty && contexts.result.browser_context_ids.is_empty() {
+                    if queued_watch_cleanup_complete(&handle.shared, no_browser_contexts(&browser)).await {
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -8921,6 +8920,104 @@ mod race_tests {
             "each cancellation must release its installed policy before shutdown"
         );
         assert!(!failed, "cancellation must preserve the healthy controller");
+    }
+
+    async fn no_browser_contexts(browser: &Browser) -> bool {
+        browser
+            .execute(GetBrowserContextsParams::default())
+            .await
+            .expect("context census")
+            .result
+            .browser_context_ids
+            .is_empty()
+    }
+
+    async fn queued_watch_cleanup_complete(
+        shared: &super::Shared,
+        census: impl std::future::Future<Output = bool>,
+    ) -> bool {
+        census.await && lock(&shared.registry).pages.is_empty()
+    }
+
+    async fn cancel_queued_watch(handle: &super::FirewallHandle, handoff: &UrlGate) -> chromiumoxide::Page {
+        let page = handle.new_page(None, None).await.expect("open owned page");
+        let configuration = config();
+        {
+            let watching = handle.watch(&page, &configuration, 0);
+            tokio::pin!(watching);
+            tokio::select! {
+                biased;
+                _ = &mut watching => panic!("watch cannot finish before page registration"),
+                held = wait_held_count(handoff, 1) => assert!(held, "watch must queue its policy"),
+            }
+        }
+        page
+    }
+
+    async fn queued_cancellation_fixture(
+        browser: Arc<Browser>,
+        ended: Arc<UrlGate>,
+    ) -> (BrowserFirewall, chromiumoxide::Page, Arc<tokio::sync::Semaphore>) {
+        let opened = Arc::new(tokio::sync::Semaphore::new(0));
+        let handoff = closed_match_gate();
+        handoff.permits.add_permits(1);
+        let firewall = BrowserFirewall::start_with(
+            browser,
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays {
+                opened_gate: Some(Arc::clone(&opened)),
+                watch_handoff_gate: Some(Arc::clone(&handoff)),
+                watch_end_gate: Some(Arc::clone(&ended)),
+                ..TestDelays::default()
+            },
+        )
+        .await
+        .expect("start firewall");
+        let handle = firewall.handle();
+        let page = cancel_queued_watch(&handle, &handoff).await;
+        (firewall, page, opened)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cleanup_census_does_not_reuse_a_registry_snapshot_from_before_registration() {
+        let test_name = "a_cleanup_census_does_not_reuse_a_registry_snapshot_from_before_registration";
+        let Some(browser) = launch(test_name).await else { return };
+        let ended = closed_match_gate();
+        let (firewall, page, opened) = queued_cancellation_fixture(Arc::clone(&browser), Arc::clone(&ended)).await;
+        let handle = firewall.handle();
+        assert!(lock(&handle.shared.registry).pages.is_empty());
+        let ready = queued_watch_cleanup_complete(&handle.shared, async {
+            opened.add_permits(1);
+            assert!(
+                wait_held_count(&ended, 1).await,
+                "cancellation must dispose its context before policy release"
+            );
+            assert_eq!(lock(&handle.shared.registry).pages.len(), 1);
+            assert!(
+                no_browser_contexts(&browser).await,
+                "the disposed context must be absent from Chrome"
+            );
+            true
+        })
+        .await;
+        ended.permits.add_permits(1);
+        let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
+            while !lock(&handle.shared.registry).pages.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let retained = lock(&handle.shared.registry).pages.len();
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert!(
+            !ready,
+            "a completed Chrome census cannot certify an earlier empty policy registry"
+        );
+        assert!(cleanup.is_ok(), "the queued policy must finish releasing");
+        assert_eq!(retained, 0);
     }
 
     /// How a test reads the refusal of a request to a denied address a watched page sends.

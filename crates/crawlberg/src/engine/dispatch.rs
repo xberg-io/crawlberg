@@ -54,7 +54,7 @@ pub(super) fn content_density(body: &str) -> f32 {
 /// ~keep `crate::browser::browser_fetch` below actually sends, never a rotated pick.
 /// ~keep `resolve_robots_outcome` is also what `admits` calls to judge the tier chosen at
 /// ~keep admission, so the two never resolve the same origin two different ways.
-#[cfg(feature = "browser")]
+#[cfg(any(feature = "browser", feature = "browser-native"))]
 async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Result<Option<String>, CrawlError> {
     let Ok(parsed) = url::Url::parse(url) else {
         return Ok(Some(format!(
@@ -111,7 +111,7 @@ impl CrawlEngine {
         native_state: Option<&mut super::fetch::NativeRenderState>,
         browser_cookies: Option<&[crate::types::BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        #[cfg(not(all(feature = "browser", feature = "browser-native")))]
+        #[cfg(not(feature = "browser-native"))]
         let _ = native_state;
         #[cfg(not(feature = "browser"))]
         let _ = browser_cookies;
@@ -159,7 +159,7 @@ impl CrawlEngine {
                 Ok((bypass_resp.into_crawl_response(), false))
             }
             crate::types::Tier::Browser => {
-                #[cfg(feature = "browser")]
+                #[cfg(any(feature = "browser", feature = "browser-native"))]
                 {
                     // ~keep A hop that reaches this arm by escalating mid-crawl (`BrowserMode::Auto`
                     // ~keep with `EscalationStrategy::BrowserOnly`/`BypassThenBrowser`) had its robots
@@ -185,11 +185,16 @@ impl CrawlEngine {
                     {
                         return self.native_render(url, state).await;
                     }
-                    let page = self.browser_fetch(url, browser_cookies, false).await?;
-                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
-                    Ok((crawl_resp, true))
+                    #[cfg(feature = "browser")]
+                    {
+                        let page = self.browser_fetch(url, browser_cookies, false).await?;
+                        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
+                        Ok((crawl_resp, true))
+                    }
+                    #[cfg(not(feature = "browser"))]
+                    Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
                 }
-                #[cfg(not(feature = "browser"))]
+                #[cfg(not(any(feature = "browser", feature = "browser-native")))]
                 Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
             }
         }

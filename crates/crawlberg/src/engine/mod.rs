@@ -159,12 +159,14 @@ impl CrawlEngine {
     /// tier, bypassing the Tower stack -- and with it, UA rotation -- entirely.
     ///
     /// ~keep Mirrors the exact condition `fetch_response` itself checks before routing:
-    /// `feature = "browser"` compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
+    /// the configured backend compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
     /// one place so `choose_request_user_agent` cannot drift from what `fetch_response` actually
     /// does (crawlberg#423).
     #[cfg(not(target_arch = "wasm32"))]
     fn request_will_use_browser(&self) -> bool {
-        cfg!(feature = "browser") && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
+        let available = cfg!(feature = "browser")
+            || (cfg!(feature = "browser-native") && self.config.browser.backend == BrowserBackend::Native);
+        available && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
     }
 
     /// Decide the agent the next request should send.
