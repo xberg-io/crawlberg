@@ -170,7 +170,7 @@ With the key on, the launched Chrome listens on no TCP port, so no other local p
 
 The key is in the Rust API and in a `CrawlConfig` that crawlberg reads as JSON. The language packages do not have it yet.
 
-The key works on Linux and macOS. On Windows it changes nothing. It is ignored, with a warning, when `endpoint` is set or the native backend is in use. A browser pool that the engine creates takes the key. The Rust `BrowserPoolConfig` has its own `private_pipe`: a browser pool that the caller supplies uses that setting, and the key of the `CrawlConfig` is then ignored. A warning says so when the key is `true` and the launch options of the pool are different.
+The key works on Linux and macOS. On Windows it changes nothing. It is ignored, with a warning, when `endpoint` is set or the native backend is in use. A browser pool that the engine creates takes the key. The Rust `BrowserPoolConfig` has its own `private_pipe`: a browser pool that the caller supplies uses that setting for scrapes and crawls, and the key of the `CrawlConfig` is then ignored for them. A warning says so when the key is `true` and the launch options of the pool are different. `interact` launches its own Chrome and takes the key.
 
 The pipe is less reliable than the debugging port on a loaded machine. Under a load of 18 to 45 with 22 browser tests in parallel, the firewall test file passed in 2 of 10 runs on the pipe against 8 of 10 on the debugging port. The failed scrapes report `failed to open page after relaunch: browser: failed to create page: oneshot canceled`. Keep the default if the machine runs many browsers at once.
 

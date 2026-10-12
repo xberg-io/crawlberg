@@ -204,9 +204,10 @@ pub struct BrowserConfig {
     /// that one forked without `exec`. Unix only: on Windows the launch uses the debugging
     /// port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is set and
     /// with the native backend. A browser pool that the engine creates takes this key. A browser
-    /// pool that the caller supplies uses its own `private_pipe` setting, and this key is then
-    /// ignored; a warning says so when this key is `true` and the launch options of the pool
-    /// are different.
+    /// pool that the caller supplies uses its own `private_pipe` setting for scrapes and crawls,
+    /// and this key is then ignored for them; a warning says so when this key is `true` and the
+    /// launch options of the pool are different. `interact` launches its own Chrome and takes
+    /// this key.
     // ~keep Not in the generated bindings: a new constructor argument is source-breaking in PHP,
     // ~keep Python, WebAssembly, Java, Swift, Dart and Zig with alef 0.109.1. Remove the skip with
     // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
