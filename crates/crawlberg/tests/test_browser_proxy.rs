@@ -736,7 +736,6 @@ async fn open_and_close_foreign_tabs(
 
 #[tokio::test]
 async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
-    use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
     const FOREIGN_TABS: usize = 200;
     const INTERACTIONS: usize = 5;
     let profile = tempfile::tempdir().expect("profile");
@@ -770,16 +769,7 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
         }
     }
     let closed = churn.await.expect("churn task");
-    let census = chrome
-        .execute(GetTargetsParams::default())
-        .await
-        .expect("foreign target census");
-    assert!(
-        closed
-            .iter()
-            .all(|target| census.result.target_infos.iter().all(|info| &info.target_id != target)),
-        "every acknowledged foreign close must remove its target"
-    );
+    let removed = foreign_targets_are_absent(&chrome, &closed).await;
     let mut chrome = Arc::try_unwrap(chrome).expect("only owner remains");
     let _ = chrome.close().await;
     tokio::time::timeout(Duration::from_secs(5), chrome.wait())
@@ -787,6 +777,7 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
         .expect("the fixture Chrome must exit")
         .expect("wait for fixture Chrome");
     owner_handler.abort();
+    assert!(removed, "every acknowledged foreign close must remove its target");
     assert_eq!(outcomes.len(), INTERACTIONS, "every owned interaction must finish");
     for result in outcomes {
         let html = result
@@ -800,4 +791,70 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
         "every foreign tab must be created and closed"
     );
     assert!(!target_requests(&seen).is_empty());
+}
+
+async fn foreign_targets_are_absent(
+    chrome: &chromiumoxide::Browser,
+    closed: &[chromiumoxide::cdp::browser_protocol::target::TargetId],
+) -> bool {
+    use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
+    // ~keep CloseTarget acknowledges the request before Chrome has necessarily destroyed the target.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let census = chrome
+                .execute(GetTargetsParams::default())
+                .await
+                .expect("target census");
+            if closed
+                .iter()
+                .all(|target| census.result.target_infos.iter().all(|info| &info.target_id != target))
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn a_foreign_close_barrier_waits_for_the_target_to_disappear() {
+    use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, CreateTargetParams};
+    let profile = tempfile::tempdir().expect("profile");
+    let Some((chrome, handler)) = launch_endpoint_chrome(
+        "a_foreign_close_barrier_waits_for_the_target_to_disappear",
+        profile.path(),
+        &[],
+    )
+    .await
+    else {
+        return;
+    };
+    let chrome = Arc::new(chrome);
+    let target = chrome
+        .execute(CreateTargetParams::new("about:blank"))
+        .await
+        .expect("create")
+        .result
+        .target_id;
+    let closer = Arc::clone(&chrome);
+    let target_to_close = target.clone();
+    let close = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        closer
+            .execute(CloseTargetParams::new(target_to_close))
+            .await
+            .expect("close");
+    });
+    let absent = foreign_targets_are_absent(&chrome, &[target]).await;
+    close.await.expect("closer");
+    let mut chrome = Arc::try_unwrap(chrome).expect("owner");
+    chrome.close().await.expect("close Chrome");
+    chrome.wait().await.expect("wait Chrome");
+    handler.abort();
+    assert!(
+        absent,
+        "the barrier must await actual destruction rather than one census"
+    );
 }

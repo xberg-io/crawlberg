@@ -553,9 +553,11 @@ fn start_listed_chrome_reading(
     // ~keep helpers through it, which a main process that is already dead no longer leads to.
     let mut child = config.command().kill_on_drop(false).spawn()?;
     let launched = child.inner.id().and_then(read);
-    if launched.is_none() && child.tree().is_none() {
-        // ~keep Stop the owned group before reaping its leader: a non-exec launcher can have
-        // ~keep exited while its Chrome still runs (#674), and reaping can release the group id.
+    // ~keep Unix still requires its process record; a guardian does not validate /proc access.
+    let missing_record = launched.is_none() && (cfg!(unix) || child.tree().is_none());
+    if missing_record {
+        // ~keep A non-exec launcher can exit before its Chrome. Stop its owned group while
+        // ~keep the launch handle still retains the original leader (#674).
         #[cfg(unix)]
         let stopped = child.start_kill_group();
         #[cfg(not(unix))]

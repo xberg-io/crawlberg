@@ -131,10 +131,9 @@ impl Child {
 
     /// Signal this launch's Unix process group, before waiting for its leader.
     ///
-    /// ~keep An unreaped leader retains its pid even after it exits, so the group id cannot
-    /// ~keep name a later launch. A launcher that does not exec can leave children behind it.
+    /// ~keep The guardian holds the group ID even when a non-exec launcher exits. The launch
+    /// ~keep handle must still be unreaped, so a completed handle cannot initiate teardown.
     #[cfg(unix)]
-    #[allow(unsafe_code)]
     pub fn start_kill_group(&mut self) -> std::io::Result<()> {
         if !self.spawned_here() {
             return Err(std::io::Error::new(
@@ -142,26 +141,14 @@ impl Child {
                 "the browser group belongs to another process",
             ));
         }
-        let pid = self
-            .inner
-            .id()
-            .ok_or_else(|| std::io::Error::other("the browser leader was already reaped"))?;
-        let pid =
-            i32::try_from(pid).map_err(|_| std::io::Error::other("the browser pid does not fit a process group"))?;
-        const SIGKILL: i32 = 9;
-        const ESRCH: i32 = 3;
-        unsafe extern "C" {
-            fn kill(pid: i32, signal: i32) -> i32;
+        if self.inner.id().is_none() {
+            return Err(std::io::Error::other("the browser leader was already reaped"));
         }
-        // SAFETY: Command starts this unreaped child in group `pid`; a negative id signals only
-        // that group. SIGKILL is 9 on Unix. This process owns the child and has not waited for it.
-        if unsafe { kill(-pid, SIGKILL) } != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(ESRCH) {
-                return Err(error);
-            }
-        }
-        Ok(())
+        self.tree
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no owned browser group"))?
+            .0
+            .signal()
     }
 
     /// Asynchronously wait for the child process to exit
@@ -183,7 +170,7 @@ impl Child {
 
     /// Return the inner process
     ///
-    /// On Windows the process ends when the last clone of its [`ProcessTree`] is dropped. Clone
+    /// The process ends when the last clone of its [`ProcessTree`] is dropped. Clone
     /// [`Self::tree`] first to keep it running.
     pub fn into_inner(self) -> process::Child {
         let mut inner = self.inner;
@@ -215,12 +202,14 @@ impl futures::AsyncRead for ChildStderr {
 ///
 /// On Windows it is a job object that the child joins before it runs its first instruction, so
 /// every process the child starts is born in it. The system ends them all when the last clone is
-/// dropped and when the owning process ends, by any route. No other platform has one, and
-/// [`Child::tree`] is `None` there.
+/// dropped and when the owning process ends, by any route. On Unix a guardian owns the
+/// group and ends it when the guardian observes parent death, including signal termination.
+/// Other platforms return `None` from [`Child::tree`].
 #[derive(Debug, Clone)]
 pub struct ProcessTree(
     #[cfg(windows)] std::sync::Arc<job::Job>,
-    #[cfg(not(windows))] std::convert::Infallible,
+    #[cfg(unix)] std::sync::Arc<unix_group::Group>,
+    #[cfg(not(any(windows, unix)))] std::convert::Infallible,
 );
 
 impl ProcessTree {
@@ -232,7 +221,11 @@ impl ProcessTree {
         {
             self.0.stop(std::time::Instant::now() + limit)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            self.0.stop(limit)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = limit;
             match self.0 {}
@@ -241,10 +234,16 @@ impl ProcessTree {
 }
 
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
-    #[cfg(unix)]
-    command.process_group(0);
+    let group = std::sync::Arc::new(unix_group::Group::start()?);
+    command
+        .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
+    Ok((command.spawn()?, Some(ProcessTree(group))))
+}
+
+#[cfg(not(any(windows, unix)))]
+fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
     Ok((command.spawn()?, None))
 }
 
@@ -616,3 +615,11 @@ mod job {
         }
     }
 }
+
+#[cfg(all(unix, test))]
+#[path = "async_process/unix_tests.rs"]
+mod unix_tests;
+
+#[cfg(unix)]
+#[path = "async_process/unix_group.rs"]
+mod unix_group;

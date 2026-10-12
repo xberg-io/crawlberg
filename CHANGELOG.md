@@ -96,6 +96,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
+  terminal document responses finish without waiting for HTML readiness when downloads are disabled.
+  Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
+- Refused Unix browser launchers stop their descendants, and parent signal termination stops the
+  owned browser group. Each Unix launch now requires `/bin/sh`, `/bin/ps` and `/bin/sleep` for its guardian and
+  a parent-ownership probe polled every second. (#674)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
