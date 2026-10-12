@@ -74,6 +74,7 @@
     "c/crawl/crawl-max-pages.md",
     "c/crawl/crawl-mixed-content-types.md",
     "c/crawl/crawl-multiple-redirects-in-traversal.md",
+    "c/crawl/crawl-original-url.md",
     "c/crawl/crawl-query-param-dedup.md",
     "c/crawl/crawl-redirect-in-traversal.md",
     "c/crawl/crawl-self-link-no-loop.md",
@@ -148,6 +149,7 @@
     "c/links/links-empty-href.md",
     "c/links/links-internal-external-classification.md",
     "c/links/links-mailto-javascript-skip.md",
+    "c/links/links-original-url.md",
     "c/links/links-protocol-relative.md",
     "c/links/links-rel-attributes.md",
     "c/links/links-relative-parent.md",
@@ -340,6 +342,7 @@
     "csharp/crawl/crawl-max-pages.md",
     "csharp/crawl/crawl-mixed-content-types.md",
     "csharp/crawl/crawl-multiple-redirects-in-traversal.md",
+    "csharp/crawl/crawl-original-url.md",
     "csharp/crawl/crawl-query-param-dedup.md",
     "csharp/crawl/crawl-redirect-in-traversal.md",
     "csharp/crawl/crawl-self-link-no-loop.md",
@@ -415,6 +418,7 @@
     "csharp/links/links-empty-href.md",
     "csharp/links/links-internal-external-classification.md",
     "csharp/links/links-mailto-javascript-skip.md",
+    "csharp/links/links-original-url.md",
     "csharp/links/links-protocol-relative.md",
     "csharp/links/links-rel-attributes.md",
     "csharp/links/links-relative-parent.md",
@@ -615,6 +619,7 @@
     "dart/crawl/crawl-max-pages.md",
     "dart/crawl/crawl-mixed-content-types.md",
     "dart/crawl/crawl-multiple-redirects-in-traversal.md",
+    "dart/crawl/crawl-original-url.md",
     "dart/crawl/crawl-query-param-dedup.md",
     "dart/crawl/crawl-redirect-in-traversal.md",
     "dart/crawl/crawl-self-link-no-loop.md",
@@ -690,6 +695,7 @@
     "dart/links/links-empty-href.md",
     "dart/links/links-internal-external-classification.md",
     "dart/links/links-mailto-javascript-skip.md",
+    "dart/links/links-original-url.md",
     "dart/links/links-protocol-relative.md",
     "dart/links/links-rel-attributes.md",
     "dart/links/links-relative-parent.md",
@@ -882,6 +888,7 @@
     "elixir/crawl/crawl-max-pages.md",
     "elixir/crawl/crawl-mixed-content-types.md",
     "elixir/crawl/crawl-multiple-redirects-in-traversal.md",
+    "elixir/crawl/crawl-original-url.md",
     "elixir/crawl/crawl-query-param-dedup.md",
     "elixir/crawl/crawl-redirect-in-traversal.md",
     "elixir/crawl/crawl-self-link-no-loop.md",
@@ -956,6 +963,7 @@
     "elixir/links/links-empty-href.md",
     "elixir/links/links-internal-external-classification.md",
     "elixir/links/links-mailto-javascript-skip.md",
+    "elixir/links/links-original-url.md",
     "elixir/links/links-protocol-relative.md",
     "elixir/links/links-rel-attributes.md",
     "elixir/links/links-relative-parent.md",
@@ -1154,6 +1162,7 @@
     "go/crawl/crawl-max-pages.md",
     "go/crawl/crawl-mixed-content-types.md",
     "go/crawl/crawl-multiple-redirects-in-traversal.md",
+    "go/crawl/crawl-original-url.md",
     "go/crawl/crawl-query-param-dedup.md",
     "go/crawl/crawl-redirect-in-traversal.md",
     "go/crawl/crawl-self-link-no-loop.md",
@@ -1229,6 +1238,7 @@
     "go/links/links-empty-href.md",
     "go/links/links-internal-external-classification.md",
     "go/links/links-mailto-javascript-skip.md",
+    "go/links/links-original-url.md",
     "go/links/links-protocol-relative.md",
     "go/links/links-rel-attributes.md",
     "go/links/links-relative-parent.md",
@@ -1429,6 +1439,7 @@
     "java/crawl/crawl-max-pages.md",
     "java/crawl/crawl-mixed-content-types.md",
     "java/crawl/crawl-multiple-redirects-in-traversal.md",
+    "java/crawl/crawl-original-url.md",
     "java/crawl/crawl-query-param-dedup.md",
     "java/crawl/crawl-redirect-in-traversal.md",
     "java/crawl/crawl-self-link-no-loop.md",
@@ -1504,6 +1515,7 @@
     "java/links/links-empty-href.md",
     "java/links/links-internal-external-classification.md",
     "java/links/links-mailto-javascript-skip.md",
+    "java/links/links-original-url.md",
     "java/links/links-protocol-relative.md",
     "java/links/links-rel-attributes.md",
     "java/links/links-relative-parent.md",
@@ -1704,6 +1716,7 @@
     "kotlin-android/crawl/crawl-max-pages.md",
     "kotlin-android/crawl/crawl-mixed-content-types.md",
     "kotlin-android/crawl/crawl-multiple-redirects-in-traversal.md",
+    "kotlin-android/crawl/crawl-original-url.md",
     "kotlin-android/crawl/crawl-query-param-dedup.md",
     "kotlin-android/crawl/crawl-redirect-in-traversal.md",
     "kotlin-android/crawl/crawl-self-link-no-loop.md",
@@ -1779,6 +1792,7 @@
     "kotlin-android/links/links-empty-href.md",
     "kotlin-android/links/links-internal-external-classification.md",
     "kotlin-android/links/links-mailto-javascript-skip.md",
+    "kotlin-android/links/links-original-url.md",
     "kotlin-android/links/links-protocol-relative.md",
     "kotlin-android/links/links-rel-attributes.md",
     "kotlin-android/links/links-relative-parent.md",
@@ -1979,6 +1993,7 @@
     "php/crawl/crawl-max-pages.md",
     "php/crawl/crawl-mixed-content-types.md",
     "php/crawl/crawl-multiple-redirects-in-traversal.md",
+    "php/crawl/crawl-original-url.md",
     "php/crawl/crawl-query-param-dedup.md",
     "php/crawl/crawl-redirect-in-traversal.md",
     "php/crawl/crawl-self-link-no-loop.md",
@@ -2054,6 +2069,7 @@
     "php/links/links-empty-href.md",
     "php/links/links-internal-external-classification.md",
     "php/links/links-mailto-javascript-skip.md",
+    "php/links/links-original-url.md",
     "php/links/links-protocol-relative.md",
     "php/links/links-rel-attributes.md",
     "php/links/links-relative-parent.md",
@@ -2254,6 +2270,7 @@
     "python/crawl/crawl-max-pages.md",
     "python/crawl/crawl-mixed-content-types.md",
     "python/crawl/crawl-multiple-redirects-in-traversal.md",
+    "python/crawl/crawl-original-url.md",
     "python/crawl/crawl-query-param-dedup.md",
     "python/crawl/crawl-redirect-in-traversal.md",
     "python/crawl/crawl-self-link-no-loop.md",
@@ -2329,6 +2346,7 @@
     "python/links/links-empty-href.md",
     "python/links/links-internal-external-classification.md",
     "python/links/links-mailto-javascript-skip.md",
+    "python/links/links-original-url.md",
     "python/links/links-protocol-relative.md",
     "python/links/links-rel-attributes.md",
     "python/links/links-relative-parent.md",
@@ -2529,6 +2547,7 @@
     "ruby/crawl/crawl-max-pages.md",
     "ruby/crawl/crawl-mixed-content-types.md",
     "ruby/crawl/crawl-multiple-redirects-in-traversal.md",
+    "ruby/crawl/crawl-original-url.md",
     "ruby/crawl/crawl-query-param-dedup.md",
     "ruby/crawl/crawl-redirect-in-traversal.md",
     "ruby/crawl/crawl-self-link-no-loop.md",
@@ -2604,6 +2623,7 @@
     "ruby/links/links-empty-href.md",
     "ruby/links/links-internal-external-classification.md",
     "ruby/links/links-mailto-javascript-skip.md",
+    "ruby/links/links-original-url.md",
     "ruby/links/links-protocol-relative.md",
     "ruby/links/links-rel-attributes.md",
     "ruby/links/links-relative-parent.md",
@@ -2804,6 +2824,7 @@
     "rust/crawl/crawl-max-pages.md",
     "rust/crawl/crawl-mixed-content-types.md",
     "rust/crawl/crawl-multiple-redirects-in-traversal.md",
+    "rust/crawl/crawl-original-url.md",
     "rust/crawl/crawl-query-param-dedup.md",
     "rust/crawl/crawl-redirect-in-traversal.md",
     "rust/crawl/crawl-self-link-no-loop.md",
@@ -2879,6 +2900,7 @@
     "rust/links/links-empty-href.md",
     "rust/links/links-internal-external-classification.md",
     "rust/links/links-mailto-javascript-skip.md",
+    "rust/links/links-original-url.md",
     "rust/links/links-protocol-relative.md",
     "rust/links/links-rel-attributes.md",
     "rust/links/links-relative-parent.md",
@@ -3071,6 +3093,7 @@
     "swift/crawl/crawl-max-pages.md",
     "swift/crawl/crawl-mixed-content-types.md",
     "swift/crawl/crawl-multiple-redirects-in-traversal.md",
+    "swift/crawl/crawl-original-url.md",
     "swift/crawl/crawl-query-param-dedup.md",
     "swift/crawl/crawl-redirect-in-traversal.md",
     "swift/crawl/crawl-self-link-no-loop.md",
@@ -3145,6 +3168,7 @@
     "swift/links/links-empty-href.md",
     "swift/links/links-internal-external-classification.md",
     "swift/links/links-mailto-javascript-skip.md",
+    "swift/links/links-original-url.md",
     "swift/links/links-protocol-relative.md",
     "swift/links/links-rel-attributes.md",
     "swift/links/links-relative-parent.md",
@@ -3343,6 +3367,7 @@
     "typescript/crawl/crawl-max-pages.md",
     "typescript/crawl/crawl-mixed-content-types.md",
     "typescript/crawl/crawl-multiple-redirects-in-traversal.md",
+    "typescript/crawl/crawl-original-url.md",
     "typescript/crawl/crawl-query-param-dedup.md",
     "typescript/crawl/crawl-redirect-in-traversal.md",
     "typescript/crawl/crawl-self-link-no-loop.md",
@@ -3418,6 +3443,7 @@
     "typescript/links/links-empty-href.md",
     "typescript/links/links-internal-external-classification.md",
     "typescript/links/links-mailto-javascript-skip.md",
+    "typescript/links/links-original-url.md",
     "typescript/links/links-protocol-relative.md",
     "typescript/links/links-rel-attributes.md",
     "typescript/links/links-relative-parent.md",
@@ -3618,6 +3644,7 @@
     "wasm/crawl/crawl-max-pages.md",
     "wasm/crawl/crawl-mixed-content-types.md",
     "wasm/crawl/crawl-multiple-redirects-in-traversal.md",
+    "wasm/crawl/crawl-original-url.md",
     "wasm/crawl/crawl-query-param-dedup.md",
     "wasm/crawl/crawl-redirect-in-traversal.md",
     "wasm/crawl/crawl-self-link-no-loop.md",
@@ -3692,6 +3719,7 @@
     "wasm/links/links-empty-href.md",
     "wasm/links/links-internal-external-classification.md",
     "wasm/links/links-mailto-javascript-skip.md",
+    "wasm/links/links-original-url.md",
     "wasm/links/links-protocol-relative.md",
     "wasm/links/links-rel-attributes.md",
     "wasm/links/links-relative-parent.md",
@@ -3876,6 +3904,7 @@
     "zig/crawl/crawl-max-pages.md",
     "zig/crawl/crawl-mixed-content-types.md",
     "zig/crawl/crawl-multiple-redirects-in-traversal.md",
+    "zig/crawl/crawl-original-url.md",
     "zig/crawl/crawl-query-param-dedup.md",
     "zig/crawl/crawl-redirect-in-traversal.md",
     "zig/crawl/crawl-self-link-no-loop.md",
@@ -3950,6 +3979,7 @@
     "zig/links/links-empty-href.md",
     "zig/links/links-internal-external-classification.md",
     "zig/links/links-mailto-javascript-skip.md",
+    "zig/links/links-original-url.md",
     "zig/links/links-protocol-relative.md",
     "zig/links/links-rel-attributes.md",
     "zig/links/links-relative-parent.md",
@@ -4955,6 +4985,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "c"
+      },
+      "path": "c/crawl/crawl-original-url.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "c"
       },
@@ -5835,6 +5877,18 @@
         "language": "c"
       },
       "path": "c/links/links-mailto-javascript-skip.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "c"
+      },
+      "path": "c/links/links-original-url.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -8147,6 +8201,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "csharp"
+      },
+      "path": "csharp/crawl/crawl-original-url.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "csharp"
       },
@@ -9039,6 +9105,18 @@
         "language": "csharp"
       },
       "path": "csharp/links/links-mailto-javascript-skip.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "csharp"
+      },
+      "path": "csharp/links/links-original-url.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -11447,6 +11525,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "dart"
+      },
+      "path": "dart/crawl/crawl-original-url.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "dart"
       },
@@ -12339,6 +12429,18 @@
         "language": "dart"
       },
       "path": "dart/links/links-mailto-javascript-skip.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "dart"
+      },
+      "path": "dart/links/links-original-url.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -14651,6 +14753,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "elixir"
+      },
+      "path": "elixir/crawl/crawl-original-url.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "elixir"
       },
@@ -15531,6 +15645,18 @@
         "language": "elixir"
       },
       "path": "elixir/links/links-mailto-javascript-skip.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "elixir"
+      },
+      "path": "elixir/links/links-original-url.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -17915,6 +18041,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "go"
+      },
+      "path": "go/crawl/crawl-original-url.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "go"
       },
@@ -18807,6 +18945,18 @@
         "language": "go"
       },
       "path": "go/links/links-mailto-javascript-skip.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "go"
+      },
+      "path": "go/links/links-original-url.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21215,6 +21365,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "java"
+      },
+      "path": "java/crawl/crawl-original-url.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "java"
       },
@@ -22107,6 +22269,18 @@
         "language": "java"
       },
       "path": "java/links/links-mailto-javascript-skip.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "java"
+      },
+      "path": "java/links/links-original-url.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -24515,6 +24689,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/crawl/crawl-original-url.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "kotlin_android"
       },
@@ -25407,6 +25593,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/links/links-mailto-javascript-skip.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/links/links-original-url.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -27815,6 +28013,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "php"
+      },
+      "path": "php/crawl/crawl-original-url.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "php"
       },
@@ -28707,6 +28917,18 @@
         "language": "php"
       },
       "path": "php/links/links-mailto-javascript-skip.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "php"
+      },
+      "path": "php/links/links-original-url.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -31115,6 +31337,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "python"
+      },
+      "path": "python/crawl/crawl-original-url.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "python"
       },
@@ -32007,6 +32241,18 @@
         "language": "python"
       },
       "path": "python/links/links-mailto-javascript-skip.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "python"
+      },
+      "path": "python/links/links-original-url.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -34415,6 +34661,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "ruby"
+      },
+      "path": "ruby/crawl/crawl-original-url.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "ruby"
       },
@@ -35307,6 +35565,18 @@
         "language": "ruby"
       },
       "path": "ruby/links/links-mailto-javascript-skip.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "ruby"
+      },
+      "path": "ruby/links/links-original-url.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -37925,6 +38195,21 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "rust"
+      },
+      "path": "rust/crawl/crawl-original-url.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "rust"
       },
@@ -39010,6 +39295,20 @@
         "language": "rust"
       },
       "path": "rust/links/links-mailto-javascript-skip.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "rust"
+      },
+      "path": "rust/links/links-original-url.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41680,6 +41979,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "swift"
+      },
+      "path": "swift/crawl/crawl-original-url.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "swift"
       },
@@ -42560,6 +42871,18 @@
         "language": "swift"
       },
       "path": "swift/links/links-mailto-javascript-skip.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "swift"
+      },
+      "path": "swift/links/links-original-url.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -44944,6 +45267,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "node"
+      },
+      "path": "typescript/crawl/crawl-original-url.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "node"
       },
@@ -45836,6 +46171,18 @@
         "language": "node"
       },
       "path": "typescript/links/links-mailto-javascript-skip.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "node"
+      },
+      "path": "typescript/links/links-original-url.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48244,6 +48591,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "wasm"
+      },
+      "path": "wasm/crawl/crawl-original-url.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "wasm"
       },
@@ -49124,6 +49483,18 @@
         "language": "wasm"
       },
       "path": "wasm/links/links-mailto-javascript-skip.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "wasm"
+      },
+      "path": "wasm/links/links-original-url.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -51340,6 +51711,18 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_original_url",
+        "language": "zig"
+      },
+      "path": "zig/crawl/crawl-original-url.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "crawl_query_param_dedup",
         "language": "zig"
       },
@@ -52220,6 +52603,18 @@
         "language": "zig"
       },
       "path": "zig/links/links-mailto-javascript-skip.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "links_original_url",
+        "language": "zig"
+      },
+      "path": "zig/links/links-original-url.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -58069,6 +58464,66 @@
       "language": "zig"
     },
     {
+      "fixture_id": "crawl_original_url",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "zig"
+    },
+    {
       "fixture_id": "crawl_query_param_dedup",
       "language": "c"
     },
@@ -62838,6 +63293,66 @@
     },
     {
       "fixture_id": "links_mailto_javascript_skip",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "c"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "go"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "java"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "node"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "php"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "python"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "links_original_url",
       "language": "zig"
     },
     {
@@ -74367,6 +74882,66 @@
       "language": "zig"
     },
     {
+      "fixture_id": "crawl_original_url",
+      "language": "c"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "crawl_original_url",
+      "language": "zig"
+    },
+    {
       "fixture_id": "crawl_query_param_dedup",
       "language": "c"
     },
@@ -79136,6 +79711,66 @@
     },
     {
       "fixture_id": "links_mailto_javascript_skip",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "c"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "go"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "java"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "node"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "php"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "python"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "links_original_url",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "links_original_url",
       "language": "zig"
     },
     {
