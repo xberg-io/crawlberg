@@ -128,6 +128,11 @@ title: "Changelog"
 - On Linux and macOS the Chrome of a crawl ends when the process that started it ends, also when
   that process is killed with SIGKILL or gets a SIGTERM that it does not handle. Before, the
   Chrome kept running with PID 1 as its parent. Windows is not changed. (#620)
+- Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
+  Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
+
+- Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
+  controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
 - With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
   pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
   one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl

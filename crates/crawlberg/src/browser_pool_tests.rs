@@ -1456,7 +1456,17 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
     let taken_count = taken.len();
     drop(taken);
 
-    let launcher_stopped = launcher.try_wait().expect("the status must be readable").is_some();
+    // ~keep macOS can report the killed process as gone before waitpid publishes its exit status.
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
+    let launcher_stopped = loop {
+        if launcher.try_wait().expect("the status must be readable").is_some() {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let helper_left = helper.map_or(0, |helper| ChromeFamily::running(&[helper], |_| {}));
     let removed = !path.exists();
     if let Some(helper) = helper {
@@ -1921,6 +1931,84 @@ async fn controller_loss_immediately_reaps_the_owned_browser() {
         "a pool with no security controller must be unhealthy"
     );
     pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn should_reap_the_retired_browser_before_replacing_a_failed_controller() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(Into::into),
+        ..BrowserPoolConfig::default()
+    });
+    pool.warm()
+        .await
+        .expect("Chrome must launch for the retirement regression");
+    let guard = pool.state.lock().await;
+    let original = guard.as_ref().expect("a warm pool must hold a browser");
+    let profile = original.user_data_dir.as_ref().expect("an owned profile");
+    let old_profile = profile.path().to_path_buf();
+    let old_process = profile.teardown().launched.expect("the owned Chrome identity");
+    let old_generation = original.generation;
+    let ended = original.handler_end.clone();
+    let controller = original.handler_handle.abort_handle();
+    let next = pool.acquire_page();
+    tokio::pin!(next);
+    // ~keep Queue acquisition ahead of the supervisor on Tokio's FIFO mutex, so replacement
+    // ~keep itself must reap the failed generation rather than depending on the supervisor.
+    assert!(futures::poll!(next.as_mut()).is_pending());
+    controller.abort();
+    tokio::time::timeout(Duration::from_secs(15), ended.ended())
+        .await
+        .expect("the aborted controller must publish its end");
+    drop(guard);
+
+    let replacement = tokio::time::timeout(Duration::from_secs(60), next)
+        .await
+        .expect("replacement must finish")
+        .expect("replacement page must open");
+    let new_generation = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .expect("replacement browser")
+        .generation;
+    let old_identity_exists = old_process.has_its_pid(start_mark);
+    let old_profile_exists = old_profile.exists();
+    let old_profile_users = chrome_process_count_for_profile(&old_profile);
+    let new_value = tokio::time::timeout(Duration::from_secs(15), replacement.page().evaluate("21 * 2")).await;
+    replacement.close().await;
+    pool.shutdown().await;
+    // ~keep A deliberately broken retirement must still clean up its old process before the
+    // ~keep assertion fails. The live-profile record owns the same teardown turn as the pool.
+    let abandoned = {
+        let profiles = live_profiles();
+        profiles.get(&old_profile).map(|profile| ProfileTeardown {
+            owner: profile.owner,
+            dir: old_profile.clone(),
+            launched: profile.launched,
+            tree: profile.tree.clone(),
+            chrome: profile.chrome.clone(),
+            turn: Arc::clone(&profile.turn),
+        })
+    };
+    tokio::task::spawn_blocking(move || drop(abandoned))
+        .await
+        .expect("retired browser fallback cleanup");
+
+    assert_ne!(new_generation, old_generation);
+    assert_eq!(
+        new_value
+            .expect("new controller must answer within the CDP deadline")
+            .expect("new controller must answer CDP")
+            .into_value::<u64>()
+            .expect("numeric CDP result"),
+        42
+    );
+    assert_eq!(
+        (old_identity_exists, old_profile_exists, old_profile_users),
+        (false, false, 0),
+        "the original Chrome identity, profile and profile users must be gone before replacement returns"
+    );
 }
 
 /// A pool whose Chrome was killed launches a new one for the next page, and still shuts down.
@@ -4156,10 +4244,20 @@ fn a_pool_dropped_in_a_forked_process_leaves_its_parents_chrome_and_profile_dire
 
     let chrome_processes = chrome_process_count_for_profile(&path);
     let directory_there = path.is_dir();
+    let parent_page = runtime.block_on(async {
+        let pool = copy.as_ref().expect("the parent holds its pool");
+        let page = pool.acquire_page().await?;
+        page.close().await;
+        Ok::<_, CrawlError>(())
+    });
     if let Some(pool) = copy {
         runtime.block_on(pool.shutdown());
     }
     assert_eq!(status, 0, "the forked process must drop its copy of the pool and leave");
+    assert!(
+        parent_page.is_ok(),
+        "the parent must still open and close a page after its forked copy drops: {parent_page:?}"
+    );
     assert!(
         chrome_processes > 0,
         "a pool dropped in a forked process must leave the Chrome of the parent running"
@@ -4907,4 +5005,103 @@ async fn should_keep_a_pages_original_handler_after_the_pool_relaunches() {
     replacement.close().await;
     original.close().await;
     pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_stalled_or_cancelled_close_preserves_other_live_pages_and_the_browser_generation() {
+    for cancelled in [false, true] {
+        let pool = BrowserPool::new(BrowserPoolConfig::default());
+        let config = crate::types::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .build();
+        let Some(held) = expect_chrome_or_skip(
+            "a_stalled_or_cancelled_close_preserves_other_live_pages_and_the_browser_generation",
+            pool.acquire_page_with_config(&config).await,
+        ) else {
+            return;
+        };
+        let generation = pool.state.lock().await.as_ref().expect("running browser").generation;
+        let close = tokio::spawn(std::future::pending::<()>());
+        let abort = close.abort_handle();
+        if cancelled {
+            abort.abort();
+        }
+        pool.state
+            .lock()
+            .await
+            .as_ref()
+            .expect("running browser")
+            .pending_closes
+            .lock()
+            .expect("pending registry")
+            .push(close);
+        let next = tokio::time::timeout(Duration::from_secs(15), pool.acquire_page_with_config(&config))
+            .await
+            .expect("another context can open")
+            .expect("next page");
+        let held_result = held.page().evaluate("21 * 2").await;
+        abort.abort();
+        let actual_generation = pool.state.lock().await.as_ref().expect("running browser").generation;
+        next.close().await;
+        held.close().await;
+        pool.shutdown().await;
+        let held_value = held_result
+            .expect("a stalled close must not disconnect a page another fetch owns")
+            .into_value::<u64>()
+            .expect("held page result");
+        assert_eq!(held_value, 42);
+        assert_eq!(
+            actual_generation, generation,
+            "a stalled or cancelled close is not failure of the browser security controller"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_dropped_page_retains_its_permit_until_its_context_is_disposed() {
+    use chromiumoxide::cdp::browser_protocol::target::GetBrowserContextsParams;
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        max_pages: 1,
+        ..BrowserPoolConfig::default()
+    });
+    if expect_chrome_or_skip(
+        "a_dropped_page_retains_its_permit_until_its_context_is_disposed",
+        pool.warm().await,
+    )
+    .is_none()
+    {
+        return;
+    }
+    let (browser, pending) = {
+        let state = pool.state.lock().await;
+        let state = state.as_ref().expect("warm browser");
+        (Arc::clone(&state.browser), Arc::clone(&state.pending_closes))
+    };
+    let original = browser
+        .execute(GetBrowserContextsParams::default())
+        .await
+        .expect("original contexts")
+        .result
+        .browser_context_ids;
+    let page = pool.acquire_page().await.expect("page");
+    assert_eq!(pool.page_semaphore.available_permits(), 0);
+    drop(page);
+    let before_cleanup = pool.page_semaphore.available_permits();
+    await_pending_closes(&pending, Duration::from_secs(10)).await;
+    assert_eq!(pool.page_semaphore.available_permits(), 1);
+    let remaining = browser
+        .execute(GetBrowserContextsParams::default())
+        .await
+        .expect("remaining contexts")
+        .result
+        .browser_context_ids;
+    pool.shutdown().await;
+    assert_eq!(
+        before_cleanup, 0,
+        "Drop must retain the permit before its asynchronous close starts"
+    );
+    assert_eq!(
+        remaining, original,
+        "the dropped page must leave no browser context behind"
+    );
 }
