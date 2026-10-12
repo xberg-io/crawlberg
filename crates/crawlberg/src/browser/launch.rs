@@ -912,8 +912,14 @@ mod tests {
         config.browser.overall_timeout = std::time::Duration::from_millis(1);
         let before = crate::browser_pool::tests::profile_drops_here();
 
-        let fetched =
-            super::super::one_shot_fetch("about:blank", &config, None, false, &crate::defaults::NoopRateLimiter).await;
+        let fetched = super::super::one_shot_fetch(
+            "about:blank",
+            &config,
+            None,
+            false,
+            tokio::time::Instant::now() + config.browser.overall_timeout,
+        )
+        .await;
 
         assert!(fetched.is_err(), "a Chrome launch cannot finish within a millisecond");
         tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, async {
@@ -1123,15 +1129,7 @@ mod tests {
         let deadline = tokio::time::Instant::now() + config.browser.overall_timeout;
         let outcome = tokio::time::timeout(
             Duration::from_secs(30),
-            super::super::fetch_launched(
-                launched,
-                deadline,
-                &url,
-                &config,
-                None,
-                false,
-                &crate::defaults::NoopRateLimiter,
-            ),
+            super::super::fetch_launched(launched, deadline, &url, &config, None, false),
         )
         .await;
         let killed = killer.await.expect("the task that kills Chrome must not panic");
