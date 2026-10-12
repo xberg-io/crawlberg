@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
-    CrawlError, create_engine, scrape,
+    CrawlEngine, CrawlError, create_engine, scrape,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -129,4 +129,55 @@ async fn a_kept_page_serves_the_next_fetch_of_its_site() {
         }
     }
     assert_eq!(kept_at_end, 1, "{test_name}: one site keeps one page");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_scrape_with_a_browser_pool_and_default_session_settings() {
+    let mock = site().await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let config = pool_only_config(&pool);
+    assert!(config.browser.session_affinity);
+    assert!(config.browser_session_pool.is_none());
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = scrape(&engine, &mock.uri()).await;
+    pool.shutdown().await;
+    let page = result.expect("default affinity must not require a session pool");
+    assert_eq!(page.status_code, 200);
+    assert!(page.html.contains("first page"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_crawl_with_a_browser_pool_and_default_session_settings() {
+    let mock = site().await;
+    Mock::given(method("GET"))
+        .and(path("/seed"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"<a href="/">first</a><a href="/next">next</a>"#, "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let engine = CrawlEngine::builder()
+        .config(pool_only_config(&pool))
+        .build()
+        .expect("engine must build");
+    let result = engine.crawl(&format!("{}/seed", mock.uri())).await;
+    pool.shutdown().await;
+    let result = result.expect("crawl");
+    assert_eq!(result.error, None);
+    assert_eq!(result.pages.len(), 3);
+    assert!(result.pages.iter().all(|page| page.status_code == 200));
+}
+
+fn pool_only_config(pool: &Arc<BrowserPool>) -> CrawlConfig {
+    CrawlConfig {
+        browser: BrowserConfig {
+            mode: BrowserMode::Always,
+            ..Default::default()
+        },
+        browser_pool: Some(Arc::clone(pool)),
+        respect_robots_txt: false,
+        max_depth: Some(1),
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    }
 }

@@ -176,6 +176,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A shared browser pool works with the default session-affinity setting when no session pool is supplied;
+  each request gets a fresh page in the shared Chrome. (#703)
+
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
