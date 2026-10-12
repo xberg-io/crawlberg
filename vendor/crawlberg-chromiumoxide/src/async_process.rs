@@ -306,6 +306,8 @@ impl ProcessTree {
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
 #[cfg(unix)]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
+    // ~keep Ignored SIGCHLD auto-reaps guardian probes; Tokio's Linux pidfd path can skip signal registration.
+    let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
     let group = std::sync::Arc::new(unix_group::Group::start()?);
     command
         .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
@@ -872,3 +874,6 @@ mod unix_tests;
 #[cfg(unix)]
 #[path = "async_process/unix_group.rs"]
 mod unix_group;
+
+#[cfg(all(test, unix))]
+mod unix_signal_tests;

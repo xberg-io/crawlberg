@@ -101,7 +101,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process", "net", "io-util"]
+features = ["rt", "rt-multi-thread", "time", "fs", "macros", "process", "net", "io-util", "signal"]
 
 [dependencies.tracing]
 version = "0.1"
