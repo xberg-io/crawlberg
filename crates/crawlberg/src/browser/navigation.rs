@@ -64,6 +64,10 @@ impl chromiumoxide::Command for BlockedUrls {
 /// than that ends on the redirect response at the limit, the way the HTTP fetch path ends. A
 /// navigation the page starts past the limit is dropped, and the page keeps its document. A
 /// response Chrome does not commit (204, 205, 304) ends the fetch on that response.
+///
+/// The fetch waits for the turn of the page's domain on `rate_limiter` first. The page then gets
+/// the whole `BrowserConfig::overall_timeout` for its setup, navigation and rendering: the wait
+/// for the delay of the domain is not counted against that deadline.
 pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -72,6 +76,33 @@ pub(super) async fn page_fetch(
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
     rate_limiter: &dyn crate::traits::RateLimiter,
+) -> Result<BrowserPage, CrawlError> {
+    if let Some(domain) = url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    {
+        rate_limiter.acquire(&domain).await?;
+    }
+    // ~keep The deadline of the page starts when its turn comes. With the wait inside the
+    // ~keep deadline, a delay of the domain (`rate_limit_ms`) longer than `overall_timeout` made
+    // ~keep every page of that domain but the first a browser timeout, which is not retried.
+    let overall_timeout = config.browser.overall_timeout;
+    tokio::time::timeout(
+        overall_timeout,
+        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot),
+    )
+    .await
+    .unwrap_or_else(|_| Err(super::overall_deadline_error(overall_timeout)))
+}
+
+/// Set `page` up and read `url` from it, in the turn of its domain.
+async fn fetch_in_turn(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    prior_cookies: Option<&[BrowserCookie]>,
+    want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
@@ -92,12 +123,6 @@ pub(super) async fn page_fetch(
 
     apply_prior_cookies(watch, prior_cookies).await?;
 
-    if let Some(domain) = url::Url::parse(url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_owned))
-    {
-        rate_limiter.acquire(&domain).await?;
-    }
     let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
     // ~keep of `extra_wait` is not missed while its DNS lookup runs.

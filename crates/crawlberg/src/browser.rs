@@ -308,10 +308,11 @@ fn overall_deadline_error(overall_timeout: Duration) -> CrawlError {
 /// Fetch using a page borrowed from a shared [`BrowserPool`], returning the page
 /// to the session pool on success when session affinity is enabled.
 ///
-/// Page acquisition, navigation and rendering are bounded as a single
-/// `BrowserConfig::overall_timeout` deadline, closing the gap where an unbounded semaphore
-/// wait could hold a fetch open indefinitely. The page release that follows runs on every
-/// path including the deadline path, and is bounded by `BrowserConfig::shutdown_timeout`.
+/// Page acquisition is bounded by a `BrowserConfig::overall_timeout` deadline, closing the gap
+/// where an unbounded semaphore wait could hold a fetch open indefinitely. The page then waits
+/// for the turn of its domain and gets a deadline of its own for its setup, navigation and
+/// rendering (`page_fetch`). The page release that follows runs on every path including the
+/// deadline paths, and is bounded by `BrowserConfig::shutdown_timeout`.
 async fn pooled_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -372,15 +373,10 @@ async fn pooled_fetch(
             });
         }
     };
-    let result = match tokio::time::timeout_at(
-        deadline,
-        page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(overall_deadline_error(overall_timeout)),
-    };
+    // ~keep `page_fetch` waits for the turn of the page's domain, then bounds the page by a
+    // ~keep deadline of its own: the page gets its whole time once its turn comes, however long
+    // ~keep the wait was. `deadline` above bounds the acquisition of the page only.
+    let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter).await;
 
     let result = result.map_err(|error| match handler_end.as_ref() {
         Some(end) => connection_closed_error(error, end),
@@ -587,8 +583,9 @@ async fn teardown_unclaimed_launch(
 
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
 ///
-/// `BrowserConfig::overall_timeout` bounds launch, page creation, navigation,
-/// rendering, and screenshot capture as a single deadline. Shutdown runs
+/// `BrowserConfig::overall_timeout` bounds launch and page creation as one deadline. The page
+/// then waits for the turn of its domain and gets a deadline of its own for its setup,
+/// navigation, rendering and screenshot capture (`page_fetch`). Shutdown runs
 /// afterward in the background: a completed page result is returned to the
 /// caller without waiting for a Chrome process that refuses to exit. A browser
 /// closed normally gets `BrowserConfig::shutdown_timeout` to exit before it is
@@ -659,15 +656,24 @@ async fn fetch_launched(
         origin,
     };
 
-    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-    let fetch_outcome = tokio::time::timeout(remaining, async {
-        let (page, watch) = session.open_watched_page(config).await?;
+    let fetch_outcome: Result<BrowserPage, CrawlError> = async {
+        let (page, watch) = tokio::time::timeout_at(deadline, session.open_watched_page(config))
+            .await
+            .unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))?;
+        // ~keep `page_fetch` waits for the turn of the page's domain, then bounds the page by a
+        // ~keep deadline of its own: `deadline` bounds the launch and the page creation only.
         let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot, rate_limiter).await;
-        watch.close().await;
+        let shutdown_timeout = config.browser.shutdown_timeout;
+        if tokio::time::timeout(shutdown_timeout, watch.close()).await.is_err() {
+            tracing::warn!(
+                timeout_secs = shutdown_timeout.as_secs_f64(),
+                "a one-shot page did not close before the shutdown timeout; it goes with its browser"
+            );
+        }
         let mut result = result?;
         crate::net::egress::add_refused(&mut result.refused, session.egress_refused().await);
         Ok(result)
-    })
+    }
     .await;
 
     // ~keep `session` is dropped as this function returns, after the result below is computed,
@@ -680,9 +686,7 @@ async fn fetch_launched(
     // ~keep end on their own but are not bounded by it (a reap of 6.6 s and a removal of 11.9 s
     // ~keep at loads of 720 to 1064). So that background task always finishes, later than
     // ~keep `shutdown_timeout` on a busy host.
-    fetch_outcome
-        .unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
-        .map_err(|error| connection_closed_error(error, &handler_end))
+    fetch_outcome.map_err(|error| connection_closed_error(error, &handler_end))
 }
 
 /// `error`, saying that the browser's CDP connection closed when that is why the fetch failed.
