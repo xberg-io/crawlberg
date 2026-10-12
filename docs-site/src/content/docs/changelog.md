@@ -188,13 +188,15 @@ title: "Changelog"
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
 - Refused Unix browser launchers stop their descendants, and parent signal termination stops the
-  owned browser group. Each Unix launch now requires `/bin/sh`, `/bin/ps` and `/bin/sleep` for its guardian and
-  a parent-ownership probe polled every second. (#674)
+  owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
+  parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
 - Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
   controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
+- A shared browser pool works with the default session-affinity setting when no session pool is supplied;
+  each request gets a fresh page in the shared Chrome. (#703)
 - With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
   pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
   one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl

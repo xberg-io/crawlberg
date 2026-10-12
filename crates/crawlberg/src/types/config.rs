@@ -359,6 +359,7 @@ pub struct CrawlConfig {
     #[cfg_attr(alef, alef(skip))]
     pub cookie_store: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
+    /// A session pool is optional: without one, requests reuse Chrome with fresh Pages.
     #[cfg(feature = "browser")]
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
