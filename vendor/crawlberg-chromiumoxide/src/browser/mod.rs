@@ -653,6 +653,7 @@ mod tests {
             child: Some(child),
             debug_ws_url: String::new(),
             browser_context: BrowserContext::default(),
+            pipe_hub: None,
         }
     }
 
