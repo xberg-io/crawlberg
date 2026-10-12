@@ -2201,9 +2201,8 @@ async fn opening_a_page_replaces_a_dead_chrome_before_its_handler_task_finishes(
     };
     let config = crate::types::CrawlConfig::default();
     let opened = match tokio::time::timeout(Duration::from_secs(60), pool.try_new_page(None, &config)).await {
-        Ok(Ok((page, watch, _, _))) => {
-            drop(page);
-            watch.close().await;
+        Ok(Ok(page)) => {
+            page.close().await;
             Ok(pool_profile_path(&pool).await)
         }
         Ok(Err(error)) => Err(error.to_string()),
@@ -4910,6 +4909,7 @@ async fn a_closed_cdp_socket_cancels_a_command_waiting_for_its_response() {
     assert!(matches!(ended, Ok(Ok(()))), "the handler must end, got {ended:?}");
 }
 
+#[cfg(feature = "browser")]
 #[tokio::test(flavor = "multi_thread")]
 async fn should_refetch_both_inflight_pages_after_the_pooled_browser_crashes() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -5110,6 +5110,7 @@ async fn a_dropped_page_retains_its_permit_until_its_context_is_disposed() {
 /// A page that is parked for its site when Chrome dies belongs to the dead Chrome. The next fetch
 /// of the site must open a page on the new Chrome. With no retry configured, a fetch that took
 /// the parked page would fail.
+#[cfg(feature = "browser")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_page_parked_on_a_crashed_browser_is_not_used_for_the_next_fetch() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
