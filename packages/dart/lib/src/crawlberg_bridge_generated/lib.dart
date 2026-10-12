@@ -577,11 +577,13 @@ class BrowserConfig {
   /// Timeout for browser page load and rendering (in milliseconds when serialized).
   final PlatformInt64 timeout;
 
-  /// Overall deadline for a single browser fetch, covering browser launch (or
-  /// page acquisition from a shared pool), page setup, navigation, rendering,
-  /// and screenshot capture. Must exceed `timeout` to leave room for launch
-  /// and setup overhead; a fetch that has not returned within this deadline
-  /// fails with a timeout error (in milliseconds when serialized).
+  /// Deadline for one browser fetch (in milliseconds when serialized). It bounds the browser
+  /// launch (or the page acquisition from a shared pool), and then, from the moment the
+  /// domain of the page grants its turn, the page setup, navigation, rendering and
+  /// screenshot capture. The wait for the delay of the domain (`rate_limit_ms`) between the
+  /// two is not counted, so a delay longer than this deadline does not fail the page. Must
+  /// exceed `timeout` to leave room for the setup; a stage that has not returned within its
+  /// deadline fails with a timeout error.
   ///
   /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
   /// not counted against this deadline: an already-computed result is
@@ -1159,7 +1161,8 @@ class CrawlConfig {
   final PlatformInt64 requestTimeout;
 
   /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-  /// between requests to the same domain. Defaults to 200ms when `None`.
+  /// between requests to the same domain, in HTTP mode and before each page load in
+  /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
   final PlatformInt64? rateLimitMs;
 
   /// Maximum number of redirects to follow.
