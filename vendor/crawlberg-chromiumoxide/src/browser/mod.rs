@@ -429,7 +429,7 @@ impl Browser {
         if let Some(hub) = &self.pipe_hub {
             return hub.open_client().await;
         }
-        crate::raw_connection::RawConnection::connect(&self.debug_ws_url).await
+        crate::raw_connection::RawConnection::connect_with_default_limits(&self.debug_ws_url).await
     }
 
     /// Whether the BrowserContext is incognito.
@@ -655,6 +655,74 @@ mod tests {
             browser_context: BrowserContext::default(),
             pipe_hub: None,
         }
+    }
+
+    /// The address of a WebSocket server that sends each of its first two clients one text
+    /// message of `size` bytes in one frame.
+    async fn server_of_one_message(size: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("client");
+                // ~keep A client that refuses the frame stops reading, so its write never ends:
+                // ~keep each client has its own task.
+                tokio::spawn(async move {
+                    let mut socket = async_tungstenite::tokio::accept_async(stream).await.expect("handshake");
+                    let _ = socket
+                        .send(async_tungstenite::tungstenite::Message::Text("a".repeat(size).into()))
+                        .await;
+                });
+            }
+        });
+        format!("ws://{address}")
+    }
+
+    /// An independent client of a browser with a debugging port keeps the default limits of the
+    /// WebSocket: a message over the frame limit of 16 MiB ends the client with an error. The
+    /// child-target controller of the request firewall is such a client. The client of the
+    /// handler has no limit and reads the same message whole.
+    #[tokio::test]
+    async fn an_independent_websocket_client_refuses_a_message_over_the_frame_limit() {
+        use async_tungstenite::tungstenite::Error as WsError;
+        use futures::StreamExt;
+
+        const OVER_THE_FRAME_LIMIT: usize = (16 << 20) + 1;
+        const WAIT: Duration = Duration::from_secs(60);
+
+        let browser = Browser {
+            sender: channel(1).0,
+            config: None,
+            child: None,
+            debug_ws_url: server_of_one_message(OVER_THE_FRAME_LIMIT).await,
+            browser_context: BrowserContext::default(),
+            pipe_hub: None,
+        };
+
+        let mut independent = browser.raw_connection().await.expect("independent client");
+        let refused = tokio::time::timeout(WAIT, independent.next())
+            .await
+            .expect("the independent client must answer");
+        assert!(
+            matches!(refused, Some(Err(CdpError::Ws(WsError::Capacity(_))))),
+            "a message over the frame limit must end the independent client with a capacity error"
+        );
+
+        let mut handler_client = crate::raw_connection::RawConnection::connect(browser.websocket_address())
+            .await
+            .expect("client of the handler");
+        let whole = tokio::time::timeout(WAIT, handler_client.next())
+            .await
+            .expect("the client of the handler must answer");
+        let whole_size = match whole {
+            Some(Ok(async_tungstenite::tungstenite::Message::Text(text))) => Some(text.len()),
+            _ => None,
+        };
+        assert_eq!(
+            whole_size,
+            Some(OVER_THE_FRAME_LIMIT),
+            "the client of the handler must read the whole message"
+        );
     }
 
     /// Collects the message of every event.

@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use async_tungstenite::tungstenite::Message;
+use async_tungstenite::tungstenite::protocol::WebSocketConfig;
 use async_tungstenite::{WebSocketStream, tokio::ConnectStream};
 use futures::{Sink, Stream};
 
@@ -21,12 +22,23 @@ pub(crate) enum RawTransport {
 }
 
 impl RawConnection {
+    /// The client of the handler. Chrome sends a whole document in one message, so this client
+    /// sets no limit for the size of a message or of a frame.
     pub async fn connect(url: &str) -> Result<Self> {
-        let config = async_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-            .max_message_size(None)
-            .max_frame_size(None);
+        let config = WebSocketConfig::default().max_message_size(None).max_frame_size(None);
+        Self::connect_with(url, Some(config)).await
+    }
+
+    /// An independent client of a browser with a debugging port. It keeps the default limits of
+    /// the WebSocket (a message of 64 MiB, a frame of 16 MiB), so a larger message ends the
+    /// client with an error.
+    pub(crate) async fn connect_with_default_limits(url: &str) -> Result<Self> {
+        Self::connect_with(url, None).await
+    }
+
+    async fn connect_with(url: &str, config: Option<WebSocketConfig>) -> Result<Self> {
         // ~keep The transport wrapper adds a future layer; bound handshake layout for generated async bindings.
-        let (socket, _) = Box::pin(async_tungstenite::tokio::connect_async_with_config(url, Some(config))).await?;
+        let (socket, _) = Box::pin(async_tungstenite::tokio::connect_async_with_config(url, config)).await?;
         Ok(Self {
             inner: RawTransport::WebSocket(Box::new(socket)),
         })
