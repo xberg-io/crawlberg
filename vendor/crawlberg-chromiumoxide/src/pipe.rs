@@ -686,7 +686,9 @@ mod tests {
         }
         drop(queued);
         let mut writer = CountingWriter(Vec::new());
-        Router::write_commands(&mut writer, jobs).await.expect("the writer ends with its queue");
+        Router::write_commands(&mut writer, jobs)
+            .await
+            .expect("the writer ends with its queue");
         assert_eq!(writer.0, vec![9], "three queued batches are written in one call");
     }
 
