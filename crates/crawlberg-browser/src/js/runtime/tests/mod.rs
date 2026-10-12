@@ -1,6 +1,7 @@
 use super::*;
 use crate::dom::parse_html;
 
+mod deadlines;
 mod document;
 mod timers;
 

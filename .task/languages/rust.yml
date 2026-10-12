@@ -170,6 +170,16 @@ tasks:
     cmds:
       - cargo test --lib --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm
 
+  test:native-only:
+    desc: Execute native browser behavior without the Chromiumoxide feature
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+    cmds:
+      - >-
+        cargo test --locked -p crawlberg --no-default-features --features browser-native
+        --test test_browser_native --test test_native_browser_proxy_provider
+        --test test_native_crawl_feature_configuration
+
   lint:
     desc: Auto-fix Rust code linting (cargo fmt + clippy)
     env:

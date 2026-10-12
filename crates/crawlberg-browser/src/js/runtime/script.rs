@@ -123,10 +123,13 @@ impl BrowserJsRuntime {
 
     pub async fn run_event_loop(&mut self) -> Result<(), String> {
         let _watchdog = EventLoopWatchdog::new(&mut self.runtime, AWAIT_BUDGET);
-        self.runtime
-            .run_event_loop(deno_core::PollEventLoopOptions::default())
-            .await
-            .map_err(|e| format!("Event loop error: {}", e))
+        tokio::time::timeout(
+            AWAIT_BUDGET,
+            self.runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
+        )
+        .await
+        .map_err(|_| format!("Event loop did not settle within {:?}", AWAIT_BUDGET))?
+        .map_err(|e| format!("Event loop error: {}", e))
     }
 
     /// Drive the event loop until an awaited evaluation's `promise` settles, for at most [`AWAIT_BUDGET`].
