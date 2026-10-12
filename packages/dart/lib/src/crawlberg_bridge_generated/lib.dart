@@ -633,7 +633,8 @@ class BrowserConfig {
 
   /// Enable session affinity: reuse chromiumoxide Pages for same-domain
   /// requests so cookies + fingerprint + solved challenges persist.
-  /// Default: true. When false, each request gets a fresh Page.
+  /// Default: true. Session reuse requires `CrawlConfig.browser_session_pool` alongside a browser pool.
+  /// Without a session pool, or when false, each request gets a fresh Page.
   final bool sessionAffinity;
 
   /// Chrome or Chromium executable to launch. When set, crawlberg launches only this
