@@ -1,8 +1,12 @@
 #![cfg(feature = "browser")]
 
-use crawlberg::{BrowserConfig, BrowserMode, CrawlConfig, create_engine, scrape};
-use std::sync::Arc;
+use crawlberg::traits::RateLimiter;
+use crawlberg::{
+    BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlEngine, CrawlEngineHandle, CrawlError,
+    PerDomainThrottle, create_engine, scrape,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -64,43 +68,129 @@ async fn should_retry_browser_rate_limits_with_the_configured_budget() {
     assert_eq!(hits.load(Ordering::SeqCst), 3);
 }
 
+/// The throttle of the engine, with the time of each turn it grants.
+struct RecordedTurns {
+    throttle: PerDomainThrottle,
+    turns: Arc<Mutex<Vec<(String, Instant)>>>,
+}
+
+#[async_trait::async_trait]
+impl RateLimiter for RecordedTurns {
+    async fn acquire(&self, domain: &str) -> Result<(), CrawlError> {
+        self.throttle.acquire(domain).await?;
+        // ~keep Stamped in the poll that grants the turn: no await lies between the two.
+        self.turns.lock().expect("turns").push((domain.to_owned(), Instant::now()));
+        Ok(())
+    }
+
+    async fn record_response(&self, domain: &str, status: u16) -> Result<(), CrawlError> {
+        self.throttle.record_response(domain, status).await
+    }
+
+    async fn set_crawl_delay(&self, domain: &str, delay: Duration) -> Result<(), CrawlError> {
+        self.throttle.set_crawl_delay(domain, delay).await
+    }
+}
+
+/// An engine with `rate_limiter` and a pool of pages on one Chrome, the shape `create_engine`
+/// makes. The caller shuts the pool down.
+fn engine_with_rate_limiter(
+    settings: CrawlConfig,
+    rate_limiter: impl RateLimiter + 'static,
+) -> (CrawlEngineHandle, Arc<BrowserPool>) {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let engine = CrawlEngine::builder()
+        .config(settings)
+        .rate_limiter(rate_limiter)
+        .with_browser_pool(Arc::clone(&pool))
+        .build()
+        .expect("engine");
+    (CrawlEngineHandle::from_engine(engine), pool)
+}
+
+/// Two pages of one host at once: the second gets its turn one delay after the first, no page is
+/// asked for before its turn, and the first page is asked for before the second turn comes.
 #[tokio::test]
 async fn should_space_browser_requests_to_the_same_domain() {
+    // ~keep The first page must be asked for within one delay of its turn, on a busy host too:
+    // ~keep the first request of a new Chrome took up to about half a second there.
+    const DELAY: Duration = Duration::from_millis(4000);
     let site = MockServer::start().await;
-    let arrivals = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let arrivals = Arc::new(Mutex::new(Vec::new()));
     let record = Arc::clone(&arrivals);
     Mock::given(method("GET"))
         .respond_with(move |request: &wiremock::Request| {
-            if request.url.path() != FAVICON_PATH {
-                record.lock().expect("record").push(Instant::now());
+            let path = request.url.path().to_owned();
+            if path != FAVICON_PATH {
+                record.lock().expect("record").push((path, Instant::now()));
             }
             ResponseTemplate::new(200).set_body_raw("<p>paced</p>", "text/html")
         })
         .mount(&site)
         .await;
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let rate_limiter = RecordedTurns {
+        throttle: PerDomainThrottle::new(DELAY),
+        turns: Arc::clone(&turns),
+    };
     let mut settings = config();
-    settings.rate_limit_ms = Some(4000);
+    // ~keep As `create_engine` sets it: a parked page runs without an SSRF watch (#179).
+    settings.browser.session_affinity = false;
+    let (engine, pool) = engine_with_rate_limiter(settings, rate_limiter);
+    let first_url = format!("{}/first", site.uri());
+    let second_url = format!("{}/second", site.uri());
+    let (first, second) = tokio::join!(scrape(&engine, &first_url), scrape(&engine, &second_url));
+    pool.shutdown().await;
+    first.expect("first");
+    second.expect("second");
+    let turns = turns.lock().expect("turns").clone();
+    let arrivals = arrivals.lock().expect("arrivals").clone();
+
+    let hosts: Vec<&str> = turns.iter().map(|(domain, _)| domain.as_str()).collect();
+    assert_eq!(hosts, ["127.0.0.1", "127.0.0.1"], "each page takes one turn of its host");
+    // ~keep The product spaces the turns. The time from a turn to the arrival of the request at
+    // ~keep the server is not the same for the two pages (the first page of a new Chrome is
+    // ~keep slower to send, by 57 to 435 ms in measured runs), so the gap between the arrivals
+    // ~keep is not asserted: it was under the delay in 3 of 41 runs on a busy host.
+    let turn_gap = turns[1].1.duration_since(turns[0].1);
+    assert!(
+        turn_gap >= DELAY,
+        "the second turn must come one delay of {DELAY:?} after the first, got {turn_gap:?}"
+    );
+    let mut pages: Vec<&str> = arrivals.iter().map(|(path, _)| path.as_str()).collect();
+    pages.sort_unstable();
+    assert_eq!(pages, ["/first", "/second"], "each page is asked for once");
+    assert!(
+        arrivals[0].1 >= turns[0].1 && arrivals[1].1 >= turns[1].1,
+        "no page is asked for before its turn: turns {turns:?}, arrivals {arrivals:?}"
+    );
+    assert!(
+        arrivals[0].1 < turns[1].1,
+        "the first page must be asked for before the second turn comes: turns {turns:?}, arrivals {arrivals:?}"
+    );
+}
+
+/// A delay of the domain longer than the deadline of a page: the second page loads all the
+/// same, because its deadline starts when its turn comes.
+#[tokio::test]
+async fn should_give_a_page_its_whole_deadline_after_the_delay_of_the_domain() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>paced</p>", "text/html"))
+        .mount(&site)
+        .await;
+    let mut settings = config();
+    settings.rate_limit_ms = Some(9000);
     settings.rate_limit_jitter_ratio = 0.0;
+    settings.browser.overall_timeout = Duration::from_secs(6);
     let engine = create_engine(Some(settings)).expect("engine");
     let first_url = format!("{}/first", site.uri());
     let second_url = format!("{}/second", site.uri());
     let (first, second) = tokio::join!(scrape(&engine, &first_url), scrape(&engine, &second_url));
-    first.expect("first");
-    second.expect("second");
-    let arrivals = arrivals.lock().expect("arrivals").clone();
-    assert_eq!(arrivals.len(), 2, "each page is asked for once");
-    // ~keep The delay runs from the moment a fetch gets its turn, not from the arrival of its
-    // ~keep request. The first page of a new Chrome takes longer to send, so the gap at the
-    // ~keep server is under the delay by a time that does not grow with the delay: 57 to 126 ms
-    // ~keep in 22 measured runs on a full Chrome 155, alone and beside 32 busy processes. The
-    // ~keep gap asked for is 92 percent of the delay, which leaves 320 ms for it.
-    let gap = arrivals[1].duration_since(arrivals[0]);
-    assert!(
-        gap >= Duration::from_millis(3680),
-        "the two pages must arrive about one delay of 4000 ms apart, got {gap:?}"
-    );
+    first.expect("the first page loads at once");
+    second.expect("the second page loads after the delay of the domain");
     let mut pages = paths_the_page_asked_for(&site).await;
-    pages.sort();
+    pages.sort_unstable();
     assert_eq!(pages, ["/first", "/second"]);
 }
 
