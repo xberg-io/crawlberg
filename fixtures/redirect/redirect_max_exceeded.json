@@ -59,7 +59,7 @@
 		{
 			"type": "contains",
 			"field": "error",
-			"value": "redirect limit exceeded"
+			"value": "/r3 - redirect limit exceeded"
 		},
 		{
 			"type": "equals",
