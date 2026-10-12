@@ -638,6 +638,23 @@ mod job {
             for child in &children.0 {
                 assert!(ids.contains(&child.id()), "member {} is not in {ids:?}", child.id());
             }
+            // ~keep The list holds no id from outside the job: each listed process that still exists is a member.
+            for &pid in &ids {
+                // SAFETY: plain call; ERROR_INVALID_PARAMETER means this PID no longer exists.
+                let listed = super::super::opened_job_member(
+                    owned(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }),
+                    windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER as i32,
+                )
+                .expect("open listed process");
+                let Some(listed) = listed else {
+                    continue;
+                };
+                let mut in_job = 0;
+                // SAFETY: both handles are live and `in_job` is writable.
+                done(unsafe { IsProcessInJob(listed.as_raw_handle(), job.job.as_raw_handle(), &raw mut in_job) })
+                    .expect("ask whether the listed process is in the job");
+                assert!(in_job != 0, "listed id {pid} is not in the job: {ids:?}");
+            }
             assert!(job.stop(Instant::now() + Duration::from_secs(10)));
             for child in &mut children.0 {
                 child.wait().expect("reap ended member");
