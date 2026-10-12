@@ -243,7 +243,7 @@ pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<Stri
 /// Returns `None` when the value is no refresh (see [`parse_refresh`]), names no target, or names an
 /// absolute address whose scheme is not `http` or `https` (`mailto:`, `javascript:`, `data:` and so
 /// on), which the crawl cannot follow. A target that names the page itself is returned as written.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn refresh_target(value: &str) -> Option<Cow<'_, str>> {
     parse_refresh(value)?.target
 }
@@ -334,6 +334,23 @@ fn unquote_refresh_url(value: &str) -> &str {
 /// ~keep or a scheme the crawl cannot follow) takes part like any other (#279).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
+    meta_refresh_directive(dom)?.1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn immediate_meta_refresh(dom: &VDom<'_>) -> Option<String> {
+    let (delay, target) = meta_refresh_directive(dom)?;
+    (delay == 0).then_some(target).flatten()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn immediate_refresh_target(value: &str) -> Option<Cow<'_, str>> {
+    let refresh = parse_refresh(value)?;
+    (refresh.delay == 0).then_some(refresh.target).flatten()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn meta_refresh_directive(dom: &VDom<'_>) -> Option<(u64, Option<String>)> {
     let parser = dom.parser();
     let iter = dom.query_selector(SEL_META)?;
     let mut chosen: Option<(u64, Option<String>)> = None;
@@ -353,7 +370,7 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
             chosen = Some((refresh.delay, refresh.target.map(Cow::into_owned)));
         }
     }
-    chosen?.1
+    chosen
 }
 
 #[cfg(test)]

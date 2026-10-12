@@ -1034,8 +1034,11 @@ mod browser {
         .await;
     }
 
-    /// A navigation that stops on a redirect past `max_redirects` shows no document. The
-    /// response is the server's own, so the character set its header names is reported.
+    /// A navigation that stops on a redirect it cannot follow shows no document. The response
+    /// is the server's own, so the character set its header names is reported.
+    ///
+    /// ~keep The redirect names an address that is not a web address, so the response is the
+    /// ~keep page. A redirect past `max_redirects` is an error and has no result to read (#613).
     #[tokio::test]
     async fn a_stopped_navigation_reports_the_character_set_of_its_header() {
         let test_name = "a_stopped_navigation_reports_the_character_set_of_its_header";
@@ -1044,7 +1047,7 @@ mod browser {
             .and(wiremock::matchers::path("/moved"))
             .respond_with(
                 wiremock::ResponseTemplate::new(302)
-                    .append_header("location", "/next")
+                    .append_header("location", "mailto:someone@example.com")
                     .append_header("content-type", "text/html; charset=shift_jis"),
             )
             .mount(&site)

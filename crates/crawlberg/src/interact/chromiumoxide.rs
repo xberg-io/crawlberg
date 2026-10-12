@@ -217,6 +217,10 @@ async fn run_session(
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
     if let Some(stop) = navigate_and_wait(page, watch, url, config).await? {
+        // ~keep A redirect with no page behind it fails here as it fails a scrape (#613).
+        if let Some(error) = crate::engine::redirect::stopped_navigation_error(&stop, url, &stop.url) {
+            return Err(error);
+        }
         return Ok(no_document_result(&stop, actions));
     }
     ensure_committed_page_is_readable(page, watch, config.browser.timeout).await?;
@@ -393,7 +397,7 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 }
 
 /// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
-/// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
+/// when it has no document: a redirect that is not followed, or a 204, 205 or 304.
 /// Fails with the SSRF policy error when a main-frame navigation was refused, during the load
 /// or the extra wait.
 // ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows

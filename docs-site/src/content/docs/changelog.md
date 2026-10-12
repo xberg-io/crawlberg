@@ -19,6 +19,15 @@ title: "Changelog"
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+- **`CrawlPageResult`, `LinkInfo`, `FrontierEntry` and `ContentConfig` have new public fields.**
+  The first three have `original_url`. `ContentConfig` has `strip_newlines`, `bullets`,
+  `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
+  struct literal that names every field must add them. `..Default::default()` needs no change
+  for `CrawlPageResult`, `LinkInfo` and `ContentConfig`; for `FrontierEntry` set
+  `original_url: None`. In Java, Swift, Dart and Zig, a call that builds one of these types with
+  every field must pass the new ones. In Kotlin and Go, a call that passes the fields by
+  position must change, because `original_url` is the second field. A `Frontier` that stores
+  its entries reads an entry of an earlier release with no change.
 
 ### Added
 
@@ -30,6 +39,24 @@ title: "Changelog"
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- `ContentConfig` has six options for the form of the Markdown. `strip_newlines` writes a line
+  break in the HTML source of a paragraph as a space. `bullets` sets the list markers for each
+  level of nesting, and `list_indent_width` the spaces for each level. `strong_em_symbol` sets the
+  emphasis marker. `compact_tables` writes table cells with no padding. `keep_inline_images_in`
+  names the elements in which an image stays an image. Each default is the default of the
+  converter, so a page converts as before. `bullets` accepts `-`, `*` and `+`,
+  `list_indent_width` accepts 1 to 256, and `strong_em_symbol` accepts `*` or `_`. Another value
+  is a configuration error. (#612)
+- `CrawlPageResult.original_url` and `LinkInfo.original_url` give the address as the link wrote
+  it. The link is resolved against the base address of its page, with no other change: no
+  percent-encoding, no change of a backslash, no removal of dot segments. For the start page it
+  is the address that the caller passed. A redirect does not change it. Credentials in the
+  address are removed. (#626)
+- Python: `crawlberg.shutdown_async_runtime()` stops the async runtime of the package and gives
+  back its threads and file descriptors. Call it when no request and no stream is in progress;
+  it raises `RuntimeError` while work is active. The next async call starts a new runtime, and
+  an engine made before the call still works. Two descriptors that Tokio opens for signals stay
+  until the process ends. (#630)
 
 ### Changed
 
@@ -57,6 +84,24 @@ title: "Changelog"
   at a time claim a given address. A frontier that more than one process uses must implement
   `claim` as one conditional write. Before, a custom frontier that answers slowly let a page that
   several redirects point to be requested and reported once for each redirect. (#638)
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, in HTTP mode and in
+  browser mode, with or without a screenshot. A crawl reports the error for that address and no
+  page. `interact` with the chromiumoxide backend fails with the same error. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page. A body that the server
+  compressed with deflate is now decoded. (#614)
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result, in HTTP mode and in browser mode. The target of the meta tag is one of its
+  links. (#605)
+- The error for an HTTP error status names the status and the address, for example
+  `forbidden: HTTP 403 for https://example.com/page`. The address has its credentials removed.
+  The error class of each status is the same. (#611)
+- A response body that does not end before `request_timeout` fails as a timeout that names the
+  address. It failed as a data loss. (#623)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
@@ -108,6 +153,22 @@ title: "Changelog"
   provider sets or deletes is not sent to later Chrome pages with its old value. With a session
   pool and `session_affinity`, the page kept for a site keeps its cookies: a later crawl gets
   them, and so does a later page after a response over HTTP deleted one. (#603)
+- Browser mode applies `block_url_patterns` on the default backend. A request of the page whose
+  address matches a pattern is not sent. Before, the setting had no effect there. (#608)
+- Browser mode applies the retry settings. A page that fails with a status in `retry_codes` is
+  loaded again after the retry delay, up to `retry_count` times, on the two backends. A browser
+  timeout is not retried. (#610)
+- Browser mode waits for the delay of the domain before each page load, on the two backends,
+  when `rate_limit_ms` is set. The delay applies to the page, not to the files that the page
+  loads. The wait is not counted against `browser.overall_timeout`, which bounds the rest of a
+  Chrome fetch, its retries included. With `rate_limit_ms` unset, browser mode loads the pages of one
+  host with no delay, as before. (#622)
+- Browser mode sends client hints that agree with a configured Chrome user agent: the brands
+  with its version, its platform and the mobile flag, on every request of the page. For a user
+  agent that does not name Chrome on Android, Windows, macOS or Linux, Chrome sends no client
+  hints, as before. (#627)
+- A page that is loading when the pooled Chrome dies is loaded again on the new Chrome when
+  `retry_count` is 1 or more. Before, the retry settings did not cover this failure. (#621)
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited
   runtime work after a process fork. The runtime starts at the first async call, not at import.
   A call after the exit hooks ran raises `RuntimeError`. (#633)

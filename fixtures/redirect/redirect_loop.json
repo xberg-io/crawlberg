@@ -38,14 +38,14 @@
 	},
 	"assertions": [
 		{
-			"type": "equals",
-			"field": "redirect_count",
-			"value": 1
+			"type": "contains",
+			"field": "error",
+			"value": "redirect loop"
 		},
 		{
 			"type": "equals",
-			"field": "pages[0].status_code",
-			"value": 302
+			"field": "pages.length",
+			"value": 0
 		}
 	]
 }
