@@ -138,8 +138,6 @@ All notable changes to crawlberg are documented here.
 - The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
   and `-platform` names the release platform. On a Linux host with musl, the command now selects
   the `linux-<arch>-musl` platform.
-- Browser mode retries a fetch that ends with a browser error or a browser timeout, up to
-  `retry_count` times, and waits for the delay of the domain before each navigation.
 
 ### Fixed
 
