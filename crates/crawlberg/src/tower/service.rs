@@ -220,7 +220,7 @@ async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<Craw
     // ~keep of the same address: none of those can read the crawl's cookies first.
     #[cfg(feature = "browser")]
     if let Some(crawl_cookies) = service.crawl_cookies.as_deref() {
-        crawl_cookies.forget_set_without_browser(url.host_str().unwrap_or_default(), &headers);
+        crawl_cookies.forget_set_without_browser(url.as_str(), &headers);
     }
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.

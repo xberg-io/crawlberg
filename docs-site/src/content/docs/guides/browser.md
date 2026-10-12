@@ -96,7 +96,7 @@ let engine = CrawlEngineBuilder::new()
 
 Requires the `browser-native` Cargo feature.
 
-**Session affinity** keeps same-domain browser sessions alive across requests, preserving cookies and fingerprints. Enable via `BrowserConfig::session_affinity` (defaults to `true`). For custom session routing, use `BrowserSessionPool` (Rust-only):
+**Session affinity** keeps same-domain browser sessions alive across requests, preserving cookies and fingerprints. Enable via `BrowserConfig::session_affinity` (defaults to `true`). A shared `browser_session_pool` also retains cookies and solved challenges across successive crawls of the same engine. HTTP responses that replace or delete a cookie invalidate the matching cookie in retained browser pages before their next navigation. For custom session routing, use `BrowserSessionPool` (Rust-only):
 
 ```rust
 use crawlberg::BrowserSessionPool;

@@ -33,6 +33,7 @@ pub(crate) struct CrawlCookies {
 struct Held {
     cookies: HashMap<Slot, (u64, BrowserCookie)>,
     made: u64,
+    invalidated: HashMap<Slot, BrowserCookie>,
 }
 
 impl Held {
@@ -84,9 +85,12 @@ impl Slot {
 impl CrawlCookies {
     /// The cookies a page that starts now is given.
     pub(crate) fn given(&self) -> Vec<BrowserCookie> {
-        let mut cookies: Vec<(u64, BrowserCookie)> = self.lock().cookies.values().cloned().collect();
+        let held = self.lock();
+        let mut cookies: Vec<(u64, BrowserCookie)> = held.cookies.values().cloned().collect();
         cookies.sort_unstable_by_key(|(age, _)| *age);
-        cookies.into_iter().map(|(_, cookie)| cookie).collect()
+        let mut cookies: Vec<_> = cookies.into_iter().map(|(_, cookie)| cookie).collect();
+        cookies.extend(held.invalidated.values().cloned());
+        cookies
     }
 
     /// Record what a page did to the cookies it was `given`, from the cookies it `left`.
@@ -102,6 +106,7 @@ impl CrawlCookies {
         for after in left {
             let slot = Slot::of(after);
             if given.remove(&slot).is_none_or(|before| before.params != after.params) {
+                held.invalidated.remove(&slot);
                 held.put(slot, after.clone());
             }
         }
@@ -116,34 +121,121 @@ impl CrawlCookies {
         }
     }
 
-    /// Forget each cookie that a response from `host`, fetched without the browser, set.
-    ///
-    /// ~keep That fetch has a cookie store of its own, so its `Set-Cookie` deleted or replaced
-    /// ~keep the cookie there and the copy here is the old one. The cookie leaves by its name,
-    /// ~keep whatever its path, for `host` and every domain above or below it: a later page gets
-    /// ~keep no cookie in place of the old one. Nothing is added, so Chrome never gets a cookie
-    /// ~keep it did not make.
-    pub(crate) fn forget_set_without_browser(&self, host: &str, headers: &HashMap<String, Vec<String>>) {
-        let Some(set) = headers.get("set-cookie") else {
-            return;
-        };
-        let names: Vec<&str> = set
-            .iter()
-            .filter_map(|raw| raw.split(';').next()?.split_once('='))
-            .map(|(name, _)| name.trim())
-            .collect();
-        let within = |inner: &str, outer: &str| {
-            inner == outer || inner.strip_suffix(outer).is_some_and(|rest| rest.ends_with('.'))
-        };
-        self.lock().cookies.retain(|slot, _| {
-            let site = slot.site.as_deref().unwrap_or_default().trim_start_matches('.');
-            !(names.contains(&slot.name.as_str()) && (within(host, site) || within(site, host)))
-        });
+    /// Invalidate exactly the cookie slots changed by an HTTP response. ~keep
+    pub(crate) fn forget_set_without_browser(&self, response_url: &str, headers: &HashMap<String, Vec<String>>) {
+        let Ok(url) = url::Url::parse(response_url) else { return };
+        let Some(set) = headers.get("set-cookie") else { return };
+        let mut held = self.lock();
+        for raw in set {
+            let Some(cookie) = invalidated_cookie(&url, raw) else {
+                continue;
+            };
+            let slot = Slot::of(&cookie);
+            if held
+                .cookies
+                .get(&slot)
+                .is_some_and(|(_, current)| invalidates(&cookie, current))
+            {
+                held.cookies.remove(&slot);
+            }
+            held.invalidated.insert(slot, cookie);
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Held> {
         self.held.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// ~keep An expired parameter removes a retained context's old copy; ordinary crawl cookies
+/// cannot express deletions because their absence does not mean a session cookie was deleted.
+fn invalidated_cookie(url: &url::Url, raw: &str) -> Option<BrowserCookie> {
+    let host = url.host_str()?;
+    let mut parts = raw.split(';');
+    let (name, _) = parts.next()?.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty() || !accepted_cookie_change(url, name, raw) {
+        return None;
+    }
+    let mut params = CookieParam::new(name, "");
+    params.url = Some(url.to_string());
+    let default_path = url
+        .path()
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .filter(|p| !p.is_empty())
+        .unwrap_or("/");
+    params.path = Some(default_path.to_owned());
+    params.expires = Some(TimeSinceEpoch::new(0.0));
+    for part in parts {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        if key.eq_ignore_ascii_case("domain") && !value.trim_start_matches('.').is_empty() {
+            crate::net::cookie::validate_cookie_domain(host, value).ok()?;
+            params.domain = Some(format!(".{}", value.trim_start_matches('.').to_ascii_lowercase()));
+        } else if key.eq_ignore_ascii_case("path") && value.starts_with('/') {
+            params.path = Some(value.to_owned());
+        }
+    }
+    Some(BrowserCookie { params })
+}
+
+/// ~keep HTTP has no trusted Chrome partition key, and rejected cookie headers cannot delete
+/// a retained cookie that Chrome itself would keep.
+fn accepted_cookie_change(url: &url::Url, name: &str, raw: &str) -> bool {
+    let attrs: Vec<_> = raw
+        .split(';')
+        .skip(1)
+        .map(|part| {
+            let (key, value) = part.trim().split_once('=').unwrap_or((part.trim(), ""));
+            (key.trim(), value.trim())
+        })
+        .collect();
+    let has = |name: &str| attrs.iter().any(|(key, _)| key.eq_ignore_ascii_case(name));
+    if has("partitioned") || (has("secure") && !secure_cookie_source(url)) {
+        return false;
+    }
+    if (name.starts_with("__Secure-") || name.starts_with("__Host-") || name.starts_with("__Http-")) && !has("secure") {
+        return false;
+    }
+    if name.starts_with("__Host-")
+        && (has("domain")
+            || attrs
+                .iter()
+                .rev()
+                .find(|(key, _)| key.eq_ignore_ascii_case("path"))
+                .map(|(_, path)| *path)
+                != Some("/"))
+    {
+        return false;
+    }
+    !(name.starts_with("__Http-") || name.starts_with("__Host-Http-")) || has("httponly")
+}
+
+fn secure_cookie_source(url: &url::Url) -> bool {
+    url.scheme() == "https"
+        || match url.host() {
+            Some(url::Host::Domain(host)) => host == "localhost" || host.ends_with(".localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        }
+}
+
+fn is_invalidated(cookie: &BrowserCookie) -> bool {
+    cookie
+        .params
+        .expires
+        .as_ref()
+        .is_some_and(|expires| *expires.inner() == 0.0)
+}
+
+fn invalidates(change: &BrowserCookie, current: &BrowserCookie) -> bool {
+    let source = change.params.url.as_deref().and_then(|url| url::Url::parse(url).ok());
+    let secure_source = source.as_ref().is_some_and(secure_cookie_source);
+    Slot::of(change) == Slot::of(current) && (current.params.secure != Some(true) || secure_source)
 }
 
 /// Seed the page with cookies carried over from a previous fetch.
@@ -161,10 +253,27 @@ pub(super) async fn apply_prior_cookies(
     if cookies.is_empty() {
         return Ok(());
     }
+    let mut replay = Vec::new();
+    let current = if cookies.iter().any(is_invalidated) {
+        page_cookies(watch).await?
+    } else {
+        Vec::new()
+    };
+    for cookie in cookies {
+        if is_invalidated(cookie) {
+            for held in current.iter().filter(|held| invalidates(cookie, held)) {
+                let mut expired = held.params.clone();
+                expired.expires = Some(TimeSinceEpoch::new(0.0));
+                replay.push(expired);
+            }
+        } else {
+            replay.push(cookie.params.clone());
+        }
+    }
     let (browser, browser_context_id) = watch.cookie_store()?;
     browser
         .execute(StorageSetCookiesParams {
-            cookies: cookies.iter().map(|cookie| cookie.params.clone()).collect(),
+            cookies: replay,
             browser_context_id,
         })
         .await
@@ -312,6 +421,7 @@ mod tests {
         let mut pairs: Vec<String> = crawl
             .given()
             .iter()
+            .filter(|cookie| cookie.params.expires.is_none())
             .map(|cookie| format!("{}={}", cookie.params.name, cookie.params.value))
             .collect();
         pairs.sort();
@@ -392,21 +502,105 @@ mod tests {
         let crawl = CrawlCookies::default();
         crawl.absorb(&[], &[left("gone", "1"), left("new", "1"), left("other", "kept")]);
 
-        crawl.forget_set_without_browser("example.com", &set_cookie(&["gone=; Max-Age=0", " new = 2; Path=/a"]));
+        crawl.forget_set_without_browser(
+            "https://example.com/private/action",
+            &set_cookie(&["gone=; Max-Age=0", "new=2; Path=/private"]),
+        );
 
         assert_eq!(held(&crawl), ["other=kept"]);
     }
 
     #[test]
-    fn a_cookie_set_without_the_browser_leaves_for_the_domains_above_and_below_its_host() {
-        for host in ["example.com", "www.example.com", "com"] {
-            let crawl = CrawlCookies::default();
-            crawl.absorb(&[], &[left("session", "1")]);
-
-            crawl.forget_set_without_browser(host, &set_cookie(&["session=2"]));
-
-            assert!(held(&crawl).is_empty(), "a response from {host} sets the cookie");
+    fn an_http_cookie_change_keeps_other_paths_domains_partitions_and_secure_cookies() {
+        let change = invalidated_cookie(
+            &url::Url::parse("https://example.com/private/action").unwrap(),
+            "session=; Max-Age=0",
+        )
+        .unwrap();
+        let current = left("session", "1");
+        assert!(invalidates(&change, &current));
+        let mut other_path = current.clone();
+        other_path.params.path = Some("/other".to_owned());
+        let mut other_host = current.clone();
+        other_host.params.url = Some("https://sub.example.com/private".to_owned());
+        let mut partitioned = current.clone();
+        partitioned.params.partition_key = Some(CookiePartitionKey::new("https://top.example", false));
+        for unrelated in [other_path, other_host, partitioned] {
+            assert!(!invalidates(&change, &unrelated));
         }
+        let insecure = invalidated_cookie(
+            &url::Url::parse("http://example.com/private/action").unwrap(),
+            "session=; Max-Age=0",
+        )
+        .unwrap();
+        assert!(!invalidates(&insecure, &current));
+        assert!(
+            invalidated_cookie(
+                &url::Url::parse("https://example.com/").unwrap(),
+                "session=; Domain=other.com"
+            )
+            .is_none()
+        );
+        assert!(
+            invalidated_cookie(
+                &url::Url::parse("https://example.com/").unwrap(),
+                "session=; Domain=com"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn partitioned_and_rejected_secure_headers_leave_no_unpartitioned_invalidation() {
+        let secure = url::Url::parse("https://example.com/").unwrap();
+        let insecure = url::Url::parse("http://example.com/").unwrap();
+        for raw in [
+            "session=; Path=/; Secure; Partitioned",
+            "session=; Path=/; Secure; pArTiTiOnEd=ignored",
+            "__Host-session=; Path=/",
+            "__Host-session=; Path=/other; Secure",
+            "__Host-session=; Path=/; Secure; Domain=example.com",
+            "__Secure-session=; Path=/",
+            "__Host-session=; Secure",
+            "__Http-session=; Secure",
+            "__Host-Http-session=; Secure; Path=/",
+        ] {
+            assert!(invalidated_cookie(&secure, raw).is_none(), "reject {raw}");
+        }
+        assert!(invalidated_cookie(&insecure, "session=; Path=/; Secure").is_none());
+        assert!(invalidated_cookie(&secure, "__Host-session=; Path=/; Secure").is_some());
+        assert!(invalidated_cookie(&secure, "__Secure-session=; Path=/; Secure").is_some());
+        assert!(
+            invalidated_cookie(
+                &url::Url::parse("http://127.0.0.1/").unwrap(),
+                "session=; Path=/; Secure"
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn an_http_change_forgets_only_its_exact_slot_and_a_browser_write_clears_it() {
+        let crawl = CrawlCookies::default();
+        let root = left("session", "old");
+        let mut other = root.clone();
+        other.params.path = Some("/elsewhere".to_owned());
+        crawl.absorb(&[], &[root.clone(), other.clone()]);
+        crawl.forget_set_without_browser(
+            "https://example.com/private/action",
+            &set_cookie(&["session=; Max-Age=0"]),
+        );
+        let given = crawl.given();
+        assert_eq!(given.iter().filter(|cookie| is_invalidated(cookie)).count(), 1);
+        assert_eq!(given.iter().filter(|cookie| !is_invalidated(cookie)).count(), 1);
+        crawl.absorb(&given, &[left("session", "new"), other]);
+        assert_eq!(crawl.given().iter().filter(|cookie| is_invalidated(cookie)).count(), 0);
+        assert_eq!(held(&crawl), ["session=new", "session=old"]);
+        crawl.forget_set_without_browser(
+            "http://example.com/private/action",
+            &set_cookie(&["session=; Max-Age=0"]),
+        );
+        assert_eq!(held(&crawl), ["session=new", "session=old"]);
     }
 
     #[test]
@@ -414,10 +608,13 @@ mod tests {
         let crawl = CrawlCookies::default();
         crawl.absorb(&[], &[left("session", "1")]);
 
-        crawl.forget_set_without_browser("notexample.com", &set_cookie(&["session=2"]));
-        crawl.forget_set_without_browser("other.org", &set_cookie(&["session=2"]));
-        crawl.forget_set_without_browser("example.com", &set_cookie(&["no pair", "different=1"]));
-        crawl.forget_set_without_browser("example.com", &HashMap::new());
+        crawl.forget_set_without_browser("https://notexample.com/private/action", &set_cookie(&["session=2"]));
+        crawl.forget_set_without_browser("https://other.org/private/action", &set_cookie(&["session=2"]));
+        crawl.forget_set_without_browser(
+            "https://example.com/private/action",
+            &set_cookie(&["no pair", "different=1"]),
+        );
+        crawl.forget_set_without_browser("https://example.com/private/action", &HashMap::new());
 
         assert_eq!(held(&crawl), ["session=1"]);
     }
