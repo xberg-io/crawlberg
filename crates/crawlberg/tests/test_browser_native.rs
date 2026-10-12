@@ -472,11 +472,6 @@ async fn native_batch_scrape_uses_shared_executor_concurrently() {
     });
     let config = CrawlConfig {
         max_concurrent: Some(4),
-        // ~keep The twelve pages are one host. With the default delay of the domain (200 ms) the
-        // ~keep native backend asks for them one turn apart, and the server holds a request for
-        // ~keep 150 ms: two requests overlap there only by the jitter of the turns. The test is
-        // ~keep about the executor running pages at once, so the delay is off.
-        rate_limit_ms: Some(0),
         ..config
     };
     let engine = engine_with(config);
