@@ -262,8 +262,68 @@ mod engine_crawl {
             .collect()
     }
 
-    /// Every process, as its pid, the pid of its parent and its command line.
-    fn process_table() -> Vec<(i32, i32, String)> {
+    /// One process of the process table.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Process {
+        pid: i32,
+        parent: i32,
+        /// The arguments, each one whole, when `/proc` gave them. Else the command line as `ps`
+        /// prints it, in one string: `ps` does not show where an argument with a space ends.
+        argv: Vec<String>,
+        /// Whether `argv` came from `/proc`.
+        whole: bool,
+    }
+
+    impl Process {
+        fn line(&self) -> String {
+            self.argv.join(" ")
+        }
+
+        /// Whether an argument names the path `dir` whole: `dir` starts a path there and ends
+        /// the argument or is followed by `/`. A command line in one string (the `ps` form, or
+        /// the title that a Chrome helper gives itself) can also go on after a space.
+        fn names(&self, dir: &str) -> bool {
+            let one_string = !self.whole || self.argv.len() == 1;
+            self.argv.iter().any(|arg| {
+                arg.match_indices(dir).any(|(at, _)| {
+                    let before = arg.get(..at).and_then(|head| head.chars().next_back());
+                    let after = arg.get(at + dir.len()..).and_then(|tail| tail.chars().next());
+                    before.is_none_or(|c| !(c.is_alphanumeric() || "/._-".contains(c)))
+                        && after.is_none_or(|c| c == '/' || (one_string && c.is_whitespace()))
+                })
+            })
+        }
+    }
+
+    /// The arguments in the bytes of a `/proc/<pid>/cmdline`: NUL ends each one, so an argument
+    /// with a space stays whole.
+    fn parse_cmdline(bytes: &[u8]) -> Vec<String> {
+        bytes
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8_lossy(arg).into_owned())
+            .collect()
+    }
+
+    /// Every process. From `/proc` where it exists, else from `ps`.
+    fn process_table() -> Vec<Process> {
+        if let (true, Ok(entries)) = (Path::new("/proc/self/cmdline").exists(), std::fs::read_dir("/proc")) {
+            return entries
+                .filter_map(|entry| {
+                    let pid: i32 = entry.ok()?.file_name().to_str()?.parse().ok()?;
+                    // ~keep The command name in `stat` can hold `)` and spaces; the fields follow the last `)`.
+                    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+                    let parent = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+                    let argv = parse_cmdline(&std::fs::read(format!("/proc/{pid}/cmdline")).ok()?);
+                    (!argv.is_empty()).then_some(Process {
+                        pid,
+                        parent,
+                        argv,
+                        whole: true,
+                    })
+                })
+                .collect();
+        }
         let table = std::process::Command::new("ps")
             .args(["-A", "-ww", "-o", "pid=", "-o", "ppid=", "-o", "args="])
             .output()
@@ -274,7 +334,12 @@ mod engine_crawl {
             .filter_map(|line| {
                 let (pid, rest) = line.trim_start().split_once(' ')?;
                 let (parent, args) = rest.trim_start().split_once(' ')?;
-                Some((pid.parse().ok()?, parent.parse().ok()?, args.trim_start().to_owned()))
+                Some(Process {
+                    pid: pid.parse().ok()?,
+                    parent: parent.parse().ok()?,
+                    argv: vec![args.trim_start().to_owned()],
+                    whole: false,
+                })
             })
             .collect()
     }
@@ -292,31 +357,49 @@ mod engine_crawl {
         /// A process that names one of these is a process of the crawl.
         dirs: Vec<PathBuf>,
         /// The descendants of the crawl process when the crawl was read.
-        below: Vec<(i32, String)>,
+        below: Vec<Process>,
     }
 
     impl Crawl {
         /// Read the crawl of the live process `owner`, whose `TMPDIR` is `scratch`.
         fn read(chrome: &Path, owner: &std::process::Child, scratch: &Path) -> Self {
-            let rows = process_table();
-            let mut family = vec![i32::try_from(owner.id()).expect("pid fits")];
+            let owner = i32::try_from(owner.id()).expect("pid fits");
+            let snap = super::common::is_snap_executable(chrome);
+            Self::of(&process_table(), owner, scratch, snap)
+        }
+
+        /// The crawl of the process `owner` in the table `rows`.
+        ///
+        /// A profile of a snap is taken only from an argument that is whole, so a path with a
+        /// space is never cut to a prefix that other processes name. A table from `ps` cannot
+        /// give that, and the read fails.
+        fn of(rows: &[Process], owner: i32, scratch: &Path, snap: bool) -> Self {
+            let mut family = vec![owner];
             let mut next = 0;
             while let Some(&parent) = family.get(next) {
-                family.extend(rows.iter().filter(|row| row.1 == parent).map(|row| row.0));
+                family.extend(rows.iter().filter(|row| row.parent == parent).map(|row| row.pid));
                 next += 1;
             }
-            let below: Vec<(i32, String)> = rows
-                .into_iter()
-                .filter(|row| family.iter().skip(1).any(|pid| *pid == row.0))
-                .map(|(pid, _, args)| (pid, args))
+            let below: Vec<Process> = rows
+                .iter()
+                .filter(|row| family.iter().skip(1).any(|pid| *pid == row.pid))
+                .cloned()
                 .collect();
-            let snap = super::common::is_snap_executable(chrome);
             let mut dirs = vec![scratch.to_path_buf()];
             if snap {
+                for row in &below {
+                    assert!(
+                        row.whole || !row.line().contains("--user-data-dir="),
+                        "the profile argument of process {} cannot be read whole without /proc: {}",
+                        row.pid,
+                        row.line()
+                    );
+                }
                 dirs = below
                     .iter()
-                    .flat_map(|(_, args)| args.split_whitespace())
+                    .flat_map(|row| &row.argv)
                     .filter_map(|arg| arg.strip_prefix("--user-data-dir="))
+                    .filter(|dir| !dir.is_empty())
                     .map(PathBuf::from)
                     .collect();
                 dirs.sort();
@@ -330,19 +413,29 @@ mod engine_crawl {
             self.scan(self.snap)
         }
 
-        /// The processes that name a directory of the crawl and, with `below`, the descendants
-        /// that were read. A descendant is the same process only with the same command line.
+        /// The processes of the crawl in the table of this moment, as [`Self::select`].
         fn scan(&self, below: bool) -> Vec<(i32, String)> {
-            process_table()
-                .into_iter()
-                .map(|(pid, _, args)| (pid, args))
+            self.select(&process_table(), below)
+        }
+
+        /// The processes in `rows` that name a directory of the crawl whole and, with `below`,
+        /// the descendants that were read. A descendant is the same process only with the same
+        /// arguments.
+        fn select(&self, rows: &[Process], below: bool) -> Vec<(i32, String)> {
+            rows.iter()
                 .filter(|row| {
                     let named = self
                         .dirs
                         .iter()
-                        .any(|dir| dir.to_str().is_some_and(|dir| row.1.contains(dir)));
-                    named || (below && self.below.contains(row))
+                        .any(|dir| dir.to_str().is_some_and(|dir| row.names(dir)));
+                    let read = || {
+                        self.below
+                            .iter()
+                            .any(|known| known.pid == row.pid && known.argv == row.argv)
+                    };
+                    named || (below && read())
                 })
+                .map(|row| (row.pid, row.line()))
                 .collect()
         }
 
@@ -568,5 +661,126 @@ mod engine_crawl {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         }
+    }
+
+    /// A process as `/proc` gives it, from the bytes of its `cmdline`.
+    fn process(pid: i32, parent: i32, cmdline: &str) -> Process {
+        Process {
+            pid,
+            parent,
+            argv: parse_cmdline(cmdline.as_bytes()),
+            whole: true,
+        }
+    }
+
+    /// A table with the crawl process 10 and its Chrome on `profile`: the browser 11, a helper 12
+    /// under the title that a Chrome helper gives itself, a helper 13 that left the tree and a
+    /// process 14 with no profile. The processes from 20 are not of the crawl: 20 names the path
+    /// that `profile` is cut to at its first space, when it has one, and 21 names a longer path.
+    fn table_of_a_crawl(profile: &str) -> Vec<Process> {
+        let mut rows = vec![
+            process(1, 0, "init\0"),
+            process(10, 1, "crawl\0--ignored\0"),
+            process(
+                11,
+                10,
+                &format!("chromium\0--user-data-dir={profile}\0--remote-debugging-pipe\0"),
+            ),
+            process(
+                12,
+                11,
+                &format!("chromium --type=renderer --user-data-dir={profile} --lang=en\0"),
+            ),
+            process(13, 1, &format!("chromium\0--type=zygote\0--user-data-dir={profile}\0")),
+            process(14, 10, "sh\0-c\0sleep 60\0"),
+            process(21, 1, &format!("chromium\0--user-data-dir={profile}4\0")),
+        ];
+        if let Some((cut, _)) = profile.split_once(' ') {
+            rows.push(process(20, 1, &format!("editor\0{cut}/notes.txt\0")));
+            rows.push(process(22, 1, &format!("chromium\0--user-data-dir={cut}\0")));
+        }
+        rows
+    }
+
+    fn pids(selected: &[(i32, String)]) -> Vec<i32> {
+        selected.iter().map(|(pid, _)| *pid).collect()
+    }
+
+    /// The scan and the cleanup of a crawl take the processes that name its profile whole. A
+    /// profile path with a space is not cut at the space, so a process that names the cut path is
+    /// not taken (and not stopped).
+    #[test]
+    fn a_profile_path_with_a_space_selects_only_the_processes_of_the_crawl() {
+        let profile = "/home/CI User/snap/chromium/common/crawlberg-123";
+        let rows = table_of_a_crawl(profile);
+
+        let snap = Crawl::of(&rows, 10, Path::new("/tmp/scratch"), true);
+        assert_eq!(
+            snap.dirs,
+            vec![PathBuf::from(profile)],
+            "the profile must be read whole"
+        );
+        assert_eq!(pids(&snap.select(&rows, true)), vec![11, 12, 13, 14]);
+        assert_eq!(pids(&snap.select(&rows, false)), vec![11, 12, 13]);
+
+        let not_a_snap = Crawl::of(&rows, 10, Path::new(profile), false);
+        assert_eq!(pids(&not_a_snap.select(&rows, false)), vec![11, 12, 13]);
+        assert_eq!(pids(&not_a_snap.select(&rows, true)), vec![11, 12, 13, 14]);
+    }
+
+    /// The control of the test above: a profile path with no space.
+    #[test]
+    fn a_profile_path_with_no_space_selects_only_the_processes_of_the_crawl() {
+        let profile = "/home/runner/snap/chromium/common/crawlberg-123";
+        let rows = table_of_a_crawl(profile);
+
+        let snap = Crawl::of(&rows, 10, Path::new("/tmp/scratch"), true);
+        assert_eq!(snap.dirs, vec![PathBuf::from(profile)]);
+        assert_eq!(pids(&snap.select(&rows, true)), vec![11, 12, 13, 14]);
+        assert_eq!(pids(&snap.select(&rows, false)), vec![11, 12, 13]);
+
+        let not_a_snap = Crawl::of(&rows, 10, Path::new(profile), false);
+        assert_eq!(pids(&not_a_snap.select(&rows, false)), vec![11, 12, 13]);
+    }
+
+    /// A table from `ps` does not show where the profile argument ends, so the profile of a snap
+    /// is not read from it.
+    #[test]
+    #[should_panic(expected = "cannot be read whole without /proc")]
+    fn a_snap_profile_is_not_read_from_a_command_line_in_one_string() {
+        let line = "chromium --user-data-dir=/home/CI User/snap/chromium/common/crawlberg-123 --headless";
+        let rows = vec![
+            process(10, 1, "crawl\0"),
+            Process {
+                pid: 11,
+                parent: 10,
+                argv: vec![line.to_owned()],
+                whole: false,
+            },
+        ];
+        let _ = Crawl::of(&rows, 10, Path::new("/tmp/scratch"), true);
+    }
+
+    /// Where `/proc` exists, the process table gives an argument with a space whole.
+    #[test]
+    fn the_process_table_reads_an_argument_with_a_space_whole() {
+        if !Path::new("/proc/self/cmdline").exists() {
+            return;
+        }
+        let spaced = "--user-data-dir=/home/CI User/profile";
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "read line", "x", spaced])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("a process with a spaced argument");
+        let pid = i32::try_from(child.id()).expect("pid fits");
+        let row = process_table().into_iter().find(|row| row.pid == pid);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let row = row.expect("the process table must show a live child");
+        assert!(row.whole);
+        assert_eq!(row.parent, i32::try_from(std::process::id()).expect("pid fits"));
+        assert_eq!(row.argv.last().map(String::as_str), Some(spaced), "{row:?}");
     }
 }
