@@ -2075,6 +2075,7 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 /// internally for each compatible binding engine, so downstream language clients do not
 /// manage a pool themselves.
 pub struct BrowserPool {
+    owner: u32,
     config: BrowserPoolConfig,
     state: Arc<Mutex<Option<BrowserState>>>,
     page_semaphore: Arc<Semaphore>,
@@ -2102,6 +2103,7 @@ impl BrowserPool {
     pub fn new(config: BrowserPoolConfig) -> Arc<Self> {
         let semaphore = Arc::new(Semaphore::new(config.max_pages));
         Arc::new(Self {
+            owner: std::process::id(),
             config,
             state: Arc::new(Mutex::new(None)),
             page_semaphore: semaphore,
@@ -2247,7 +2249,6 @@ impl BrowserPool {
         config: &crate::types::CrawlConfig,
     ) -> Result<(chromiumoxide::Page, crate::ssrf_intercept::Watch, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
-
         if guard.is_none()
             || guard
                 .as_ref()
@@ -2255,8 +2256,7 @@ impl BrowserPool {
         {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
-                old.firewall.stop().await;
-                old.handler_handle.abort();
+                old.fail_closed().await;
             }
             let bs = self.launch_browser().await?;
             *guard = Some(bs);
@@ -2414,6 +2414,20 @@ impl BrowserPool {
     }
 }
 
+impl Drop for BrowserPool {
+    fn drop(&mut self) {
+        if self.owner != std::process::id() {
+            // ~keep A fork inherits Tokio wakers, not its running reactor. Retain the copied
+            // ~keep resources so field drops cannot wake invalid I/O handles or tear down the
+            // ~keep parent's Chrome. Only child memory is leaked; the parent keeps its cleanup.
+            std::mem::forget(Arc::clone(&self.state));
+            std::mem::forget(Arc::clone(&self.page_semaphore));
+            #[cfg(test)]
+            std::mem::forget(self.hold_handler_end.clone());
+        }
+    }
+}
+
 impl std::fmt::Debug for BrowserPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrowserPool")
@@ -2492,7 +2506,9 @@ impl Drop for PooledPage {
             let watch = self.watch.take();
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
+                    let permit = self._permit.take();
                     let close = handle.spawn(async move {
+                        let _permit = permit;
                         if let Some(watch) = watch {
                             drop(page);
                             watch.close().await;

@@ -33,6 +33,30 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
+  page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
+  `/item?` are two pages. The same parameters in a different order are still one page. A site
+  with query parameters gives more pages, so a crawl reaches `max_pages` earlier. A session
+  parameter in a link gives one page for each value unless `strip_tracking_params` removes it. A
+  configuration that does not have the field now means `true`. Set `dedup_include_query` to
+  `false` to get the earlier result. (#637)
+- **BREAKING: a crawl keeps empty path segments.** `/a/b` and `/a//b` are two pages, requested and
+  reported separately, also when `dedup_include_query` is `false`. No setting merges them again.
+  `normalized_url` and `map` keep the doubled separator. (#636)
+- **BREAKING (go): `CrawlConfig.DedupIncludeQuery` is now `*bool`.** `nil` uses the new default,
+  and a pointer to `false` merges queries. A struct literal that sets `DedupIncludeQuery: true`
+  does not compile until it uses a pointer. (#637)
+- **BREAKING: a frontier store with keys of an earlier version requests those pages again.** The
+  key of a page now keeps its query and its empty path segments. A custom `Frontier` that keeps
+  its seen keys between runs holds the earlier keys, so a page with a query or with a doubled
+  slash gets a new key and is requested one more time. (#636, #637)
+- **`Frontier` has a new method, `claim`.** It marks an address as seen and returns `true` only to
+  the first caller. The engine calls it for each discovered link and each redirect target, in
+  place of `is_seen` and then `mark_seen`. The default implementation calls those two methods, so
+  a custom frontier needs no change: within one engine and its clones, the engine lets one call
+  at a time claim a given address. A frontier that more than one process uses must implement
+  `claim` as one conditional write. Before, a custom frontier that answers slowly let a page that
+  several redirects point to be requested and reported once for each redirect. (#638)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
@@ -80,6 +104,18 @@ All notable changes to crawlberg are documented here.
 - On Linux and macOS the Chrome of a crawl ends when the process that started it ends, also when
   that process is killed with SIGKILL or gets a SIGTERM that it does not handle. Before, the
   Chrome kept running with PID 1 as its parent. Windows is not changed. (#620)
+- Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
+  Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
+
+- Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
+  controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
+- With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
+  pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
+  one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
+  does not get them. In automatic mode, a cookie that a response over HTTP or from a bypass
+  provider sets or deletes is not sent to later Chrome pages with its old value. With a session
+  pool and `session_affinity`, the page kept for a site keeps its cookies: a later crawl gets
+  them, and so does a later page after a response over HTTP deleted one. (#603)
 - Python async runtime shuts down automatically at interpreter exit and rejects inherited
   runtime work after a process fork. The runtime starts at the first async call, not at import.
   A call after the exit hooks ran raises `RuntimeError`. (#633)

@@ -69,6 +69,30 @@ async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Resu
 }
 
 impl CrawlEngine {
+    /// Fetch `url` with the configured browser backend: through the engine's browser pool, and,
+    /// inside a crawl that keeps cookies, with the cookies of that crawl.
+    #[cfg(feature = "browser")]
+    pub(super) async fn browser_fetch(
+        &self,
+        url: &str,
+        prior_cookies: Option<&[crate::types::BrowserCookie]>,
+        want_screenshot: bool,
+    ) -> Result<crate::browser::BrowserPage, CrawlError> {
+        // ~keep Boxed: each caller's future holds this one inline, and one more level of it pushed
+        // ~keep the generated dart binding's async dispatch past rustc's query depth limit.
+        Box::pin(crate::browser::browser_fetch(
+            url,
+            &self.config,
+            prior_cookies,
+            self.crawl_cookies.as_deref(),
+            self.config.browser_pool.as_deref(),
+            want_screenshot,
+            #[cfg(feature = "browser-native")]
+            self.native_browser_executor.as_deref(),
+        ))
+        .await
+    }
+
     /// Dispatch a single fetch attempt to the given tier.
     ///
     /// Returns `(CrawlResponse, browser_used)` or a `CrawlError`.
@@ -111,9 +135,22 @@ impl CrawlEngine {
                     .ok_or_else(|| {
                         CrawlError::invalid_config("escalation to Bypass tier but no bypass provider configured")
                     })?;
+                let bypass_resp = provider.fetch(url).await?;
+                // ~keep A provider's response does not pass the HTTP fetch service, so this is the
+                // ~keep second place a response fetched without the browser arrives. It reports
+                // ~keep the cookies the target set before anything can read the crawl's cookies.
+                #[cfg(feature = "browser")]
+                if let Some(crawl_cookies) = self.crawl_cookies.as_deref() {
+                    let landed = [bypass_resp.final_url.as_str(), url]
+                        .into_iter()
+                        .map(super::redirect::url_host)
+                        .find(|host| !host.is_empty())
+                        .unwrap_or_default();
+                    crawl_cookies.forget_set_without_browser(&landed, &bypass_resp.headers);
+                }
                 // ~keep A custom bypass provider is a user plugin outside the rotation layer; it does
                 // ~keep not report which agent it sent, if any, so `sent_user_agent` stays unset.
-                Ok((provider.fetch(url).await?.into_crawl_response(), false))
+                Ok((bypass_resp.into_crawl_response(), false))
             }
             crate::types::Tier::Browser => {
                 #[cfg(feature = "browser")]
@@ -142,19 +179,7 @@ impl CrawlEngine {
                     {
                         return self.native_render(url, state).await;
                     }
-                    let pool = self.config.browser_pool.as_deref();
-                    #[cfg(feature = "browser-native")]
-                    let page = crate::browser::browser_fetch(
-                        url,
-                        &self.config,
-                        browser_cookies,
-                        pool,
-                        false,
-                        self.native_browser_executor.as_deref(),
-                    )
-                    .await?;
-                    #[cfg(not(feature = "browser-native"))]
-                    let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
+                    let page = self.browser_fetch(url, browser_cookies, false).await?;
                     let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
                     Ok((crawl_resp, true))
                 }

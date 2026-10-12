@@ -307,22 +307,61 @@ async fn cancelled_pooled_scrape_leaks_nothing() {
     let test_name = "cancelled_pooled_scrape_leaks_nothing";
     let denied = denied_server().await;
     let d = denied_url(&denied);
-    let (_site, seed) = seed_site(&format!(
+    let (site, seed) = seed_site(&format!(
         "<p>start</p><script>setInterval(() => {{ for (let k = 0; k < 20; k++) fetch({d:?} + '?' + Math.random(), {{ mode: 'no-cors' }}).catch(() => {{}}); window.open({d:?}); }}, 1);</script>"
     ))
     .await;
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     let mut config = pooled_config(&pool);
     config.browser.extra_wait = Some(Duration::from_secs(5));
+    let seed_timeout = config.browser.timeout;
     let engine = create_engine(Some(config)).expect("engine must build");
-    if tokio::time::timeout(Duration::from_millis(2500), scrape(&engine, &seed))
-        .await
-        .is_ok()
-    {
-        // ~keep The scrape ended before the timeout: Chrome is missing or the page failed.
-        pool.shutdown().await;
-        return;
-    }
+    let cancelled = {
+        let fetch = scrape(&engine, &seed);
+        tokio::pin!(fetch);
+        let seed_loaded = async {
+            loop {
+                if site
+                    .received_requests()
+                    .await
+                    .expect("record seed requests")
+                    .iter()
+                    .any(|request| request.url.path() == "/")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::select! {
+            result = &mut fetch => {
+                if let Err(CrawlError::BrowserError { message, .. }) = &result
+                    && is_missing_chrome_message(message)
+                {
+                    announce_chrome_skip(test_name, message);
+                    pool.shutdown().await;
+                    return;
+                }
+                panic!("{test_name}: the flood must remain running until the seed loads: {result:?}");
+            }
+            loaded = tokio::time::timeout(seed_timeout, seed_loaded) => {
+                loaded.expect("the cancellation must exercise a loaded seed within the browser timeout");
+            }
+        }
+        tokio::time::timeout(Duration::from_millis(2500), &mut fetch).await
+    };
+    assert!(
+        site.received_requests()
+            .await
+            .expect("record seed requests")
+            .iter()
+            .any(|request| request.url.path() == "/"),
+        "{test_name}: the cancellation must exercise a loaded seed"
+    );
+    assert!(
+        cancelled.is_err(),
+        "{test_name}: the flood must still be running when cancelled: {cancelled:?}"
+    );
     assert_refused(test_name, &denied).await;
     let (_next_site, next_seed) = seed_site("<p>next</p>").await;
     let next = run(test_name, &next_seed, pooled_config(&pool)).await;
