@@ -232,6 +232,10 @@ pub struct ScrapeResult {
 pub struct CrawlPageResult {
     /// The original URL of the page.
     pub url: String,
+    /// Seed address as supplied, or the discovered link address resolved against its base.
+    /// Preserves source spelling through redirects; URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
     /// The normalized URL of the page.
     pub normalized_url: String,
     /// The HTTP status code of the response.

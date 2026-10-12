@@ -179,7 +179,8 @@ pub struct CrawlConfig {
     #[serde(with = "duration_ms")]
     pub request_timeout: Duration,
     /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-    /// between requests to the same domain. Defaults to 200ms when `None`.
+    /// between requests to the same domain, in HTTP mode and before each page load in
+    /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
     pub rate_limit_ms: Option<u64>,
     /// Maximum number of redirects to follow.
     pub max_redirects: usize,
@@ -485,6 +486,25 @@ impl CrawlConfig {
         self.validate_request_timeout()?;
         self.validate_browser_endpoint()?;
         self.validate_browser_launch()?;
+        self.validate_content_formatting()?;
+        Ok(())
+    }
+
+    fn validate_content_formatting(&self) -> Result<(), CrawlError> {
+        if self.content.bullets.is_empty() || !self.content.bullets.chars().all(|c| matches!(c, '-' | '*' | '+')) {
+            return Err(CrawlError::invalid_config(
+                "content.bullets must contain only Markdown list markers (-, *, +)",
+            ));
+        }
+        const MAX_LIST_INDENT_WIDTH: usize = 256;
+        if !(1..=MAX_LIST_INDENT_WIDTH).contains(&self.content.list_indent_width) {
+            return Err(CrawlError::invalid_config(
+                "content.list_indent_width must be between 1 and 256",
+            ));
+        }
+        if !matches!(self.content.strong_em_symbol.as_str(), "*" | "_") {
+            return Err(CrawlError::invalid_config("content.strong_em_symbol must be * or _"));
+        }
         Ok(())
     }
 

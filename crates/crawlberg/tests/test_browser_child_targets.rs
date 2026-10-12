@@ -94,7 +94,19 @@ fn config() -> CrawlConfig {
 /// ~keep opaque successful response. The marker therefore proves interception, not only egress.
 #[tokio::test(flavor = "multi_thread")]
 async fn child_targets_should_inherit_the_page_ssrf_policy() {
-    let test_name = "child_targets_should_inherit_the_page_ssrf_policy";
+    check_child_target_inheritance("child_targets_should_inherit_the_page_ssrf_policy", Duration::ZERO).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn late_nested_worker_creation_should_inherit_the_page_ssrf_policy() {
+    check_child_target_inheritance(
+        "late_nested_worker_creation_should_inherit_the_page_ssrf_policy",
+        Duration::from_secs(5),
+    )
+    .await;
+}
+
+async fn check_child_target_inheritance(test_name: &str, outer_startup_delay: Duration) {
     let denied_server = denied_server().await;
     let denied = denied_url(&denied_server);
     let site = MockServer::start().await;
@@ -115,12 +127,13 @@ async fn child_targets_should_inherit_the_page_ssrf_policy() {
         ),
     )
     .await;
-    mount_script(
-        &site,
-        "/outer.js",
-        "new Worker('/inner.js'); setInterval(() => {}, 1000);".to_owned(),
-    )
-    .await;
+    Mock::given(method("GET"))
+        .and(path("/outer.js"))
+        .respond_with(
+            javascript("new Worker('/inner.js'); setInterval(() => {}, 1000);").set_delay(outer_startup_delay),
+        )
+        .mount(&site)
+        .await;
     mount_script(
         &site,
         "/inner.js",
@@ -176,67 +189,75 @@ async fn child_targets_should_inherit_the_page_ssrf_policy() {
         .await
         .expect("the protected page must navigate to the seed");
 
-    let mut observed_targets = BTreeSet::new();
-    for _ in 0..80 {
-        let targets = page
-            .page()
-            .execute(GetTargetsParams::default())
-            .await
-            .expect("the page connection must expose the browser target census")
-            .result
-            .target_infos;
-        for target in targets {
-            match (target.r#type.as_str(), target.url.as_str()) {
-                ("shared_worker", url) if url.contains("/shared.js") => {
-                    observed_targets.insert("shared-worker");
-                }
-                ("service_worker", url) if url.contains("/service.js") => {
-                    observed_targets.insert("service-worker");
-                }
-                ("worker", url) if url.contains("/inner.js") => {
-                    observed_targets.insert("nested-worker");
-                }
-                ("iframe", url) if url.starts_with("http://[::1]:") => {
-                    observed_targets.insert("oopif");
-                }
-                _ => {}
-            }
-        }
-        if observed_targets.len() == 4 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(
-        observed_targets,
-        BTreeSet::from(["nested-worker", "oopif", "service-worker", "shared-worker"]),
-        "{test_name}: Chrome must expose each descendant under its intended Target-domain type"
-    );
-
     let expected_queries = [
         "shared-worker=refused",
         "service-worker=refused",
         "nested-worker=refused",
         "same-origin-frame=refused",
     ];
+    let mut observed_targets = BTreeSet::new();
+    let mut latest_targets = Vec::new();
     let mut queries = Vec::new();
-    for _ in 0..80 {
-        queries = site
-            .received_requests()
-            .await
-            .expect("request recording must be enabled")
-            .iter()
-            .filter_map(|request| request.url.query().map(str::to_owned))
-            .collect();
-        if expected_queries
-            .iter()
-            .all(|expected| queries.iter().any(|query| query == expected))
-            && oopif_markers.load(Ordering::SeqCst) == 1
-        {
-            break;
+    // ~keep The old census and execution phases each allowed 4s, but slow creator-script loading
+    // ~keep can defer nested target creation. Keep their combined budget and collect both kinds of evidence together.
+    let ready = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let targets = page
+                .page()
+                .execute(GetTargetsParams::default())
+                .await
+                .expect("the page connection must expose the browser target census")
+                .result
+                .target_infos;
+            latest_targets = targets
+                .iter()
+                .map(|target| (target.r#type.clone(), target.url.clone()))
+                .collect::<Vec<_>>();
+            for target in targets {
+                match (target.r#type.as_str(), target.url.as_str()) {
+                    ("shared_worker", url) if url.contains("/shared.js") => {
+                        observed_targets.insert("shared-worker");
+                    }
+                    ("service_worker", url) if url.contains("/service.js") => {
+                        observed_targets.insert("service-worker");
+                    }
+                    ("worker", url) if url.contains("/inner.js") => {
+                        observed_targets.insert("nested-worker");
+                    }
+                    ("iframe", url) if url.starts_with("http://[::1]:") => {
+                        observed_targets.insert("oopif");
+                    }
+                    _ => {}
+                }
+            }
+            queries = site
+                .received_requests()
+                .await
+                .expect("request recording must be enabled")
+                .iter()
+                .filter_map(|request| request.url.query().map(str::to_owned))
+                .collect();
+            if observed_targets.len() == 4
+                && expected_queries
+                    .iter()
+                    .all(|expected| queries.iter().any(|query| query == expected))
+                && oopif_markers.load(Ordering::SeqCst) == 1
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    })
+    .await;
+    assert_eq!(
+        observed_targets,
+        BTreeSet::from(["nested-worker", "oopif", "service-worker", "shared-worker"]),
+        "{test_name}: Chrome must expose each descendant under its intended Target-domain type; latest census: {latest_targets:?}; execution markers: {queries:?}"
+    );
+    assert!(
+        ready.is_ok(),
+        "{test_name}: descendant creation and execution must complete within their combined budget"
+    );
     for marker in ["shared-worker", "service-worker", "nested-worker", "same-origin-frame"] {
         let expected = format!("{marker}=refused");
         assert_eq!(

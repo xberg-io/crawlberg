@@ -24,6 +24,45 @@ pub(super) fn wait_for_cancel(
     !wait.timed_out()
 }
 
+// ~keep Tokio deadlines cannot interrupt a V8 callback that never yields; cancellation must
+// ~keep come from another thread, including when the surrounding future is dropped.
+pub(super) struct EventLoopWatchdog {
+    handle: deno_core::v8::IsolateHandle,
+    cancellation: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl EventLoopWatchdog {
+    pub(super) fn new(runtime: &mut deno_core::JsRuntime, budget: std::time::Duration) -> Self {
+        let handle = runtime.v8_isolate().thread_safe_handle();
+        let cancellation = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let watched = cancellation.clone();
+        let watched_handle = handle.clone();
+        let thread = std::thread::spawn(move || {
+            if !wait_for_cancel(&watched, budget) {
+                watched_handle.terminate_execution();
+            }
+        });
+        Self {
+            handle,
+            cancellation,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for EventLoopWatchdog {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.cancellation;
+        *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+        wake.notify_one();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        self.handle.cancel_terminate_execution();
+    }
+}
+
 impl BrowserJsRuntime {
     pub fn execute_script(&mut self, _name: &str, source: &str) -> Result<(), String> {
         self.runtime
@@ -83,10 +122,14 @@ impl BrowserJsRuntime {
     }
 
     pub async fn run_event_loop(&mut self) -> Result<(), String> {
-        self.runtime
-            .run_event_loop(deno_core::PollEventLoopOptions::default())
-            .await
-            .map_err(|e| format!("Event loop error: {}", e))
+        let _watchdog = EventLoopWatchdog::new(&mut self.runtime, AWAIT_BUDGET);
+        tokio::time::timeout(
+            AWAIT_BUDGET,
+            self.runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
+        )
+        .await
+        .map_err(|_| format!("Event loop did not settle within {:?}", AWAIT_BUDGET))?
+        .map_err(|e| format!("Event loop error: {}", e))
     }
 
     /// Drive the event loop until an awaited evaluation's `promise` settles, for at most [`AWAIT_BUDGET`].
@@ -112,6 +155,7 @@ impl BrowserJsRuntime {
     ) -> Result<Result<T, CoreError>, tokio::time::error::Elapsed> {
         // ~keep Wait for this evaluation, not for the whole event loop to go idle: an earlier script's
         // ~keep stalled await or fetch leaves an op that never settles, and every later wait would sit on it.
+        let _watchdog = EventLoopWatchdog::new(&mut self.runtime, budget);
         let mut own = std::pin::pin!(own);
         let options = deno_core::PollEventLoopOptions::default();
         let runtime = &mut self.runtime;

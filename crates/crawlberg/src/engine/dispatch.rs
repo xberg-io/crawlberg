@@ -54,7 +54,7 @@ pub(super) fn content_density(body: &str) -> f32 {
 /// ~keep `crate::browser::browser_fetch` below actually sends, never a rotated pick.
 /// ~keep `resolve_robots_outcome` is also what `admits` calls to judge the tier chosen at
 /// ~keep admission, so the two never resolve the same origin two different ways.
-#[cfg(feature = "browser")]
+#[cfg(any(feature = "browser", feature = "browser-native"))]
 async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Result<Option<String>, CrawlError> {
     let Ok(parsed) = url::Url::parse(url) else {
         return Ok(Some(format!(
@@ -80,17 +80,23 @@ impl CrawlEngine {
     ) -> Result<crate::browser::BrowserPage, CrawlError> {
         // ~keep Boxed: each caller's future holds this one inline, and one more level of it pushed
         // ~keep the generated dart binding's async dispatch past rustc's query depth limit.
-        Box::pin(crate::browser::browser_fetch(
-            url,
-            &self.config,
-            prior_cookies,
-            self.crawl_cookies.as_deref(),
-            self.config.browser_pool.as_deref(),
-            want_screenshot,
-            #[cfg(feature = "browser-native")]
-            self.native_browser_executor.as_deref(),
-        ))
-        .await
+        // ~keep The box is a `dyn Future + Send`, not the future's own type: a caller that needs
+        // ~keep its future to be `Send` (`tokio::spawn`) then proves it for this box, not for
+        // ~keep every type under the browser fetch. The retry loop of `browser_fetch` and the
+        // ~keep cookie step of this wrapper each add one level to that type, and the proof for
+        // ~keep the own type ran past rustc's recursion limit in the caller.
+        let fetch: futures::future::BoxFuture<'_, Result<crate::browser::BrowserPage, CrawlError>> =
+            Box::pin(crate::browser::browser_fetch(
+                url,
+                &self.config,
+                prior_cookies,
+                self.crawl_cookies.as_deref(),
+                want_screenshot,
+                self.browser_rate_limiter.as_ref(),
+                #[cfg(feature = "browser-native")]
+                self.native_browser_executor.as_deref(),
+            ));
+        fetch.await
     }
 
     /// Dispatch a single fetch attempt to the given tier.
@@ -105,7 +111,7 @@ impl CrawlEngine {
         native_state: Option<&mut super::fetch::NativeRenderState>,
         browser_cookies: Option<&[crate::types::BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        #[cfg(not(all(feature = "browser", feature = "browser-native")))]
+        #[cfg(not(feature = "browser-native"))]
         let _ = native_state;
         #[cfg(not(feature = "browser"))]
         let _ = browser_cookies;
@@ -153,7 +159,7 @@ impl CrawlEngine {
                 Ok((bypass_resp.into_crawl_response(), false))
             }
             crate::types::Tier::Browser => {
-                #[cfg(feature = "browser")]
+                #[cfg(any(feature = "browser", feature = "browser-native"))]
                 {
                     // ~keep A hop that reaches this arm by escalating mid-crawl (`BrowserMode::Auto`
                     // ~keep with `EscalationStrategy::BrowserOnly`/`BypassThenBrowser`) had its robots
@@ -179,11 +185,16 @@ impl CrawlEngine {
                     {
                         return self.native_render(url, state).await;
                     }
-                    let page = self.browser_fetch(url, browser_cookies, false).await?;
-                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
-                    Ok((crawl_resp, true))
+                    #[cfg(feature = "browser")]
+                    {
+                        let page = self.browser_fetch(url, browser_cookies, false).await?;
+                        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
+                        Ok((crawl_resp, true))
+                    }
+                    #[cfg(not(feature = "browser"))]
+                    Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
                 }
-                #[cfg(not(feature = "browser"))]
+                #[cfg(not(any(feature = "browser", feature = "browser-native")))]
                 Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
             }
         }

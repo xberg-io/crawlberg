@@ -37,6 +37,10 @@ pub struct CrawlEngineBuilder {
     config: Option<CrawlConfig>,
     frontier: Option<Arc<dyn Frontier>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
+    /// The limiter of the browser paths, when it is not the decision of `build`: the one of
+    /// another engine, shared through `politeness`.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    browser_rate_limiter: Option<Arc<dyn RateLimiter>>,
     store: Option<Arc<dyn CrawlStore>>,
     event_emitter: Option<Arc<dyn EventEmitter>>,
     strategy: Option<Arc<dyn CrawlStrategy>>,
@@ -62,6 +66,8 @@ impl CrawlEngineBuilder {
             config: None,
             frontier: None,
             rate_limiter: None,
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter: None,
             store: None,
             event_emitter: None,
             strategy: None,
@@ -85,6 +91,10 @@ impl CrawlEngineBuilder {
     #[cfg(feature = "api")]
     pub(crate) fn politeness(mut self, politeness: super::Politeness) -> Self {
         self.rate_limiter = Some(politeness.rate_limiter);
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        {
+            self.browser_rate_limiter = Some(politeness.browser_rate_limiter);
+        }
         self.robots_cache = Some(politeness.robots_cache);
         self
     }
@@ -102,10 +112,16 @@ impl CrawlEngineBuilder {
         self
     }
 
-    /// Set the rate limiter implementation.
+    /// Set the rate limiter implementation. Every fetch takes a turn of it, in HTTP mode and in
+    /// browser mode alike.
     #[allow(dead_code)]
     pub fn rate_limiter(mut self, rate_limiter: impl RateLimiter + 'static) -> Self {
-        self.rate_limiter = Some(Arc::new(rate_limiter));
+        let rate_limiter: Arc<dyn RateLimiter> = Arc::new(rate_limiter);
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        {
+            self.browser_rate_limiter = Some(Arc::clone(&rate_limiter));
+        }
+        self.rate_limiter = Some(rate_limiter);
         self
     }
 
@@ -264,8 +280,23 @@ impl CrawlEngineBuilder {
             config.cookie_store = config.cookies_enabled.then(Default::default);
         }
 
-        let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
-        let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
+        let rate_limiter: Arc<dyn RateLimiter> = self.rate_limiter.unwrap_or_else(|| {
+            Arc::new(default_rate_limiter(
+                config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS),
+                config.rate_limit_jitter_ratio,
+            ))
+        });
+        // ~keep The only place where the default delay reaches the browser paths. A page of
+        // ~keep Chrome and a native render take a turn of the throttle only when the caller set
+        // ~keep `rate_limit_ms` or installed a limiter: with the default settings, browser mode
+        // ~keep loads the pages of one host with no delay, as before #622 (the owner refused a
+        // ~keep slower default). HTTP mode keeps its default delay.
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        let browser_rate_limiter: Arc<dyn RateLimiter> = match self.browser_rate_limiter {
+            Some(shared) => shared,
+            None if config.rate_limit_ms.is_some() => Arc::clone(&rate_limiter),
+            None => Arc::new(defaults::NoopRateLimiter),
+        };
         let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
@@ -286,9 +317,9 @@ impl CrawlEngineBuilder {
             frontier: super::frontier_claim::GuardedFrontier::wrap(
                 self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
             ),
-            rate_limiter: self
-                .rate_limiter
-                .unwrap_or_else(|| Arc::new(default_rate_limiter(rate_limit_ms, rate_limit_jitter_ratio))),
+            rate_limiter,
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter,
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
             event_emitter: self.event_emitter.unwrap_or_else(|| Arc::new(defaults::NoopEmitter)),
             strategy: self.strategy.unwrap_or_else(|| default_strategy(crawl_strategy)),
@@ -700,6 +731,129 @@ mod rate_limiter_plumbing_tests {
             waited <= Duration::from_millis(200),
             "a ratio above 1.0 must clamp to 1.0 (max 2x the 100ms delay), not scale it by 5x \
              (up to 600ms), got {waited:?}"
+        );
+    }
+}
+
+/// The delay of the domain in browser mode: the Chrome page and the native render take a turn
+/// of the limiter the builder gives the browser paths. These tests observe that limiter under a
+/// paused tokio clock, as `rate_limiter_plumbing_tests` does: the wait is the computed one.
+#[cfg(all(test, any(feature = "browser", feature = "browser-native")))]
+mod browser_rate_limiter_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::CrawlEngine;
+    use crate::types::CrawlConfig;
+
+    const DOMAIN: &str = "example.com";
+
+    async fn second_turn_of_the_browser_paths(engine: &CrawlEngine) -> Duration {
+        engine.browser_rate_limiter.acquire(DOMAIN).await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        engine.browser_rate_limiter.acquire(DOMAIN).await.expect("second turn");
+        start.elapsed()
+    }
+
+    async fn second_turn_of_http(engine: &CrawlEngine) -> Duration {
+        engine.rate_limiter.acquire(DOMAIN).await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        engine.rate_limiter.acquire(DOMAIN).await.expect("second turn");
+        start.elapsed()
+    }
+
+    fn engine_with(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build")
+    }
+
+    // ~keep The owner refused a slower default: a crawl with the default settings loads the
+    // ~keep pages of one host in browser mode as it did before the delay reached the browser
+    // ~keep paths, with no delay, while HTTP mode keeps its default delay.
+    #[tokio::test(start_paused = true)]
+    async fn with_the_default_settings_the_browser_paths_get_their_turns_at_once() {
+        let engine = engine_with(CrawlConfig::default());
+
+        assert_eq!(
+            second_turn_of_the_browser_paths(&engine).await,
+            Duration::ZERO,
+            "with rate_limit_ms unset, the second page of a host must get its turn at once in browser mode"
+        );
+        assert_eq!(
+            second_turn_of_http(&engine).await,
+            Duration::from_millis(200),
+            "HTTP mode keeps the default delay of 200 ms"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_set_rate_limit_ms_spaces_the_turns_of_the_browser_paths() {
+        let engine = engine_with(CrawlConfig {
+            rate_limit_ms: Some(300),
+            ..CrawlConfig::default()
+        });
+
+        assert_eq!(
+            second_turn_of_the_browser_paths(&engine).await,
+            Duration::from_millis(300),
+            "with rate_limit_ms set, the second page of a host gets its turn one delay after the first"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rate_limit_ms_of_zero_spaces_nothing_in_the_browser_paths() {
+        let engine = engine_with(CrawlConfig {
+            rate_limit_ms: Some(0),
+            ..CrawlConfig::default()
+        });
+
+        assert_eq!(second_turn_of_the_browser_paths(&engine).await, Duration::ZERO);
+    }
+
+    #[test]
+    fn an_installed_rate_limiter_is_the_one_of_the_browser_paths_too() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig::default())
+            .rate_limiter(crate::defaults::PerDomainThrottle::new(Duration::from_millis(50)))
+            .build()
+            .expect("engine must build");
+
+        assert!(
+            Arc::ptr_eq(&engine.rate_limiter, &engine.browser_rate_limiter),
+            "a limiter the caller installed must take the turns of the browser paths"
+        );
+    }
+
+    // ~keep The API server builds the engine of each request from its own politeness, so the
+    // ~keep decision of the server's build must reach the engine of the request unchanged: with
+    // ~keep the default settings, no delay in browser mode there either.
+    #[cfg(feature = "api")]
+    #[tokio::test(start_paused = true)]
+    async fn an_engine_that_shares_the_politeness_of_another_keeps_its_browser_delay() {
+        let server = engine_with(CrawlConfig::default());
+        let request = CrawlEngine::builder()
+            .config(server.config.clone())
+            .politeness(server.politeness())
+            .build()
+            .expect("engine must build");
+
+        assert!(Arc::ptr_eq(&server.rate_limiter, &request.rate_limiter));
+        assert_eq!(second_turn_of_the_browser_paths(&request).await, Duration::ZERO);
+
+        let server = engine_with(CrawlConfig {
+            rate_limit_ms: Some(300),
+            ..CrawlConfig::default()
+        });
+        let request = CrawlEngine::builder()
+            .config(server.config.clone())
+            .politeness(server.politeness())
+            .build()
+            .expect("engine must build");
+        assert_eq!(
+            second_turn_of_the_browser_paths(&request).await,
+            Duration::from_millis(300)
         );
     }
 }

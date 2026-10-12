@@ -72,6 +72,18 @@ pub struct ContentConfig {
     pub wrap: bool,
     /// Wrap width when `wrap` is enabled. Default: `80`.
     pub wrap_width: usize,
+    /// Replace paragraph source line breaks with spaces. Default: `false`.
+    pub strip_newlines: bool,
+    /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
+    pub bullets: String,
+    /// Spaces per nested list level. Default: `2`.
+    pub list_indent_width: usize,
+    /// Markdown emphasis marker: `"*"` (default) or `"_"`.
+    pub strong_em_symbol: String,
+    /// Render tables without column-width padding. Default: `false`.
+    pub compact_tables: bool,
+    /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
+    pub keep_inline_images_in: Vec<String>,
     /// Include document structure tree in output. Default: `true`.
     pub include_document_structure: bool,
     /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
@@ -101,6 +113,12 @@ impl Default for ContentConfig {
             max_depth: None,
             wrap: false,
             wrap_width: 80,
+            strip_newlines: false,
+            bullets: "-*+".to_owned(),
+            list_indent_width: 2,
+            strong_em_symbol: "*".to_owned(),
+            compact_tables: false,
+            keep_inline_images_in: Vec::new(),
             include_document_structure: true,
             extract_metadata: true,
             keep_hidden: false,
@@ -125,9 +143,13 @@ pub struct BrowserConfig {
     pub timeout: Duration,
     /// Overall deadline for a single browser fetch, covering browser launch (or
     /// page acquisition from a shared pool), page setup, navigation, rendering,
-    /// and screenshot capture. Must exceed `timeout` to leave room for launch
-    /// and setup overhead; a fetch that has not returned within this deadline
-    /// fails with a timeout error (in milliseconds when serialized).
+    /// screenshot capture, and every retry of the fetch. Must exceed `timeout`
+    /// to leave room for launch and setup overhead; a fetch that has not
+    /// returned within this deadline fails with a timeout error (in
+    /// milliseconds when serialized). The wait for the delay of the domain
+    /// (`rate_limit_ms`) is not counted, so a delay longer than this deadline
+    /// does not fail the page. A scrape with the native backend is not bounded
+    /// by this deadline.
     ///
     /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
     /// not counted against this deadline: an already-computed result is
@@ -153,7 +175,7 @@ pub struct BrowserConfig {
     pub proxy: Option<ProxyConfig>,
     /// URL patterns to block before the network request fires. Supports `*`
     /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-    /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+    /// both browser backends.
     #[serde(default)]
     pub block_url_patterns: Vec<String>,
     /// JavaScript snippet evaluated after navigation completes.

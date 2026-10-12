@@ -217,7 +217,7 @@ fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Ch
 /// ended before it has run: no browser runs outside a job.
 #[cfg(windows)]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
-    const CREATE_SUSPENDED: u32 = 0x0000_0004;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
     let refused = |error: std::io::Error| {
         std::io::Error::new(
             error.kind(),
@@ -272,9 +272,87 @@ fn job_process_ids(list: &[u8], id_width: usize) -> Vec<u32> {
         .collect()
 }
 
+// ~keep ERROR_MORE_DATA does not promise a usable partial list; retry with a larger aligned buffer.
+#[cfg(any(windows, test))]
+fn query_job_process_ids(
+    id_width: usize,
+    mut capacity: usize,
+    mut query: impl FnMut(&mut [u64], u32) -> std::io::Result<bool>,
+) -> std::io::Result<Vec<u32>> {
+    loop {
+        let bytes = capacity
+            .checked_mul(id_width)
+            .and_then(|bytes| bytes.checked_add(JOB_ID_LIST_HEADER))
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or_else(|| std::io::Error::other("job member list is too large"))?;
+        let mut list = vec![0u64; (bytes as usize).div_ceil(size_of::<u64>())];
+        if query(&mut list, bytes)? {
+            let list: Vec<u8> = list.iter().flat_map(|word| word.to_ne_bytes()).collect();
+            return Ok(job_process_ids(&list[..bytes as usize], id_width));
+        }
+        capacity = capacity
+            .checked_mul(2)
+            .filter(|capacity| *capacity != 0)
+            .ok_or_else(|| std::io::Error::other("job member list is too large"))?;
+    }
+}
+
+#[cfg(any(windows, test))]
+fn opened_job_member<T>(result: std::io::Result<T>, vanished_error: i32) -> std::io::Result<Option<T>> {
+    match result {
+        Ok(member) => Ok(Some(member)),
+        Err(error) if error.raw_os_error() == Some(vanished_error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::job_process_ids;
+    use super::{job_process_ids, opened_job_member, query_job_process_ids};
+
+    #[test]
+    fn inaccessible_members_are_unknown_but_a_vanished_member_is_absent() {
+        let denied = opened_job_member::<()>(Err(std::io::Error::from_raw_os_error(5)), 87)
+            .expect_err("access denied must not hide a live member");
+        assert_eq!(denied.raw_os_error(), Some(5));
+        assert_eq!(
+            opened_job_member::<()>(Err(std::io::Error::from_raw_os_error(87)), 87).unwrap(),
+            None
+        );
+        assert_eq!(opened_job_member(Ok(1100), 87).unwrap(), Some(1100));
+    }
+
+    #[test]
+    fn a_failed_member_query_is_not_an_empty_job() {
+        let error = query_job_process_ids(8, 2, |_, _| Err(std::io::Error::from_raw_os_error(5)))
+            .expect_err("an inaccessible job must remain unknown");
+        assert_eq!(error.raw_os_error(), Some(5));
+    }
+
+    #[test]
+    fn more_members_retry_without_using_the_partial_result() {
+        for width in [4, 8] {
+            let mut calls = 0;
+            let ids = query_job_process_ids(width, 2, |buffer, bytes| {
+                calls += 1;
+                if calls == 1 {
+                    assert_eq!(bytes as usize, 8 + 2 * width);
+                    return Ok(false);
+                }
+                assert_eq!(bytes as usize, 8 + 4 * width);
+                let data = list(3, 3, &[1100, 2200, 3300], width);
+                for (index, chunk) in data.chunks(8).enumerate() {
+                    let mut word = [0u8; 8];
+                    word[..chunk.len()].copy_from_slice(chunk);
+                    buffer[index] = u64::from_ne_bytes(word);
+                }
+                Ok(true)
+            })
+            .expect("the larger query succeeds");
+            assert_eq!(calls, 2);
+            assert_eq!(ids, [1100, 2200, 3300]);
+        }
+    }
 
     /// The bytes of a list with the two counts `assigned` and `listed`, then `ids` at `id_width` bytes each.
     fn list(assigned: u32, listed: u32, ids: &[u64], id_width: usize) -> Vec<u8> {
@@ -362,7 +440,7 @@ mod job {
     use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle, RawHandle};
     use std::time::Instant;
 
-    use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
@@ -376,7 +454,7 @@ mod job {
         THREAD_SUSPEND_RESUME, WaitForSingleObject,
     };
 
-    /// The most processes of a job that one round of [`Job::stop`] waits for.
+    // ~keep Start with a modest allocation and grow on ERROR_MORE_DATA instead of trusting partial data.
     const MEMBERS_PER_ROUND: usize = 256;
 
     //The decoder reads the layout of the structure that the system writes, for this target.
@@ -448,6 +526,9 @@ mod job {
                 let members = self.members();
                 // SAFETY: the job handle is live. A job with no process left is ended at once.
                 unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) };
+                let Ok(members) = members else {
+                    return false;
+                };
                 if !ended(&self.root, deadline) || !members.iter().all(|member| ended(member, deadline)) {
                     return false;
                 }
@@ -457,38 +538,127 @@ mod job {
             }
         }
 
-        /// A handle on each process that is in the job now, up to [`MEMBERS_PER_ROUND`].
-        fn members(&self) -> Vec<OwnedHandle> {
-            //The system writes a `JOBOBJECT_BASIC_PROCESS_ID_LIST` with room for that many ids.
-            //The buffer is made of `u64` so that it has the alignment of the structure.
-            const LIST_BYTES: usize = super::JOB_ID_LIST_HEADER + MEMBERS_PER_ROUND * size_of::<usize>();
-            let mut list = [0u64; LIST_BYTES.div_ceil(size_of::<u64>())];
-            // SAFETY: the buffer is writable for the size passed. A longer list fails with
-            // "more data" after it has filled the buffer, and the next round reads the rest.
-            unsafe {
-                QueryInformationJobObject(
-                    self.job.as_raw_handle(),
-                    JobObjectBasicProcessIdList,
-                    list.as_mut_ptr().cast(),
-                    LIST_BYTES as u32,
-                    std::ptr::null_mut(),
-                );
-            }
-            let list: Vec<u8> = list.iter().flat_map(|word| word.to_ne_bytes()).collect();
-            super::job_process_ids(&list[..LIST_BYTES], size_of::<usize>())
-                .into_iter()
-                .filter_map(|pid| {
-                    // SAFETY: plain call; a process that is gone gives a null handle.
-                    let member =
-                        owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })
-                            .ok()?;
+        /// A handle on each process that is in the job now.
+        fn members(&self) -> io::Result<Vec<OwnedHandle>> {
+            let ids = process_ids(self.job.as_raw_handle(), MEMBERS_PER_ROUND)?;
+            ids.into_iter()
+                .map(|pid| {
+                    // SAFETY: plain call; ERROR_INVALID_PARAMETER means this PID no longer exists.
+                    let member = super::opened_job_member(
+                        owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }),
+                        windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER as i32,
+                    )?;
+                    let Some(member) = member else {
+                        return Ok(None);
+                    };
                     let mut in_job = 0;
                     // SAFETY: both handles are live and `in_job` is writable.
-                    done(unsafe { IsProcessInJob(member.as_raw_handle(), self.job.as_raw_handle(), &raw mut in_job) })
-                        .ok()?;
-                    (in_job != 0).then_some(member)
+                    done(unsafe { IsProcessInJob(member.as_raw_handle(), self.job.as_raw_handle(), &raw mut in_job) })?;
+                    Ok((in_job != 0).then_some(member))
                 })
-                .collect()
+                .collect::<io::Result<Vec<_>>>()
+                .map(|members| members.into_iter().flatten().collect())
+        }
+    }
+
+    fn process_ids(job: RawHandle, capacity: usize) -> io::Result<Vec<u32>> {
+        super::query_job_process_ids(size_of::<usize>(), capacity, |list, bytes| {
+            // SAFETY: the u64 buffer is aligned and writable for the supplied byte count.
+            if unsafe {
+                QueryInformationJobObject(
+                    job,
+                    JobObjectBasicProcessIdList,
+                    list.as_mut_ptr().cast(),
+                    bytes,
+                    std::ptr::null_mut(),
+                )
+            } != 0
+            {
+                return Ok(true);
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_MORE_DATA as i32) {
+                Ok(false)
+            } else {
+                Err(error)
+            }
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        use std::time::Duration;
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+
+        struct Children(Vec<std::process::Child>);
+
+        impl Drop for Children {
+            fn drop(&mut self) {
+                for child in &mut self.0 {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        #[test]
+        fn an_invalid_job_query_returns_an_error() {
+            let error = process_ids(INVALID_HANDLE_VALUE, 2).expect_err("invalid job handle");
+            assert_eq!(
+                error.raw_os_error(),
+                Some(windows_sys::Win32::Foundation::ERROR_INVALID_HANDLE as i32)
+            );
+        }
+
+        #[test]
+        fn a_job_with_more_members_than_the_initial_buffer_reports_every_member() {
+            let mut children = Children(Vec::new());
+            for _ in 0..3 {
+                children.0.push(
+                    Command::new("powershell.exe")
+                        .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+                        .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+                        .spawn()
+                        .expect("spawn suspended process"),
+                );
+            }
+            let job = Job::holding(children.0[0].as_raw_handle(), children.0[0].id()).expect("start root in job");
+            for child in &children.0[1..] {
+                // SAFETY: both handles are live; the process is still suspended.
+                done(unsafe { AssignProcessToJobObject(job.job.as_raw_handle(), child.as_raw_handle()) })
+                    .expect("assign member to job");
+                resume(child.id()).expect("resume member");
+            }
+            let ids = process_ids(job.job.as_raw_handle(), 2).expect("retry larger member query");
+            // ~keep A resumed member can start processes of its own, and the job holds them too.
+            // ~keep The list holds the three members and can hold more.
+            for child in &children.0 {
+                assert!(ids.contains(&child.id()), "member {} is not in {ids:?}", child.id());
+            }
+            // ~keep The list holds no id from outside the job: each listed process that still exists is a member.
+            for &pid in &ids {
+                // SAFETY: plain call; ERROR_INVALID_PARAMETER means this PID no longer exists.
+                let listed = super::super::opened_job_member(
+                    owned(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }),
+                    windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER as i32,
+                )
+                .expect("open listed process");
+                let Some(listed) = listed else {
+                    continue;
+                };
+                let mut in_job = 0;
+                // SAFETY: both handles are live and `in_job` is writable.
+                done(unsafe { IsProcessInJob(listed.as_raw_handle(), job.job.as_raw_handle(), &raw mut in_job) })
+                    .expect("ask whether the listed process is in the job");
+                assert!(in_job != 0, "listed id {pid} is not in the job: {ids:?}");
+            }
+            assert!(job.stop(Instant::now() + Duration::from_secs(10)));
+            for child in &mut children.0 {
+                child.wait().expect("reap ended member");
+            }
         }
     }
 

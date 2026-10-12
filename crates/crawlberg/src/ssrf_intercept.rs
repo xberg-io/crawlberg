@@ -31,8 +31,8 @@ use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
-    DialogType, EventFrameNavigated, EventFrameStoppedLoading, EventJavascriptDialogOpening, FrameId,
-    HandleJavaScriptDialogParams,
+    ClientNavigationReason, DialogType, EventFrameNavigated, EventFrameRequestedNavigation, EventFrameStoppedLoading,
+    EventJavascriptDialogOpening, FrameId, HandleJavaScriptDialogParams,
 };
 use chromiumoxide::cdp::browser_protocol::storage::{
     GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
@@ -55,6 +55,28 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::net::userinfo;
 use crate::normalize::resolve_redirect;
 use crate::types::CrawlConfig;
+
+// ~keep Chrome still emits this deprecated event, but the generated CDP schema omits it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshScheduled {
+    frame_id: FrameId,
+    delay: f64,
+    reason: ClientNavigationReason,
+    url: String,
+}
+
+enum RefreshNavigation {
+    Scheduled(Arc<RefreshScheduled>),
+    Requested(Arc<EventFrameRequestedNavigation>),
+}
+
+impl chromiumoxide::types::MethodType for RefreshScheduled {
+    fn method_id() -> chromiumoxide::types::MethodId {
+        "Page.frameScheduledNavigation".into()
+    }
+}
+impl chromiumoxide::cdp::CustomEvent for RefreshScheduled {}
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
@@ -127,6 +149,7 @@ pub(crate) struct InterceptOutcome {
     redirects_followed: usize,
     /// Whether the main frame has sent the request of its first navigation.
     navigation_started: bool,
+    pending_refresh: Option<url::Url>,
     /// Set once the requested navigation is over: later navigations are not counted.
     navigation_ended: bool,
     /// ~keep Whether the check has dropped a main-frame navigation past the redirect limit or one
@@ -848,6 +871,8 @@ struct TestDelays {
     opened_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Hold an installed watch before acknowledging its caller, to exercise cancellation. ~keep
     watch_ack_gate: Option<Arc<UrlGate>>,
+    /// Hold disposed-context cleanup before the listener releases its installed policy. ~keep
+    watch_end_gate: Option<Arc<UrlGate>>,
     /// After frame attribution snapshots target ownership, until the test gives one permit. ~keep
     attribute_snapshot_gate: Option<Arc<UrlGate>>,
     /// Before a lifecycle reconciliation queries Chrome, until the test gives one permit. ~keep
@@ -889,6 +914,7 @@ enum Command {
         Arc<WatchedPage>,
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
+        BoxStream<'static, Arc<RefreshNavigation>>,
         DialogAnswers,
         oneshot::Sender<Result<Option<BrowserContextId>, String>>,
     ),
@@ -1518,6 +1544,18 @@ impl FirewallHandle {
             .event_listener::<EventLoadingFailed>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+        let scheduled = page
+            .event_listener::<RefreshScheduled>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register refresh listener: {e}")))?;
+        let requested = page
+            .event_listener::<EventFrameRequestedNavigation>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register requested navigation listener: {e}")))?;
+        let requested = Box::pin(futures::stream::select(
+            scheduled.map(|event| Arc::new(RefreshNavigation::Scheduled(event))),
+            requested.map(|event| Arc::new(RefreshNavigation::Requested(event))),
+        ));
         let dialogs = page
             .event_listener::<EventJavascriptDialogOpening>()
             .await
@@ -1549,6 +1587,7 @@ impl FirewallHandle {
                 Arc::clone(&watched),
                 navigations,
                 failures,
+                requested,
                 dialog_answers(&watched, page, dialogs),
                 ack,
             ))
@@ -2379,7 +2418,9 @@ where
                     async_tungstenite::tungstenite::Message::Close(_) => return false,
                     _ => continue,
                 };
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(text.as_ref()) else {
+                // ~keep The driver's reader: a Page event of a popup can hold half of a surrogate
+                // ~keep pair (a frame name, a window name), which `serde_json` alone refuses.
+                let Ok(value) = chromiumoxide::conn::parse_message::<serde_json::Value>(text.as_ref()) else {
                     return false;
                 };
                 if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
@@ -2565,6 +2606,43 @@ where
                         }
                         continue;
                     }
+                    Some("Page.javascriptDialogOpening") => {
+                        // ~keep Close a dialog that a popup opened. A popup shares the renderer of
+                        // ~keep its page, so its open dialog stops every read of that page until the
+                        // ~keep browser timeout (xberg-io/crawlberg#683). The watch answers the
+                        // ~keep dialogs of the page it opened; two answers could close a later dialog
+                        // ~keep with the wrong choice. The reply is not awaited: a popup can close
+                        // ~keep under its dialog, and a reply with an unknown id is skipped above.
+                        let popup = value
+                            .get("sessionId")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|session| {
+                                session_targets
+                                    .get(*session)
+                                    .is_some_and(|target| !lock(&shared.registry).opened.contains_key(target))
+                            });
+                        if let Some(session) = popup {
+                            let accept = serde_json::from_value::<DialogType>(value["params"]["type"].clone())
+                                .is_ok_and(|kind| dialog_is_accepted(&kind));
+                            let Some(id) = child_command_id(&mut next_id) else { return false };
+                            if child_socket_write(
+                                &mut socket,
+                                child_message(
+                                    id,
+                                    "Page.handleJavaScriptDialog",
+                                    serde_json::json!({ "accept": accept }),
+                                    Some(session),
+                                ),
+                                command_timeout,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                return false;
+                            }
+                        }
+                        continue;
+                    }
                     Some("Target.attachedToTarget") => {}
                     _ => continue,
                 }
@@ -2689,6 +2767,25 @@ where
                 {
                     parent.authorized = true;
                 }
+                // ~keep Chrome reports a dialog only to a session that has the Page domain on, and
+                // ~keep does not report an open dialog again. The popup is still held here, so the
+                // ~keep domain is on before the resume and no dialog of it can open unreported.
+                // ~keep A popup is told by its opener: a page of the check attaches here before
+                // ~keep the check records it as opened, and it has no opener. Its watch answers
+                // ~keep its dialogs, so its Page events stay off this socket.
+                if permitted && attached.target_info.r#type == "page" && attached.target_info.opener_id.is_some() {
+                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    if child_socket_write(
+                        &mut socket,
+                        child_message(id, "Page.enable", serde_json::json!({}), Some(&attached.session_id)),
+                        command_timeout,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return false;
+                    }
+                }
                 let Some(id) = child_command_id(&mut next_id) else { return false };
                 if child_socket_write(&mut socket, child_message(
                     id,
@@ -2748,6 +2845,7 @@ async fn serve(
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
     let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
+    let mut refreshes: SelectAll<BoxStream<'static, (Arc<WatchedPage>, Arc<RefreshNavigation>)>> = SelectAll::new();
     let mut dialogs: SelectAll<DialogAnswers> = SelectAll::new();
     // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
     // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
@@ -2837,10 +2935,10 @@ async fn serve(
                         }
                     }
                 }
-                Some(Command::Watch(_, _, _, _, ack)) if stopping.is_some() => {
+                Some(Command::Watch(_, _, _, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
-                Some(Command::Watch(page, navigated, failed, answers, ack)) => {
+                Some(Command::Watch(page, navigated, failed, requested, answers, ack)) => {
                     let owned_context = {
                         let mut registry = lock(&shared.registry);
                         // ~keep `Opened` precedes `Watch` on this queue; capture its context only after registration.
@@ -2858,6 +2956,7 @@ async fn serve(
                     };
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
+                    refreshes.push(events_of(&page, requested));
                     dialogs.push(answers);
                     #[cfg(test)]
                     if let Some(gate) = &shared.delays.watch_ack_gate {
@@ -2894,6 +2993,9 @@ async fn serve(
             Some((page, navigated)) = navigations.next(), if !navigations.is_empty() => {
                 record_commit(&page, &navigated);
             }
+            Some((page, requested)) = refreshes.next(), if !refreshes.is_empty() => {
+                record_refresh_request(&page, &requested);
+            }
             event = events.paused.next() => match event {
                 Some(event) => {
                     // ~keep Chrome sends a commit before any later paused response, and chromiumoxide
@@ -2901,6 +3003,9 @@ async fn serve(
                     // ~keep first and the committed loader is current when a response is recorded.
                     while let Some(Some((page, navigated))) = navigations.next().now_or_never() {
                         record_commit(&page, &navigated);
+                    }
+                    while let Some(Some((page, requested))) = refreshes.next().now_or_never() {
+                        record_refresh_request(&page, &requested);
                     }
                     #[cfg(test)]
                     {
@@ -3485,6 +3590,13 @@ async fn end_watch(
             "the SSRF policy refused more requests the page sent; only the first were logged"
         );
     }
+    #[cfg(test)]
+    if let Some(gate) = &shared.delays.watch_end_gate {
+        lock(&gate.held).push(page.root.inner().clone());
+        if let Ok(permit) = gate.permits.acquire().await {
+            permit.forget();
+        }
+    }
     Done::Ended(page, keep_root, done)
 }
 
@@ -3579,7 +3691,11 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
         Some(Owner::Watched(page)) => {
             let in_flight = paused.matched(page);
             let page = &in_flight.0;
-            let verdict = judge(shared, page, event, paused_at).await;
+            let verdict = if should_preserve_refresh_page(page, event) {
+                Verdict::Abort
+            } else {
+                judge(shared, page, event, paused_at).await
+            };
             let verdict = if page.ending.load(Ordering::Acquire) {
                 Verdict::Refuse
             } else {
@@ -3706,6 +3822,49 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         self.0.in_flight.fetch_sub(1, Ordering::AcqRel);
     }
+}
+
+fn record_refresh_request(page: &WatchedPage, navigation: &RefreshNavigation) {
+    let mut state = lock(&page.outcome);
+    match navigation {
+        RefreshNavigation::Scheduled(event) if event.frame_id == page.main_frame => {
+            state.pending_refresh = matches!(
+                event.reason,
+                ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+            )
+            .then_some(event.delay)
+            .filter(|delay| *delay >= 1.0)
+            .and_then(|_| refresh_request_key(&event.url));
+        }
+        RefreshNavigation::Requested(event)
+            if event.frame_id == page.main_frame
+                && !matches!(
+                    event.reason,
+                    ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+                ) =>
+        {
+            state.pending_refresh = None;
+        }
+        _ => {}
+    }
+}
+
+fn should_preserve_refresh_page(page: &WatchedPage, event: &EventRequestPaused) -> bool {
+    if is_response_stage(event) || event.frame_id != page.main_frame || event.resource_type != ResourceType::Document {
+        return false;
+    }
+    lock(&page.outcome)
+        .pending_refresh
+        .take()
+        .is_some_and(|target| Some(target) == refresh_request_key(&event.request.url))
+}
+
+// ~keep CDP scheduling includes fragments and userinfo; Fetch pauses the network URL without them.
+fn refresh_request_key(raw: &str) -> Option<url::Url> {
+    userinfo::parse(raw).map(|mut url| {
+        url.set_fragment(None);
+        url
+    })
 }
 
 async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> Verdict {
@@ -5605,6 +5764,239 @@ mod tests {
         assert!(controller.await.expect("child controller task"));
     }
 
+    /// A controller with the watched page `ROOT` armed and resumed, and its popup `POPUP` attached
+    /// on the session `S-POPUP`. Returns the commands the controller wrote for the popup before
+    /// its arm was answered, and the arm.
+    async fn child_controller_with_a_popup(
+        command_timeout: Duration,
+    ) -> (
+        TestChildSocket,
+        mpsc::Sender<super::ChildCommand>,
+        tokio::task::JoinHandle<bool>,
+        Vec<serde_json::Value>,
+    ) {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) = test_child_controller(shared, command_timeout).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        send_attached_target_of_type(&mut socket, "S-POPUP", "POPUP", "page", Some("ROOT"), &context).await;
+        let before_the_arm_reply = vec![
+            next_child_message(&mut socket).await,
+            next_child_message(&mut socket).await,
+        ];
+        (socket, commands, controller, before_the_arm_reply)
+    }
+
+    async fn send_dialog_opening(socket: &mut TestChildSocket, session: &str, kind: &str) {
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({
+                    "method": "Page.javascriptDialogOpening",
+                    "sessionId": session,
+                    "params": {
+                        "url": "http://a.localhost/popup",
+                        "frameId": "POPUP",
+                        "message": "a",
+                        "type": kind,
+                        "hasBrowserHandledBeforeUnload": false,
+                    },
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send the dialog event");
+    }
+
+    /// A popup reports its dialogs from its first script: the Page domain of its session is on
+    /// before the popup is resumed.
+    #[tokio::test]
+    async fn a_popup_reports_its_dialogs_before_it_is_resumed() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        assert_eq!(written[0]["method"], "Page.enable");
+        assert_eq!(written[0]["sessionId"], "S-POPUP");
+        assert_eq!(written[1]["method"], "Target.setAutoAttach");
+        assert_eq!(written[1]["sessionId"], "S-POPUP");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), socket.next())
+                .await
+                .is_err(),
+            "the popup resumed before its recursive boundary was acknowledged"
+        );
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+        assert_eq!(resume["sessionId"], "S-POPUP");
+        answer_child_command(&mut socket, &resume).await;
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A page of the check gets no Page domain command from the controller, also when it attaches
+    /// before the check records it as opened, as it does in a browser: it has no opener, and its
+    /// watch has a dialog listener of its own.
+    #[tokio::test]
+    async fn a_page_of_the_check_gets_no_page_domain_command() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        lock(&shared.registry).opened.remove(&page.root);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        let (done, armed) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Arm {
+                root: page.root.clone(),
+                done,
+            })
+            .await
+            .expect("arm root");
+        let root_arm = begin_root_arm(&mut socket, &context).await;
+        finish_root_arm(&mut socket, &root_arm, armed).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), socket.next())
+                .await
+                .is_err(),
+            "the controller wrote one more command for the page of the check"
+        );
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A Page event of a popup can hold half of a surrogate pair, in a frame name or a window
+    /// name. The controller reads it and goes on; a message it cannot read stops it, and a
+    /// stopped controller fails the browser.
+    #[tokio::test]
+    async fn an_event_that_holds_half_of_a_surrogate_pair_does_not_stop_the_controller() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        let event = concat!(
+            r#"{"method":"Page.windowOpen","sessionId":"S-POPUP","params":{"url":"http://a.localhost/","#,
+            r#""windowName":"name \ud83d","windowFeatures":[],"userGesture":false}}"#
+        );
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(event.to_owned().into()))
+            .await
+            .expect("send the event");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !controller.is_finished(),
+            "the controller stopped on an event that holds half of a surrogate pair"
+        );
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A dialog of a popup is closed on the popup's session: an alert is dismissed and a
+    /// `beforeunload` dialog is accepted, as the watch does for its page. A dialog of the watched
+    /// page, and one of a session the controller does not know, get no answer from the controller.
+    #[tokio::test]
+    async fn a_dialog_of_a_popup_is_closed_on_its_session() {
+        let (mut socket, commands, controller, written) =
+            child_controller_with_a_popup(Duration::from_millis(250)).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        for (kind, accept) in [
+            ("alert", false),
+            ("confirm", false),
+            ("prompt", false),
+            ("beforeunload", true),
+        ] {
+            send_dialog_opening(&mut socket, "S-POPUP", kind).await;
+            let answer = next_child_message(&mut socket).await;
+            assert_eq!(answer["method"], "Page.handleJavaScriptDialog", "{kind}");
+            assert_eq!(answer["sessionId"], "S-POPUP", "{kind}");
+            assert_eq!(answer["params"], serde_json::json!({ "accept": accept }), "{kind}");
+            answer_child_command(&mut socket, &answer).await;
+        }
+        for session in ["S-ROOT", "S-UNKNOWN"] {
+            send_dialog_opening(&mut socket, session, "alert").await;
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), socket.next())
+                    .await
+                    .is_err(),
+                "the controller answered a dialog of {session}"
+            );
+        }
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
+    /// A popup can close under its open dialog. The error reply to the answer, the error reply to
+    /// the Page domain command and a reply that never comes do not stop the controller.
+    #[tokio::test]
+    async fn a_refused_answer_to_a_popup_dialog_does_not_stop_the_controller() {
+        let timeout = Duration::from_millis(100);
+        let (mut socket, commands, controller, written) = child_controller_with_a_popup(timeout).await;
+        answer_child_command(&mut socket, &written[1]).await;
+        let resume = next_child_message(&mut socket).await;
+        answer_child_command(&mut socket, &resume).await;
+
+        send_dialog_opening(&mut socket, "S-POPUP", "alert").await;
+        let refused = next_child_message(&mut socket).await;
+        assert_eq!(refused["method"], "Page.handleJavaScriptDialog");
+        send_dialog_opening(&mut socket, "S-POPUP", "alert").await;
+        let unanswered = next_child_message(&mut socket).await;
+        assert_eq!(unanswered["method"], "Page.handleJavaScriptDialog");
+        for command in [&written[0], &refused] {
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "id": command["id"],
+                        "error": { "code": -32000, "message": "No dialog is showing" },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("send the error reply");
+        }
+        tokio::time::sleep(timeout * 3).await;
+        assert!(
+            !controller.is_finished(),
+            "the controller stopped on a reply to a dialog command, or on its missing reply"
+        );
+
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("stop child controller");
+        assert!(controller.await.expect("child controller task"));
+    }
+
     #[tokio::test]
     async fn a_foreign_external_target_is_resumed_without_an_owned_policy() {
         let page = watched("ROOT");
@@ -5860,6 +6252,24 @@ mod tests {
     /// The ids of the targets the registry holds for watched pages, in order.
     fn owned(registry: &Registry) -> Vec<&str> {
         registry.targets.iter().map(|(id, _)| id.inner().as_str()).collect()
+    }
+
+    #[test]
+    fn should_keep_a_structural_tab_out_of_the_pages_popup_close_set() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("CONTEXT");
+        lock(&shared.registry).register_context(context.clone(), None);
+        lock(&shared.registry)
+            .opened
+            .insert(page.root.clone(), Some(context.clone()));
+        let tab_event = in_context(target_created("TAB", "tab", None, None, None), &context);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        install_watch(&mut lock(&shared.registry), &page).expect("watch installs");
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
+        page.ending.store(true, Ordering::Release);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
     }
 
     /// A frame of a watched page that Chrome hosts in a target of its own is one of the page's
@@ -8098,19 +8508,6 @@ mod race_tests {
         close(browser).await;
     }
 
-    /// The id of the frame target whose URL starts with `prefix`, if `browser` has one.
-    async fn frame_target_of(browser: &Browser, prefix: &str) -> Option<TargetId> {
-        browser
-            .execute(GetTargetsParams::default())
-            .await
-            .ok()?
-            .result
-            .target_infos
-            .into_iter()
-            .find(|info| info.r#type == "iframe" && info.url.starts_with(prefix))
-            .map(|info| info.target_id)
-    }
-
     /// A loopback server on `a.localhost` answering every request with `body` as HTML, counting
     /// the requests for `/ok`.
     async fn frame_site(body: String) -> (String, Arc<AtomicUsize>) {
@@ -8143,13 +8540,14 @@ mod race_tests {
         (url, ok_hits)
     }
 
-    /// A page keeps a cross-site frame Chrome hosts in a target of its own: the frame's requests
+    /// A page keeps a cross-site frame: the frame's requests
     /// are judged by the page's policy, the park closes the page's popups and not the frame, and
     /// a stop of an external browser does not wait for it. The parked page is still open after
     /// the park.
     ///
     /// ~keep The frame is on `a.localhost`, a different site from the page's `localhost`, so
-    /// ~keep Chrome gives it a target of its own. Closing that target closes the page (measured on
+    /// ~keep Full Chrome can give it a target of its own; headless shell can keep it in-process.
+    /// ~keep Closing a frame target closes the page (measured on
     /// ~keep Chrome 154), which is what the park did to the page it was keeping.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_parked_page_keeps_its_cross_site_frame_and_stays_open() {
@@ -8189,18 +8587,28 @@ mod race_tests {
                  document.body.appendChild(frame); 1"
             ))
             .await;
-        let mut frame_target = None;
-        for _ in 0..50 {
-            frame_target = frame_target_of(&browser, "http://a.localhost").await;
-            if frame_target.is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
         let frame_allowed = served(&ok_hits).await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
+        let refused = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let refused = watch.refused_urls().await;
+                if refused.iter().any(|url| url == &denied) {
+                    break refused;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the frame must attempt its denied request");
         watch.park().await;
+        let frame_state = page
+            .evaluate("JSON.stringify({frame: document.querySelector('iframe') !== null, count: window.frames.length})")
+            .await;
+        let frame_kept = frame_state
+            .as_ref()
+            .ok()
+            .and_then(|value| value.clone().into_value::<String>().ok())
+            .is_some_and(|value| value.contains("\"frame\":true") && value.contains("\"count\":1"));
+        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
         let open_after_park = open_targets(&browser).await.contains(&root);
         let stopped = tokio::time::timeout(Duration::from_secs(15), firewall.stop())
             .await
@@ -8210,16 +8618,20 @@ mod race_tests {
         }
 
         assert!(
-            frame_target.is_some(),
-            "{test_name}: the cross-site frame must get a target of its own"
-        );
-        assert!(
             frame_allowed,
             "{test_name}: the frame's request to its own site must be allowed through"
         );
         assert!(
             frame_refused,
             "{test_name}: the frame's request to the denied address must be refused"
+        );
+        assert!(
+            refused.iter().any(|url| url == &denied),
+            "{test_name}: the policy must have checked and refused the frame's request, got {refused:?}"
+        );
+        assert!(
+            frame_kept,
+            "{test_name}: parking must keep the frame in the open page, got {frame_state:?}, page open {open_after_park}"
         );
         assert!(open_after_park, "{test_name}: parking must leave the page open");
         assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");
@@ -8405,12 +8817,7 @@ mod race_tests {
         opened.add_permits(1);
         let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let empty = lock(&handle.shared.registry).pages.is_empty();
-                let contexts = browser
-                    .execute(GetBrowserContextsParams::default())
-                    .await
-                    .expect("context census");
-                if empty && contexts.result.browser_context_ids.is_empty() {
+                if queued_watch_cleanup_complete(&handle.shared, no_browser_contexts(&browser)).await {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -8477,12 +8884,7 @@ mod race_tests {
             gate.permits.add_permits(1);
             let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    let empty = lock(&handle.shared.registry).pages.is_empty();
-                    let contexts = browser
-                        .execute(GetBrowserContextsParams::default())
-                        .await
-                        .expect("context census");
-                    if empty && contexts.result.browser_context_ids.is_empty() {
+                    if queued_watch_cleanup_complete(&handle.shared, no_browser_contexts(&browser)).await {
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -8518,6 +8920,104 @@ mod race_tests {
             "each cancellation must release its installed policy before shutdown"
         );
         assert!(!failed, "cancellation must preserve the healthy controller");
+    }
+
+    async fn no_browser_contexts(browser: &Browser) -> bool {
+        browser
+            .execute(GetBrowserContextsParams::default())
+            .await
+            .expect("context census")
+            .result
+            .browser_context_ids
+            .is_empty()
+    }
+
+    async fn queued_watch_cleanup_complete(
+        shared: &super::Shared,
+        census: impl std::future::Future<Output = bool>,
+    ) -> bool {
+        census.await && lock(&shared.registry).pages.is_empty()
+    }
+
+    async fn cancel_queued_watch(handle: &super::FirewallHandle, handoff: &UrlGate) -> chromiumoxide::Page {
+        let page = handle.new_page(None, None).await.expect("open owned page");
+        let configuration = config();
+        {
+            let watching = handle.watch(&page, &configuration, 0);
+            tokio::pin!(watching);
+            tokio::select! {
+                biased;
+                _ = &mut watching => panic!("watch cannot finish before page registration"),
+                held = wait_held_count(handoff, 1) => assert!(held, "watch must queue its policy"),
+            }
+        }
+        page
+    }
+
+    async fn queued_cancellation_fixture(
+        browser: Arc<Browser>,
+        ended: Arc<UrlGate>,
+    ) -> (BrowserFirewall, chromiumoxide::Page, Arc<tokio::sync::Semaphore>) {
+        let opened = Arc::new(tokio::sync::Semaphore::new(0));
+        let handoff = closed_match_gate();
+        handoff.permits.add_permits(1);
+        let firewall = BrowserFirewall::start_with(
+            browser,
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays {
+                opened_gate: Some(Arc::clone(&opened)),
+                watch_handoff_gate: Some(Arc::clone(&handoff)),
+                watch_end_gate: Some(Arc::clone(&ended)),
+                ..TestDelays::default()
+            },
+        )
+        .await
+        .expect("start firewall");
+        let handle = firewall.handle();
+        let page = cancel_queued_watch(&handle, &handoff).await;
+        (firewall, page, opened)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cleanup_census_does_not_reuse_a_registry_snapshot_from_before_registration() {
+        let test_name = "a_cleanup_census_does_not_reuse_a_registry_snapshot_from_before_registration";
+        let Some(browser) = launch(test_name).await else { return };
+        let ended = closed_match_gate();
+        let (firewall, page, opened) = queued_cancellation_fixture(Arc::clone(&browser), Arc::clone(&ended)).await;
+        let handle = firewall.handle();
+        assert!(lock(&handle.shared.registry).pages.is_empty());
+        let ready = queued_watch_cleanup_complete(&handle.shared, async {
+            opened.add_permits(1);
+            assert!(
+                wait_held_count(&ended, 1).await,
+                "cancellation must dispose its context before policy release"
+            );
+            assert_eq!(lock(&handle.shared.registry).pages.len(), 1);
+            assert!(
+                no_browser_contexts(&browser).await,
+                "the disposed context must be absent from Chrome"
+            );
+            true
+        })
+        .await;
+        ended.permits.add_permits(1);
+        let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
+            while !lock(&handle.shared.registry).pages.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let retained = lock(&handle.shared.registry).pages.len();
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert!(
+            !ready,
+            "a completed Chrome census cannot certify an earlier empty policy registry"
+        );
+        assert!(cleanup.is_ok(), "the queued policy must finish releasing");
+        assert_eq!(retained, 0);
     }
 
     /// How a test reads the refusal of a request to a denied address a watched page sends.

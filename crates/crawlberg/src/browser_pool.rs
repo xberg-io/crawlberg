@@ -5,8 +5,10 @@
 //! ~keep `~keep` there). Three methods compiled under this module, `PooledPage::into_parts`,
 //! ~keep `BrowserPool::firewall` and `HandlerEnd::cause`, are only called from code gated on the
 //! ~keep wider `browser` feature, so each carries its own `#[cfg(feature = "browser")]` inline
-//! ~keep (`HandlerEnd::cause` adds `test`, because a test of this module reads it too); those are
-//! ~keep the sanctioned in-file feature gates, not a precedent for adding more.
+//! ~keep (`HandlerEnd::cause` adds `test`, because a test of this module reads it too). The field
+//! ~keep `PooledPage::handler_end` carries the gate of `HandlerEnd::cause`: `into_parts` and a
+//! ~keep test are its only readers. Those are the sanctioned in-file feature gates, not a
+//! ~keep precedent for adding more.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -2161,28 +2163,19 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        match self.try_new_page(proxy, config).await {
-            Ok((page, watch, pending_closes)) => Ok(PooledPage {
-                page: Some(page),
-                watch: Some(watch),
-                _permit: Some(permit),
-                pending_closes: Some(pending_closes),
-            }),
+        let mut pooled = match self.try_new_page(proxy, config).await {
+            Ok(pooled) => pooled,
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let (page, watch, pending_closes) = self.try_new_page(proxy, config).await.map_err(|e| {
+                self.try_new_page(proxy, config).await.map_err(|e| {
                     CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
-                })?;
-                Ok(PooledPage {
-                    page: Some(page),
-                    watch: Some(watch),
-                    _permit: Some(permit),
-                    pending_closes: Some(pending_closes),
-                })
+                })?
             }
-        }
+        };
+        pooled._permit = Some(permit);
+        Ok(pooled)
     }
 
     /// Non-blocking health check. Returns `true` when Chrome is running.
@@ -2220,13 +2213,14 @@ impl BrowserPool {
     /// Try to create a new page from the current browser. Takes the mutex
     /// briefly, creates the page, and releases.
     ///
-    /// Returns the page together with the current browser's pending-close registry, so the
-    /// [`PooledPage`] built around it can record a close its `Drop` spawns.
+    /// Returns a [`PooledPage`] that holds no permit yet: the caller adds the permit. The page
+    /// carries the current browser's pending-close registry, so it can record a close its `Drop`
+    /// spawns.
     async fn try_new_page(
         &self,
         proxy: Option<&crate::proxy::ChromeProxy>,
         config: &crate::types::CrawlConfig,
-    ) -> Result<(chromiumoxide::Page, crate::ssrf_intercept::Watch, PendingCloses), CrawlError> {
+    ) -> Result<PooledPage, CrawlError> {
         let mut guard = self.state.lock().await;
         if guard.is_none()
             || guard
@@ -2256,7 +2250,14 @@ impl BrowserPool {
         .await
         .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         let watch = bs.firewall.handle().watch(&page, config, config.max_redirects).await?;
-        Ok((page, watch, Arc::clone(&bs.pending_closes)))
+        Ok(PooledPage {
+            #[cfg(any(feature = "browser", test))]
+            handler_end: bs.handler_end.clone(),
+            page: Some(page),
+            watch: Some(watch),
+            _permit: None,
+            pending_closes: Some(Arc::clone(&bs.pending_closes)),
+        })
     }
 
     /// Force-relaunch Chrome (used after a page-open failure).
@@ -2423,6 +2424,10 @@ impl std::fmt::Debug for BrowserPool {
 /// another caller to open a page. Prefer calling [`close`](Self::close) for
 /// deterministic async cleanup.
 pub struct PooledPage {
+    // ~keep Read by `into_parts`, which the wider `browser` feature compiles, and by a test of
+    // ~keep this module. Under `browser-chromiumoxide` alone it has no reader and would be dead code.
+    #[cfg(any(feature = "browser", test))]
+    handler_end: HandlerEnd,
     page: Option<chromiumoxide::Page>,
     watch: Option<crate::ssrf_intercept::Watch>,
     _permit: Option<OwnedSemaphorePermit>,
@@ -2468,11 +2473,12 @@ impl PooledPage {
         chromiumoxide::Page,
         crate::ssrf_intercept::Watch,
         Option<OwnedSemaphorePermit>,
+        HandlerEnd,
     ) {
         let page = self.page.take().expect("page already taken via close()");
         let watch = self.watch.take().expect("watched page already taken via close()");
         let permit = self._permit.take();
-        (page, watch, permit)
+        (page, watch, permit, self.handler_end.clone())
     }
 }
 

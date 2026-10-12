@@ -434,6 +434,46 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn concurrent_requests_should_keep_each_reserved_domain_gap() {
+        let throttle = std::sync::Arc::new(PerDomainThrottle::new(Duration::from_millis(80)));
+        throttle.acquire("example.com").await.expect("first slot");
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let throttle = throttle.clone();
+            tasks.push(tokio::spawn(async move {
+                throttle.acquire("example.com").await.expect("reserved slot");
+                Instant::now()
+            }));
+        }
+        let mut starts = Vec::new();
+        for task in tasks {
+            starts.push(task.await.expect("acquire task"));
+        }
+        starts.sort();
+        assert_eq!(starts.len(), 3);
+        for gap in starts.windows(2) {
+            assert!(gap[1].duration_since(gap[0]) >= Duration::from_millis(65));
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_jitter_should_respect_a_robots_crawl_delay_floor() {
+        let throttle = PerDomainThrottle::with_jitter_ratio(Duration::ZERO, 1.0);
+        let floor = Duration::from_millis(60);
+        throttle
+            .set_crawl_delay("example.com", floor)
+            .await
+            .expect("robots delay");
+        let mut previous = Instant::now();
+        for _ in 0..16 {
+            throttle.acquire("example.com").await.expect("robots slot");
+            let started = Instant::now();
+            assert!(started.duration_since(previous) >= Duration::from_millis(50));
+            previous = started;
+        }
+    }
+
     #[test]
     fn jitter_ratio_zero_never_changes_the_duration() {
         let throttle = PerDomainThrottle::new(DEFAULT);

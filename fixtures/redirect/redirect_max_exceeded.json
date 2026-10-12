@@ -57,14 +57,14 @@
 	},
 	"assertions": [
 		{
-			"type": "equals",
-			"field": "redirect_count",
-			"value": 2
+			"type": "contains",
+			"field": "error",
+			"value": "/r3 - redirect limit exceeded"
 		},
 		{
 			"type": "equals",
-			"field": "pages[0].status_code",
-			"value": 301
+			"field": "pages.length",
+			"value": 0
 		}
 	]
 }

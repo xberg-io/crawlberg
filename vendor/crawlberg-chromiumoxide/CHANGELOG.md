@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `conn::parse_message`, the reader of the connection, for a caller that reads a protocol
+  socket of its own
 - Add `Browser::launch_with` to start the child process through a function of the caller
 - Add `BrowserConfig::command` and `async_process::Command::kill_on_drop`, for a caller that stops
   the browser process family itself

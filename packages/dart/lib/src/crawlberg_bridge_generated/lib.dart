@@ -579,9 +579,13 @@ class BrowserConfig {
 
   /// Overall deadline for a single browser fetch, covering browser launch (or
   /// page acquisition from a shared pool), page setup, navigation, rendering,
-  /// and screenshot capture. Must exceed `timeout` to leave room for launch
-  /// and setup overhead; a fetch that has not returned within this deadline
-  /// fails with a timeout error (in milliseconds when serialized).
+  /// screenshot capture, and every retry of the fetch. Must exceed `timeout`
+  /// to leave room for launch and setup overhead; a fetch that has not
+  /// returned within this deadline fails with a timeout error (in
+  /// milliseconds when serialized). The wait for the delay of the domain
+  /// (`rate_limit_ms`) is not counted, so a delay longer than this deadline
+  /// does not fail the page. A scrape with the native backend is not bounded
+  /// by this deadline.
   ///
   /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
   /// not counted against this deadline: an already-computed result is
@@ -609,7 +613,7 @@ class BrowserConfig {
 
   /// URL patterns to block before the network request fires. Supports `*`
   /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-  /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+  /// both browser backends.
   final List<String> blockUrlPatterns;
 
   /// JavaScript snippet evaluated after navigation completes.
@@ -899,6 +903,24 @@ class ContentConfig {
   /// Wrap width when `wrap` is enabled. Default: `80`.
   final PlatformInt64 wrapWidth;
 
+  /// Replace paragraph source line breaks with spaces. Default: `false`.
+  final bool stripNewlines;
+
+  /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
+  final String bullets;
+
+  /// Spaces per nested list level. Default: `2`.
+  final PlatformInt64 listIndentWidth;
+
+  /// Markdown emphasis marker: `"*"` (default) or `"_"`.
+  final String strongEmSymbol;
+
+  /// Render tables without column-width padding. Default: `false`.
+  final bool compactTables;
+
+  /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
+  final List<String> keepInlineImagesIn;
+
   /// Include document structure tree in output. Default: `true`.
   final bool includeDocumentStructure;
 
@@ -927,6 +949,12 @@ class ContentConfig {
     this.maxDepth,
     required this.wrap,
     required this.wrapWidth,
+    required this.stripNewlines,
+    required this.bullets,
+    required this.listIndentWidth,
+    required this.strongEmSymbol,
+    required this.compactTables,
+    required this.keepInlineImagesIn,
     required this.includeDocumentStructure,
     required this.extractMetadata,
     this.keepHidden = false,
@@ -945,6 +973,12 @@ class ContentConfig {
       maxDepth.hashCode ^
       wrap.hashCode ^
       wrapWidth.hashCode ^
+      stripNewlines.hashCode ^
+      bullets.hashCode ^
+      listIndentWidth.hashCode ^
+      strongEmSymbol.hashCode ^
+      compactTables.hashCode ^
+      keepInlineImagesIn.hashCode ^
       includeDocumentStructure.hashCode ^
       extractMetadata.hashCode ^
       keepHidden.hashCode;
@@ -965,6 +999,12 @@ class ContentConfig {
           maxDepth == other.maxDepth &&
           wrap == other.wrap &&
           wrapWidth == other.wrapWidth &&
+          stripNewlines == other.stripNewlines &&
+          bullets == other.bullets &&
+          listIndentWidth == other.listIndentWidth &&
+          strongEmSymbol == other.strongEmSymbol &&
+          compactTables == other.compactTables &&
+          keepInlineImagesIn == other.keepInlineImagesIn &&
           includeDocumentStructure == other.includeDocumentStructure &&
           extractMetadata == other.extractMetadata &&
           keepHidden == other.keepHidden;
@@ -1130,7 +1170,8 @@ class CrawlConfig {
   final PlatformInt64 requestTimeout;
 
   /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-  /// between requests to the same domain. Defaults to 200ms when `None`.
+  /// between requests to the same domain, in HTTP mode and before each page load in
+  /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
   final PlatformInt64? rateLimitMs;
 
   /// Maximum number of redirects to follow.
@@ -1599,6 +1640,10 @@ class CrawlPageResult {
   /// The original URL of the page.
   final String url;
 
+  /// Seed address as supplied, or the discovered link address resolved against its base.
+  /// Preserves source spelling through redirects; URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   /// The normalized URL of the page.
   final String normalizedUrl;
 
@@ -1681,6 +1726,7 @@ class CrawlPageResult {
 
   const CrawlPageResult({
     required this.url,
+    required this.originalUrl,
     required this.normalizedUrl,
     required this.statusCode,
     required this.contentType,
@@ -1711,6 +1757,7 @@ class CrawlPageResult {
   @override
   int get hashCode =>
       url.hashCode ^
+      originalUrl.hashCode ^
       normalizedUrl.hashCode ^
       statusCode.hashCode ^
       contentType.hashCode ^
@@ -1743,6 +1790,7 @@ class CrawlPageResult {
       other is CrawlPageResult &&
           runtimeType == other.runtimeType &&
           url == other.url &&
+          originalUrl == other.originalUrl &&
           normalizedUrl == other.normalizedUrl &&
           statusCode == other.statusCode &&
           contentType == other.contentType &&
@@ -2339,6 +2387,11 @@ class LinkInfo {
   /// The resolved URL of the link.
   final String url;
 
+  /// Link address resolved against the page's base without changing path spelling.
+  /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+  /// URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   /// The visible text of the link.
   final String text;
 
@@ -2353,6 +2406,7 @@ class LinkInfo {
 
   const LinkInfo({
     required this.url,
+    required this.originalUrl,
     required this.text,
     required this.linkType,
     this.rel,
@@ -2362,6 +2416,7 @@ class LinkInfo {
   @override
   int get hashCode =>
       url.hashCode ^
+      originalUrl.hashCode ^
       text.hashCode ^
       linkType.hashCode ^
       rel.hashCode ^
@@ -2373,6 +2428,7 @@ class LinkInfo {
       other is LinkInfo &&
           runtimeType == other.runtimeType &&
           url == other.url &&
+          originalUrl == other.originalUrl &&
           text == other.text &&
           linkType == other.linkType &&
           rel == other.rel &&

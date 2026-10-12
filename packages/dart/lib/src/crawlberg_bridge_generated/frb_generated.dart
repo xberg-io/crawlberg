@@ -2893,8 +2893,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2907,9 +2907,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[8]),
       wrap: dco_decode_bool(arr[9]),
       wrapWidth: dco_decode_i_64(arr[10]),
-      includeDocumentStructure: dco_decode_bool(arr[11]),
-      extractMetadata: dco_decode_bool(arr[12]),
-      keepHidden: dco_decode_bool(arr[13]),
+      stripNewlines: dco_decode_bool(arr[11]),
+      bullets: dco_decode_String(arr[12]),
+      listIndentWidth: dco_decode_i_64(arr[13]),
+      strongEmSymbol: dco_decode_String(arr[14]),
+      compactTables: dco_decode_bool(arr[15]),
+      keepInlineImagesIn: dco_decode_list_String(arr[16]),
+      includeDocumentStructure: dco_decode_bool(arr[17]),
+      extractMetadata: dco_decode_bool(arr[18]),
     );
   }
 
@@ -3078,37 +3083,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 26)
-      throw Exception('unexpected arr length: expect 26 but see ${arr.length}');
+    if (arr.length != 27)
+      throw Exception('unexpected arr length: expect 27 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
-      normalizedUrl: dco_decode_String(arr[1]),
-      statusCode: dco_decode_i_64(arr[2]),
-      contentType: dco_decode_String(arr[3]),
-      html: dco_decode_String(arr[4]),
-      bodySize: dco_decode_i_64(arr[5]),
-      metadata: dco_decode_page_metadata(arr[6]),
-      links: dco_decode_list_link_info(arr[7]),
-      images: dco_decode_list_image_info(arr[8]),
-      feeds: dco_decode_list_feed_info(arr[9]),
-      jsonLd: dco_decode_list_json_ld_entry(arr[10]),
-      depth: dco_decode_i_64(arr[11]),
-      stayedOnDomain: dco_decode_bool(arr[12]),
-      wasSkipped: dco_decode_bool(arr[13]),
-      isPdf: dco_decode_bool(arr[14]),
-      detectedCharset: dco_decode_opt_String(arr[15]),
-      markdown: dco_decode_opt_box_autoadd_markdown_result(arr[16]),
-      extractedData: dco_decode_opt_String(arr[17]),
-      extractionMeta: dco_decode_opt_box_autoadd_extraction_meta(arr[18]),
+      originalUrl: dco_decode_String(arr[1]),
+      normalizedUrl: dco_decode_String(arr[2]),
+      statusCode: dco_decode_i_64(arr[3]),
+      contentType: dco_decode_String(arr[4]),
+      html: dco_decode_String(arr[5]),
+      bodySize: dco_decode_i_64(arr[6]),
+      metadata: dco_decode_page_metadata(arr[7]),
+      links: dco_decode_list_link_info(arr[8]),
+      images: dco_decode_list_image_info(arr[9]),
+      feeds: dco_decode_list_feed_info(arr[10]),
+      jsonLd: dco_decode_list_json_ld_entry(arr[11]),
+      depth: dco_decode_i_64(arr[12]),
+      stayedOnDomain: dco_decode_bool(arr[13]),
+      wasSkipped: dco_decode_bool(arr[14]),
+      isPdf: dco_decode_bool(arr[15]),
+      detectedCharset: dco_decode_opt_String(arr[16]),
+      markdown: dco_decode_opt_box_autoadd_markdown_result(arr[17]),
+      extractedData: dco_decode_opt_String(arr[18]),
+      extractionMeta: dco_decode_opt_box_autoadd_extraction_meta(arr[19]),
       downloadedDocument: dco_decode_opt_box_autoadd_downloaded_document(
-        arr[19],
+        arr[20],
       ),
-      browserUsed: dco_decode_bool(arr[20]),
-      finalUrl: dco_decode_String(arr[21]),
-      redirectCount: dco_decode_i_64(arr[22]),
-      noindexDetected: dco_decode_bool(arr[23]),
-      nofollowDetected: dco_decode_bool(arr[24]),
-      ssrfRefusedUrls: dco_decode_list_String(arr[25]),
+      browserUsed: dco_decode_bool(arr[21]),
+      finalUrl: dco_decode_String(arr[22]),
+      redirectCount: dco_decode_i_64(arr[23]),
+      noindexDetected: dco_decode_bool(arr[24]),
+      nofollowDetected: dco_decode_bool(arr[25]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[26]),
     );
   }
 
@@ -3344,14 +3350,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LinkInfo dco_decode_link_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return LinkInfo(
       url: dco_decode_String(arr[0]),
-      text: dco_decode_String(arr[1]),
-      linkType: dco_decode_link_type(arr[2]),
-      rel: dco_decode_opt_String(arr[3]),
-      nofollow: dco_decode_bool(arr[4]),
+      originalUrl: dco_decode_String(arr[1]),
+      text: dco_decode_String(arr[2]),
+      linkType: dco_decode_link_type(arr[3]),
+      rel: dco_decode_opt_String(arr[4]),
+      nofollow: dco_decode_bool(arr[5]),
     );
   }
 
@@ -4359,9 +4366,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_maxDepth = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_wrap = sse_decode_bool(deserializer);
     var var_wrapWidth = sse_decode_i_64(deserializer);
+    var var_stripNewlines = sse_decode_bool(deserializer);
+    var var_bullets = sse_decode_String(deserializer);
+    var var_listIndentWidth = sse_decode_i_64(deserializer);
+    var var_strongEmSymbol = sse_decode_String(deserializer);
+    var var_compactTables = sse_decode_bool(deserializer);
+    var var_keepInlineImagesIn = sse_decode_list_String(deserializer);
     var var_includeDocumentStructure = sse_decode_bool(deserializer);
     var var_extractMetadata = sse_decode_bool(deserializer);
-    var var_keepHidden = sse_decode_bool(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4374,9 +4386,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       maxDepth: var_maxDepth,
       wrap: var_wrap,
       wrapWidth: var_wrapWidth,
+      stripNewlines: var_stripNewlines,
+      bullets: var_bullets,
+      listIndentWidth: var_listIndentWidth,
+      strongEmSymbol: var_strongEmSymbol,
+      compactTables: var_compactTables,
+      keepInlineImagesIn: var_keepInlineImagesIn,
       includeDocumentStructure: var_includeDocumentStructure,
       extractMetadata: var_extractMetadata,
-      keepHidden: var_keepHidden,
     );
   }
 
@@ -4624,6 +4641,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult sse_decode_crawl_page_result(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_url = sse_decode_String(deserializer);
+    var var_originalUrl = sse_decode_String(deserializer);
     var var_normalizedUrl = sse_decode_String(deserializer);
     var var_statusCode = sse_decode_i_64(deserializer);
     var var_contentType = sse_decode_String(deserializer);
@@ -4655,6 +4673,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return CrawlPageResult(
       url: var_url,
+      originalUrl: var_originalUrl,
       normalizedUrl: var_normalizedUrl,
       statusCode: var_statusCode,
       contentType: var_contentType,
@@ -4941,12 +4960,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LinkInfo sse_decode_link_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_url = sse_decode_String(deserializer);
+    var var_originalUrl = sse_decode_String(deserializer);
     var var_text = sse_decode_String(deserializer);
     var var_linkType = sse_decode_link_type(deserializer);
     var var_rel = sse_decode_opt_String(deserializer);
     var var_nofollow = sse_decode_bool(deserializer);
     return LinkInfo(
       url: var_url,
+      originalUrl: var_originalUrl,
       text: var_text,
       linkType: var_linkType,
       rel: var_rel,
@@ -6321,9 +6342,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_i_64(self.maxDepth, serializer);
     sse_encode_bool(self.wrap, serializer);
     sse_encode_i_64(self.wrapWidth, serializer);
+    sse_encode_bool(self.stripNewlines, serializer);
+    sse_encode_String(self.bullets, serializer);
+    sse_encode_i_64(self.listIndentWidth, serializer);
+    sse_encode_String(self.strongEmSymbol, serializer);
+    sse_encode_bool(self.compactTables, serializer);
+    sse_encode_list_String(self.keepInlineImagesIn, serializer);
     sse_encode_bool(self.includeDocumentStructure, serializer);
     sse_encode_bool(self.extractMetadata, serializer);
-    sse_encode_bool(self.keepHidden, serializer);
   }
 
   @protected
@@ -6503,6 +6529,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.url, serializer);
+    sse_encode_String(self.originalUrl, serializer);
     sse_encode_String(self.normalizedUrl, serializer);
     sse_encode_i_64(self.statusCode, serializer);
     sse_encode_String(self.contentType, serializer);
@@ -6729,6 +6756,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_link_info(LinkInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.url, serializer);
+    sse_encode_String(self.originalUrl, serializer);
     sse_encode_String(self.text, serializer);
     sse_encode_link_type(self.linkType, serializer);
     sse_encode_opt_String(self.rel, serializer);
