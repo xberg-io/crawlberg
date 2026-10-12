@@ -160,8 +160,8 @@ All notable changes to crawlberg are documented here.
   timeout is not retried. (#610)
 - Browser mode waits for the delay of the domain before each page load, on the two backends,
   when `rate_limit_ms` is set. The delay applies to the page, not to the files that the page
-  loads. The wait is not counted against `browser.overall_timeout`: a page gets its whole
-  deadline once its turn comes. With `rate_limit_ms` unset, browser mode loads the pages of one
+  loads. The wait is not counted against `browser.overall_timeout`, which bounds the rest of the
+  fetch, its retries included. With `rate_limit_ms` unset, browser mode loads the pages of one
   host with no delay, as before. (#622)
 - Browser mode sends client hints that agree with a configured Chrome user agent: the brands
   with its version, its platform and the mobile flag, on every request of the page. For a user

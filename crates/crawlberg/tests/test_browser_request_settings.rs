@@ -153,8 +153,74 @@ async fn should_space_browser_requests_to_the_same_domain() {
     );
 }
 
+/// With the default delay settings, `overall_timeout` bounds the whole fetch, the wait for a
+/// page of the pool included. Two pages of 3 s each share a pool of one page with a deadline of
+/// 5 s: one loads, and the other fails at the deadline, counted from the start of its fetch.
+#[tokio::test]
+async fn should_bound_the_whole_fetch_by_the_deadline_with_the_default_delay_settings() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/warm"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>warm</p>", "text/html"))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<p>slow</p>", "text/html")
+                .set_delay(Duration::from_secs(3)),
+        )
+        .with_priority(10)
+        .mount(&site)
+        .await;
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        max_pages: 1,
+        ..BrowserPoolConfig::default()
+    });
+    let mut settings = config();
+    settings.browser.session_affinity = false;
+    settings.browser.timeout = Duration::from_secs(4);
+    settings.browser.overall_timeout = Duration::from_secs(5);
+    settings.browser_pool = Some(Arc::clone(&pool));
+    let engine = create_engine(Some(settings)).expect("engine");
+    // ~keep The launch of Chrome is not part of what the two fetches below measure.
+    scrape(&engine, &format!("{}/warm", site.uri())).await.expect("warm");
+    let timed = |url: String| {
+        let engine = &engine;
+        async move {
+            let started = Instant::now();
+            let outcome = scrape(engine, &url).await;
+            (
+                started.elapsed(),
+                outcome.map(|_| ()).map_err(|error| error.to_string()),
+            )
+        }
+    };
+    let (first, second) = tokio::join!(
+        timed(format!("{}/slow-1", site.uri())),
+        timed(format!("{}/slow-2", site.uri()))
+    );
+    pool.shutdown().await;
+    let (loaded, failed): (Vec<_>, Vec<_>) = [first, second].into_iter().partition(|(_, outcome)| outcome.is_ok());
+    assert_eq!(
+        (loaded.len(), failed.len()),
+        (1, 1),
+        "one page must load and the other must fail at the deadline: loaded {loaded:?}, failed {failed:?}"
+    );
+    let (elapsed, error) = &failed[0];
+    let error = error.as_ref().expect_err("the failed fetch");
+    assert!(
+        error.contains("exceeded the overall deadline of 5s"),
+        "the fetch must fail on its deadline: {error}"
+    );
+    assert!(
+        *elapsed >= Duration::from_millis(4900) && *elapsed < Duration::from_millis(6000),
+        "the fetch must fail 5 s after its start, not a deadline later: {elapsed:?}"
+    );
+}
+
 /// A delay of the domain longer than the deadline of a page: the second page loads all the
-/// same, because its deadline starts when its turn comes.
+/// same, because the wait for its turn is not counted against its deadline.
 #[tokio::test]
 async fn should_give_a_page_its_whole_deadline_after_the_delay_of_the_domain() {
     let site = MockServer::start().await;
