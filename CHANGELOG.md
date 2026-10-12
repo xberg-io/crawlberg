@@ -272,6 +272,9 @@ All notable changes to crawlberg are documented here.
   back until the next page opened, so a page closed outside the request check kept its browser
   context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
   already ended for pooled pages. (#595)
+- With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
+  Chrome 155 opens targets of its own in each new browser context and does not close them on
+  request; the engine waited for them to close before it kept the page. (#694)
 
 ## [1.10.3] - 2026-10-09
 

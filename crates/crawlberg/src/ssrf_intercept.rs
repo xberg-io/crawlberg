@@ -433,6 +433,11 @@ struct Registry {
     /// ~keep parked root. Keep its policy ownership without popup teardown. A tab is not here:
     /// ~keep nothing is recorded for a tab.
     structural_targets: HashSet<TargetId>,
+    /// ~keep Every live target of type `browser_ui`: Chrome makes them in each new browser
+    /// ~keep context and answers `Target.closeTarget` on one with success without destroying it
+    /// ~keep (measured on Chrome 155). A park neither closes nor waits for one; its ended owner
+    /// ~keep keeps its requests refused, and it goes with its page or its context.
+    browser_targets: HashSet<TargetId>,
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
@@ -639,6 +644,7 @@ impl Registry {
         self.context_targets.remove(target);
         self.ownership.remove(target);
         self.structural_targets.remove(target);
+        self.browser_targets.remove(target);
         self.other_candidates.retain(|candidate| candidate != target);
         self.target_generations.remove(target);
     }
@@ -693,9 +699,18 @@ impl Registry {
     }
 
     fn owns_live_target(&self, page: &Arc<WatchedPage>, keep_root: bool) -> bool {
+        self.targets_to_end(page, keep_root).next().is_some()
+    }
+
+    /// The targets the end of `page`'s watch closes and waits for. A park (`keep_root`) leaves
+    /// out the page's own target and each `browser_ui` target; a close leaves out none.
+    fn targets_to_end<'a>(&'a self, page: &'a Arc<WatchedPage>, keep_root: bool) -> impl Iterator<Item = &'a TargetId> {
         self.targets
             .iter()
-            .any(|(id, owner)| Arc::ptr_eq(owner, page) && !(keep_root && *id == page.root))
+            .filter(move |(id, owner)| {
+                Arc::ptr_eq(owner, page) && !(keep_root && (*id == page.root || self.browser_targets.contains(id)))
+            })
+            .map(|(id, _)| id)
     }
 }
 
@@ -3237,6 +3252,9 @@ fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
     if info.r#type == "iframe" {
         registry.structural_targets.insert(info.target_id.clone());
     }
+    if info.r#type == "browser_ui" {
+        registry.browser_targets.insert(info.target_id.clone());
+    }
     let (lineage_owner, frame_owner) = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => (registry.owner_of_target(opener.inner()), None),
         (None, Some(parent)) => {
@@ -3511,10 +3529,8 @@ async fn end_watch(
         loop {
             let destroyed = shared.destroyed.notified();
             let open: Vec<TargetId> = lock(&shared.registry)
-                .targets
-                .iter()
-                .filter(|(id, owner)| Arc::ptr_eq(owner, &page) && !(keep_root && *id == page.root))
-                .map(|(id, _)| id.clone())
+                .targets_to_end(&page, keep_root)
+                .cloned()
                 .collect();
             if open.is_empty() {
                 break;
@@ -6467,6 +6483,46 @@ mod tests {
         assert!(!registry.structural_targets.contains(&TargetId::new("FRAME")));
     }
 
+    /// Chrome makes `browser_ui` targets in each new browser context and does not destroy one on
+    /// `Target.closeTarget` (measured on Chrome 155), so a park that waited for one waited the
+    /// whole `CLOSE_TIMEOUT`.
+    #[test]
+    fn a_park_does_not_wait_for_a_browser_ui_target_and_a_close_does() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = register_owned_context(&shared, &page);
+        let mut event = target_created_in_context("UI", None, &context);
+        event.target_info.r#type = "browser_ui".to_owned();
+        let close_now = adopt_target(&shared, &event.target_info);
+        begin_ending(&page);
+        let mut registry = lock(&shared.registry);
+        let owner = registry
+            .owner_of_target("UI")
+            .expect("the browser_ui target stays owned");
+
+        assert_eq!(close_now, None, "a live watch closes none of its targets");
+        assert!(
+            !registry.owns_live_target(&page, true),
+            "a park must not wait for a browser_ui target"
+        );
+        assert!(
+            registry.owns_live_target(&page, false),
+            "a close must wait for a browser_ui target"
+        );
+        assert!(
+            Arc::ptr_eq(&owner, &page) && owner.ending.load(Ordering::Acquire),
+            "a browser_ui target must stay fail-closed under the ended watch"
+        );
+
+        // ~keep Chrome destroys the target; a popup that then gets its id is a popup.
+        registry.remove_target(&TargetId::new("UI"));
+        registry.register_watched(TargetId::new("UI"), Arc::clone(&page));
+        assert!(
+            registry.owns_live_target(&page, true),
+            "a park must wait for a popup whose id a destroyed browser_ui target had"
+        );
+    }
+
     /// The listener closes what `reconcile_created` returns. A tab of an ending watch holds the
     /// parked root, so it is never returned and nothing is recorded for it; a popup of the same
     /// watch is returned.
@@ -8523,6 +8579,63 @@ mod race_tests {
         );
         assert!(open_after_park, "{test_name}: parking must leave the page open");
         assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");
+    }
+
+    /// The target types a park has a rule for: it keeps the root `page` and closes each other
+    /// `page` as a popup, records nothing for a `tab`, and neither closes nor waits for an
+    /// `iframe` or a `browser_ui` target.
+    const TARGET_TYPES_A_PARK_KNOWS: [&str; 4] = ["page", "tab", "iframe", "browser_ui"];
+
+    /// A park of a page in a new browser context returns at once, and the installed Chrome puts
+    /// no target type in that context that the park has no rule for. A new type fails here by
+    /// name; without a rule the park closes it as a popup and can wait `CLOSE_TIMEOUT` for it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_park_has_a_rule_for_each_target_type_of_a_new_browser_context() {
+        let test_name = "a_park_has_a_rule_for_each_target_type_of_a_new_browser_context";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let (firewall, page, watch) = watched_page(&browser, TestDelays::default()).await;
+        let context = super::registered_context(&lock(&watch.shared.registry), page.target_id())
+            .expect("installed context")
+            .expect("owned isolated context");
+        let mut types: Vec<String> = browser
+            .execute(GetTargetsParams::default())
+            .await
+            .expect("the browser must answer")
+            .result
+            .target_infos
+            .into_iter()
+            .filter(|info| info.browser_context_id.as_ref() == Some(&context))
+            .map(|info| info.r#type)
+            .collect();
+        types.sort_unstable();
+        let started = std::time::Instant::now();
+        watch.park().await;
+        let parked = started.elapsed();
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+
+        let unknown: Vec<&String> = types
+            .iter()
+            .filter(|kind| !TARGET_TYPES_A_PARK_KNOWS.contains(&kind.as_str()))
+            .collect();
+        assert!(
+            types.iter().any(|kind| kind == "page"),
+            "{test_name}: the new browser context must hold its page: {types:?}"
+        );
+        assert!(
+            unknown.is_empty(),
+            "{test_name}: a new browser context holds a target of a type the park has no rule for: {unknown:?} \
+             (all types: {types:?}). Give the type a rule where the request check adopts a target: a park that \
+             closes it as a popup waits 5 s when Chrome does not destroy it"
+        );
+        assert!(
+            parked < Duration::from_secs(2),
+            "{test_name}: the park of a page in a new browser context took {} ms; target types: {types:?}",
+            parked.as_millis()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

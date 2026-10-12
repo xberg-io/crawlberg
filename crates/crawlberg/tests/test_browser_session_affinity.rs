@@ -7,6 +7,7 @@
 #![cfg(feature = "browser")]
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
@@ -34,12 +35,9 @@ async fn site() -> MockServer {
     mock
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_kept_page_serves_the_next_fetch_of_its_site() {
-    let test_name = "a_kept_page_serves_the_next_fetch_of_its_site";
-    let mock = site().await;
-    let pool = BrowserPool::new(BrowserPoolConfig::default());
-    let sessions = Arc::new(BrowserSessionPool::new());
+/// A browser-mode config with `session_affinity` on that takes its pages from `pool` and keeps
+/// them in `sessions`.
+fn affinity_config(pool: &Arc<BrowserPool>, sessions: &Arc<BrowserSessionPool>) -> CrawlConfig {
     let mut config = CrawlConfig {
         browser: BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
@@ -50,9 +48,53 @@ async fn a_kept_page_serves_the_next_fetch_of_its_site() {
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
     config.browser.session_affinity = true;
-    config.browser_pool = Some(Arc::clone(&pool));
-    config.browser_session_pool = Some(Arc::clone(&sessions));
-    let engine = create_engine(Some(config)).expect("engine must build");
+    config.browser_pool = Some(Arc::clone(pool));
+    config.browser_session_pool = Some(Arc::clone(sessions));
+    config
+}
+
+/// The fetch that keeps a new page returns when its page is parked. Chrome 155 makes targets of
+/// its own in each new browser context and does not destroy them on a close command; the park
+/// waited 5 s for them.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_fetch_that_keeps_its_page_returns_in_under_two_seconds() {
+    let test_name = "the_first_fetch_that_keeps_its_page_returns_in_under_two_seconds";
+    let mock = site().await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let sessions = Arc::new(BrowserSessionPool::new());
+    let engine = create_engine(Some(affinity_config(&pool, &sessions))).expect("engine must build");
+
+    let started = Instant::now();
+    let first = scrape(&engine, &mock.uri()).await;
+    let elapsed = started.elapsed();
+    let kept = sessions.size().await;
+    sessions.shutdown().await;
+    pool.shutdown().await;
+
+    let first = match first {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: the first fetch must succeed: {error:?}"),
+    };
+    assert!(first.html.contains("first page"), "{test_name}: {}", first.html);
+    assert_eq!(kept, 1, "{test_name}: the session pool must keep the page of the fetch");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "{test_name}: the first fetch took {} ms",
+        elapsed.as_millis()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kept_page_serves_the_next_fetch_of_its_site() {
+    let test_name = "a_kept_page_serves_the_next_fetch_of_its_site";
+    let mock = site().await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let sessions = Arc::new(BrowserSessionPool::new());
+    let engine = create_engine(Some(affinity_config(&pool, &sessions))).expect("engine must build");
 
     let first = match scrape(&engine, &mock.uri()).await {
         Ok(result) => result,
