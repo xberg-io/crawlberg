@@ -102,6 +102,11 @@ All notable changes to crawlberg are documented here.
   The error class of each status is the same. (#611)
 - A response body that does not end before `request_timeout` fails as a timeout that names the
   address. It failed as a data loss. (#623)
+- **Browser mode keeps the default delay between requests to one domain.** With `rate_limit_ms`
+  unset, the pages of one host load 200 ms apart on the two browser backends, as in HTTP mode.
+  Before, browser mode loaded them with no delay at all. A batch of pages of one host with the
+  default settings takes longer in browser mode now. Set `rate_limit_ms` to 0 to load them with
+  no delay. (#622)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
