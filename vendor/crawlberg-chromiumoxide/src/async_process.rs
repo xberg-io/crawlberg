@@ -326,11 +326,20 @@ mod tests {
             .expect("peer must start");
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
         let zombie = loop {
-            let state = std::process::Command::new("ps")
-                .args(["-o", "stat=", "-p", &pid.to_string()])
-                .output()
-                .expect("process status must be readable");
-            if String::from_utf8_lossy(&state.stdout).trim().starts_with('Z') {
+            #[cfg(target_os = "linux")]
+            let zombie = std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .expect("process status must be readable")
+                .lines()
+                .any(|line| line.starts_with("State:") && line.split_whitespace().nth(1) == Some("Z"));
+            #[cfg(not(target_os = "linux"))]
+            let zombie = {
+                let state = std::process::Command::new("ps")
+                    .args(["-o", "stat=", "-p", &pid.to_string()])
+                    .output()
+                    .expect("process status must be readable");
+                String::from_utf8_lossy(&state.stdout).trim().starts_with('Z')
+            };
+            if zombie {
                 break true;
             }
             if tokio::time::Instant::now() >= deadline {

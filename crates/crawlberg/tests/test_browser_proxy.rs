@@ -770,15 +770,12 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
     }
     let closed = churn.await.expect("churn task");
     let removed = foreign_targets_are_absent(&chrome, &closed).await;
-    let mut chrome = Arc::try_unwrap(chrome).expect("only owner remains");
-    let _ = chrome.close().await;
-    tokio::time::timeout(Duration::from_secs(5), chrome.wait())
-        .await
-        .expect("the fixture Chrome must exit")
-        .expect("wait for fixture Chrome");
-    owner_handler.abort();
     assert!(removed, "every acknowledged foreign close must remove its target");
-    assert_eq!(outcomes.len(), INTERACTIONS, "every owned interaction must finish");
+    assert_eq!(
+        outcomes.len(),
+        INTERACTIONS,
+        "every owned interaction must finish: {outcomes:?}"
+    );
     for result in outcomes {
         let html = result
             .expect("interaction timeout")
@@ -791,6 +788,28 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
         "every foreign tab must be created and closed"
     );
     assert!(!target_requests(&seen).is_empty());
+    // ~keep The endpoint pool must release its connection before the fixture owner asks Chrome to exit.
+    crawlberg::shutdown_engine(engine).await;
+    chrome
+        .execute(chromiumoxide::cdp::browser_protocol::browser::GetVersionParams::default())
+        .await
+        .expect("engine shutdown must keep the external owner's Chrome running");
+    let mut chrome = Arc::try_unwrap(chrome).expect("only owner remains");
+    chrome.close().await.expect("the fixture owner must close Chrome");
+    // ~keep Chrome may acknowledge close before its platform cleanup ends. Only this fixture owns its child.
+    match tokio::time::timeout(Duration::from_secs(5), chrome.wait()).await {
+        Ok(waited) => {
+            waited.expect("wait for fixture Chrome");
+        }
+        Err(_) => {
+            tokio::time::timeout(Duration::from_secs(5), chrome.kill())
+                .await
+                .expect("the fixture kill must reap its child within the kill bound")
+                .expect("the fixture must retain its own launched child")
+                .expect("the fixture owner must reap Chrome after the close grace");
+        }
+    }
+    owner_handler.abort();
 }
 
 async fn foreign_targets_are_absent(

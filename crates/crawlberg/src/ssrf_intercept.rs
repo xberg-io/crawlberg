@@ -4930,14 +4930,31 @@ mod tests {
 
     #[tokio::test]
     async fn foreign_session_error_before_detach_requires_target_absence() {
-        for target_present in [false, true] {
+        for (target_present, waiting_root) in [(false, false), (true, false), (false, true)] {
             let page = watched("ROOT");
             let shared = Arc::new(shared_with(&page, "OTHER"));
             let owned = register_owned_context(&shared, &page);
             let foreign = BrowserContextId::new("FOREIGN");
             let (mut socket, commands, controller) =
                 test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
-            send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &foreign, false).await;
+            let target = if waiting_root { "ROOT" } else { "TAB" };
+            let (root_done, _root_armed) = oneshot::channel();
+            if waiting_root {
+                commands
+                    .send(super::ChildCommand::Arm {
+                        root: page.root.clone(),
+                        done: root_done,
+                    })
+                    .await
+                    .expect("wait for owned root arm");
+                let (done, enabled) = oneshot::channel();
+                commands
+                    .send(super::ChildCommand::Enable { done })
+                    .await
+                    .expect("root command barrier");
+                enabled.await.expect("command barrier").expect("enabled");
+            }
+            send_attached_target_with_waiting(&mut socket, "S-TAB", target, "tab", None, &foreign, false).await;
             let arm = next_child_message(&mut socket).await;
             socket
                 .send(async_tungstenite::tungstenite::Message::Text(
@@ -4951,7 +4968,7 @@ mod tests {
             let census = next_child_message(&mut socket).await;
             assert_eq!(census["method"], "Target.getTargets");
             let infos = if target_present {
-                serde_json::json!([{ "targetId": "TAB", "type": "tab",
+                serde_json::json!([{ "targetId": target, "type": "tab",
             "title": "", "url": "", "attached": true, "canAccessOpener": false,
             "browserContextId": foreign.inner() }])
             } else {
@@ -4965,11 +4982,11 @@ mod tests {
                 ))
                 .await
                 .expect("answer authoritative target census");
-            if target_present {
+            if target_present || waiting_root {
                 assert!(
                     !tokio::time::timeout(Duration::from_secs(1), controller)
                         .await
-                        .expect("a failed arm on a live target must end the controller")
+                        .expect("a live target or an owned root waiter must end the controller")
                         .expect("controller")
                 );
                 continue;
@@ -4981,6 +4998,113 @@ mod tests {
             commands.send(super::ChildCommand::Stop).await.expect("stop");
             assert!(controller.await.expect("controller"));
         }
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_releases_state_after_the_original_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(100)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("removed session");
+        let census = next_child_message(&mut socket).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("absent target");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !controller.is_finished(),
+            "a proven absent target must leave no expiring structural state"
+        );
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("controller still accepts stop");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_releases_capacity_for_later_targets() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_secs(10)).await;
+        for index in 0..=super::CHILD_CONTROLLER_PENDING_LIMIT {
+            let session = format!("SESSION-{index}");
+            let target = format!("TARGET-{index}");
+            send_attached_target_with_waiting(&mut socket, &session, &target, "page", None, &foreign, true).await;
+            let arm = next_child_message(&mut socket).await;
+            answer_child_command(&mut socket, &arm).await;
+            let resume = next_child_message(&mut socket).await;
+            assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": resume["id"], "error": { "code": -32001,
+                    "message": "Session with given id not found." } })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("removed foreign session");
+            let census = next_child_message(&mut socket).await;
+            assert_eq!(census["method"], "Target.getTargets");
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("retired foreign target");
+        }
+        commands
+            .send(super::ChildCommand::Stop)
+            .await
+            .expect("later targets must retain controller capacity");
+        assert!(controller.await.expect("controller"));
+    }
+
+    #[tokio::test]
+    async fn foreign_retirement_census_cannot_extend_an_arming_deadline() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let foreign = BrowserContextId::new("FOREIGN");
+        let (mut socket, _commands, controller) = test_child_controller(shared, Duration::from_millis(200)).await;
+        send_attached_target_with_waiting(&mut socket, "S-PAGE", "OTHER", "page", None, &foreign, false).await;
+        let arm = next_child_message(&mut socket).await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": arm["id"], "error": { "code": -32001,
+                "message": "Session with given id not found." } })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("removed session");
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert!(
+            !tokio::time::timeout(Duration::from_millis(160), controller)
+                .await
+                .expect("the original deadline must remain in force")
+                .expect("controller")
+        );
     }
 
     #[tokio::test]

@@ -1,6 +1,9 @@
 use std::os::unix::process::CommandExt;
 use std::time::{Duration, Instant};
 
+const SIGINT: i32 = 2;
+const SIGKILL: i32 = 9;
+
 #[tokio::test]
 #[ignore = "subprocess fixture"]
 async fn signal_parent_fixture() {
@@ -69,12 +72,51 @@ async fn shell_signal_fixture(marker: &str) {
 }
 
 fn alive(pid: u32) -> bool {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .expect("process state");
-    let status = String::from_utf8_lossy(&output.stdout);
-    !status.trim().is_empty() && !status.trim().starts_with('Z')
+    #[cfg(target_os = "linux")]
+    {
+        linux_process_state(pid).is_some_and(|(_, state)| state != 'Z')
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("process state");
+        let status = String::from_utf8_lossy(&output.stdout);
+        !status.trim().is_empty() && !status.trim().starts_with('Z')
+    }
+}
+
+fn process_group(pid: u32) -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        linux_process_state(pid).expect("live process group").0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "pgid=", "-p", &pid.to_string()])
+            .output()
+            .expect("process group");
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("group ID")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_state(pid: u32) -> Option<(u32, char)> {
+    parse_linux_process_state(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_process_state(stat: &str) -> Option<(u32, char)> {
+    let (_, fields) = stat.rsplit_once(") ")?;
+    let mut fields = fields.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let _parent = fields.next()?;
+    Some((fields.next()?.parse().ok()?, state))
 }
 
 fn parent_signal_ends_its_browser_group(signal: &str, chrome: bool) {
@@ -102,11 +144,7 @@ fn parent_signal_ends_its_browser_group(signal: &str, chrome: bool) {
             .expect("fixture parent"),
     );
     let mut pids = wait_for_signal_fixture(&marker, chrome);
-    let group = std::process::Command::new("ps")
-        .args(["-o", "pgid=", "-p", &pids[0].to_string()])
-        .output()
-        .expect("browser group");
-    let guardian: u32 = String::from_utf8_lossy(&group.stdout).trim().parse().expect("group ID");
+    let guardian = process_group(pids[0]);
     if !pids.contains(&guardian) {
         pids.push(guardian);
     }
@@ -211,11 +249,18 @@ async fn assert_family_ended(pids: &[u32]) {
 }
 
 fn process_entry_exists(pid: u32) -> bool {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .expect("process census");
-    !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("process census");
+        !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+    }
 }
 
 #[tokio::test]
@@ -231,31 +276,47 @@ async fn failing_to_start_a_browser_reaps_its_existing_guardian() {
 }
 
 fn group_members(root: u32) -> Vec<u32> {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "pgid=", "-p", &root.to_string()])
-        .output()
-        .expect("Chrome group");
-    let group: u32 = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .expect("Chrome group ID");
-    let output = std::process::Command::new("ps")
-        .args(["-axo", "pid=,pgid=,stat="])
-        .output()
-        .expect("group census");
-    let mut members: Vec<u32> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let pid: u32 = fields.next()?.parse().ok()?;
-            let pgid: u32 = fields.next()?.parse().ok()?;
-            let status = fields.next()?;
-            (pgid == group && !status.starts_with('Z')).then_some(pid)
+    let group = process_group(root);
+    #[cfg(target_os = "linux")]
+    let mut members: Vec<u32> = std::fs::read_dir("/proc")
+        .expect("process census")
+        .filter_map(|entry| {
+            let pid = entry.ok()?.file_name().to_str()?.parse().ok()?;
+            let (pgid, state) = linux_process_state(pid)?;
+            (pgid == group && state != 'Z').then_some(pid)
         })
         .collect();
+    #[cfg(not(target_os = "linux"))]
+    let mut members: Vec<u32> = {
+        let output = std::process::Command::new("ps")
+            .args(["-axo", "pid=,pgid=,stat="])
+            .output()
+            .expect("group census");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let pid: u32 = fields.next()?.parse().ok()?;
+                let pgid: u32 = fields.next()?.parse().ok()?;
+                let status = fields.next()?;
+                (pgid == group && !status.starts_with('Z')).then_some(pid)
+            })
+            .collect()
+    };
     members.retain(|pid| *pid != root);
     members.insert(0, root);
     members
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn procfs_state_parser_keeps_parentheses_and_spaces_in_process_names() {
+    assert_eq!(
+        parse_linux_process_state("123 (name with ) spaces) S 1 456 0"),
+        Some((456, 'S'))
+    );
+    assert_eq!(parse_linux_process_state("123 (zombie) Z 1 456 0"), Some((456, 'Z')));
+    assert_eq!(parse_linux_process_state("123 (missing group) S 1"), None);
 }
 
 #[test]
@@ -361,15 +422,14 @@ fn finish_signal_fixture(
     signal: &str,
     fork: bool,
 ) {
-    let recipient = if fork {
-        parent.id().to_string()
-    } else {
-        format!("-{}", parent.id())
+    let recipient = i32::try_from(parent.id()).expect("fixture pid");
+    let recipient = if fork { recipient } else { -recipient };
+    let signal_number = match signal {
+        "-INT" => SIGINT,
+        "-KILL" => SIGKILL,
+        other => panic!("unsupported fixture signal: {other}"),
     };
-    std::process::Command::new("/bin/kill")
-        .args([signal, "--", &recipient])
-        .status()
-        .expect("signal foreground group");
+    signal_fixture(recipient, signal_number).expect("signal fixture parent");
     parent.wait().expect("parent exits");
     let deadline = Instant::now() + Duration::from_secs(5);
     while pids.iter().copied().any(alive) && Instant::now() < deadline {
@@ -377,10 +437,7 @@ fn finish_signal_fixture(
     }
     let remaining: Vec<_> = pids.iter().copied().filter(|pid| alive(*pid)).collect();
     if !remaining.is_empty() {
-        std::process::Command::new("/bin/kill")
-            .args(["-KILL", "--", &format!("-{guardian}")])
-            .status()
-            .expect("clean up owned browser group");
+        let _ = signal_fixture(-i32::try_from(guardian).expect("guardian pid"), SIGKILL);
     }
     if fork {
         finish_fork_inheritor(marker);
@@ -399,11 +456,21 @@ fn finish_fork_inheritor(marker: &std::path::Path) {
         alive(inheritor.parse().expect("fork PID")),
         "the fork inheritor must survive parent death"
     );
-    std::process::Command::new("/bin/kill")
-        .args(["-KILL", &inheritor])
-        .status()
-        .expect("end inheritor");
+    signal_fixture(inheritor.parse().expect("fork pid"), SIGKILL).expect("end inheritor");
     std::fs::remove_file(report).expect("remove fork report");
+}
+
+#[allow(unsafe_code)]
+fn signal_fixture(pid: i32, signal: i32) -> std::io::Result<()> {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    // SAFETY: callers pass only fixture-owned process or retained group identities.
+    if unsafe { kill(pid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[tokio::test]
