@@ -26,6 +26,7 @@ async fn launched_browser_uses_a_private_pipe_without_a_debugging_port() {
     let config = BrowserConfig::builder()
         .chrome_executable(chrome)
         .user_data_dir(profile.path())
+        .private_pipe(true)
         .build()
         .expect("browser config");
     let (mut browser, mut handler) = Browser::launch(config).await.expect("browser launch");
@@ -159,6 +160,7 @@ async fn pipe_owner_helper() {
     let config = BrowserConfig::builder()
         .chrome_executable(chrome)
         .user_data_dir(&profile)
+        .private_pipe(true)
         .build()
         .expect("config");
     let (mut browser, mut handler) = Browser::launch(config).await.expect("launch");
@@ -214,6 +216,7 @@ async fn browser_firewall_keeps_child_requests_guarded_over_the_private_pipe() {
     config.respect_robots_txt = false;
     config.browser.mode = BrowserMode::Always;
     config.browser.chrome_path = Some(chrome);
+    config.browser.private_pipe = true;
     let engine = create_engine(Some(config)).expect("engine");
     let page = scrape(&engine, &format!("{}/", server.uri().replace("127.0.0.1", "localhost")))
         .await
@@ -234,6 +237,8 @@ mod engine_crawl {
 
     const HELPER: &str = "engine_crawl::crawl_owner_helper";
     const MARKER: &str = "CRAWLBERG_PIPE_CRAWL_MARKER";
+    /// Set for the crawl process when its config turns `browser.private_pipe` on.
+    const PRIVATE_PIPE: &str = "CRAWLBERG_PIPE_CRAWL_PRIVATE_PIPE";
 
     /// The processes whose command line names `dir`, each with its command line.
     fn processes_naming(dir: &Path) -> Vec<(i32, String)> {
@@ -270,17 +275,22 @@ mod engine_crawl {
         }
     }
 
-    /// Start a process that scrapes one page in browser mode and then keeps its engine. The
+    /// Start a process that scrapes one page in browser mode and then keeps its engine. Its
+    /// config has `browser.private_pipe` as given and every other key at its default. The
     /// profile of its Chrome is under `scratch`. Return when the scrape is done.
-    async fn start_crawl_owner(chrome: &Path, scratch: &Path) -> std::process::Child {
+    async fn start_crawl_owner(chrome: &Path, scratch: &Path, private_pipe: bool) -> std::process::Child {
         let marker = scratch.join("crawled");
-        let mut owner = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test executable"));
+        command
             .args(["--ignored", "--exact", HELPER])
             .env(MARKER, &marker)
             .env("CHROME", chrome)
             .env("TMPDIR", scratch)
-            .spawn()
-            .expect("crawl process");
+            .env_remove(PRIVATE_PIPE);
+        if private_pipe {
+            command.env(PRIVATE_PIPE, "1");
+        }
+        let mut owner = command.spawn().expect("crawl process");
         let deadline = Instant::now() + Duration::from_secs(120);
         while !marker.exists() {
             if owner.try_wait().expect("crawl process status").is_some() || Instant::now() >= deadline {
@@ -315,6 +325,7 @@ mod engine_crawl {
         config.respect_robots_txt = false;
         config.browser.mode = BrowserMode::Always;
         config.browser.chrome_path = Some(chrome.into());
+        config.browser.private_pipe = std::env::var_os(PRIVATE_PIPE).is_some();
         let engine = create_engine(Some(config)).expect("engine");
         let page = scrape(&engine, &format!("{}/", server.uri().replace("127.0.0.1", "localhost")))
             .await
@@ -325,8 +336,45 @@ mod engine_crawl {
         std::future::pending::<()>().await;
     }
 
+    /// The default: the key is off, so the Chrome of a crawl gets a debugging port, as before the
+    /// key existed.
     #[tokio::test]
-    async fn the_chrome_of_a_crawl_has_no_debugging_port_and_no_listening_socket() {
+    async fn the_chrome_of_a_default_crawl_has_a_debugging_port_and_no_pipe() {
+        let Some(chrome) = test_chrome() else {
+            return;
+        };
+        let scratch = tempfile::tempdir().expect("scratch directory");
+        let root = scratch.path().canonicalize().expect("scratch path");
+        let mut owner = start_crawl_owner(&chrome, &root, false).await;
+        let processes = processes_naming(&root);
+        let _ = owner.kill();
+        let _ = owner.wait();
+        stop_processes_naming(&root);
+
+        let profile_flag = format!("--user-data-dir={}", root.display());
+        let browsers: Vec<&String> = processes
+            .iter()
+            .map(|(_, args)| args)
+            .filter(|args| args.contains(&profile_flag) && !args.contains("--type="))
+            .collect();
+        assert!(
+            !browsers.is_empty(),
+            "the process table must show the Chrome of the crawl by its profile directory: {processes:?}"
+        );
+        for args in browsers {
+            assert!(
+                args.contains("--remote-debugging-port=0"),
+                "the Chrome of a default crawl must get a debugging port: {args}"
+            );
+            assert!(
+                !args.contains("--remote-debugging-pipe"),
+                "the Chrome of a default crawl must not get the pipe: {args}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_chrome_of_a_crawl_with_the_key_on_has_no_debugging_port_and_no_listening_socket() {
         let Some(chrome) = test_chrome() else {
             return;
         };
@@ -341,7 +389,7 @@ mod engine_crawl {
 
         let scratch = tempfile::tempdir().expect("scratch directory");
         let root = scratch.path().canonicalize().expect("scratch path");
-        let mut owner = start_crawl_owner(&chrome, &root).await;
+        let mut owner = start_crawl_owner(&chrome, &root, true).await;
         let processes = processes_naming(&root);
         let listening: Vec<String> = processes
             .iter()
@@ -381,14 +429,14 @@ mod engine_crawl {
     }
 
     #[tokio::test]
-    async fn no_chrome_of_a_crawl_is_left_after_its_process_is_killed() {
+    async fn no_chrome_of_a_crawl_with_the_key_on_is_left_after_its_process_is_killed() {
         let Some(chrome) = test_chrome() else {
             return;
         };
         for signal in [libc::SIGKILL, libc::SIGTERM] {
             let scratch = tempfile::tempdir().expect("scratch directory");
             let root = scratch.path().canonicalize().expect("scratch path");
-            let mut owner = start_crawl_owner(&chrome, &root).await;
+            let mut owner = start_crawl_owner(&chrome, &root, true).await;
             let started = processes_naming(&root);
             // SAFETY: the pid is the one of the live crawl process that this test started. ~keep
             let sent = unsafe { libc::kill(i32::try_from(owner.id()).expect("pid fits"), signal) };

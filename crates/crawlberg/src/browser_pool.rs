@@ -179,7 +179,7 @@ const PROFILE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 /// the browser and return an error: the crawl never runs with the policy off.
 ///
 /// ~keep Pipe launches prove the profile namespace with a local blob download before policy setup.
-/// ~keep Legacy Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
+/// ~keep A Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
 /// ~keep path into `<user-data-dir>/DevToolsActivePort` as it prints them on stderr, where
 /// ~keep chromiumoxide reads the websocket address. A sandboxed Chrome, such as a strictly
 /// ~keep confined snap with a private /tmp, opens another directory at the same path and writes
@@ -303,13 +303,18 @@ pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
 /// refuse are an error here too, for the pool, whose config never passes through `validate`.
 /// `section` names the config the options came from (`browser` or `BrowserPoolConfig`), and
 /// the error names the key in it.
+///
+/// `private_pipe` is the `private_pipe` key of that config: the one place where a launch of
+/// crawlberg chooses between the debugging port and the private debugging pipe.
 pub(crate) fn apply_launch_overrides(
     mut builder: BrowserConfigBuilder,
     section: &str,
     chrome_path: Option<&std::path::Path>,
     chrome_args: &[String],
+    private_pipe: bool,
     proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
+    builder = builder.private_pipe(private_pipe);
     #[cfg(test)]
     let test_chrome_path = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(std::path::PathBuf::from);
     #[cfg(test)]
@@ -1283,6 +1288,7 @@ fn build_pool_launch_builder(
         "BrowserPoolConfig",
         config.chrome_path.as_deref(),
         &config.chrome_args,
+        config.private_pipe,
         None,
     )
 }
@@ -1306,6 +1312,9 @@ pub struct BrowserPoolConfig {
     /// Checked by the rules of `BrowserConfig::chrome_args` when the pool launches Chrome:
     /// a refused entry makes `warm` and `acquire_page` return an error.
     pub chrome_args: Vec<String>,
+    /// Launch Chrome on a private debugging pipe, not on a debugging port, by the rules of
+    /// `BrowserConfig::private_pipe`. Default: `false`. Ignored when `browser_endpoint` is set.
+    pub private_pipe: bool,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
 }
@@ -1320,6 +1329,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
             browser_endpoint,
             chrome_path,
             chrome_args,
+            private_pipe,
             launch_timeout,
         } = self;
         f.debug_struct("BrowserPoolConfig")
@@ -1332,6 +1342,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
             )
             .field("chrome_path", chrome_path)
             .field("chrome_args", &crate::chrome_args::RedactedChromeArgs(chrome_args))
+            .field("private_pipe", private_pipe)
             .field("launch_timeout", launch_timeout)
             .finish()
     }
@@ -1344,6 +1355,7 @@ impl Default for BrowserPoolConfig {
             browser_endpoint: None,
             chrome_path: None,
             chrome_args: Vec::new(),
+            private_pipe: false,
             launch_timeout: Duration::from_secs(30),
         }
     }
@@ -2123,6 +2135,7 @@ impl BrowserPool {
             && browser.endpoint.is_none()
             && self.config.chrome_path == browser.chrome_path
             && self.config.chrome_args == browser.chrome_args
+            && self.config.private_pipe == browser.private_pipe
     }
 
     /// Eagerly launch the Chrome process so that the first
@@ -2611,6 +2624,40 @@ pub(crate) fn assert_launch_overrides_reach_the_builder(
         missing.to_string().contains("/nonexistent/crawlberg-chrome"),
         "the error must name the path, got: {missing}"
     );
+}
+
+/// Assert that `build`, given the `private_pipe` key, chooses the transport on the command line of
+/// Chrome: the debugging port for `false`, and on Unix the private debugging pipe for `true`.
+/// Shared by the builder test of each of the three launch paths.
+#[cfg(test)]
+pub(crate) fn assert_private_pipe_chooses_the_transport(
+    build: impl Fn(bool) -> Result<BrowserConfigBuilder, CrawlError>,
+) {
+    let binary = crate::types::executable_temp_file("transport");
+    let command_line = |private_pipe: bool| {
+        let config = build(private_pipe)
+            .expect("the launch builder must accept the key")
+            .chrome_executable(&binary)
+            .build()
+            .expect("the launch configuration must build");
+        format!("{:?}", config.command())
+    };
+    let port = command_line(false);
+    let pipe = command_line(true);
+    let _ = std::fs::remove_file(&binary);
+
+    assert!(
+        port.contains("--remote-debugging-port=0") && !port.contains("--remote-debugging-pipe"),
+        "without the key Chrome must get a debugging port and no pipe: {port}"
+    );
+    if cfg!(unix) {
+        assert!(
+            pipe.contains("--remote-debugging-pipe") && !pipe.contains("--remote-debugging-port"),
+            "with the key Chrome must get the pipe and no debugging port: {pipe}"
+        );
+    } else {
+        assert_eq!(pipe, port, "the key must change nothing where there is no pipe");
+    }
 }
 
 #[cfg(test)]

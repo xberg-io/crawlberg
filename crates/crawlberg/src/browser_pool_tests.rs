@@ -2277,7 +2277,6 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
     let owner_config = build_pool_launch_builder(owner_dir.path(), &BrowserPoolConfig::default())
         .expect("the default pool configuration must build")
         .chrome_executable(executable)
-        .websocket_transport()
         .build()
         .expect("the external Chrome configuration must build");
     let (mut owner, owner_handler, owner_dir) = owner_dir
@@ -2719,7 +2718,6 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
         ScratchProfileDir::create("crawlberg-pool-test-", None).expect("a profile directory must be created");
     let launched = match build_pool_launch_builder(user_data_dir.path(), &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
-        .websocket_transport()
         .build()
     {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
@@ -3479,7 +3477,6 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-kill-fallback-test-{}", std::process::id()));
     let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
         .expect("the default pool config names no binary to check")
-        .websocket_transport()
         .build()
     {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
@@ -3528,8 +3525,12 @@ async fn the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_o
     const TEST_NAME: &str = "the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_open";
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-pipe-profile-check-{}", std::process::id()));
     let other_dir = std::env::temp_dir().join(format!("crawlberg-pipe-profile-other-{}", std::process::id()));
-    let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
-        .expect("the default pool config names no binary to check")
+    let pool_config = BrowserPoolConfig {
+        private_pipe: true,
+        ..BrowserPoolConfig::default()
+    };
+    let launched = match build_pool_launch_builder(&user_data_dir, &pool_config)
+        .expect("the pool config names no binary to check")
         .build()
     {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
@@ -3551,7 +3552,10 @@ async fn the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_o
     let _ = std::fs::remove_dir_all(&user_data_dir);
     let _ = std::fs::remove_dir_all(&other_dir);
 
-    assert_eq!(transport, "pipe", "the launch of the pool must use the private pipe");
+    assert_eq!(
+        transport, "pipe",
+        "a pool with the key on must launch on the private pipe"
+    );
     confirmed.expect("the check must confirm the directory that Chrome opened");
     let refusal = refused
         .expect_err("the check must refuse a directory that Chrome did not open")
@@ -3662,6 +3666,48 @@ fn the_pool_launch_builder_uses_the_configured_chrome_path_and_args() {
             },
         )
     });
+}
+
+#[test]
+fn the_pool_launch_builder_chooses_the_transport_by_the_private_pipe_key() {
+    assert!(
+        !BrowserPoolConfig::default().private_pipe,
+        "a default pool must launch on the debugging port"
+    );
+    assert_private_pipe_chooses_the_transport(|private_pipe| {
+        build_pool_launch_builder(
+            std::path::Path::new("/tmp/pool-test-profile"),
+            &BrowserPoolConfig {
+                private_pipe,
+                ..BrowserPoolConfig::default()
+            },
+        )
+    });
+}
+
+/// A pool serves a fetch from its own launch only when the key of the fetch is the pool's.
+#[test]
+fn a_pool_does_not_claim_the_launch_options_of_a_config_with_another_private_pipe_key() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let same = crate::types::BrowserConfig::default();
+    let other = crate::types::BrowserConfig {
+        private_pipe: true,
+        ..Default::default()
+    };
+    assert!(pool.uses_launch_options(&same));
+    assert!(!pool.uses_launch_options(&other));
+}
+
+#[test]
+fn the_debug_text_of_a_pool_config_shows_the_private_pipe_key() {
+    let text = format!(
+        "{:?}",
+        BrowserPoolConfig {
+            private_pipe: true,
+            ..BrowserPoolConfig::default()
+        }
+    );
+    assert!(text.contains("private_pipe: true"), "{text}");
 }
 
 #[test]

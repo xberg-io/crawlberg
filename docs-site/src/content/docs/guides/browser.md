@@ -150,6 +150,28 @@ Set `chrome_args` only from trusted configuration, as you would `proxy`. Flags s
 
 Both fields are ignored, with a warning, when `endpoint` is set or the native backend is in use, and crawlberg does not check them then. Scrapes and crawls that use a shared browser pool also ignore them with a warning, because the pool launches Chrome from its own config; `interact()` still launches Chrome from them, so crawlberg checks them.
 
+## Launching Chrome on a private pipe
+
+By default the Chrome that crawlberg launches gets a debugging port on 127.0.0.1, and crawlberg connects to it by WebSocket. Set `private_pipe` to `true` to launch Chrome on a private debugging pipe:
+
+```rust
+use crawlberg::{BrowserConfig, CrawlConfig};
+
+let config = CrawlConfig {
+    browser: BrowserConfig {
+        private_pipe: true,
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+With the key on, the launched Chrome listens on no TCP port, so no other local process can drive it. It also ends when the process that started it ends, including after SIGKILL. With the key off, a Chrome whose owner is killed keeps running.
+
+The key works on Linux and macOS. On Windows it changes nothing. It is ignored, with a warning, when `endpoint` is set or the native backend is in use. The Rust `BrowserPoolConfig` has its own `private_pipe`; scrapes and crawls that use a shared browser pool use the pool's key.
+
+The pipe is less reliable than the debugging port on a loaded machine. Under a load of 18 to 45 with 22 browser tests in parallel, the firewall test file passed in 2 of 10 runs on the pipe against 8 of 10 on the debugging port. The failed scrapes report `failed to open page after relaunch: browser: failed to create page: oneshot canceled`. Keep the default if the machine runs many browsers at once.
+
 ## Browser profiles
 
 Persistent browser profiles retain cookies, localStorage, and other browser state across crawl sessions. Configure them through `CrawlConfig::browser_profile` (named profile to attach) and `CrawlConfig::save_browser_profile` (persist changes on exit):

@@ -19,6 +19,9 @@ All notable changes to crawlberg are documented here.
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+- **`BrowserConfig` and `BrowserPoolConfig` each have a new public field, `private_pipe`.** A
+  Rust struct literal that names every field must add it; a literal with `..Default::default()`
+  needs no change.
 
 ### Added
 
@@ -30,6 +33,27 @@ All notable changes to crawlberg are documented here.
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- **`browser.private_pipe` starts Chrome on a private debugging pipe (Linux and macOS).** The
+  key is a `bool` and its default is `false`: a caller that sets nothing gets the Chrome of the
+  release before, with a debugging port on 127.0.0.1. With `true`:
+  - The Chrome that crawlberg starts listens on no TCP port. crawlberg speaks the DevTools
+    protocol with it over the pipe, so no other local process can drive the browser of a crawl.
+    The profile directory of that Chrome has no `DevToolsActivePort` file. (#624)
+  - The Chrome ends when the process that started it ends, also when that process is killed
+    with SIGKILL or gets a SIGTERM that it does not handle. Without the key the Chrome keeps
+    running with PID 1 as its parent. (#620)
+  - Limit: the pipe is less reliable than the debugging port when the machine is loaded. On a
+    host at a load of 18 to 45, with 22 browser tests in parallel, the firewall test file was
+    green in 2 of 10 runs on the pipe against 8 of 10 on the debugging port. In 5 of the 10 pipe
+    runs a scrape failed with `failed to open page after relaunch: browser: failed to create
+    page: oneshot canceled`; in 0 of the 10 runs on the debugging port. The cause is not known.
+  - On Windows the key changes nothing. A Chrome behind `browser.endpoint` belongs to the caller
+    and is not changed. The native backend ignores the key, with a warning.
+  - The Rust `BrowserPoolConfig` has the same key for the Chrome that a pool launches. A scrape
+    or crawl on a shared pool uses the pool's key. `CrawlConfig::adopt_operator_egress` sets the
+    key from the operator, and `reject_untrusted_fields` refuses `/browser/private_pipe` from
+    an untrusted caller.
+  #620 and #624 are fixed only with the key on.
 
 ### Changed
 
@@ -96,14 +120,6 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- On Linux and macOS the Chrome that crawlberg starts no longer listens on a debugging port.
-  crawlberg speaks the DevTools protocol with it over a private pipe, so no other local process
-  can drive the browser of a crawl. The profile directory of that Chrome has no
-  `DevToolsActivePort` file. A Chrome behind `browser.endpoint` belongs to the caller and is not
-  changed. On Windows the Chrome still gets a debugging port on 127.0.0.1. (#624)
-- On Linux and macOS the Chrome of a crawl ends when the process that started it ends, also when
-  that process is killed with SIGKILL or gets a SIGTERM that it does not handle. Before, the
-  Chrome kept running with PID 1 as its parent. Windows is not changed. (#620)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 

@@ -147,7 +147,7 @@ impl Default for BrowserConfigBuilder {
             sandbox: true,
             window_size: None,
             port: 0,
-            private_pipe: cfg!(unix),
+            private_pipe: false,
             executable: None,
             executation_detection: DetectionOptions::default(),
             extensions: Vec::new(),
@@ -218,10 +218,12 @@ impl BrowserConfigBuilder {
         self
     }
 
-    /// Explicitly launch a WebSocket endpoint for a browser shared with external clients.
-    /// Launched Unix browsers otherwise use a private debugging pipe.
-    pub fn websocket_transport(mut self) -> Self {
-        self.private_pipe = false;
+    /// Launch the browser on a private debugging pipe when `private_pipe` is true. The default is
+    /// false: the browser gets a debugging port and the caller connects by WebSocket. The pipe
+    /// exists on Unix only; on other systems, and with a fixed [`Self::port`], the launch uses
+    /// the debugging port whatever this says.
+    pub fn private_pipe(mut self, private_pipe: bool) -> Self {
+        self.private_pipe = private_pipe;
         self
     }
 
@@ -400,12 +402,12 @@ impl BrowserConfig {
     /// The command that [`Self::launch`] spawns. A caller that stops the browser process itself
     /// changes the command first, with [`async_process::Command::kill_on_drop`].
     ///
-    /// On Unix the command starts the browser on a private debugging pipe, unless the config asks
-    /// for a debugging port or for the WebSocket transport. The child that the command spawns
-    /// holds the caller's end of the pipe, and [`Browser::launch_with`](crate::Browser::launch_with)
-    /// speaks the protocol over it.
+    /// The command starts the browser with a debugging port, unless the config asks for the
+    /// private debugging pipe, on Unix and with no fixed port. For the pipe, the child that the
+    /// command spawns holds the caller's end of it, and
+    /// [`Browser::launch_with`](crate::Browser::launch_with) speaks the protocol over it.
     pub fn command(&self) -> async_process::Command {
-        let pipe = self.private_pipe && self.port == 0;
+        let pipe = cfg!(unix) && self.private_pipe && self.port == 0;
         let mut builder = ArgsBuilder::new();
 
         if self.disable_default_args {
@@ -546,5 +548,45 @@ mod tests {
 
         assert!(default.manage_child_targets);
         assert!(!disabled.manage_child_targets);
+    }
+
+    /// The command line of the browser that `config` launches, as the command's `Debug` prints it.
+    fn command_line(config: &BrowserConfig) -> String {
+        format!("{:?}", config.command())
+    }
+
+    #[test]
+    fn a_default_launch_gets_a_debugging_port_and_the_pipe_is_opt_in() {
+        let default = BrowserConfig::builder()
+            .chrome_executable("/not/launched")
+            .build()
+            .expect("build default browser config");
+        let pipe = BrowserConfig::builder()
+            .chrome_executable("/not/launched")
+            .private_pipe(true)
+            .build()
+            .expect("build browser config with the private pipe");
+        let fixed_port = BrowserConfig::builder()
+            .chrome_executable("/not/launched")
+            .private_pipe(true)
+            .port(9333)
+            .build()
+            .expect("build browser config with a fixed port");
+
+        let default = command_line(&default);
+        assert!(default.contains("--remote-debugging-port=0"), "{default}");
+        assert!(!default.contains("--remote-debugging-pipe"), "{default}");
+
+        let pipe = command_line(&pipe);
+        if cfg!(unix) {
+            assert!(pipe.contains("--remote-debugging-pipe"), "{pipe}");
+            assert!(!pipe.contains("--remote-debugging-port"), "{pipe}");
+        } else {
+            assert_eq!(pipe, default, "the pipe exists on Unix only");
+        }
+
+        let fixed_port = command_line(&fixed_port);
+        assert!(fixed_port.contains("--remote-debugging-port=9333"), "{fixed_port}");
+        assert!(!fixed_port.contains("--remote-debugging-pipe"), "{fixed_port}");
     }
 }

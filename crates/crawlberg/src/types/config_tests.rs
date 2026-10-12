@@ -61,6 +61,33 @@ fn should_keep_nested_defaults_when_one_unrelated_field_is_set() {
     );
 }
 
+#[test]
+fn the_debug_text_of_a_browser_config_shows_the_private_pipe_key() {
+    let text = format!(
+        "{:?}",
+        BrowserConfig {
+            private_pipe: true,
+            ..BrowserConfig::default()
+        }
+    );
+    assert!(text.contains("private_pipe: true"), "{text}");
+}
+
+#[test]
+fn private_pipe_is_off_by_default_and_reads_from_the_config() {
+    assert!(!BrowserConfig::default().private_pipe);
+    let config: CrawlConfig = serde_json::from_str(r#"{"browser":{}}"#).expect("parse");
+    assert!(
+        !config.browser.private_pipe,
+        "a config that does not name the key must keep the debugging port"
+    );
+
+    let config: CrawlConfig = serde_json::from_str(r#"{"browser":{"private_pipe":true}}"#).expect("parse");
+    assert!(config.browser.private_pipe);
+    let written = serde_json::to_value(&config).expect("serialize");
+    assert_eq!(written["browser"]["private_pipe"], serde_json::Value::Bool(true));
+}
+
 /// Characterization: `validate` reports the FIRST violation, and the order it checks
 /// rules in is observable behaviour — a config that breaks several rules gets exactly one
 /// message, and which one depends on the check order. Pinned here so the order survives

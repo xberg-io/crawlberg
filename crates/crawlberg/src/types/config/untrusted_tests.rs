@@ -8,7 +8,7 @@ use crate::{
     AuthConfig, BrowserConfig, CrawlConfig, DispatchProfile, HostMatcher, ProxyConfig, SsrfPolicy, StaticProxyProvider,
 };
 
-const EXPECTED_FORBIDDEN_FIELDS: [&str; 14] = [
+const EXPECTED_FORBIDDEN_FIELDS: [&str; 15] = [
     "/ssrf",
     "/ssrf_deny_private_explicit",
     "/max_redirects",
@@ -17,6 +17,7 @@ const EXPECTED_FORBIDDEN_FIELDS: [&str; 14] = [
     "/browser/endpoint",
     "/browser/chrome_path",
     "/browser/chrome_args",
+    "/browser/private_pipe",
     "/browser/eval_script",
     "/browser/session_affinity",
     "/browser_profile",
@@ -108,6 +109,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
             endpoint: Some("ws://caller-browser.invalid/devtools/browser/secret".to_owned()),
             chrome_path: Some(PathBuf::from("/caller/chrome")),
             chrome_args: vec!["--proxy-server=http://caller-proxy.invalid".to_owned()],
+            private_pipe: true,
             eval_script: Some("callerScript()".to_owned()),
             session_affinity: false,
             ..BrowserConfig::default()
@@ -169,6 +171,10 @@ fn should_adopt_every_serializable_operator_owned_field() {
     assert_eq!(caller.browser.endpoint, operator.browser.endpoint);
     assert_eq!(caller.browser.chrome_path, operator.browser.chrome_path);
     assert_eq!(caller.browser.chrome_args, operator.browser.chrome_args);
+    assert!(
+        !caller.browser.private_pipe,
+        "the operator's transport must replace the caller's"
+    );
     assert_eq!(caller.browser.eval_script, operator.browser.eval_script);
     assert_eq!(caller.browser.session_affinity, operator.browser.session_affinity);
     assert_eq!(caller.browser_profile, operator.browser_profile);
@@ -341,5 +347,6 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         session_affinity: _,
         chrome_path: _,
         chrome_args: _,
+        private_pipe: _,
     } = browser;
 }

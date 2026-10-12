@@ -248,6 +248,7 @@ fn binding_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::Bro
         browser_endpoint: config.browser.endpoint.clone(),
         chrome_path: config.browser.chrome_path.clone(),
         chrome_args: config.browser.chrome_args.clone(),
+        private_pipe: config.browser.private_pipe,
         ..defaults
     }
 }
@@ -988,6 +989,7 @@ mod tests {
                 endpoint: Some("ws://browser.example:9222/devtools/browser/test".to_owned()),
                 chrome_path: Some("/opt/chrome".into()),
                 chrome_args: vec!["--lang=de".to_owned()],
+                private_pipe: true,
                 ..BrowserConfig::default()
             },
             ..CrawlConfig::default()
@@ -999,6 +1001,14 @@ mod tests {
         assert_eq!(pool_config.browser_endpoint, config.browser.endpoint);
         assert_eq!(pool_config.chrome_path, config.browser.chrome_path);
         assert_eq!(pool_config.chrome_args, config.browser.chrome_args);
+        assert!(
+            pool_config.private_pipe,
+            "the key must reach the pool that a binding creates"
+        );
+        assert!(
+            !binding_browser_pool_config(&CrawlConfig::default()).private_pipe,
+            "the pool of a default config must launch on the debugging port"
+        );
     }
 
     #[test]

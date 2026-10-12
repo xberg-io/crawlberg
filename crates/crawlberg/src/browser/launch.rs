@@ -263,6 +263,7 @@ fn build_one_shot_launch_builder(
         "browser",
         browser.chrome_path.as_deref(),
         &browser.chrome_args,
+        browser.private_pipe,
         proxy,
     )
 }
@@ -760,6 +761,20 @@ mod tests {
                 &crate::types::BrowserConfig {
                     chrome_path,
                     chrome_args,
+                    ..Default::default()
+                },
+                None,
+            )
+        });
+    }
+
+    #[test]
+    fn the_one_shot_launch_builder_chooses_the_transport_by_the_private_pipe_key() {
+        crate::browser_pool::assert_private_pipe_chooses_the_transport(|private_pipe| {
+            build_one_shot_launch_builder(
+                std::path::Path::new("/tmp/browser-rs-test-profile"),
+                &crate::types::BrowserConfig {
+                    private_pipe,
                     ..Default::default()
                 },
                 None,

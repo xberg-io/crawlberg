@@ -176,6 +176,12 @@ pub struct BrowserConfig {
     /// shared browser pool.
     #[cfg_attr(alef, alef(sensitive))]
     pub chrome_args: Vec<String>,
+    /// Launch Chrome on a private debugging pipe, not on a debugging port. Default: `false`.
+    /// With `true`, the launched Chrome listens on no TCP port and exits when the process that
+    /// started it ends, however that process ends. Unix only: on Windows the launch uses the
+    /// debugging port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is
+    /// set, with the native backend, and by scrapes and crawls that use a shared browser pool.
+    pub private_pipe: bool,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -209,6 +215,7 @@ impl std::fmt::Debug for BrowserConfig {
             session_affinity,
             chrome_path,
             chrome_args,
+            private_pipe,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -234,6 +241,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("session_affinity", session_affinity)
             .field("chrome_path", chrome_path)
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
+            .field("private_pipe", private_pipe)
             .finish()
     }
 }
@@ -258,6 +266,7 @@ impl Default for BrowserConfig {
             session_affinity: true,
             chrome_path: None,
             chrome_args: Vec::new(),
+            private_pipe: false,
         }
     }
 }
@@ -341,7 +350,8 @@ pub(crate) fn check_chrome_executable(section: &str, path: &Path) -> Result<(), 
     Ok(())
 }
 
-/// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set.
+/// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set,
+/// and that `private_pipe` has none, when it is on.
 /// `reason` completes the sentence "... are ignored when ...". The warning gives the number of
 /// flags, not their values, for the reason given on the `Debug` impl of `BrowserConfig`.
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
@@ -352,6 +362,9 @@ pub(crate) fn warn_ignored_launch_options(browser: &BrowserConfig, reason: &str)
             chrome_args = %format!("{} flags", browser.chrome_args.len()),
             "browser.chrome_path and browser.chrome_args are ignored when {reason}"
         );
+    }
+    if browser.private_pipe {
+        tracing::warn!("browser.private_pipe is ignored when {reason}");
     }
 }
 
