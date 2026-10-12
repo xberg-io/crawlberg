@@ -408,3 +408,73 @@ async fn should_leave_the_only_browser_pool_page_free_while_waiting_for_a_domain
     paths.sort_unstable();
     assert_eq!(paths, ["/fast", "/slow", "/warm"]);
 }
+
+#[tokio::test]
+async fn should_clear_blocked_url_patterns_when_reusing_a_retained_browser_page() {
+    let site = MockServer::start().await;
+    Mock::given(path("/blocked"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<script>window.name='retained-block-pattern-page';</script><p>blocked</p><img src='/first.png'>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/clear"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<p>clear</p><img src='/second.png'><script>document.body.dataset.retained=window.name;</script>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("cache-control", "no-store")
+                .set_body_raw("image", "image/png"),
+        )
+        .with_priority(10)
+        .mount(&site)
+        .await;
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        max_pages: 1,
+        ..BrowserPoolConfig::default()
+    });
+    let sessions = Arc::new(crawlberg::BrowserSessionPool::new());
+    let mut settings = config();
+    settings.browser.session_affinity = true;
+    settings.browser_session_pool = Some(sessions.clone());
+    settings.browser.block_url_patterns = vec!["*.png".into()];
+    let blocked = CrawlEngineHandle::from_engine(
+        CrawlEngine::builder()
+            .config(settings.clone())
+            .with_browser_pool(pool.clone())
+            .build()
+            .expect("blocked engine"),
+    );
+    scrape(&blocked, &format!("{}/blocked", site.uri()))
+        .await
+        .expect("blocked page");
+    assert_eq!(sessions.size().await, 1, "first page must be retained");
+    assert_eq!(paths_the_page_asked_for(&site).await, ["/blocked"]);
+    settings.browser.block_url_patterns.clear();
+    let cleared = CrawlEngineHandle::from_engine(
+        CrawlEngine::builder()
+            .config(settings)
+            .with_browser_pool(pool.clone())
+            .build()
+            .expect("clear engine"),
+    );
+    let result = scrape(&cleared, &format!("{}/clear", site.uri()))
+        .await
+        .expect("clear page");
+    sessions.shutdown().await;
+    pool.shutdown().await;
+    assert!(
+        result.html.contains("data-retained=\"retained-block-pattern-page\""),
+        "a fresh page would not prove reset: {}",
+        result.html
+    );
+    let mut requested = paths_the_page_asked_for(&site).await;
+    requested.sort_unstable();
+    assert_eq!(requested, ["/blocked", "/clear", "/second.png"]);
+}
