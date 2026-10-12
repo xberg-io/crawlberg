@@ -41,6 +41,10 @@ title: "Changelog"
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
+- `Frontier::pop_batch_excluding_hosts` selects entries whose hosts are not waiting for a
+  rate-limiter turn, without removing or reordering retained entries. Return `Some(entries)`
+  to support this selection, or `None` to retain the existing bounded-window fallback. The
+  built-in FIFO and LIFO frontiers support it. (#684)
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
@@ -190,6 +194,9 @@ title: "Changelog"
 - Refused Unix browser launchers stop their descendants, and parent signal termination stops the
   owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
   parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
+- Batch crawls with more seeds than `max_concurrent` complete after host waits by sharing
+  each seed's permit acquisition. Ready batch scrape operations run on parallel runtime tasks
+  while retaining the configured concurrency bound. (#684)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 

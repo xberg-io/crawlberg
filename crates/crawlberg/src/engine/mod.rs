@@ -6,6 +6,10 @@ mod batch;
 mod builder;
 mod chain_claim;
 #[cfg(not(target_arch = "wasm32"))]
+mod continuation;
+#[cfg(not(target_arch = "wasm32"))]
+mod cooperative;
+#[cfg(not(target_arch = "wasm32"))]
 mod crawl_loop;
 #[cfg(not(target_arch = "wasm32"))]
 mod crawl_state;
@@ -14,6 +18,8 @@ mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod fetch;
 mod frontier_claim;
+#[cfg(not(target_arch = "wasm32"))]
+mod host_turn;
 #[cfg(not(target_arch = "wasm32"))]
 mod link_discovery;
 mod link_scope;
@@ -24,6 +30,8 @@ pub(crate) mod redirect;
 #[cfg(not(target_arch = "wasm32"))]
 mod robots_cache;
 mod scrape_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod seed_schedule;
 mod selection;
 // ~keep Also compiled under `cfg(test)` natively: see the module doc for why.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -82,6 +90,8 @@ pub struct CrawlEngine {
     ua_rotation: crate::tower::UaRotation,
     #[cfg(not(target_arch = "wasm32"))]
     robots_cache: Arc<robots_cache::RobotsCache>,
+    #[cfg(not(target_arch = "wasm32"))]
+    crawl_schedule: Option<Arc<cooperative::CooperativeContext>>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     pub(crate) native_browser_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
     /// The cookies the Chrome pages of one crawl have in common, when `cookies_enabled` is set.
@@ -106,6 +116,15 @@ pub(crate) struct Politeness {
 }
 
 impl CrawlEngine {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn scheduling_limiter(&self) -> Arc<dyn RateLimiter> {
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        if self.request_will_use_browser() {
+            return self.browser_rate_limiter.clone();
+        }
+        self.rate_limiter.clone()
+    }
+
     /// The politeness parts of this engine, for another engine to share.
     #[cfg(feature = "api")]
     pub(crate) fn politeness(&self) -> Politeness {

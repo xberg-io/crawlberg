@@ -59,6 +59,14 @@ impl Frontier for GuardedFrontier {
         self.inner.pop_batch(n).await
     }
 
+    async fn pop_batch_excluding_hosts(
+        &self,
+        n: usize,
+        hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        self.inner.pop_batch_excluding_hosts(n, hosts).await
+    }
+
     async fn len(&self) -> Result<usize, CrawlError> {
         self.inner.len().await
     }
@@ -96,6 +104,39 @@ mod tests {
 
     use super::*;
     use crate::{CrawlEngine, InMemoryFrontier};
+
+    #[tokio::test]
+    async fn should_forward_host_selection_and_preserve_entry_metadata() {
+        let inner = std::sync::Arc::new(InMemoryFrontier::new());
+        for (host, depth) in [("slow.test", 17), ("free.test", 23)] {
+            inner
+                .push(FrontierEntry {
+                    url: format!("https://{host}/%2f"),
+                    original_url: Some(format!("https://source.test/{host}")),
+                    depth,
+                    doc_depth: 31,
+                    priority: 9.5,
+                })
+                .await
+                .unwrap();
+        }
+        let guarded = GuardedFrontier::wrap(inner);
+        let selected = guarded
+            .pop_batch_excluding_hosts(1, &["slow.test".into()])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].url, "https://free.test/%2f");
+        assert_eq!(
+            selected[0].original_url.as_deref(),
+            Some("https://source.test/free.test")
+        );
+        assert_eq!(selected[0].depth, 23);
+        assert_eq!(selected[0].doc_depth, 31);
+        assert_eq!(selected[0].priority, 9.5);
+        assert_eq!(guarded.pop().await.unwrap().unwrap().url, "https://slow.test/%2f");
+    }
 
     /// A frontier written before `claim` existed: its check yields before it answers.
     struct YieldingFrontier {
