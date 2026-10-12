@@ -10,9 +10,18 @@ const OWNER_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 // ~keep Poll the guardian's current PPID: a fork can retain pipe descriptors after its parent dies.
 // ~keep Foreground probes/timers are reaped before the guardian kills its held group; no cached
 // ~keep auxiliary PID is signalled after a shell could have reaped and recycled it.
+#[cfg(any(not(target_os = "linux"), test))]
 const GUARDIAN_SCRIPT: &str = "trap 'kill -s KILL -- -$$' TERM; printf .; \
     while owner=$(/bin/ps -o ppid= -p \"$$\") && [ \"$owner\" -eq \"$1\" ]; \
     do /bin/sleep 1 || break; done; kill -s KILL -- -$$";
+
+// ~keep Linux procfs provides the live parent without requiring procps or BusyBox ps options.
+#[cfg(target_os = "linux")]
+const LINUX_GUARDIAN_SCRIPT: &str = "trap 'kill -9 -$$' TERM; printf .; \
+    while owner= && [ -r /proc/$$/status ]; do \
+    while read -r key value rest; do case \"$key\" in PPid:) owner=$value; break;; esac; \
+    done < /proc/$$/status; [ \"$owner\" = \"$1\" ] || break; \
+    /bin/sleep 1 || break; done; kill -9 -$$";
 
 #[derive(Debug)]
 pub(super) struct Group {
@@ -23,10 +32,41 @@ pub(super) struct Group {
 
 impl Group {
     pub(super) fn start() -> io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            let group = Self::start_script(LINUX_GUARDIAN_SCRIPT)?;
+            validate_timer("/bin/sleep")?;
+            let status = std::fs::read_to_string(format!("/proc/{}/status", group.id))?;
+            if status_parent(&status) != Some(group.owner) {
+                return Err(io::Error::other(
+                    "guardian procfs parent did not identify this process as its owner",
+                ));
+            }
+            Ok(group)
+        }
+        #[cfg(not(target_os = "linux"))]
         Self::start_with_tools("/bin/ps", "/bin/sleep")
     }
 
+    #[cfg(any(not(target_os = "linux"), test))]
     pub(super) fn start_with_tools(probe: &str, timer: &str) -> io::Result<Self> {
+        let group = Self::start_script(GUARDIAN_SCRIPT)?;
+        validate_timer(timer).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("could not start browser guardian timer using {timer}: {error}"),
+            )
+        })?;
+        validate_owner(probe, group.id, group.owner).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("could not establish browser guardian ownership using {probe}: {error}"),
+            )
+        })?;
+        Ok(group)
+    }
+
+    fn start_script(script: &str) -> io::Result<Self> {
         // ~keep The guardian starts first and retains its own group ID against reuse.
         // ~keep The acknowledgement socket closes before Chrome starts; no ownership pipe survives a fork.
         let (mut ready, child_ready) = std::os::unix::net::UnixStream::pair()?;
@@ -34,7 +74,7 @@ impl Group {
         let child = Command::new("/bin/sh")
             .args([
                 "-c",
-                GUARDIAN_SCRIPT,
+                script,
                 "crawlberg-browser-guardian",
                 &std::process::id().to_string(),
             ])
@@ -50,18 +90,6 @@ impl Group {
             child: Mutex::new(Some(child)),
         };
         acknowledge_ready(&mut ready)?;
-        validate_timer(timer).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("could not start browser guardian timer using {timer}: {error}"),
-            )
-        })?;
-        validate_owner(probe, id, group.owner).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("could not establish browser guardian ownership using {probe}: {error}"),
-            )
-        })?;
         Ok(group)
     }
 
@@ -143,6 +171,7 @@ fn signal_group(id: u32) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn validate_owner(probe: &str, guardian: u32, expected: u32) -> io::Result<()> {
     use std::io::Read;
     let mut child = Command::new(probe)
@@ -209,5 +238,38 @@ fn wait_probe(child: &mut Child) -> io::Result<std::process::ExitStatus> {
             }
             Ok(None) => std::thread::sleep(POLL_INTERVAL),
         }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn status_parent(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("PPid:")?.trim().parse().ok())
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn an_inherited_group_refuses_signal_and_stop_without_touching_its_owner() {
+        let mut group = Group::start().expect("guardian");
+        let mut leaf = Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(i32::try_from(group.id()).expect("group fits pid"))
+            .spawn()
+            .expect("group member");
+        let owner = group.owner;
+        group.owner = owner.wrapping_add(1);
+        let refused = group.signal().expect_err("foreign process cannot signal this group");
+        let stopped = group.stop(Duration::from_millis(100));
+        let untouched = leaf.try_wait().expect("leaf status").is_none();
+        group.owner = owner;
+        assert!(group.stop(DROP_TIMEOUT), "actual owner must clean its group");
+        leaf.wait().expect("reap group member");
+        assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!stopped, "foreign stop must refuse ownership");
+        assert!(untouched, "neither foreign operation may signal the owner's member");
     }
 }

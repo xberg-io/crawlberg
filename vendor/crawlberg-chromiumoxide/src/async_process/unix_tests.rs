@@ -442,3 +442,16 @@ impl Drop for FixtureParent {
         let _ = self.0.wait();
     }
 }
+
+#[test]
+fn procfs_parent_parser_accepts_only_the_ppid_field() {
+    for (status, parent) in [
+        ("Name:\tname with spaces\nPid:\t999\nPPid:\t123\n", Some(123)),
+        ("PPid:\t0\n", Some(0)),
+        ("Pid:\t123\n", None),
+        ("PPid:\t123 extra\n", None),
+        ("PPid:\t-1\n", None),
+    ] {
+        assert_eq!(super::unix_group::status_parent(status), parent);
+    }
+}
