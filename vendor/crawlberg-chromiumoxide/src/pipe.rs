@@ -316,11 +316,31 @@ impl Router {
         loop {
             tokio::select! {
                 command = commands.recv() => {
-                    let ended = command.is_none();
-                    if let Some(command) = command
-                        && let Some(bytes) = self.encode_command(command)?
-                    {
-                        writes.send(bytes).map_err(|_| CdpError::NoResponse)?;
+                    // ~keep Every command that is queued goes to the writer in this turn, as one
+                    // ~keep batch. A poll of a task has a budget of 128 operations, and each turn
+                    // ~keep of this loop spends three, so a hub that took one command for each
+                    // ~keep turn handed over about 40 commands for each time the scheduler ran it.
+                    // ~keep Under a flood of paused requests, each of which needs an answer, the
+                    // ~keep answers left for Chrome at a few hundred a second and every read of the
+                    // ~keep page waited behind them until its timeout.
+                    let mut ended = command.is_none();
+                    let mut next = command;
+                    let mut batch = Vec::new();
+                    while let Some(command) = next {
+                        if let Some(bytes) = self.encode_command(command)? {
+                            batch.extend_from_slice(&bytes);
+                        }
+                        next = match commands.try_recv() {
+                            Ok(command) => Some(command),
+                            Err(mpsc::error::TryRecvError::Empty) => None,
+                            Err(mpsc::error::TryRecvError::Disconnected) => {
+                                ended = true;
+                                None
+                            }
+                        };
+                    }
+                    if !batch.is_empty() {
+                        writes.send(batch).map_err(|_| CdpError::NoResponse)?;
                     }
                     if ended || self.clients.is_empty() {
                         // ~keep The writer ends when its queue is empty, so a command that a client
@@ -358,7 +378,13 @@ impl Router {
         mut writer: impl tokio::io::AsyncWrite + Unpin,
         mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
     ) -> Result<()> {
-        while let Some(bytes) = queued.recv().await {
+        while let Some(mut bytes) = queued.recv().await {
+            // ~keep Every batch that is queued is written in one call, for the same reason the
+            // ~keep hub drains its queue: one write for each turn is one write for each time the
+            // ~keep scheduler runs this task.
+            while let Ok(more) = queued.try_recv() {
+                bytes.extend_from_slice(&more);
+            }
             writer.write_all(&bytes).await?;
         }
         Ok(())
@@ -573,6 +599,78 @@ mod tests {
                 "each command is written in its order"
             );
         }
+    }
+
+    /// ~keep A poll of a task has a budget of 128 operations. A hub that took one command for each
+    /// ~keep turn and a writer that wrote one command for each turn moved about 40 commands for
+    /// ~keep each round of the scheduler. Under a flood that needs an answer for each request the
+    /// ~keep answers left at a few hundred a second, and each read of the page waited behind them
+    /// ~keep until its timeout (the two flood tests of `test_browser_ssrf_whole_fetch`). The test
+    /// ~keep gives the hub and the writer three rounds for a thousand commands.
+    #[tokio::test]
+    async fn every_queued_command_is_written_within_three_rounds_of_the_scheduler() {
+        const COMMANDS: u64 = 1000;
+        let (socket, peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_, mut client) = PipeHub::start(socket);
+        for number in 0..COMMANDS {
+            let command = serde_json::json!({
+                "id": number,
+                "method": "Fetch.failRequest",
+                "params": {"requestId": "interception-job-1.0", "errorReason": "BlockedByClient"},
+            });
+            client
+                .send(Message::Text(command.to_string().into()))
+                .now_or_never()
+                .expect("the sink takes a command with no wait for the peer")
+                .expect("command queued");
+        }
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        let mut received = 0;
+        let mut buffer = [0; READ_BUFFER_SIZE];
+        loop {
+            match peer.try_read(&mut buffer) {
+                Ok(0) => panic!("the pipe stays open"),
+                Ok(count) => received += buffer[..count].iter().filter(|byte| **byte == 0).count() as u64,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("read commands: {error}"),
+            }
+        }
+        assert_eq!(
+            received, COMMANDS,
+            "every queued command is written within three rounds of the scheduler"
+        );
+    }
+
+    /// ~keep The batches that queue while the writer waits on the socket go out in one write.
+    #[tokio::test]
+    async fn the_writer_writes_every_queued_batch_in_one_call() {
+        struct CountingWriter(Vec<usize>);
+
+        impl tokio::io::AsyncWrite for CountingWriter {
+            fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<std::io::Result<usize>> {
+                self.0.push(bytes.len());
+                Poll::Ready(Ok(bytes.len()))
+            }
+
+            fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let (queued, jobs) = mpsc::unbounded_channel();
+        for _ in 0..3 {
+            queued.send(b"{}\0".to_vec()).expect("batch queued");
+        }
+        drop(queued);
+        let mut writer = CountingWriter(Vec::new());
+        Router::write_commands(&mut writer, jobs).await.expect("the writer ends with its queue");
+        assert_eq!(writer.0, vec![9], "three queued batches are written in one call");
     }
 
     #[tokio::test]
