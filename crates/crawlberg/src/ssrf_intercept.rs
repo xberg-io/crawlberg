@@ -1628,6 +1628,13 @@ impl Watch {
         }
     }
 
+    pub(crate) fn has_intentional_terminal_response(&self) -> bool {
+        lock(&self.page.outcome)
+            .stopped_response
+            .as_ref()
+            .is_some_and(|response| response.ready && response.terminal_intercepted)
+    }
+
     pub(crate) fn take_stopped_response(&self) -> Option<StoppedResponse> {
         let mut outcome = lock(&self.page.outcome);
         if outcome.stopped_response.as_ref().is_some_and(|response| response.ready) {
@@ -3559,7 +3566,7 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
 /// Answer one paused request. It is judged by the policy of the watched page it belongs to,
 /// and refused when its page's watch is ending. A request of another client's page on an
 /// external browser is continued untouched; any other request is refused. A document response
-/// of a watched page's main frame is judged by [`main_frame_verdict`], and a main-frame document
+/// of a watched page's main frame is judged by [`main_frame_response_verdict`], and a main-frame document
 /// request the policy allows by [`navigation_verdict`].
 async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, paused: Paused<'_>) {
     let paused_at = paused.at;
@@ -3713,7 +3720,13 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
         return Verdict::Refuse;
     }
     if is_response_stage(event) {
-        return main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome);
+        return main_frame_response_verdict(
+            event,
+            &page.main_frame,
+            page.redirect_limit,
+            &page.outcome,
+            !page.config.download_documents,
+        );
     }
     #[cfg(test)]
     {
@@ -3899,11 +3912,22 @@ fn has_fetchable_redirect_target(response_url: &str, headers: &[HeaderEntry]) ->
 /// ~keep sandboxed `text/plain` header set. Chrome can neither wait on the origin body, follow
 /// ~keep the non-web `Location`, nor execute content; callers receive the original status,
 /// ~keep headers and URL with an empty body.
+#[cfg(test)]
 fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: &FrameId,
     limit: usize,
     state: &Mutex<InterceptOutcome>,
+) -> Verdict {
+    main_frame_response_verdict(event, main_frame, limit, state, false)
+}
+
+fn main_frame_response_verdict(
+    event: &EventRequestPaused,
+    main_frame: &FrameId,
+    limit: usize,
+    state: &Mutex<InterceptOutcome>,
+    skip_pdf_body: bool,
 ) -> Verdict {
     if *main_frame != event.frame_id {
         return Verdict::Continue(None);
@@ -3946,6 +3970,17 @@ fn main_frame_verdict(
                 render_redirect = true;
                 code
             }
+        }
+        Some(code)
+            if skip_pdf_body
+                && headers.iter().any(|header| {
+                    header.name.eq_ignore_ascii_case("content-type") && crate::html::is_pdf_content(&header.value, "")
+                }) =>
+        {
+            // ~keep Chrome's PDF viewer is not the origin document and a download may never fire
+            // ~keep load. With downloading disabled, report its headers without entering either.
+            render_redirect = true;
+            code
         }
         Some(code) if NO_DOCUMENT_STATUSES.contains(&code) => {
             if state.first_document_arrived {
@@ -4083,10 +4118,10 @@ mod tests {
         FIREWALL_STOP_TIMEOUT, FetchRequestId, FrameId, HeaderEntry, InterceptOutcome, Opening, Owner, PageContext,
         Registry, Shared, TargetId, TargetOwnership, TestDelays, Verdict, WatchedPage, adopt_target, begin_ending,
         child_policy_acknowledged, complete_stopped_response_outcome, controller_completed, events_of,
-        failed_document_response, install_watch, judge, lock, main_frame_verdict, navigation_verdict,
-        reconcile_created, reconcile_destroyed, record_document_failure_outcome, record_main_frame_commit,
-        registered_context, release, require_main_frame, serve_child_targets_with_timeout, ssrf_verdict,
-        ssrf_verdict_for_browser,
+        failed_document_response, install_watch, judge, lock, main_frame_response_verdict, main_frame_verdict,
+        navigation_verdict, reconcile_created, reconcile_destroyed, record_document_failure_outcome,
+        record_main_frame_commit, registered_context, release, require_main_frame, serve_child_targets_with_timeout,
+        ssrf_verdict, ssrf_verdict_for_browser,
     };
     use crate::net::ssrf::SsrfPolicy;
 
@@ -6526,6 +6561,38 @@ mod tests {
             "networkId": network_id,
         }))
         .expect("a paused response event")
+    }
+
+    #[test]
+    fn should_intercept_pdf_headers_only_when_document_downloading_is_disabled() {
+        let main_frame = FrameId::from("MAIN".to_owned());
+        for (mime, disabled, main, stopped) in [
+            ("application/pdf", true, true, true),
+            ("Application/PDF; charset=binary", true, true, true),
+            ("application/pdf", false, true, false),
+            ("application/pdf", true, false, false),
+            ("text/html", true, true, false),
+        ] {
+            let mut event = main_frame_response("PDF", 200);
+            event.response_headers = Some(vec![HeaderEntry::new("Content-Type", mime)]);
+            if !main {
+                event.frame_id = FrameId::from("CHILD".to_owned());
+            }
+            let state = Mutex::new(InterceptOutcome::default());
+            let verdict = main_frame_response_verdict(&event, &main_frame, 10, &state, disabled);
+            assert_eq!(
+                matches!(verdict, Verdict::RenderRedirect),
+                stopped,
+                "{mime}: {disabled}/{main}"
+            );
+            let state = state.into_inner().expect("outcome");
+            assert_eq!(state.stopped_response.is_some(), stopped);
+            if let Some(response) = state.stopped_response {
+                assert_eq!(response.status, 200);
+                assert_eq!(response.headers["content-type"], vec![mime.to_owned()]);
+                assert!(response.body_bytes.is_empty());
+            }
+        }
     }
 
     /// A paused main-frame document request for `url`, a redirect hop when `redirected` is set.

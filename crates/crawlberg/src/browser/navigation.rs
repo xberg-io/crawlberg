@@ -110,6 +110,9 @@ async fn render(
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 
+        if watch.has_intentional_terminal_response() {
+            return Ok(());
+        }
         wait_for_ready(page, config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
