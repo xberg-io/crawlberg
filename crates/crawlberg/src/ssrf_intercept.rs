@@ -2020,6 +2020,7 @@ enum ChildPendingKind {
     },
     RecursiveArm {
         target: TargetId,
+        other: bool,
         session: String,
         waiting_for_debugger: bool,
         structural_parent: Option<String>,
@@ -2568,6 +2569,7 @@ where
                             session,
                             waiting_for_debugger,
                             structural_parent,
+                            ..
                         } => {
                             if !acknowledged {
                                 if let Some(waiter) = root_waiters.remove(&target) {
@@ -2727,6 +2729,18 @@ where
                                 return false;
                             }
                         }
+                        // ~keep Chrome can detach an existing browser UI before its arm is answered (#701).
+                        // ~keep Retire only the observed unowned root session; a live or owned arm still fails closed.
+                        let registry = lock(&shared.registry);
+                        pending.retain(|_, command| !matches!(&command.kind,
+                            ChildPendingKind::RecursiveArm {
+                                target, session: pending_session, other: true, structural_parent: None,
+                                ..
+                            } if pending_session == session
+                                && !root_waiters.contains_key(target)
+                                && matches!(registry.ownership.get(target), None | Some(TargetOwnership::Other))
+                                && command.context.as_ref().is_none_or(|context| !registry.contexts.contains_key(context))
+                        ));
                         continue;
                     }
                     Some("Page.javascriptDialogOpening") => {
@@ -2924,6 +2938,7 @@ where
                     child_pending_in(
                         ChildPendingKind::RecursiveArm {
                             target,
+                            other,
                             session: attached.session_id,
                             waiting_for_debugger: attached.waiting_for_debugger,
                             structural_parent,
@@ -5045,6 +5060,97 @@ mod tests {
             .await
             .expect("stop child controller");
         assert!(controller.await.expect("child controller task"));
+    }
+
+    enum ArmOwner {
+        Other,
+        Owned,
+        RegisteredLater,
+        WatchedLater,
+    }
+
+    async fn a_target_arm_with_a_late_session_error(detached: bool, owner: ArmOwner) -> bool {
+        use async_tungstenite::tungstenite::Message;
+
+        let owned = matches!(owner, ArmOwner::Owned);
+        let survives = detached && matches!(owner, ArmOwner::Other);
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = if owned {
+            register_owned_context(&shared, &page)
+        } else {
+            BrowserContextId::new("DEFAULT")
+        };
+        let target = if owned { "ROOT" } else { "OTHER" };
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
+        send_attached_target_with_waiting(&mut socket, "S-OTHER", target, "browser_ui", None, &context, false).await;
+        let arm = next_child_message(&mut socket).await;
+        assert_eq!(arm["sessionId"], "S-OTHER");
+        match owner {
+            ArmOwner::RegisteredLater => lock(&shared.registry).register_context(context.clone(), None),
+            ArmOwner::WatchedLater => lock(&shared.registry).register_watched(TargetId::new(target), Arc::clone(&page)),
+            ArmOwner::Other | ArmOwner::Owned => {}
+        }
+        if detached {
+            let event = serde_json::json!({
+                "method": "Target.detachedFromTarget",
+                "params": { "sessionId": "S-OTHER", "targetId": target },
+            });
+            socket
+                .send(Message::Text(event.to_string().into()))
+                .await
+                .expect("send the session detach");
+        }
+        let error = serde_json::json!({
+            "id": arm["id"], "error": { "code": -32001, "message": "Session with given id not found." },
+        });
+        socket
+            .send(Message::Text(error.to_string().into()))
+            .await
+            .expect("send the late session error");
+        if survives {
+            send_attached_target_with_waiting(&mut socket, "S-NEXT", "NEXT", "browser_ui", None, &context, false).await;
+            let next = next_child_message(&mut socket).await;
+            assert_eq!(
+                next["sessionId"], "S-NEXT",
+                "the controller must process the event after the late error"
+            );
+            answer_child_command(&mut socket, &next).await;
+            commands
+                .send(super::ChildCommand::Stop)
+                .await
+                .expect("stop the controller");
+        }
+        tokio::time::timeout(Duration::from_secs(1), controller)
+            .await
+            .expect("a detached session must complete its stop or fail closed within the test bound")
+            .expect("join the child controller")
+    }
+
+    #[tokio::test]
+    async fn a_detached_other_session_retires_its_pending_recursive_arm() {
+        assert!(a_target_arm_with_a_late_session_error(true, ArmOwner::Other).await);
+    }
+
+    #[tokio::test]
+    async fn a_missing_live_other_session_still_fails_the_controller() {
+        assert!(!a_target_arm_with_a_late_session_error(false, ArmOwner::Other).await);
+    }
+
+    #[tokio::test]
+    async fn a_detached_owned_session_still_fails_its_pending_arm() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::Owned).await);
+    }
+
+    #[tokio::test]
+    async fn an_other_session_registered_after_arming_still_fails_when_detached() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::RegisteredLater).await);
+    }
+
+    #[tokio::test]
+    async fn an_other_session_watched_after_arming_still_fails_when_detached() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::WatchedLater).await);
     }
 
     #[tokio::test]
