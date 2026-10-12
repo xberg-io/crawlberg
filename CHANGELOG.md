@@ -35,6 +35,9 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- The vendored browser process `Command::get_args()` exposes a read-only iterator over the
+  configured arguments. It does not change their order or launch behavior.
+  ([#702](https://github.com/xberg-io/crawlberg/pull/702))
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
