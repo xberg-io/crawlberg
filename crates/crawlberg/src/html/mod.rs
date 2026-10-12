@@ -80,7 +80,6 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
 
 /// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
 /// lower case, without the colon). An address that does not parse has no scheme.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
     Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
 }
@@ -246,10 +245,13 @@ pub(crate) use detection::is_pdf_url;
 pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_content, is_page_content, is_pdf_content};
 pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
-pub(crate) use links::{effective_base_url, extract_links};
-pub(crate) use metadata::robots_meta_contents;
+pub(crate) use links::{append_refresh_header_link, effective_base_url, extract_links};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use metadata::{detect_meta_refresh, refresh_target};
+pub(crate) use metadata::detect_meta_refresh;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use metadata::immediate_refresh_target;
+pub(crate) use metadata::refresh_target;
+pub(crate) use metadata::robots_meta_contents;
 pub(crate) use raw_text::{MaskedHtml, PageScan, mask_raw_text_markup};
 #[cfg(test)]
 pub(crate) use real_tags::ATTRIBUTE_LIMIT;

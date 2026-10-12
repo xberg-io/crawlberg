@@ -150,6 +150,7 @@ impl RetryPolicy for SimpleRetryPolicy {
             | CrawlError::ConversionFailed { .. }
             | CrawlError::BrowserError { .. }
             | CrawlError::BrowserTimeout { .. }
+            | CrawlError::TooManyRedirects { .. }
             | CrawlError::SsrfPolicyViolation { .. }
             | CrawlError::Other { .. } => RetryDirective::Stop,
         }

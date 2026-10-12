@@ -1551,6 +1551,10 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.unsupported({required String message}) =
       CrawlError_Unsupported;
 
+  /// The HTTP redirect chain exceeded the configured redirect limit.
+  const factory CrawlError.tooManyRedirects({required String message}) =
+      CrawlError_TooManyRedirects;
+
   /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
   const factory CrawlError.ssrfPolicyViolation({
     required String url,

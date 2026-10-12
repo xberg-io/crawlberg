@@ -22,6 +22,12 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- HTTP scrape redirect loops and exhausted redirect budgets return `TooManyRedirects`
+  (`too_many_redirects:`), rather than a successful terminal 3xx response. Python's existing
+  `TooManyRedirectsError` retains its `SsrfError` base, which now also derives from `CrawlError`;
+  Java and C# preserve the corresponding generic catches with the same exception hierarchy. API responses use `TOO_MANY_REDIRECTS` with HTTP 502. Crawl chains
+  and browser rendering retain their bounded terminal-response behavior.
+
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
@@ -95,6 +101,15 @@ All notable changes to crawlberg are documented here.
   the `linux-<arch>-musl` platform.
 
 ### Fixed
+
+- Scrapes share the engine's robots.txt cache across requests, while credentialed requests
+  continue to bypass it. Headerless HTML fragments are recognized as pages, so failed Markdown
+  conversion reports `conversion_failed` instead of silently omitting Markdown.
+- Delayed HTTP `Refresh` targets are discovered as links against the response URL in scrape,
+  crawl and map, independently of an HTML base element, without immediately following the delay.
+- Maps apply the engine's host limiter to robots, sitemap discovery, recursive children, redirects
+  and retries, and record every response status including 429. A sitemap index with many children
+  now incurs one configured delay for each request to the same host.
 
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.

@@ -120,7 +120,7 @@ impl CrawlEngine {
             &final_url,
             &response,
             page_scan,
-            &self.config,
+            self,
             self.document_filter.as_deref(),
         )
         .await?;
@@ -216,7 +216,7 @@ impl CrawlEngine {
             &final_url,
             &crawl_resp,
             None,
-            &self.config,
+            self,
             self.document_filter.as_deref(),
         )
         .await?;

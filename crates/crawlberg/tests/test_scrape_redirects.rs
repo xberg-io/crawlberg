@@ -107,8 +107,7 @@ async fn scrape_follows_chain_302_302_200() {
     assert!(page.html.contains("Destination"));
 }
 
-/// When the redirect chain forms a cycle (A→B→A), scrape() must stop without
-/// looping and return the most recent 3xx response (not raise).
+/// ~keep Public HTTP scrape classifies a cycle as redirect exhaustion (#676).
 #[tokio::test]
 async fn scrape_stops_on_redirect_cycle() {
     let mock = MockServer::start().await;
@@ -137,13 +136,7 @@ async fn scrape_stops_on_redirect_cycle() {
     let url = format!("{}/a", mock.uri());
     let result = scrape(&handle, &url).await;
 
-    assert!(
-        result.is_ok(),
-        "scrape must not raise on a redirect cycle: {:?}",
-        result.err()
-    );
-    let page = result.unwrap();
-    assert_eq!(page.status_code, 302, "final status must be the unfollowed 3xx");
+    assert!(matches!(result, Err(crawlberg::CrawlError::TooManyRedirects { .. })));
 }
 
 /// Regression test for a seed-normalization bug: when the crawl is seeded with a bare
@@ -231,13 +224,7 @@ async fn scrape_stops_at_max_redirects() {
     let url = format!("{}/r1", mock.uri());
     let result = scrape(&handle, &url).await;
 
-    assert!(
-        result.is_ok(),
-        "scrape must not raise when max_redirects is exceeded: {:?}",
-        result.err()
-    );
-    let page = result.unwrap();
-    assert_eq!(page.status_code, 302, "final status must be the last unfollowed 3xx");
+    assert!(matches!(result, Err(crawlberg::CrawlError::TooManyRedirects { .. })));
 }
 
 /// scrape() must populate `final_url` with the post-redirect URL, not the

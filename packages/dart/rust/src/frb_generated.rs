@@ -2062,6 +2062,9 @@ const _: fn() = || {
         crate::CrawlError::Unsupported { message } => {
             let _: String = message;
         }
+        crate::CrawlError::TooManyRedirects { message } => {
+            let _: String = message;
+        }
         crate::CrawlError::SsrfPolicyViolation { url, reason } => {
             let _: String = url;
             let _: String = reason;
@@ -2999,6 +3002,10 @@ impl SseDecode for crate::CrawlError {
                 return crate::CrawlError::Unsupported { message: var_message };
             }
             18 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::TooManyRedirects { message: var_message };
+            }
+            19 => {
                 let mut var_url = <String>::sse_decode(deserializer);
                 let mut var_reason = <String>::sse_decode(deserializer);
                 return crate::CrawlError::SsrfPolicyViolation {
@@ -3006,7 +3013,7 @@ impl SseDecode for crate::CrawlError {
                     reason: var_reason,
                 };
             }
-            19 => {
+            20 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::CrawlError::Other { message: var_message };
             }
@@ -4932,13 +4939,16 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
             crate::CrawlError::Unsupported { message } => {
                 [17.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
+            crate::CrawlError::TooManyRedirects { message } => {
+                [18.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
             crate::CrawlError::SsrfPolicyViolation { url, reason } => [
-                18.into_dart(),
+                19.into_dart(),
                 url.into_into_dart().into_dart(),
                 reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::CrawlError::Other { message } => [19.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Other { message } => [20.into_dart(), message.into_into_dart().into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -6113,13 +6123,17 @@ impl SseEncode for crate::CrawlError {
                 <i32>::sse_encode(17, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+            crate::CrawlError::TooManyRedirects { message } => {
                 <i32>::sse_encode(18, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+                <i32>::sse_encode(19, serializer);
                 <String>::sse_encode(url, serializer);
                 <String>::sse_encode(reason, serializer);
             }
             crate::CrawlError::Other { message } => {
-                <i32>::sse_encode(19, serializer);
+                <i32>::sse_encode(20, serializer);
                 <String>::sse_encode(message, serializer);
             }
             _ => {

@@ -3042,11 +3042,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 17:
         return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
       case 18:
+        return CrawlError_TooManyRedirects(message: dco_decode_String(raw[1]));
+      case 19:
         return CrawlError_SsrfPolicyViolation(
           url: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
-      case 19:
+      case 20:
         return CrawlError_Other(message: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -4585,10 +4587,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_message = sse_decode_String(deserializer);
         return CrawlError_Unsupported(message: var_message);
       case 18:
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_TooManyRedirects(message: var_message);
+      case 19:
         var var_url = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
-      case 19:
+      case 20:
         var var_message = sse_decode_String(deserializer);
         return CrawlError_Other(message: var_message);
       default:
@@ -6465,12 +6470,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case CrawlError_Unsupported(message: final message):
         sse_encode_i_32(17, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+      case CrawlError_TooManyRedirects(message: final message):
         sse_encode_i_32(18, serializer);
+        sse_encode_String(message, serializer);
+      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+        sse_encode_i_32(19, serializer);
         sse_encode_String(url, serializer);
         sse_encode_String(reason, serializer);
       case CrawlError_Other(message: final message):
-        sse_encode_i_32(19, serializer);
+        sse_encode_i_32(20, serializer);
         sse_encode_String(message, serializer);
     }
   }

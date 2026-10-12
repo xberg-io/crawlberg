@@ -923,7 +923,7 @@ async fn fetch_and_extract(
     let header_robots =
         crate::scrape::RobotsDirectives::from_header_values(headers.get("x-robots-tag"), &robots_user_agent);
 
-    let page_ext = tokio::task::spawn_blocking(move || {
+    let mut page_ext = tokio::task::spawn_blocking(move || {
         blocking_extract_page(
             &url_for_extract,
             &content_type_clone,
@@ -936,6 +936,11 @@ async fn fetch_and_extract(
     .await
     .map_err(|e| (entry.clone(), CrawlError::other(format!("extraction task failed: {e}"))))?;
 
+    if !page_ext.is_binary && !page_ext.is_pdf {
+        let document_url = Url::parse(&final_url)
+            .map_err(|error| (entry.clone(), CrawlError::other(format!("invalid final URL: {error}"))))?;
+        crate::html::append_refresh_header_link(&mut page_ext.extraction.links, &headers, &document_url);
+    }
     Ok(FetchOutcome::Fetched(Box::new(FetchResult {
         entry,
         status_code,

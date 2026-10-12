@@ -915,6 +915,8 @@ features = ["interact", "browser-chromiumoxide"]
 
 [crates.python]
 module_name = "_crawlberg"
+# ~keep Preserve existing managed runtime shutdown and fork guards across generator upgrades.
+async_runtime = "managed"
 send_sync_types = ["CrawlEngineHandle"]
 
 [crates.python.stubs]

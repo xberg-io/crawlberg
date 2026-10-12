@@ -112,6 +112,34 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, document_url: &Url) -> Vec<Li
     links
 }
 
+/// Include the response's declarative refresh target in link discovery.
+/// ~keep HTTP Refresh resolves against the response URL, independently of an HTML base element.
+pub(crate) fn append_refresh_header_link(
+    links: &mut Vec<LinkInfo>,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+    document_url: &Url,
+) {
+    let Some(target) = headers
+        .get("refresh")
+        .and_then(|values| values.first())
+        .and_then(|value| super::refresh_target(value))
+        .and_then(|target| fetchable_address(&target, document_url))
+    else {
+        return;
+    };
+    if links.iter().any(|link| link.url == target.as_str()) {
+        return;
+    }
+    let link_type = classify_link(target.as_str(), &target, document_url);
+    links.push(LinkInfo {
+        url: target.into(),
+        text: String::new(),
+        link_type,
+        rel: None,
+        nofollow: false,
+    });
+}
+
 /// Rewrite every real `<a>` start tag of `tags` in `html` into unambiguous form: its name lower-cased, each
 /// attribute once in source order, double-quoted, as html5ever's tokenizer reads it.
 ///

@@ -10,9 +10,8 @@ use super::CrawlEngine;
 use super::chain_claim::ChainClaim;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
-use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
-use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
+use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -139,6 +138,7 @@ pub(crate) struct RedirectPolicy<'a> {
     /// What this policy's one chain holds on the frontier: its starting URL and every hop it
     /// claimed.
     chain: ChainClaim,
+    pub(crate) throttle_robots: bool,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -159,6 +159,7 @@ impl<'a> RedirectPolicy<'a> {
             urls_filtered: 0,
             pending_user_agent: None,
             chain: ChainClaim::default(),
+            throttle_robots: false,
         }
     }
 
@@ -266,7 +267,15 @@ impl<'a> RedirectPolicy<'a> {
         let outcome = match self.outcomes.get(origin) {
             Some(outcome) => Arc::clone(outcome),
             None => {
-                let outcome = resolve_robots_outcome(self.engine, self.client, parsed, url, user_agent).await;
+                let outcome = resolve_robots_outcome_with_limiter(
+                    self.engine,
+                    self.client,
+                    parsed,
+                    url,
+                    user_agent,
+                    self.throttle_robots.then_some(self.engine.rate_limiter.as_ref()),
+                )
+                .await;
                 self.outcomes.insert(origin.clone(), Arc::clone(&outcome));
                 outcome
             }
@@ -349,31 +358,47 @@ impl crate::http::HopPolicy for RedirectPolicy<'_> {
 /// credentialed request (never shared with another caller of the same origin), and
 /// `AllowAll` when robots.txt is off.
 ///
-/// ~keep `pub(super)`: the one place that resolves a robots.txt outcome for an agent, shared by
-/// `admits` (judging the agent chosen for the current tier) and
-/// `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm (re-judging the browser's own agent on
-/// escalation), so the two can never resolve the same `(origin, agent)` two different ways
-/// (crawlberg#423).
-pub(super) async fn resolve_robots_outcome(
+/// ~keep The shared robots resolver is used by scrape extraction, admission and browser escalation;
+/// ~keep all callers resolve the same `(origin, agent)` through the same credential-aware cache.
+pub(crate) async fn resolve_robots_outcome(
     engine: &CrawlEngine,
     client: &reqwest::Client,
     parsed: &Url,
     url: &str,
     agent: &str,
 ) -> Arc<RobotsOutcome> {
+    resolve_robots_outcome_with_limiter(engine, client, parsed, url, agent, None).await
+}
+
+async fn resolve_robots_outcome_with_limiter(
+    engine: &CrawlEngine,
+    client: &reqwest::Client,
+    parsed: &Url,
+    url: &str,
+    agent: &str,
+    limiter: Option<&dyn crate::traits::RateLimiter>,
+) -> Arc<RobotsOutcome> {
+    let fetch = || async {
+        crate::helpers::fetch_robots_document_with_policy(
+            url,
+            &engine.config,
+            client,
+            agent,
+            &mut crate::http::RateLimited::new(crate::http::AdmitEvery, limiter),
+        )
+        .await
+        .0
+    };
     if !engine.config.respect_robots_txt {
         return Arc::new(RobotsOutcome::AllowAll);
     }
     // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
     // ~keep would hand it to the next crawl of the same origin.
     if crate::net::credentials::is_credentialed(&engine.config, parsed) {
-        return Arc::new(fetch_robots_outcome(url, &engine.config, client, agent).await);
+        return Arc::new(fetch().await);
     }
     let key = RobotsCacheKey::new(parsed, agent);
-    engine
-        .robots_cache
-        .get_or_fetch(key, || fetch_robots_outcome(url, &engine.config, client, agent))
-        .await
+    engine.robots_cache.get_or_fetch(key, fetch).await
 }
 
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.
@@ -450,6 +475,9 @@ pub(crate) async fn follow_redirects(
     override_user_agent: Option<&str>,
     hop: Hop,
 ) -> Result<RedirectResolution, CrawlError> {
+    // ~keep Public HTTP scrape reports exhausted chains; policy-bearing crawl chains retain
+    // ~keep their terminal response so one cyclic page does not abort the crawl (#676).
+    let report_redirect_limit = policy.is_none() && override_user_agent.is_none();
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
     let mut browser_used = false;
@@ -539,6 +567,16 @@ pub(crate) async fn follow_redirects(
 
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
+            if report_redirect_limit
+                && !hop_browser_used
+                && let Some(target) = http_redirect_target(&resp, &chain.current_url)
+                && (chain.redirect_count >= max_redirects || chain.unseen_key(target.as_str()).is_none())
+            {
+                return Err(CrawlError::too_many_redirects(format!(
+                    "redirect loop or limit {max_redirects} reached at {}",
+                    redact_url_credentials(target.as_str())
+                )));
+            }
             prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
@@ -840,7 +878,7 @@ fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Opti
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
     let refresh = resp.header("refresh")?;
-    let target = refresh_target(refresh)?;
+    let target = crate::html::immediate_refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
 
