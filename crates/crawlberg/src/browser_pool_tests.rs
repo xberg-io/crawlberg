@@ -1933,6 +1933,84 @@ async fn controller_loss_immediately_reaps_the_owned_browser() {
     pool.shutdown().await;
 }
 
+#[tokio::test]
+async fn should_reap_the_retired_browser_before_replacing_a_failed_controller() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(Into::into),
+        ..BrowserPoolConfig::default()
+    });
+    pool.warm()
+        .await
+        .expect("Chrome must launch for the retirement regression");
+    let guard = pool.state.lock().await;
+    let original = guard.as_ref().expect("a warm pool must hold a browser");
+    let profile = original.user_data_dir.as_ref().expect("an owned profile");
+    let old_profile = profile.path().to_path_buf();
+    let old_process = profile.teardown().launched.expect("the owned Chrome identity");
+    let old_generation = original.generation;
+    let ended = original.handler_end.clone();
+    let controller = original.handler_handle.abort_handle();
+    let next = pool.acquire_page();
+    tokio::pin!(next);
+    // ~keep Queue acquisition ahead of the supervisor on Tokio's FIFO mutex, so replacement
+    // ~keep itself must reap the failed generation rather than depending on the supervisor.
+    assert!(futures::poll!(next.as_mut()).is_pending());
+    controller.abort();
+    tokio::time::timeout(Duration::from_secs(15), ended.ended())
+        .await
+        .expect("the aborted controller must publish its end");
+    drop(guard);
+
+    let replacement = tokio::time::timeout(Duration::from_secs(60), next)
+        .await
+        .expect("replacement must finish")
+        .expect("replacement page must open");
+    let new_generation = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .expect("replacement browser")
+        .generation;
+    let old_identity_exists = old_process.has_its_pid(start_mark);
+    let old_profile_exists = old_profile.exists();
+    let old_profile_users = chrome_process_count_for_profile(&old_profile);
+    let new_value = tokio::time::timeout(Duration::from_secs(15), replacement.page().evaluate("21 * 2")).await;
+    replacement.close().await;
+    pool.shutdown().await;
+    // ~keep A deliberately broken retirement must still clean up its old process before the
+    // ~keep assertion fails. The live-profile record owns the same teardown turn as the pool.
+    let abandoned = {
+        let profiles = live_profiles();
+        profiles.get(&old_profile).map(|profile| ProfileTeardown {
+            owner: profile.owner,
+            dir: old_profile.clone(),
+            launched: profile.launched,
+            tree: profile.tree.clone(),
+            chrome: profile.chrome.clone(),
+            turn: Arc::clone(&profile.turn),
+        })
+    };
+    tokio::task::spawn_blocking(move || drop(abandoned))
+        .await
+        .expect("retired browser fallback cleanup");
+
+    assert_ne!(new_generation, old_generation);
+    assert_eq!(
+        new_value
+            .expect("new controller must answer within the CDP deadline")
+            .expect("new controller must answer CDP")
+            .into_value::<u64>()
+            .expect("numeric CDP result"),
+        42
+    );
+    assert_eq!(
+        (old_identity_exists, old_profile_exists, old_profile_users),
+        (false, false, 0),
+        "the original Chrome identity, profile and profile users must be gone before replacement returns"
+    );
+}
+
 /// A pool whose Chrome was killed launches a new one for the next page, and still shuts down.
 ///
 /// ~keep chromiumoxide 0.9.1's handler stays pending after its websocket breaks, so a handler loop

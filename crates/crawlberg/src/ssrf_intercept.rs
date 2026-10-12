@@ -756,6 +756,8 @@ impl Drop for Opening {
 struct WatchSetup {
     commands: mpsc::UnboundedSender<Command>,
     root: TargetId,
+    // ~keep Cancellation must end the exact queued policy even before its ACK arrives.
+    queued: Option<Arc<WatchedPage>>,
     armed: bool,
 }
 
@@ -764,12 +766,14 @@ impl WatchSetup {
         Self {
             commands: commands.clone(),
             root,
+            queued: None,
             armed: true,
         }
     }
 
     fn disarm(&mut self) {
         self.armed = false;
+        self.queued = None;
     }
 }
 
@@ -790,7 +794,18 @@ async fn wait_for_controller_failure(shared: &Shared) {
 impl Drop for WatchSetup {
     fn drop(&mut self) {
         if self.armed {
-            let _ = self.commands.send(Command::Abandon(self.root.clone()));
+            let command = match self.queued.take() {
+                Some(page) => {
+                    begin_ending(&page);
+                    Command::End {
+                        page,
+                        close_page: true,
+                        done: None,
+                    }
+                }
+                None => Command::Abandon(self.root.clone()),
+            };
+            let _ = self.commands.send(command);
         }
     }
 }
@@ -831,6 +846,8 @@ struct TestDelays {
     watch_handoff_gate: Option<Arc<UrlGate>>,
     /// Hold registration after opening returns, to exercise the watch command ordering. ~keep
     opened_gate: Option<Arc<tokio::sync::Semaphore>>,
+    /// Hold an installed watch before acknowledging its caller, to exercise cancellation. ~keep
+    watch_ack_gate: Option<Arc<UrlGate>>,
     /// After frame attribution snapshots target ownership, until the test gives one permit. ~keep
     attribute_snapshot_gate: Option<Arc<UrlGate>>,
     /// Before a lifecycle reconciliation queries Chrome, until the test gives one permit. ~keep
@@ -1536,6 +1553,7 @@ impl FirewallHandle {
                 ack,
             ))
             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
+        setup.queued = Some(Arc::clone(&watched));
         match enabled.await {
             Ok(Ok(owned_context)) => {
                 let watch = Watch {
@@ -1547,6 +1565,7 @@ impl FirewallHandle {
                     page: watched,
                     ended: false,
                 };
+                setup.disarm();
                 disable_primary_child_attach(page).await?;
                 let (armed, boundary) = oneshot::channel();
                 self.child_commands
@@ -1560,7 +1579,6 @@ impl FirewallHandle {
                     .await
                     .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?
                     .map_err(CrawlError::browser_error)?;
-                setup.disarm();
                 Ok(watch)
             }
             Ok(Err(e)) => Err(CrawlError::browser_error(e)),
@@ -2817,24 +2835,31 @@ async fn serve(
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
                 Some(Command::Watch(page, navigated, failed, answers, ack)) => {
-                    let mut registry = lock(&shared.registry);
-                    // ~keep `Opened` precedes `Watch` on this queue; capture its context only after registration.
-                    let Some(owned_context) = registry.opened.get(&page.root).cloned() else {
-                        drop(registry);
-                        let _ = ack.send(Err(
-                            "the SSRF check can only watch a page it opened; open the page with the check".to_owned(),
-                        ));
-                        continue;
+                    let owned_context = {
+                        let mut registry = lock(&shared.registry);
+                        // ~keep `Opened` precedes `Watch` on this queue; capture its context only after registration.
+                        let Some(owned_context) = registry.opened.get(&page.root).cloned() else {
+                            let _ = ack.send(Err(
+                                "the SSRF check can only watch a page it opened; open the page with the check".to_owned(),
+                            ));
+                            continue;
+                        };
+                        if let Err(error) = install_watch(&mut registry, &page) {
+                            let _ = ack.send(Err(error));
+                            continue;
+                        }
+                        owned_context
                     };
-                    if let Err(error) = install_watch(&mut registry, &page) {
-                        drop(registry);
-                        let _ = ack.send(Err(error));
-                        continue;
-                    }
-                    drop(registry);
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
                     dialogs.push(answers);
+                    #[cfg(test)]
+                    if let Some(gate) = &shared.delays.watch_ack_gate {
+                        lock(&gate.held).push(page.root.inner().clone());
+                        if let Ok(permit) = gate.permits.acquire().await {
+                            permit.forget();
+                        }
+                    }
                     let _ = ack.send(Ok(owned_context));
                 }
                 Some(Command::End { page, close_page, done }) => {
@@ -4928,6 +4953,77 @@ mod tests {
             !healthy,
             "unclassified pending work must fail closed before acknowledging drainage"
         );
+    }
+
+    #[tokio::test]
+    async fn a_retired_context_drain_expires_before_later_pending_work() {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let context = register_owned_context(&shared, &page);
+        retire_child_test_context(&shared, &context);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(2)).await;
+        tokio::time::pause();
+        // ~keep Keep the runtime runnable so its paused clock advances only when this test requests it.
+        let keep_awake = tokio::spawn(async {
+            loop {
+                tokio::task::yield_now().await;
+            }
+        });
+        let (done, drained) = oneshot::channel();
+        commands
+            .send(super::ChildCommand::Drain {
+                context: context.clone(),
+                done,
+            })
+            .await
+            .expect("request retired context drain");
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        send_attached_target_with_waiting(&mut socket, "LATE-SESSION", "LATE-TAB", "tab", None, &context, true).await;
+        let later_arm = next_child_message(&mut socket).await;
+        assert_eq!(later_arm["method"], "Target.setAutoAttach");
+        socket
+            .send(async_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("confirm empty census while later work remains pending");
+        // ~keep Ping/Pong on this socket proves the earlier census reply was processed before time advances.
+        socket
+            .send(async_tungstenite::tungstenite::Message::Ping(vec![1].into()))
+            .await
+            .expect("send census processing barrier");
+        assert!(matches!(
+            socket.next().await,
+            Some(Ok(async_tungstenite::tungstenite::Message::Pong(_)))
+        ));
+        tokio::time::advance(Duration::from_millis(1100)).await;
+        let harness_bound = std::time::Instant::now() + Duration::from_secs(2);
+        while !controller.is_finished() && std::time::Instant::now() < harness_bound {
+            tokio::task::yield_now().await;
+        }
+        let finished_at_drain_deadline = controller.is_finished();
+        if !finished_at_drain_deadline {
+            commands
+                .send(super::ChildCommand::Stop)
+                .await
+                .expect("stop test controller");
+        }
+        let healthy = controller.await.expect("controller task");
+        keep_awake.abort();
+        let _ = keep_awake.await;
+        tokio::time::resume();
+        let acknowledged = drained.await;
+        assert!(
+            finished_at_drain_deadline,
+            "the drain deadline must fail closed before the later arm deadline, instead of waiting indefinitely"
+        );
+        assert!(!healthy, "the expired drain must fail the controller closed");
+        assert!(acknowledged.is_err(), "an expired drain must never be acknowledged");
     }
 
     #[tokio::test]
@@ -8146,6 +8242,158 @@ mod race_tests {
         drop(page);
         close(browser).await;
         result.expect("watch must wait for the earlier Opened command instead of reading an unregistered context");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_a_watch_queued_behind_registration_releases_its_policy() {
+        let test_name = "cancelling_a_watch_queued_behind_registration_releases_its_policy";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let opened = Arc::new(tokio::sync::Semaphore::new(0));
+        let handoff = closed_match_gate();
+        handoff.permits.add_permits(1);
+        let firewall = BrowserFirewall::start_with(
+            Arc::clone(&browser),
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays {
+                opened_gate: Some(Arc::clone(&opened)),
+                watch_handoff_gate: Some(Arc::clone(&handoff)),
+                ..TestDelays::default()
+            },
+        )
+        .await
+        .expect("start firewall");
+        let handle = firewall.handle();
+        let page = handle.new_page(None, None).await.expect("open owned page");
+        let configuration = config();
+        {
+            let watching = handle.watch(&page, &configuration, 0);
+            tokio::pin!(watching);
+            tokio::select! {
+                biased;
+                _ = &mut watching => panic!("watch cannot complete while page registration is held"),
+                held = wait_held_count(&handoff, 1) => assert!(held, "watch must reach its queued handoff"),
+            }
+        }
+        assert!(!lock(&handle.shared.registry).opened.contains_key(page.target_id()));
+        opened.add_permits(1);
+        let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let empty = lock(&handle.shared.registry).pages.is_empty();
+                let contexts = browser
+                    .execute(GetBrowserContextsParams::default())
+                    .await
+                    .expect("context census");
+                if empty && contexts.result.browser_context_ids.is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let retained = lock(&handle.shared.registry).pages.len();
+        let disposed = browser
+            .execute(GetBrowserContextsParams::default())
+            .await
+            .expect("context census")
+            .result
+            .browser_context_ids
+            .len();
+        let failed = handle.shared.failed.load(Ordering::Acquire);
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert_eq!(disposed, 0, "the queued cancellation must dispose its Chrome context");
+        assert_eq!(
+            retained, 0,
+            "the queued cancellation must release the subsequently installed policy"
+        );
+        assert!(cleanup.is_ok(), "queued cancellation cleanup must complete");
+        assert!(!failed, "cancellation must preserve the healthy controller");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_a_watch_before_its_acknowledgement_releases_every_installed_policy() {
+        let test_name = "cancelling_a_watch_before_its_acknowledgement_releases_every_installed_policy";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let gate = closed_match_gate();
+        let firewall = BrowserFirewall::start_with(
+            Arc::clone(&browser),
+            BrowserOrigin::Launched,
+            PageContext::Isolated,
+            TestDelays {
+                watch_ack_gate: Some(Arc::clone(&gate)),
+                ..TestDelays::default()
+            },
+        )
+        .await
+        .expect("start firewall");
+        let handle = firewall.handle();
+        let mut retained = Vec::new();
+        let mut disposed = Vec::new();
+        for attempt in 0..3 {
+            let page = handle.new_page(None, None).await.expect("open an owned page");
+            let page_for_watch = page.clone();
+            let watching_handle = handle.clone();
+            let watching = tokio::spawn(async move { watching_handle.watch(&page_for_watch, &config(), 0).await });
+            assert!(
+                wait_held_count(&gate, attempt + 1).await,
+                "watch must reach the acknowledgement gate"
+            );
+            assert!(
+                !watching.is_finished(),
+                "the caller must still be waiting for its watch acknowledgement"
+            );
+            watching.abort();
+            assert!(watching.await.err().expect("cancel watch").is_cancelled());
+            gate.permits.add_permits(1);
+            let cleanup = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let empty = lock(&handle.shared.registry).pages.is_empty();
+                    let contexts = browser
+                        .execute(GetBrowserContextsParams::default())
+                        .await
+                        .expect("context census");
+                    if empty && contexts.result.browser_context_ids.is_empty() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await;
+            retained.push(lock(&handle.shared.registry).pages.len());
+            disposed.push(
+                browser
+                    .execute(GetBrowserContextsParams::default())
+                    .await
+                    .expect("context census")
+                    .result
+                    .browser_context_ids
+                    .len(),
+            );
+            if cleanup.is_err() && handle.shared.failed.load(Ordering::Acquire) {
+                break;
+            }
+            drop(page);
+        }
+        let failed = handle.shared.failed.load(Ordering::Acquire);
+        firewall.stop().await;
+        close(browser).await;
+        assert_eq!(
+            disposed,
+            vec![0, 0, 0],
+            "each cancellation must dispose its Chrome context"
+        );
+        assert_eq!(
+            retained,
+            vec![0, 0, 0],
+            "each cancellation must release its installed policy before shutdown"
+        );
+        assert!(!failed, "cancellation must preserve the healthy controller");
     }
 
     /// How a test reads the refusal of a request to a denied address a watched page sends.
