@@ -283,7 +283,9 @@ impl CrawlEngineBuilder {
 
         Ok(CrawlEngine {
             config,
-            frontier: self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
+            frontier: super::frontier_claim::GuardedFrontier::wrap(
+                self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
+            ),
             rate_limiter: self
                 .rate_limiter
                 .unwrap_or_else(|| Arc::new(default_rate_limiter(rate_limit_ms, rate_limit_jitter_ratio))),
@@ -305,6 +307,8 @@ impl CrawlEngineBuilder {
             robots_cache: self.robots_cache.unwrap_or_default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
+            #[cfg(feature = "browser")]
+            crawl_cookies: None,
         })
     }
 }

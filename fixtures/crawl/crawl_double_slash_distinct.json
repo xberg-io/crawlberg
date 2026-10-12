@@ -1,0 +1,55 @@
+{
+	"id": "crawl_double_slash_distinct",
+	"description": "Fetches distinct pages separated by an empty path segment",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-double-slash-distinct",
+		"title": "Fetches distinct pages separated by an empty path segment"
+	},
+	"tags": [
+		"crawl",
+		"normalization"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><a href=\"/a/b\">Single</a><a href=\"/a//b\">Double</a></body></html>"
+			},
+			{
+				"path": "/a/b",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Single separator</h1></body></html>"
+			},
+			{
+				"path": "/a//b",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Empty path segment</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 3
+		}
+	]
+}

@@ -33,6 +33,30 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
+  page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
+  `/item?` are two pages. The same parameters in a different order are still one page. A site
+  with query parameters gives more pages, so a crawl reaches `max_pages` earlier. A session
+  parameter in a link gives one page for each value unless `strip_tracking_params` removes it. A
+  configuration that does not have the field now means `true`. Set `dedup_include_query` to
+  `false` to get the earlier result. (#637)
+- **BREAKING: a crawl keeps empty path segments.** `/a/b` and `/a//b` are two pages, requested and
+  reported separately, also when `dedup_include_query` is `false`. No setting merges them again.
+  `normalized_url` and `map` keep the doubled separator. (#636)
+- **BREAKING (go): `CrawlConfig.DedupIncludeQuery` is now `*bool`.** `nil` uses the new default,
+  and a pointer to `false` merges queries. A struct literal that sets `DedupIncludeQuery: true`
+  does not compile until it uses a pointer. (#637)
+- **BREAKING: a frontier store with keys of an earlier version requests those pages again.** The
+  key of a page now keeps its query and its empty path segments. A custom `Frontier` that keeps
+  its seen keys between runs holds the earlier keys, so a page with a query or with a doubled
+  slash gets a new key and is requested one more time. (#636, #637)
+- **`Frontier` has a new method, `claim`.** It marks an address as seen and returns `true` only to
+  the first caller. The engine calls it for each discovered link and each redirect target, in
+  place of `is_seen` and then `mark_seen`. The default implementation calls those two methods, so
+  a custom frontier needs no change: within one engine and its clones, the engine lets one call
+  at a time claim a given address. A frontier that more than one process uses must implement
+  `claim` as one conditional write. Before, a custom frontier that answers slowly let a page that
+  several redirects point to be requested and reported once for each redirect. (#638)
 - **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
   and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
   both. Before, it requested the one it met first and never requested the other.
@@ -58,6 +82,17 @@ All notable changes to crawlberg are documented here.
 - `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
   declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
   longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
+- **BREAKING (python): an error that `scrape`, `crawl`, `batch_scrape`, `batch_crawl`, `interact`
+  or `map_urls` raises is a `CrawlError` subclass, such as `CrawlConnectionError`.** Before, it
+  was a `RuntimeError`. `CrawlError` is not a `RuntimeError`, so `except RuntimeError` no longer
+  catches these errors. Catch `CrawlError`. (#618)
+- **Dart: the package needs Dart 3.13 or later.** The SDK floor was 3.11. A project on Dart 3.11
+  or 3.12 cannot resolve the package.
+- **Ruby: the gem needs `sorbet-runtime` 0.6 or later.** It accepted 0.5 before. A bundle that
+  locks 0.5 must update it.
+- The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
+  and `-platform` names the release platform. On a Linux host with musl, the command now selects
+  the `linux-<arch>-musl` platform.
 
 ### Fixed
 
@@ -66,6 +101,20 @@ All notable changes to crawlberg are documented here.
 
 - Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
   controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
+- With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
+  pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
+  one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
+  does not get them. In automatic mode, a cookie that a response over HTTP or from a bypass
+  provider sets or deletes is not sent to later Chrome pages with its old value. With a session
+  pool and `session_affinity`, the page kept for a site keeps its cookies: a later crawl gets
+  them, and so does a later page after a response over HTTP deleted one. (#603)
+- Python async runtime shuts down automatically at interpreter exit and rejects inherited
+  runtime work after a process fork. The runtime starts at the first async call, not at import.
+  A call after the exit hooks ran raises `RuntimeError`. (#633)
+- Swift: the `mode`, `backend` and `wait` of `BrowserConfig`, `LinkInfo.linkType`,
+  `ImageInfo.source`, `FeedInfo.feedType`, `DownloadedAsset.assetCategory` and the `allowlist`
+  and `denylist` of `SsrfPolicy` had no effect: the binding passed the default value. It now
+  passes the value that the caller sets.
 - With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
   kept for a site failed at once with a browser error: every second fetch of the site. The engine
   closed the page it kept. The kept page now serves the next fetch. (#653)
