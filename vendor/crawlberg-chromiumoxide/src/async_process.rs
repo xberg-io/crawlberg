@@ -632,11 +632,12 @@ mod job {
                     .expect("assign member to job");
                 resume(child.id()).expect("resume member");
             }
-            let mut ids = process_ids(job.job.as_raw_handle(), 2).expect("retry larger member query");
-            ids.sort_unstable();
-            let mut expected: Vec<_> = children.0.iter().map(std::process::Child::id).collect();
-            expected.sort_unstable();
-            assert_eq!(ids, expected);
+            let ids = process_ids(job.job.as_raw_handle(), 2).expect("retry larger member query");
+            // ~keep A resumed member can start processes of its own, and the job holds them too.
+            // ~keep The list holds the three members and can hold more.
+            for child in &children.0 {
+                assert!(ids.contains(&child.id()), "member {} is not in {ids:?}", child.id());
+            }
             assert!(job.stop(Instant::now() + Duration::from_secs(10)));
             for child in &mut children.0 {
                 child.wait().expect("reap ended member");
