@@ -177,10 +177,15 @@ pub struct BrowserConfig {
     #[cfg_attr(alef, alef(sensitive))]
     pub chrome_args: Vec<String>,
     /// Launch Chrome on a private debugging pipe, not on a debugging port. Default: `false`.
-    /// With `true`, the launched Chrome listens on no TCP port and exits when the process that
-    /// started it ends, however that process ends. Unix only: on Windows the launch uses the
-    /// debugging port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is
-    /// set, with the native backend, and by scrapes and crawls that use a shared browser pool.
+    /// With `true`, the launched Chrome listens on no TCP port, and it exits when the last
+    /// process that holds the pipe ends: the process that started it, and any process which
+    /// that one forked without `exec`. Unix only: on Windows the launch uses the debugging
+    /// port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is set, with
+    /// the native backend, and by scrapes and crawls that use a shared browser pool.
+    // ~keep Not in the generated bindings: a new constructor argument is source-breaking in PHP,
+    // ~keep Python, WebAssembly, Java, Swift, Dart and Zig with alef 0.109.1. Remove the skip with
+    // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
+    #[cfg_attr(alef, alef(skip))]
     pub private_pipe: bool,
 }
 

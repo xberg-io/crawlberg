@@ -166,7 +166,9 @@ let config = CrawlConfig {
 };
 ```
 
-With the key on, the launched Chrome listens on no TCP port, so no other local process can drive it. It also ends when the process that started it ends, including after SIGKILL. With the key off, a Chrome whose owner is killed keeps running.
+With the key on, the launched Chrome listens on no TCP port, so no other local process can drive it. It also ends when the last process that holds the pipe ends. The process that started Chrome holds the pipe, so Chrome ends when that process exits or is killed, including with SIGKILL. A process that the owner forked without `exec` holds a copy of the pipe: Chrome then runs until that process ends too.
+
+The key is in the Rust API and in a `CrawlConfig` that crawlberg reads as JSON. The language packages do not have it yet.
 
 The key works on Linux and macOS. On Windows it changes nothing. It is ignored, with a warning, when `endpoint` is set or the native backend is in use. The Rust `BrowserPoolConfig` has its own `private_pipe`; scrapes and crawls that use a shared browser pool use the pool's key.
 
