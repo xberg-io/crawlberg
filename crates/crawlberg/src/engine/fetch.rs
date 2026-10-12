@@ -285,7 +285,7 @@ impl CrawlEngine {
         native_state: Option<&mut NativeRenderState>,
         browser_cookies: Option<&[BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        #[cfg(feature = "browser")]
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
         if self.request_will_use_browser() {
             #[cfg(feature = "browser-native")]
             if self.config.browser.backend == BrowserBackend::Native
@@ -293,9 +293,16 @@ impl CrawlEngine {
             {
                 return self.native_render(url, state).await;
             }
-            let page = self.browser_fetch(url, browser_cookies, false).await?;
-            let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
-            return Ok((crawl_resp, true));
+            #[cfg(feature = "browser")]
+            {
+                let page = self.browser_fetch(url, browser_cookies, false).await?;
+                let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
+                return Ok((crawl_resp, true));
+            }
+            #[cfg(not(feature = "browser"))]
+            return Err(CrawlError::browser_error(
+                "native browser render state is not available",
+            ));
         }
 
         let plan = DispatchPlan::from_config(&self.config);
