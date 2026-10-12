@@ -7,7 +7,7 @@ use crate::browser_detect;
 use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    MaskedHtml, PageScan, detect_charset, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
+    MaskedHtml, PageScan, decode_page, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
@@ -83,13 +83,20 @@ pub(crate) async fn scrape_from_crawl_response(
     let extraction = body.extraction;
     let js_render_hint = body.js_render_hint;
     let downloaded_assets = download_discovered_assets(body.asset_refs, config, &client).await;
-    let markdown = crate::markdown::convert_to_markdown(
-        &decoded.body,
-        Some(body.page_scan),
-        &parsed_url,
-        &merged_content_config(config),
-    )
-    .await;
+    // ~keep A binary or PDF body is not a page to convert, as in the crawl (`engine::page_result`).
+    let markdown = if decoded.was_skipped {
+        None
+    } else {
+        crate::markdown::convert_response_to_markdown(
+            &decoded.body,
+            Some(body.page_scan),
+            &parsed_url,
+            &merged_content_config(config),
+            &content_type,
+            downloaded_document.is_some(),
+        )
+        .await?
+    };
 
     Ok(ScrapeResult {
         status_code: resp.status,
@@ -243,8 +250,8 @@ async fn resolve_robots_status(
 /// truncated to `max_body_size`, together with the content verdicts derived from it.
 struct DecodedBody {
     body: String,
-    /// The redirect check's read of the response body, dropped when the charset re-decode
-    /// replaces the body. A body cut to `max_body_size` is read again (see [`PageScan::attach`]).
+    /// The redirect check's read of the response body, dropped when the decode with the page's
+    /// character set replaces the body. A body cut to `max_body_size` is read again (see [`PageScan::attach`]).
     page_scan: Option<PageScan>,
     body_size: usize,
     detected_charset: Option<String>,
@@ -265,15 +272,14 @@ fn decode_response_body(
     parsed_url: &Url,
     config: &CrawlConfig,
 ) -> DecodedBody {
-    let mut body = resp.body.clone();
-    let detected_charset = detect_charset(content_type, &resp.body_bytes);
-
-    if let Some(ref charset) = detected_charset
-        && let Some(decoded) = crate::http::redecode_with_charset(charset, &resp.body_bytes)
-    {
-        body = decoded;
-        page_scan = None;
-    }
+    let (text, detected_charset) = decode_page(resp.body_text(), content_type, parsed_url.as_str(), &resp.body_bytes);
+    let mut body = match text {
+        Some(text) => {
+            page_scan = None;
+            text
+        }
+        None => resp.body.clone(),
+    };
     let is_pdf = is_pdf_content(content_type, &body);
 
     let mut body_size = body.len();
@@ -452,16 +458,12 @@ mod tests {
     }
 
     fn response(content_type: &str, body: &str) -> crate::tower::CrawlResponse {
-        crate::tower::CrawlResponse {
-            status: 200,
-            content_type: content_type.to_owned(),
-            body: body.to_owned(),
-            body_bytes: body.as_bytes().to_vec(),
-            headers: HashMap::new(),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-        }
+        crate::tower::CrawlResponse::new(
+            200,
+            content_type.to_owned(),
+            HashMap::new(),
+            crate::tower::ResponseBody::Bytes(body.as_bytes().to_vec()),
+        )
     }
 
     #[tokio::test]
@@ -512,16 +514,12 @@ mod tests {
     }
 
     fn response_with_bytes(content_type: &str, body_bytes: Vec<u8>) -> crate::tower::CrawlResponse {
-        crate::tower::CrawlResponse {
-            status: 200,
-            content_type: content_type.to_owned(),
-            body: String::from_utf8_lossy(&body_bytes).into_owned(),
-            body_bytes,
-            headers: HashMap::new(),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-        }
+        crate::tower::CrawlResponse::new(
+            200,
+            content_type.to_owned(),
+            HashMap::new(),
+            crate::tower::ResponseBody::Bytes(body_bytes),
+        )
     }
 
     #[tokio::test]
@@ -941,6 +939,21 @@ mod tests {
 
         assert!(result.is_pdf, "a PDF content type must be recognised");
         assert!(result.was_skipped, "a PDF must be flagged as skipped for extraction");
+        assert!(result.markdown.is_none(), "a skipped page is not converted");
+    }
+
+    #[tokio::test]
+    async fn scrape_of_a_page_the_converter_refuses_is_an_error() {
+        let resp = response("text/html", "PK\u{3}\u{4}<p>not a page</p>");
+        let error = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
+            .await
+            .expect_err("a page that cannot be converted is not a result");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("could not convert https://example.com/page to Markdown"),
+            "the error names the page, got: {message}"
+        );
     }
 
     fn urls<T>(items: &[T], url: impl Fn(&T) -> &str) -> Vec<String> {

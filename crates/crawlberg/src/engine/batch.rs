@@ -30,13 +30,25 @@ impl CrawlEngine {
     /// calls, and `CrawlEngine::clone()` shares the same `Arc<dyn Frontier>` across all
     /// clones. Without per-call isolation, a frontier's `seen` state (e.g. the default
     /// `InMemoryFrontier`) would leak across calls on a reused engine and race under
-    /// concurrent `batch_crawl` calls sharing the same `seen` set. Every entry point that
-    /// invokes `crawl_with_sender` must route through this helper.
+    /// concurrent `batch_crawl` calls sharing the same `seen` set.
     fn with_isolated_frontier(&self) -> Self {
         let mut engine = self.clone();
         if let Some(fresh) = self.frontier.isolated() {
             engine.frontier = fresh;
         }
+        engine
+    }
+
+    /// Return a clone of this engine for a single crawl call: its frontier is isolated, and
+    /// with `cookies_enabled` its Chrome pages share cookies that no other crawl call sees.
+    /// Every entry point that invokes `crawl_with_sender` must route through this helper.
+    fn for_one_crawl(&self) -> Self {
+        let engine = self.with_isolated_frontier();
+        #[cfg(feature = "browser")]
+        let engine = Self {
+            crawl_cookies: self.config.cookies_enabled.then(Arc::default),
+            ..engine
+        };
         engine
     }
 
@@ -53,16 +65,14 @@ impl CrawlEngine {
     /// Crawl an admitted seed URL. See [`CrawlEngine::crawl`].
     #[tracing::instrument(name = "crawl.engine.crawl", skip_all, fields(url.full = %seed))]
     async fn crawl_seed(&self, seed: &SeedUrl) -> Result<CrawlResult, CrawlError> {
-        self.with_isolated_frontier().crawl_with_sender(seed, None).await
+        self.for_one_crawl().crawl_with_sender(seed, None).await
     }
 
     /// Crawl a website and return a stream of events as pages are processed.
     ///
     /// Uses the engine's trait implementations (strategy, frontier, etc.) for the crawl.
     pub fn crawl_stream(&self, url: &str) -> ReceiverStream<CrawlEvent> {
-        let admitted = self
-            .admit(url)
-            .map(|(engine, seed)| (engine.with_isolated_frontier(), seed));
+        let admitted = self.admit(url).map(|(engine, seed)| (engine.for_one_crawl(), seed));
         let span = match &admitted {
             Ok((_, seed)) => tracing::info_span!("crawl.engine.crawl_stream", { URL_FULL } = %seed),
             Err(_) => tracing::info_span!("crawl.engine.crawl_stream"),
@@ -220,9 +230,7 @@ impl CrawlEngine {
                             Err(_) => break,
                         },
                     };
-                    let admitted = engine
-                        .admit(&url)
-                        .map(|(engine, seed)| (engine.with_isolated_frontier(), seed));
+                    let admitted = engine.admit(&url).map(|(engine, seed)| (engine.for_one_crawl(), seed));
                     let error_url = admission_key(&url, admitted.as_ref().ok().map(|(_, seed)| seed));
                     let event_sink = engine.event_sink.clone();
                     let tx = tx.clone();

@@ -214,47 +214,37 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let (response, refused, redirects) =
+        let (response, refused, redirects, charset) =
             crate::native_browser::native_browser_render(url, &self.config, state, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: response.status,
-            content_type: response.content_type,
-            body: response.body,
-            body_bytes: response.body_bytes,
-            headers: response.headers,
-            landed: Some(Box::new(crate::tower::Landing {
-                url: response.final_url,
-                redirects,
-                refused,
-                extras: response.browser_extras,
-                cookies: Vec::new(),
-            })),
-            // ~keep The native browser backend never reads `config.user_agents`.
-            sent_user_agent: None,
-            soft_error: false,
+        // ~keep The native backend decoded the document, with the character set it reports. It
+        // ~keep never reads `config.user_agents`, so `sent_user_agent` stays unset.
+        let body = crate::tower::ResponseBody::Text {
+            text: response.body,
+            charset,
         };
+        let crawl_resp =
+            crate::tower::CrawlResponse::new(response.status, response.content_type, response.headers, body)
+                .with_landed(Some(Box::new(crate::tower::Landing {
+                    url: response.final_url,
+                    redirects,
+                    refused,
+                    extras: response.browser_extras,
+                    cookies: Vec::new(),
+                })));
         Ok((crawl_resp, true))
     }
 
     /// Scrape through chromiumoxide, keeping the screenshot it captured.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let pool = self.config.browser_pool.as_deref();
-        #[cfg(feature = "browser-native")]
-        let mut page = crate::browser::browser_fetch(
-            url,
-            &self.config,
-            None,
-            pool,
-            true,
-            self.rate_limiter.as_ref(),
-            self.native_browser_executor.as_deref(),
-        )
-        .await?;
-        #[cfg(not(feature = "browser-native"))]
-        let mut page =
-            crate::browser::browser_fetch(url, &self.config, None, pool, true, self.rate_limiter.as_ref()).await?;
+        let mut page = self.browser_fetch(url, None, true).await?;
+
+        // ~keep This fetch does not go through `follow_redirects`, so it applies the rule of the
+        // ~keep chain for a redirect that Chrome stopped on.
+        if let Some(error) = super::redirect::stopped_navigation_error(&page.response, url, &page.response.final_url) {
+            return Err(error);
+        }
 
         let screenshot = page.response.screenshot.take();
         let final_url = page.response.final_url.clone();
@@ -349,16 +339,13 @@ impl CrawlEngine {
         .response;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: resp.status,
-            content_type: resp.content_type,
-            body: resp.body,
-            body_bytes: resp.body_bytes,
-            headers: resp.headers,
-            landed: None,
-            sent_user_agent: forced_user_agent.map(str::to_owned),
-            soft_error: false,
-        };
+        let crawl_resp = crate::tower::CrawlResponse::new(
+            resp.status,
+            resp.content_type,
+            resp.headers,
+            crate::tower::ResponseBody::Bytes(resp.body_bytes),
+        )
+        .with_sent_user_agent(forced_user_agent.map(str::to_owned));
         Ok((post_redirect_url, crawl_resp, false))
     }
 }

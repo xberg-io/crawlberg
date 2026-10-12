@@ -8,6 +8,17 @@
 use super::*;
 use crate::net::ssrf::HostMatcher;
 
+#[test]
+fn query_parameters_participate_in_page_identity_by_default() {
+    assert!(CrawlConfig::default().dedup_include_query);
+    assert!(CrawlConfig::builder().build().dedup_include_query);
+    let config: CrawlConfig = serde_json::from_str("{}").expect("empty configuration");
+    assert!(config.dedup_include_query);
+    let config: CrawlConfig =
+        serde_json::from_str(r#"{"dedup_include_query":false}"#).expect("explicit legacy setting");
+    assert!(!config.dedup_include_query);
+}
+
 /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
 /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
 /// already carries `#[serde(default)]` the field attribute is therefore not redundant — it
@@ -390,6 +401,35 @@ fn validate_rejects_native_endpoint() {
     let err = config.validate().unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("chromiumoxide"), "unexpected error: {msg}");
+}
+
+// ~keep The store holds session cookies, so `Debug` shows only whether it exists.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn crawl_config_debug_does_not_print_the_cookies_of_its_store() {
+    use reqwest::cookie::CookieStore as _;
+
+    let store = crate::net::cookie::PolicyCookieStore::default();
+    let url = url::Url::parse("https://example.com/").expect("a valid URL");
+    let header = reqwest::header::HeaderValue::from_static("session=s3cr3t-cookie-value; Path=/");
+    store.set_cookies(&mut std::iter::once(&header), &url);
+    assert!(store.cookies(&url).is_some(), "the store must hold the cookie");
+    let config = CrawlConfig {
+        cookies_enabled: true,
+        cookie_store: Some(std::sync::Arc::new(store)),
+        ..CrawlConfig::default()
+    };
+
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(
+            !rendered.contains("s3cr3t-cookie-value"),
+            "Debug output must not contain a cookie value"
+        );
+    }
+    assert!(
+        format!("{config:?}").contains("cookie_store: true"),
+        "Debug output must show that the store exists"
+    );
 }
 
 #[test]

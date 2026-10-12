@@ -18,12 +18,11 @@ use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use body::validate_content_encoding;
-pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
-};
+pub(crate) use body::{effective_max_body_size, read_body_bounded, truncate_body_at_char_boundary};
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
-pub(crate) use client::{build_client, request_client};
+pub(crate) use client::{build_client, request_client, send_with_cookies};
 pub(crate) use headers::build_headers_map;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
@@ -271,7 +270,7 @@ impl FetchedPage {
 /// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
 /// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
 /// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
-/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
+/// ~keep rules (see `ChainRules`): the chain stops or fails where the crawl's does.
 pub(crate) async fn http_fetch_with(
     url: &str,
     config: &CrawlConfig,
@@ -619,7 +618,9 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(k.as_str(), v.as_str());
     }
 
-    req.send().await.map_err(classify_reqwest_error)
+    send_with_cookies(req, context.config)
+        .await
+        .map_err(classify_reqwest_error)
 }
 
 /// Resolve a 3xx response's `Location` header against the URL that served it.
@@ -1841,19 +1842,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deflate_should_decode_and_unknown_content_encoding_should_fail() {
+    async fn a_status_error_after_a_redirect_names_the_address_that_answered() {
+        let mock = MockServer::start().await;
+        Mock::given(path("/start"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/missing"))
+            .mount(&mock)
+            .await;
+        Mock::given(path("/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client");
+        let error = http_fetch(&format!("{}/start", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .err()
+            .expect("the 404 behind the redirect");
+        assert_eq!(
+            error.to_string(),
+            format!("not_found: HTTP 404 for {}/missing", mock.uri())
+        );
+    }
+
+    #[tokio::test]
+    async fn deflate_decodes_and_only_a_body_left_compressed_fails() {
         use std::io::Write as _;
         let mock = MockServer::start().await;
         let html = b"<p>page body words</p>";
         let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(html).expect("compression");
         let body = encoder.finish().expect("compressed body");
-        for encoding in ["deflate", "unknown"] {
+        for (encoding, bytes) in [("deflate", &body[..]), ("DEFLATE", &body[..]), ("UTF-8", &html[..])] {
             Mock::given(path(format!("/{encoding}")))
                 .respond_with(
                     ResponseTemplate::new(200)
                         .insert_header("Content-Encoding", encoding)
-                        .set_body_bytes(body.clone()),
+                        .set_body_bytes(bytes),
                 )
                 .mount(&mock)
                 .await;
@@ -1864,11 +1888,57 @@ mod tests {
             .await
             .expect("deflate decoded");
         assert_eq!(response.body_bytes, html);
-        let error = http_fetch(&format!("{}/unknown", mock.uri()), &config, &HashMap::new(), &client)
+        let error = http_fetch(&format!("{}/DEFLATE", mock.uri()), &config, &HashMap::new(), &client)
             .await
             .err()
-            .expect("unsupported encoding");
-        assert!(error.to_string().contains("unknown"), "{error}");
+            .expect("a body that is still compressed");
+        assert!(error.to_string().contains("DEFLATE"), "{error}");
+        let response = http_fetch(&format!("{}/UTF-8", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("a plain page with a label that is not a coding");
+        assert_eq!(response.body_bytes, html);
+    }
+
+    fn content_encoding(value: &'static [u8]) -> Result<(), CrawlError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_ENCODING,
+            reqwest::header::HeaderValue::from_bytes(value).expect("header value"),
+        );
+        validate_content_encoding(&headers)
+    }
+
+    #[test]
+    fn a_compression_coding_left_on_the_response_is_refused_in_each_spelling() {
+        for value in [
+            "gzip",
+            "GZIP",
+            "x-gzip",
+            "X-Gzip",
+            "gzip, identity",
+            "identity,BR",
+            "zstd",
+            "Deflate",
+        ] {
+            let error = content_encoding(value.as_bytes()).expect_err(value);
+            assert!(matches!(error, CrawlError::Unsupported { .. }), "{value}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_label_that_is_not_a_compression_coding_leaves_the_page() {
+        for value in [
+            &b""[..],
+            b"identity",
+            b"IDENTITY, identity",
+            b"UTF-8",
+            b"none",
+            b" , ",
+            b"gzipped",
+            b"\xff",
+        ] {
+            assert!(content_encoding(value).is_ok(), "{value:?}");
+        }
     }
 
     fn permissive_config() -> CrawlConfig {

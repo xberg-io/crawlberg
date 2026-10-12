@@ -153,11 +153,10 @@ pub struct CrawlConfig {
     /// (`bücher.de` is matched as `xn--bcher-kva.de`).
     #[serde(default)]
     pub path_patterns_match_url: bool,
-    /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
-    /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
-    /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
-    /// query is fetched once.
-    #[serde(default)]
+    /// Whether the crawl-dedup key includes the query string, sorted by parameter name.
+    /// Defaults to `true`: `/item?id=1` and `/item?id=2` are distinct pages, each fetched once.
+    /// Set to `false` to merge query variants and fetch only the first. Session parameters
+    /// produce a page for each distinct value unless removed with `strip_tracking_params`.
     pub dedup_include_query: bool,
     /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
     /// fetched, and reported. Defaults to `false`, so no tracking parameters are stripped
@@ -349,6 +348,15 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub credential_scope: Option<crate::net::CredentialScope>,
+    /// The cookie store of the engine that holds this configuration.
+    ///
+    /// Set by the engine when it is built: a new store when `cookies_enabled` is on, `None` when
+    /// it is off. A caller leaves it `None`.
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub cookie_store: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -392,7 +400,7 @@ impl Default for CrawlConfig {
             exclude_paths: Vec::new(),
             path_patterns_match_query: false,
             path_patterns_match_url: false,
-            dedup_include_query: false,
+            dedup_include_query: true,
             strip_tracking_params: false,
             tracking_params: default_tracking_params(),
             custom_headers: HashMap::new(),
@@ -432,6 +440,8 @@ impl Default for CrawlConfig {
             ssrf_deny_private_explicit: None,
             dispatch: None,
             credential_scope: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            cookie_store: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]

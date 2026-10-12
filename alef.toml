@@ -37,7 +37,6 @@ user_owned = [
   "e2e/node/package.json",
   "e2e/ruby/Gemfile",
   "e2e/wasm/package.json",
-  "e2e/zig/build.zig",
   "e2e/zig/build.zig.zon",
   "test_apps/dart/pubspec.yaml",
   "test_apps/elixir/mix.exs",
@@ -342,12 +341,12 @@ replace = 'release/swift/{version}'
 # ~keep alef classifies as CREATE-ONCE SEEDS: it writes each only when the path is absent and
 # ~keep never re-renders it, so `alef verify` lists them under `frozen path(s) DRIFTED` on every
 # ~keep run and no amount of regeneration updates them. Adoption is NOT the fix. These files
-# ~keep carry hand-grown content -- e2e/zig/build.zig alone is 903 lines of FFI path, rpath and
-# ~keep mock-server wiring, and test_apps/kotlin_android/build.gradle.kts downloads and unpacks
-# ~keep an artifact -- and `alef adopt --clobber-create-once-seeds` consents to alef REPLACING
+# ~keep carry hand-grown content -- test_apps/kotlin_android/build.gradle.kts downloads and
+# ~keep unpacks an artifact -- and `alef adopt --clobber-create-once-seeds` consents to alef REPLACING
 # ~keep all of that with a placeholder seed on the next overwriting regen, which is what
 # ~keep `task version:sync` is. Only the version-bearing line in each needs to track the
 # ~keep release, and a text replacement is the one mechanism that touches just that line.
+# ~keep e2e/zig/build.zig is not one of the six: it is adopted, and alef regenerates it whole.
 # ~keep Without these the pins sat at 1.2.1 through NINE releases -- 1.3.0, 1.3.1, 1.3.2,
 # ~keep 1.3.3, 1.4.0, 1.4.1, 1.4.2, 1.5.0 and 1.5.1 -- so every "does the published package
 # ~keep work" test app was in fact exercising a package from 2026-08-11.

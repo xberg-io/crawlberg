@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
@@ -1132,10 +1133,10 @@ class CrawlConfig {
   /// (`bücher.de` is matched as `xn--bcher-kva.de`).
   final bool pathPatternsMatchUrl;
 
-  /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
-  /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
-  /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
-  /// query is fetched once.
+  /// Whether the crawl-dedup key includes the query string, sorted by parameter name.
+  /// Defaults to `true`: `/item?id=1` and `/item?id=2` are distinct pages, each fetched once.
+  /// Set to `false` to merge query variants and fetch only the first. Session parameters
+  /// produce a page for each distinct value unless removed with `strip_tracking_params`.
   final bool dedupIncludeQuery;
 
   /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
@@ -1562,6 +1563,13 @@ sealed class CrawlError with _$CrawlError {
   /// Data was lost or truncated during transfer.
   const factory CrawlError.dataLoss({required String message}) =
       CrawlError_DataLoss;
+
+  /// The page was fetched but could not be converted to Markdown.
+  ///
+  /// A crawl event and a batch item carry an error as text only. There, the text starts with
+  /// `conversion_failed:`, and that tag is stable.
+  const factory CrawlError.conversionFailed({required String message}) =
+      CrawlError_ConversionFailed;
 
   /// The browser failed to launch, connect, or navigate.
   const factory CrawlError.browserError({required String message}) =
@@ -2423,7 +2431,7 @@ enum LinkType {
   /// A link to a different domain.
   external_,
 
-  /// A fragment-only link (e.g., `#section`).
+  /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
   anchor,
 
   /// A link to a downloadable document (PDF, DOC, etc.).

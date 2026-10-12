@@ -8,9 +8,10 @@ use url::Url;
 
 use crate::helpers::PathPattern;
 use crate::html::{
-    HtmlExtraction, PageScan, detect_charset, extract_page_data, is_binary_content_type, is_binary_url,
-    is_html_content, is_pdf_content, is_pdf_url, mask_raw_text_markup,
+    HtmlExtraction, PageScan, decode_page, extract_page_data, is_binary_content_type, is_binary_url, is_html_content,
+    is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
+use crate::tower::BodyText;
 use crate::types::*;
 
 use crate::helpers::RobotsOutcome;
@@ -113,8 +114,8 @@ pub(super) enum FetchOutcome {
 
 /// Result of blocking HTML extraction within a fetch task.
 pub(super) struct PageExtraction {
-    /// The page body, re-decoded with `detected_charset` when a non-UTF-8 encoding
-    /// was detected (see [`blocking_extract_page`]). This is the body extraction,
+    /// The page body, decoded with `detected_charset` when the page is not UTF-8
+    /// (see [`blocking_extract_page`]). This is the body extraction,
     /// markdown conversion, and the final `CrawlPageResult::html` must all use —
     /// never the caller's original UTF-8-lossy `body`.
     pub(super) body: String,
@@ -198,35 +199,43 @@ impl CrawlState {
     }
 }
 
+/// The body of a fetched page, as the fetch returned it.
+pub(super) struct FetchedBody {
+    pub(super) body: String,
+    pub(super) body_bytes: Vec<u8>,
+    /// Whether `body` is the text of the page already. See [`BodyText`].
+    pub(super) body_text: BodyText,
+}
+
 /// Perform HTML extraction in a blocking context.
 ///
 /// The parsed document borrows the input string, so this must run via `spawn_blocking`.
 ///
-/// ~keep Re-decodes `body` from `body_bytes` using the detected charset (mirrors
-/// `scrape_from_crawl_response` in `scrape.rs`) *before* parsing, so extraction,
+/// ~keep Decides the character set of the page from `body_bytes` and decodes them (as
+/// `scrape_from_crawl_response` in `scrape.rs` does) *before* parsing, so extraction,
 /// markdown conversion, and the `html` field the caller reports downstream all see
-/// correctly decoded text instead of `crawl()`'s original UTF-8-lossy fallback body.
-/// `detect_charset` runs on `body_bytes` (not `body`) so a byte-order mark or non-ASCII
-/// meta tag survives even when `body` is already lossy-mangled.
+/// the text of the page instead of `crawl()`'s original UTF-8-lossy fallback body.
+/// `body_text` says whether `body` is that text already, as the body of a browser is.
 ///
-/// `page_scan` is the redirect check's read of `body`, reused unless the re-decode replaced it.
+/// `page_scan` is the redirect check's read of `body`, reused unless the decode replaced it.
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
     header_robots: RobotsDirectives,
     user_agent: &str,
-    body: String,
-    body_bytes: Vec<u8>,
+    fetched: FetchedBody,
     page_scan: Option<PageScan>,
 ) -> PageExtraction {
+    let FetchedBody {
+        body,
+        body_bytes,
+        body_text,
+    } = fetched;
     let parsed_url = Url::parse(url).unwrap_or_else(|_| FALLBACK_URL.clone());
 
-    let detected_charset = detect_charset(content_type, &body_bytes);
-    let (body, page_scan) = match detected_charset
-        .as_deref()
-        .and_then(|charset| crate::http::redecode_with_charset(charset, &body_bytes))
-    {
-        Some(redecoded) => (redecoded, None),
+    let (text, detected_charset) = decode_page(&body_text, content_type, url, &body_bytes);
+    let (body, page_scan) = match text {
+        Some(text) => (text, None),
         None => (body, page_scan),
     };
 

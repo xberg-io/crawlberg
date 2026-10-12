@@ -62,7 +62,15 @@ impl Page {
             self.url = Some(response.url.clone());
         }
 
-        let body_text = String::from_utf8_lossy(&response.body).to_string();
+        let (body_text, charset) = match self.document_decoder {
+            Some(decode) => decode(
+                response.content_type().unwrap_or_default(),
+                response.url.as_str(),
+                &response.body,
+            ),
+            None => (String::from_utf8_lossy(&response.body).into_owned(), None),
+        };
+        self.document_charset = charset;
         let dom = parse_html(&body_text);
         self.document_base_url = self.base_url_from_dom(&dom);
         self.title = dom

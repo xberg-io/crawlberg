@@ -20,6 +20,7 @@ impl BypassProvider for TestProvider {
             content_type: "text/html".to_string(),
             body: "<html>test</html>".to_string(),
             body_bytes: b"<html>test</html>".to_vec(),
+            body_kind: crawlberg::BypassBody::Bytes,
             headers: std::collections::HashMap::new(),
             final_url: String::new(),
             cost_usd: Some(0.001),

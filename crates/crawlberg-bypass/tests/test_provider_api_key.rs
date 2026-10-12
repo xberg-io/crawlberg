@@ -52,6 +52,11 @@ async fn success_response_carries_no_api_key() {
     let response = provider.fetch(TARGET).await.unwrap();
 
     assert_eq!(response.body, "<html>page</html>");
+    assert_eq!(
+        response.body_kind,
+        crawlberg::BypassBody::Bytes,
+        "a raw body is the bytes the origin sent"
+    );
     assert!(
         !format!("{response:?}").contains(API_KEY),
         "API key leaked into the response: {response:?}"

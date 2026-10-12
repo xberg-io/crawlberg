@@ -81,6 +81,20 @@ fn global(page: &mut Page, expression: &str) -> serde_json::Value {
     page.evaluate(expression)
 }
 
+/// Waits until the `promise` expression settles in the page, then returns its value.
+///
+/// The drain of a navigation has a time budget. On a busy host, work that no script awaits can
+/// settle after `navigate` returns, so a test waits for that work before it reads the result.
+/// The wait ends with an error at the budget of an awaited evaluation.
+async fn settled(page: &mut Page, promise: &str) -> serde_json::Value {
+    let js = page.js.as_mut().expect("the page runs scripts");
+    js.evaluate_for_cdp(promise, true, true)
+        .await
+        .unwrap_or_else(|error| panic!("`{promise}` must settle: {error}"))
+        .value
+        .unwrap_or(serde_json::Value::Null)
+}
+
 fn order(page: &mut Page) -> Vec<String> {
     global(page, "(globalThis.order || []).join(',')")
         .as_str()
@@ -484,18 +498,14 @@ async fn a_dynamic_import_of_a_blocked_address_is_not_fetched() {
     )
     .await;
 
-    // The page's drain has a time budget, and under load an import can settle after it, so wait for
-    // both imports' own promises before reading what they set.
-    let settled = page
-        .evaluate_for_cdp(
-            "globalThis.settled.then(() => JSON.stringify([!!globalThis.fine, globalThis.blocked || null]))",
-            true,
-            true,
-        )
-        .await;
+    let imports = settled(
+        &mut page,
+        "globalThis.settled.then(() => JSON.stringify([!!globalThis.fine, globalThis.blocked || null]))",
+    )
+    .await;
     assert_eq!(
-        settled.value,
-        Some(serde_json::json!("[true,\"refused\"]")),
+        imports,
+        serde_json::json!("[true,\"refused\"]"),
         "the allowed import loads and the blocked one is refused"
     );
     let requests = requests.lock().expect("lock").clone();
@@ -735,12 +745,13 @@ async fn an_inline_module_awaiting_a_timer_and_a_fetch_finishes_before_the_next_
 async fn a_fetch_a_module_starts_without_awaiting_does_not_hold_the_next_module() {
     let html = format!(
         "<html><body><script type=\"module\">\
-         fetch('/data.txt').then(r => r.text()).then(t => (globalThis.order = globalThis.order || []).push(t));\n{}\
+         globalThis.late = fetch('/data.txt').then(r => r.text()).then(t => (globalThis.order = globalThis.order || []).push(t));\n{}\
          </script><script type=\"module\">{}</script></body></html>",
         push("first"),
         push("second"),
     );
     let mut page = navigate_bounded(&html, &[("/data.txt", "text/plain", "fetched")]).await;
+    settled(&mut page, "globalThis.late").await;
 
     assert_eq!(order(&mut page), vec!["first", "second", "fetched"]);
 }
@@ -1878,28 +1889,20 @@ fn ok_response(content_type: &str, body: &str) -> String {
     )
 }
 
-/// Runs `script` in a page served from `base_routes`, then returns the JSON its fetch stored.
+/// Waits for the fetch of [`fetch_script`] to settle, then returns the JSON of its outcome.
 async fn fetch_result(page: &mut Page, base: &str) -> serde_json::Value {
+    let raw = settled(page, "globalThis.fr").await;
+    let raw = raw.as_str().unwrap_or("<<missing>>");
     let _ = base;
-    let result = tokio::time::timeout(std::time::Duration::from_secs(10), page.evaluate_for_cdp(
-        "new Promise(resolve => { const poll = () => { if (globalThis.fr !== '\"pending\"') resolve(globalThis.fr); else setTimeout(poll, 10); }; poll(); })",
-        true,
-        true,
-    )).await.expect("the fetch must settle before its deadline");
-    let raw = result.value.expect("the settled fetch must return a value");
-    let raw = raw.as_str().expect("the fetch stores its result as JSON");
-    serde_json::from_str(raw).expect("the settled fetch must return JSON")
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
-/// Script body that stores the outcome of one `fetch` into `globalThis.fr` as JSON.
+/// Script body that stores the outcome of one `fetch` in `globalThis.fr`, as a promise of JSON.
 fn fetch_script(target: &str, init: &str) -> String {
     format!(
-        r#"globalThis.fr = '"pending"';
-           fetch('{target}'{init}).then(r => r.text().then(t => {{
-             globalThis.fr = JSON.stringify({{
-               status: r.status, text: t, blocked: !!r.__blocked, cors: !!r.__cors
-             }});
-           }})).catch(e => {{ globalThis.fr = JSON.stringify({{error: String(e)}}); }});"#
+        r#"globalThis.fr = fetch('{target}'{init}).then(r => r.text().then(t => JSON.stringify({{
+             status: r.status, text: t, blocked: !!r.__blocked, cors: !!r.__cors
+           }}))).catch(e => JSON.stringify({{error: String(e)}}));"#
     )
 }
 
@@ -2016,6 +2019,7 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
     .await;
     let mut page = test_page();
     page.navigate(&base).await.expect("navigate");
+    fetch_result(&mut page, &base).await;
 
     // The cookie takes the default path of the fetched URL, so it is not returned for the page path.
     let stored = page.context.cookie_jar.snapshot();
@@ -2132,6 +2136,72 @@ async fn a_fetch_to_a_url_with_userinfo_is_refused_without_it() {
     assert!(
         !error.contains("s3cret"),
         "the password must not be named, got {result}"
+    );
+}
+
+/// A `fetch` that the page refuses before it opens a connection: its URL has userinfo.
+///
+/// The fetch needs no network and no timer, but its promise settles only on a turn of the event
+/// loop. So only the drain of a navigation can settle it before `navigate` returns.
+const REFUSED_FETCH: &str = "fetch('http://user:s3cret@127.0.0.1:9/refused')";
+
+/// Navigates to a page with one classic `script`, then reads `globalThis.drained` one time, with no wait.
+async fn drained_after_navigate(script: &str) -> serde_json::Value {
+    let html = format!("<html><body><script>globalThis.drained = 'pending';\n{script}</script></body></html>");
+    let mut page = navigate_bounded(&html, &[]).await;
+    global(&mut page, "globalThis.drained")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_a_script_starts_that_needs_no_network_is_done_when_navigate_returns() {
+    // ~keep Three fetches in a row, each started when the one before settles: one turn is not enough.
+    let script = format!(
+        "{REFUSED_FETCH}.catch(() => {REFUSED_FETCH}).catch(() => {REFUSED_FETCH})\
+         .catch(() => {{ globalThis.drained = 'done'; }});"
+    );
+
+    assert_eq!(
+        drained_after_navigate(&script).await,
+        serde_json::json!("done"),
+        "the navigation must drain the event loop until the page is quiet"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_the_load_handler_starts_that_needs_no_network_is_done_when_navigate_returns() {
+    let script =
+        format!("window.onload = () => {{ {REFUSED_FETCH}.catch(() => {{ globalThis.drained = 'done'; }}); }};");
+
+    assert_eq!(
+        drained_after_navigate(&script).await,
+        serde_json::json!("done"),
+        "the navigation must drain the event loop after the load handler runs"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_page_that_never_goes_quiet_costs_the_navigation_one_drain_budget() {
+    // ~keep Each refused fetch starts the next one, so the event loop always has work.
+    let html = format!(
+        "<html><body><script>globalThis.turns = 0;\n\
+         const again = () => {{ globalThis.turns++; {REFUSED_FETCH}.catch(again); }};\n\
+         again();</script></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let mut page = test_page();
+
+    let started = std::time::Instant::now();
+    tokio::time::timeout(std::time::Duration::from_secs(40), page.navigate(&base))
+        .await
+        .expect("a page that never goes quiet must not hold the navigation")
+        .expect("navigation must succeed");
+    let took = started.elapsed();
+
+    let turns = global(&mut page, "globalThis.turns").as_f64().unwrap_or_default();
+    assert!(turns > 1.0, "the drain must run the work of the page: {turns} turn(s)");
+    assert!(
+        took >= std::time::Duration::from_millis(500) && took < std::time::Duration::from_secs(15),
+        "the drain must give a busy page its 500 ms budget and then end: took {took:?}"
     );
 }
 
@@ -2378,8 +2448,9 @@ async fn script_fetches_and_module_imports_carry_the_credential_only_on_its_host
     let other = format!("http://localhost:{}", addr.port());
     let html = format!(
         "<html><body><script>globalThis.fetched = 0;\
-         fetch('/data', {{headers: {{'X-Api-Key': 'page-value'}}}}).finally(() => globalThis.fetched++);\
-         fetch('{other}/elsewhere').finally(() => globalThis.fetched++);</script>\
+         globalThis.fetches = Promise.allSettled([\
+         fetch('/data', {{headers: {{'X-Api-Key': 'page-value'}}}}).finally(() => globalThis.fetched++),\
+         fetch('{other}/elsewhere').finally(() => globalThis.fetched++)]);</script>\
          <script type=\"module\">import '/near.js'; import '/hop.js';</script></body></html>"
     );
     // ~keep A cross-host module redirect: reqwest keeps a custom-named header across hosts,
@@ -2414,10 +2485,11 @@ async fn script_fetches_and_module_imports_carry_the_credential_only_on_its_host
     page.navigate(&format!("http://{addr}/")).await.expect("navigate");
 
     assert_eq!(
-        global(
+        settled(
             &mut page,
-            "JSON.stringify([globalThis.fetched, !!globalThis.near, !!globalThis.far])"
-        ),
+            "globalThis.fetches.then(() => JSON.stringify([globalThis.fetched, !!globalThis.near, !!globalThis.far]))"
+        )
+        .await,
         serde_json::json!("[2,true,true]"),
         "both fetches must settle and both modules must run"
     );
@@ -2650,8 +2722,8 @@ async fn script_fetches_and_module_imports_never_reach_a_rebinding_hosts_denied_
     .await;
     let target = format!("http://localhost:{port}");
     let html = format!(
-        "<html><body><script>globalThis.fetched = 'pending';\
-         fetch('{target}/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+        "<html><body><script>\
+         globalThis.fetched = fetch('{target}/data').then(() => 'ok', e => String(e));</script>\
          <script type=\"module\">import '{target}/far.js';</script><p>page</p></body></html>"
     );
     let base = serve(routes(&[("/", "text/html", &html)])).await;
@@ -2663,7 +2735,7 @@ async fn script_fetches_and_module_imports_never_reach_a_rebinding_hosts_denied_
     page.navigate(&base).await.expect("navigate");
 
     assert!(rendered_html(&page).contains("<p>page</p>"), "the page itself renders");
-    let fetched = global(&mut page, "String(globalThis.fetched)");
+    let fetched = settled(&mut page, "globalThis.fetched").await;
     assert!(
         fetched
             .as_str()
@@ -2693,8 +2765,8 @@ async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
-    let html = "<html><body><script>globalThis.fetched = 'pending';\
-                fetch('http://example.invalid/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+    let html = "<html><body><script>\
+                globalThis.fetched = fetch('http://example.invalid/data').then(() => 'ok', e => String(e));</script>\
                 <script type=\"module\">import 'http://example.invalid/m.js';</script></body></html>";
     let requests = serve_raw_recording(
         listener,
@@ -2723,7 +2795,11 @@ async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
     page.navigate("http://example.invalid/").await.expect("navigate");
 
     assert_eq!(
-        global(&mut page, "JSON.stringify([globalThis.fetched, !!globalThis.far])"),
+        settled(
+            &mut page,
+            "globalThis.fetched.then(fetched => JSON.stringify([fetched, !!globalThis.far]))"
+        )
+        .await,
         serde_json::json!("[\"ok\",true]"),
         "the fetch and the module must go through the proxy: {:?}",
         requests.lock().expect("lock")
@@ -2773,9 +2849,9 @@ async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
 
     let (port, seen) = denied_server("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
     let html = format!(
-        "<html><body><script>globalThis.fetched = 'pending';\
-         fetch('http://localhost:{port}/data', {{headers: {{'X-Custom': '1'}}}})\
-         .then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script></body></html>"
+        "<html><body><script>\
+         globalThis.fetched = fetch('http://localhost:{port}/data', {{headers: {{'X-Custom': '1'}}}})\
+         .then(() => 'ok', e => String(e));</script></body></html>"
     );
     let base = serve(routes(&[("/", "text/html", &html)])).await;
     let context = BrowserContext::with_ssrf(
@@ -2791,7 +2867,7 @@ async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
 
     page.navigate(&base).await.expect("navigate");
 
-    let fetched = global(&mut page, "String(globalThis.fetched)");
+    let fetched = settled(&mut page, "globalThis.fetched").await;
     assert!(
         fetched
             .as_str()

@@ -1,0 +1,46 @@
+{
+	"id": "crawl_query_identity_default",
+	"description": "Fetches distinct query values with the default configuration",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-query-identity-default",
+		"title": "Fetches distinct query values with the default configuration"
+	},
+	"tags": [
+		"crawl",
+		"normalization"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><a href=\"/item?id=1\">First</a><a href=\"/item?id=2\">Second</a></body></html>"
+			},
+			{
+				"path": "/item",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Item</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 3
+		}
+	]
+}

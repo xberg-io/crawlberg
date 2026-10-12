@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+      # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+      - "vendor/crawlberg-chromiumoxide/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "fuzz/Cargo.toml"
@@ -30,6 +33,7 @@ on:
       - "packages/**/crawlberg.h"
       - "scripts/ci/check-vendored-headers.sh"
       - "scripts/ci/check-alef-generated.sh"
+      - "scripts/ci/rust/prepare-chrome.sh"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
   # ~keep before merging any PR that needs its own CI.
@@ -37,6 +41,9 @@ on:
   #   branches: [main]
   #   paths:
   #     - "crates/**"
+  #     # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+  #     # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+  #     - "vendor/crawlberg-chromiumoxide/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "fuzz/Cargo.toml"
@@ -62,6 +69,7 @@ on:
   #     - "packages/**/crawlberg.h"
   #     - "scripts/ci/check-vendored-headers.sh"
   #     - "scripts/ci/check-alef-generated.sh"
+  #     - "scripts/ci/rust/prepare-chrome.sh"
   workflow_dispatch:
 
 concurrency:
@@ -157,12 +165,18 @@ jobs:
         id: chrome
         uses: xberg-io/actions/setup-chrome@v1
 
+      - name: Prepare Chrome app bundle
+        id: prepared_chrome
+        run: task rust:chrome:prepare
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+
       - name: Run tests
         run: task rust:test:ci
         shell: bash
         env:
-          CHROME: ${{ steps.chrome.outputs.chrome-path }}
-          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME: ${{ steps.prepared_chrome.outputs.chrome-path }}
+          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.prepared_chrome.outputs.chrome-path }}
           CRAWLBERG_TEST_THREADS: ${{ runner.arch == 'ARM64' && '1' || '' }}
           LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH || '' }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH || '' }}
