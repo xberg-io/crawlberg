@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Range;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -18,6 +19,171 @@ fn next_frame_end(bytes: &[u8], scanned: usize) -> Option<usize> {
         .iter()
         .position(|byte| *byte == 0)
         .map(|end| scanned + end)
+}
+
+/// One member of the top-level object of a frame, as byte ranges of the frame: the key's text,
+/// the value, and the bytes to cut to remove the member, its comma included.
+#[derive(Debug, PartialEq, Eq)]
+struct Member {
+    key: Range<usize>,
+    value: Range<usize>,
+    cut: Range<usize>,
+}
+
+/// ~keep The hub routes a frame by its top-level members and forwards its bytes unchanged. It
+/// ~keep does not parse the frame: a parse to a value and back for every frame cost the hub's
+/// ~keep thread 41 percent of its time under a flood of paused requests, Chrome's backlog ahead
+/// ~keep of each read grew without bound, and every read of the page waited behind it until
+/// ~keep its timeout. The scanner walks the members of the top-level object and skips a nested
+/// ~keep value by its brackets and strings. It routes; the connection's parse validates.
+///
+/// Gives each member to `visit` in its order. Returns `false` when `frame` is not one JSON
+/// object, such as a frame that is not JSON at all.
+fn scan_members(frame: &[u8], mut visit: impl FnMut(Member)) -> bool {
+    let mut at = skip_space(frame, 0);
+    if frame.get(at) != Some(&b'{') {
+        return false;
+    }
+    at = skip_space(frame, at + 1);
+    if frame.get(at) == Some(&b'}') {
+        return skip_space(frame, at + 1) == frame.len();
+    }
+    let mut previous_end = None;
+    loop {
+        let key_start = at;
+        let Some(key_end) = skip_string(frame, at) else {
+            return false;
+        };
+        at = skip_space(frame, key_end);
+        if frame.get(at) != Some(&b':') {
+            return false;
+        }
+        at = skip_space(frame, at + 1);
+        let Some(value_end) = skip_value(frame, at) else {
+            return false;
+        };
+        let value = at..value_end;
+        at = skip_space(frame, value_end);
+        let last = match frame.get(at) {
+            Some(b',') => false,
+            Some(b'}') => true,
+            _ => return false,
+        };
+        at = skip_space(frame, at + 1);
+        let cut = match previous_end {
+            Some(previous_end) => previous_end..value_end,
+            None if last => key_start..value_end,
+            None => key_start..at,
+        };
+        visit(Member {
+            key: key_start + 1..key_end - 1,
+            value,
+            cut,
+        });
+        if last {
+            return at == frame.len();
+        }
+        previous_end = Some(value_end);
+    }
+}
+
+fn skip_space(frame: &[u8], mut at: usize) -> usize {
+    while frame.get(at).is_some_and(u8::is_ascii_whitespace) {
+        at += 1;
+    }
+    at
+}
+
+/// The index after the string that opens at `at`, or `None` when it does not open or end.
+fn skip_string(frame: &[u8], at: usize) -> Option<usize> {
+    if frame.get(at) != Some(&b'"') {
+        return None;
+    }
+    let mut at = at + 1;
+    loop {
+        match frame.get(at)? {
+            b'\\' => at += 2,
+            b'"' => return Some(at + 1),
+            _ => at += 1,
+        }
+    }
+}
+
+/// The index after the value that starts at `at`: a string, an object or array by its brackets,
+/// or a scalar up to the next separator.
+fn skip_value(frame: &[u8], mut at: usize) -> Option<usize> {
+    match frame.get(at)? {
+        b'"' => skip_string(frame, at),
+        b'{' | b'[' => {
+            let mut depth = 0usize;
+            loop {
+                match frame.get(at)? {
+                    b'"' => {
+                        at = skip_string(frame, at)?;
+                        continue;
+                    }
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(at + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                at += 1;
+            }
+        }
+        _ => {
+            let end = frame[at..]
+                .iter()
+                .position(|byte| matches!(byte, b',' | b'}' | b']') || byte.is_ascii_whitespace())
+                .map_or(frame.len(), |length| at + length);
+            (end > at).then_some(end)
+        }
+    }
+}
+
+/// The text of the string value in `value`, without its quotes and as it is written: a session
+/// id is compared as Chrome writes it, never unescaped.
+fn string_text(frame: &[u8], value: &Range<usize>) -> Option<Range<usize>> {
+    (value.len() >= 2 && frame[value.start] == b'"').then(|| value.start + 1..value.end - 1)
+}
+
+/// The text of the string member `key` of the object in `object`.
+fn member_string(frame: &[u8], object: Range<usize>, key: &[u8]) -> Option<Range<usize>> {
+    let mut found = None;
+    scan_members(&frame[object.clone()], |member| {
+        if &frame[object.start + member.key.start..object.start + member.key.end] == key {
+            found = string_text(
+                frame,
+                &(object.start + member.value.start..object.start + member.value.end),
+            );
+        }
+    });
+    found
+}
+
+fn integer(frame: &[u8], value: &Range<usize>) -> Option<u64> {
+    std::str::from_utf8(&frame[value.clone()]).ok()?.parse().ok()
+}
+
+/// `frame` with each edit's range replaced by its text. Edits do not overlap.
+fn rewritten(frame: &str, mut edits: [Option<(Range<usize>, &str)>; 2]) -> String {
+    if let [Some(first), Some(second)] = &edits
+        && second.0.start < first.0.start
+    {
+        edits.swap(0, 1);
+    }
+    let mut text = String::with_capacity(frame.len() + 20);
+    let mut copied = 0;
+    for (range, replacement) in edits.into_iter().flatten() {
+        text.push_str(&frame[copied..range.start]);
+        text.push_str(replacement);
+        copied = range.end;
+    }
+    text.push_str(&frame[copied..]);
+    text
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +299,8 @@ enum Pending {
     Ignore,
     Reply {
         client: usize,
-        original_id: Value,
+        /// The client's id as JSON text, spliced back into the response.
+        original_id: String,
     },
     Open {
         done: oneshot::Sender<Result<RawConnection>>,
@@ -206,7 +373,7 @@ impl Router {
                 {
                     value["sessionId"] = Value::String(root.clone());
                 }
-                let original_id = value.get("id").cloned().ok_or(CdpError::NoResponse)?;
+                let original_id = value.get("id").map(Value::to_string).ok_or(CdpError::NoResponse)?;
                 (value, Pending::Reply { client, original_id })
             }
             Command::Open(done) => (
@@ -234,58 +401,92 @@ impl Router {
         Ok(Some(bytes))
     }
 
-    fn deliver(&mut self, mut value: Value) -> Result<()> {
-        if let Some(id) = value.get("id").and_then(Value::as_u64) {
+    /// Routes one frame, as Chrome wrote it, to the client that owns it. The client gets the
+    /// frame's bytes unchanged, except a response's id, which gets the client's id back, and a
+    /// secondary client's root session id, which that client never sees.
+    fn deliver(&mut self, frame: &str) {
+        let bytes = frame.as_bytes();
+        let mut id = None;
+        let mut session = None;
+        let mut method = None;
+        let mut params = None;
+        let mut result = None;
+        let scanned = scan_members(bytes, |member| match &bytes[member.key.clone()] {
+            b"id" => id = integer(bytes, &member.value).map(|id| (id, member.value)),
+            b"sessionId" => session = string_text(bytes, &member.value).map(|text| (text, member.cut)),
+            b"method" => method = string_text(bytes, &member.value),
+            b"params" => params = Some(member.value),
+            b"result" => result = Some(member.value),
+            _ => {}
+        });
+        if !scanned {
+            tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", frame, "skipped a private browser pipe frame that is not a JSON object");
+            return;
+        }
+        if let Some((id, id_value)) = id {
             match self.pending.remove(&id) {
                 Some(Pending::Reply { client, original_id }) => {
-                    value["id"] = original_id;
-                    self.send(client, value)?;
+                    self.send(client, frame, Some((id_value, original_id.as_str())), session);
                 }
                 Some(Pending::Open { done }) => {
-                    let result = match value.pointer("/result/sessionId").and_then(Value::as_str) {
-                        Some(session) => Ok(self.add_client(Some(session.to_owned()))),
+                    let result = match result.and_then(|result| member_string(bytes, result, b"sessionId")) {
+                        Some(session) => Ok(self.add_client(Some(frame[session].to_owned()))),
                         None => Err(CdpError::msg(format!(
-                            "failed to attach a private browser client: {value}"
+                            "failed to attach a private browser client: {frame}"
                         ))),
                     };
                     let _ = done.send(result);
                 }
                 Some(Pending::Ignore) | None => {}
             }
-            return Ok(());
+            return;
         }
-        let session = value.get("sessionId").and_then(Value::as_str);
-        let client = match session {
-            Some(session) => match self.sessions.get(session) {
+        let client = match &session {
+            Some((text, _)) => match self.sessions.get(&frame[text.clone()]) {
                 Some(client) => *client,
-                None => return Ok(()),
+                None => return,
             },
             None => 0,
         };
-        if value.get("method").and_then(Value::as_str) == Some("Target.attachedToTarget")
-            && let Some(session) = value.pointer("/params/sessionId").and_then(Value::as_str)
+        let method = method.map(|text| &frame[text]);
+        let child = || {
+            params
+                .clone()
+                .and_then(|params| member_string(bytes, params, b"sessionId"))
+        };
+        if method == Some("Target.attachedToTarget")
+            && let Some(child) = child()
         {
-            self.sessions.insert(session.to_owned(), client);
+            self.sessions.insert(frame[child].to_owned(), client);
         }
-        if value.get("method").and_then(Value::as_str) == Some("Target.detachedFromTarget")
-            && let Some(session) = value.pointer("/params/sessionId").and_then(Value::as_str)
+        if method == Some("Target.detachedFromTarget")
+            && let Some(child) = child()
         {
-            self.sessions.remove(session);
+            self.sessions.remove(&frame[child]);
         }
-        self.send(client, value)
+        self.send(client, frame, None, session);
     }
 
-    fn send(&self, client: usize, mut value: Value) -> Result<()> {
-        if let Some(state) = self.clients.get(&client) {
-            if value.get("sessionId").and_then(Value::as_str) == state.root_session.as_deref()
-                && state.root_session.is_some()
-            {
-                value.as_object_mut().ok_or(CdpError::NoResponse)?.remove("sessionId");
-            }
-            let message = Message::Text(serde_json::to_string(&value)?.into());
-            let _ = state.incoming.send(Ok(message));
-        }
-        Ok(())
+    /// Queues `frame` for `client` with `id` spliced in, and without the `session` member when
+    /// it is the client's root session.
+    fn send(
+        &self,
+        client: usize,
+        frame: &str,
+        id: Option<(Range<usize>, &str)>,
+        session: Option<(Range<usize>, Range<usize>)>,
+    ) {
+        let Some(state) = self.clients.get(&client) else {
+            return;
+        };
+        let root = session
+            .filter(|(text, _)| state.root_session.as_deref() == Some(&frame[text.clone()]))
+            .map(|(_, cut)| (cut, ""));
+        let text = match (&id, &root) {
+            (None, None) => frame.to_owned(),
+            _ => rewritten(frame, [id, root]),
+        };
+        let _ = state.incoming.send(Ok(Message::Text(text.into())));
     }
 
     async fn run(&mut self, socket: tokio::net::UnixStream, commands: mpsc::UnboundedReceiver<Command>) -> Result<()> {
@@ -310,10 +511,10 @@ impl Router {
         let (mut reader, writer) = socket.into_split();
         let (writes, queued) = mpsc::unbounded_channel();
         let mut writer = WriterTask(tokio::spawn(Self::write_commands(writer, queued)));
-        let mut buffer = [0; READ_BUFFER_SIZE];
-        let mut pending_bytes = Vec::new();
+        let mut pending_bytes = Vec::with_capacity(READ_BUFFER_SIZE);
         let mut scanned = 0;
         loop {
+            pending_bytes.reserve(READ_BUFFER_SIZE);
             tokio::select! {
                 command = commands.recv() => {
                     // ~keep Every command that is queued goes to the writer in this turn, as one
@@ -352,28 +553,25 @@ impl Router {
                 written = &mut writer.0 => {
                     return written.map_err(|error| CdpError::Io(std::io::Error::other(error)))?;
                 }
-                read = reader.read(&mut buffer) => {
-                    let count = read?;
-                    if count == 0 {
+                read = reader.read_buf(&mut pending_bytes) => {
+                    if read? == 0 {
                         return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "private browser pipe reached EOF").into());
                     }
-                    pending_bytes.extend_from_slice(&buffer[..count]);
+                    // ~keep Every complete frame in the buffer is delivered in this turn, each
+                    // ~keep byte is scanned once, and the bytes of a partial frame move once for
+                    // ~keep each read, not once for each frame.
+                    let mut consumed = 0;
                     while let Some(end) = next_frame_end(&pending_bytes, scanned) {
-                        // The frame is read as the WebSocket connection reads a message: a lone
-                        // half of a surrogate pair in a page's text becomes U+FFFD instead of
-                        // losing the whole reply.
-                        let parsed = std::str::from_utf8(&pending_bytes[..end])
-                            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-                            .and_then(|text| crate::conn::parse_message::<Value>(text).map_err(std::io::Error::from));
-                        match parsed {
-                            Ok(value) => self.deliver(value)?,
+                        match std::str::from_utf8(&pending_bytes[consumed..end]) {
+                            Ok(frame) => self.deliver(frame),
                             Err(error) => {
-                                tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", %error, "skipped a private browser pipe frame that is not JSON");
+                                tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", %error, "skipped a private browser pipe frame that is not UTF-8");
                             }
                         }
-                        pending_bytes.drain(..=end);
-                        scanned = 0;
+                        consumed = end + 1;
+                        scanned = consumed;
                     }
+                    pending_bytes.drain(..consumed);
                     scanned = pending_bytes.len();
                 }
             }
@@ -413,24 +611,168 @@ mod tests {
         assert_eq!(next_frame_end(bytes, bytes.len()), None);
     }
 
-    /// A frame with half of a surrogate pair is an event with U+FFFD in its place, as the
-    /// WebSocket connection reads such a message; a frame that is not JSON is skipped, and the
-    /// pipe stays open for the event after it.
+    /// The members of `frame`, as (key, value, the frame without the member).
+    fn members(frame: &str) -> Option<Vec<(String, String, String)>> {
+        let mut found = Vec::new();
+        scan_members(frame.as_bytes(), |member| {
+            found.push((
+                frame[member.key].to_owned(),
+                frame[member.value].to_owned(),
+                format!("{}{}", &frame[..member.cut.start], &frame[member.cut.end..]),
+            ))
+        })
+        .then_some(found)
+    }
+
+    #[test]
+    fn the_scanner_walks_the_top_level_members_and_skips_nested_values() {
+        let frame = r#"{"id":7,"result":{"sessionId":"inner","a":[1,{"b":"}"}],"c":"x,\"sessionId\":\"y\""},"sessionId":"root"}"#;
+        assert_eq!(
+            members(frame),
+            Some(vec![
+                ("id".into(), "7".into(), format!("{{{}", &frame[8..])),
+                (
+                    "result".into(),
+                    r#"{"sessionId":"inner","a":[1,{"b":"}"}],"c":"x,\"sessionId\":\"y\""}"#.into(),
+                    r#"{"id":7,"sessionId":"root"}"#.into()
+                ),
+                (
+                    "sessionId".into(),
+                    "\"root\"".into(),
+                    r#"{"id":7,"result":{"sessionId":"inner","a":[1,{"b":"}"}],"c":"x,\"sessionId\":\"y\""}}"#.into()
+                ),
+            ])
+        );
+        assert_eq!(
+            members(" { \"a\" : true , \"b\" : null } "),
+            Some(vec![
+                ("a".into(), "true".into(), " { \"b\" : null } ".into()),
+                ("b".into(), "null".into(), " { \"a\" : true } ".into()),
+            ])
+        );
+        assert_eq!(members("{}"), Some(Vec::new()));
+        assert_eq!(
+            members(r#"{"only":"\"\\"}"#),
+            Some(vec![("only".into(), r#""\"\\""#.into(), "{}".into())])
+        );
+        for frame in [
+            "not json",
+            "[1]",
+            "\"x\"",
+            "{",
+            "{\"a\"}",
+            "{\"a\":}",
+            "{\"a\":\"unterminated}",
+            "{\"a\":{\"b\":1}",
+            "{\"a\":1,}",
+            "{\"a\":1} x",
+            "{,\"a\":1}",
+        ] {
+            assert_eq!(members(frame), None, "{frame}");
+        }
+        let frame = br#"{"params":{"x":{"sessionId":"deep"},"sessionId":"child"}}"#;
+        let params = 10..frame.len() - 1;
+        assert_eq!(
+            member_string(frame, params.clone(), b"sessionId").map(|at| &frame[at]),
+            Some(&b"child"[..])
+        );
+        assert_eq!(member_string(frame, params, b"x"), None);
+        assert_eq!(integer(b"{\"id\":12}", &(6..8)), Some(12));
+        assert_eq!(integer(b"{\"id\":-1}", &(6..8)), None);
+    }
+
+    #[test]
+    fn a_rewrite_applies_its_edits_in_order() {
+        assert_eq!(
+            rewritten(
+                "{\"id\":99,\"x\":1,\"sessionId\":\"s\"}",
+                [Some((14..30, "")), Some((6..8, "4"))]
+            ),
+            "{\"id\":4,\"x\":1}"
+        );
+        assert_eq!(rewritten("{}", [None, None]), "{}");
+    }
+
+    /// ~keep A frame reaches its client as Chrome wrote it: a parse to a value and back for every
+    /// ~keep frame cost the hub 41 percent of its thread under a flood. A response gets the
+    /// ~keep client's id back by a splice, and nothing else changes.
+    #[tokio::test]
+    async fn a_response_reaches_its_client_byte_for_byte_except_its_id() {
+        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (_, mut client) = PipeHub::start(socket);
+        client
+            .send(Message::Text(
+                "{\"id\":41,\"method\":\"Browser.getVersion\",\"params\":{}}"
+                    .to_owned()
+                    .into(),
+            ))
+            .await
+            .expect("send");
+        let command = read_command(&mut peer).await;
+        let response = format!(
+            "{{\"id\":{} , \"result\" : {{\"z\":1,\"a\":[1, 2],\"u\":\"\\u00e9\"}},\"extra\":{{}}}}\0",
+            command["id"]
+        );
+        peer.write_all(response.as_bytes()).await.expect("response write");
+        let reply = timeout(DEADLINE, client.next())
+            .await
+            .expect("reply deadline")
+            .expect("reply")
+            .expect("reply result");
+        assert_eq!(
+            reply.to_text().expect("text"),
+            "{\"id\":41 , \"result\" : {\"z\":1,\"a\":[1, 2],\"u\":\"\\u00e9\"},\"extra\":{}}"
+        );
+    }
+
+    /// ~keep A secondary client never sees its root session, and nothing else of an event changes:
+    /// ~keep not a nested `sessionId`, not the text of a string, not a child session's id.
+    #[tokio::test]
+    async fn an_event_of_a_secondary_client_loses_only_its_root_session() {
+        let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
+        let (hub, _primary) = PipeHub::start(socket);
+        let mut secondary = secondary_client(&hub, &mut peer).await;
+        let attached = "{\"method\":\"Target.attachedToTarget\",\"params\":{\"sessionId\":\"child\",\"targetInfo\":{}},\"sessionId\":\"secondary\"}";
+        let child = "{\"method\":\"Test.child\",\"params\":{\"k\":\"v,\\\"sessionId\\\":\\\"secondary\\\"\"},\"sessionId\":\"child\"}";
+        peer.write_all(format!("{attached}\0{child}\0").as_bytes())
+            .await
+            .expect("events write");
+        for expected in [
+            "{\"method\":\"Target.attachedToTarget\",\"params\":{\"sessionId\":\"child\",\"targetInfo\":{}}}",
+            child,
+        ] {
+            let event = timeout(DEADLINE, secondary.next())
+                .await
+                .expect("event deadline")
+                .expect("event")
+                .expect("event result");
+            assert_eq!(event.to_text().expect("text"), expected);
+        }
+    }
+
+    /// A frame with half of a surrogate pair reaches the client as Chrome wrote it, and the
+    /// connection's parse reads it as the WebSocket connection reads such a message: an event
+    /// with U+FFFD in its place. A frame that is not JSON is skipped, and the pipe stays open for
+    /// the event after it.
     #[tokio::test]
     async fn a_frame_that_is_not_json_is_skipped_and_the_next_event_arrives() {
         let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
         let (_, mut client) = PipeHub::start(socket);
-        peer.write_all(
-            b"{\"method\":\"Test.half\",\"params\":{\"title\":\"\\ud83d\"}}\0not json\0{\"method\":\"Test.next\",\"params\":{}}\0",
-        )
-        .await
-        .expect("a frame with half a pair, a frame that is not JSON and a good frame");
+        let half = "{\"method\":\"Test.half\",\"params\":{\"title\":\"\\ud83d\"}}";
+        peer.write_all(format!("{half}\0not json\0{{\"method\":\"Test.next\",\"params\":{{}}}}\0").as_bytes())
+            .await
+            .expect("a frame with half a pair, a frame that is not JSON and a good frame");
         let event = timeout(DEADLINE, client.next())
             .await
             .expect("half deadline")
             .expect("half event")
             .expect("a frame with half a surrogate pair is an event");
-        let value: Value = serde_json::from_str(event.to_text().expect("text")).expect("half event JSON");
+        assert_eq!(
+            event.to_text().expect("text"),
+            half,
+            "the frame arrives as Chrome wrote it"
+        );
+        let value: Value = crate::conn::parse_message(event.to_text().expect("text")).expect("half event JSON");
         assert_eq!(value["method"], "Test.half");
         assert_eq!(value["params"]["title"], "\u{FFFD}");
         let event = timeout(DEADLINE, client.next())
