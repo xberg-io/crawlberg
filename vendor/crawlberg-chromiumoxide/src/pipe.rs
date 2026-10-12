@@ -359,7 +359,13 @@ impl Router {
                     }
                     pending_bytes.extend_from_slice(&buffer[..count]);
                     while let Some(end) = next_frame_end(&pending_bytes, scanned) {
-                        match serde_json::from_slice(&pending_bytes[..end]) {
+                        // The frame is read as the WebSocket connection reads a message: a lone
+                        // half of a surrogate pair in a page's text becomes U+FFFD instead of
+                        // losing the whole reply.
+                        let parsed = std::str::from_utf8(&pending_bytes[..end])
+                            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+                            .and_then(|text| crate::conn::parse_message::<Value>(text).map_err(std::io::Error::from));
+                        match parsed {
                             Ok(value) => self.deliver(value)?,
                             Err(error) => {
                                 tracing::debug!(target: "chromiumoxide::conn::raw_ws::parse_errors", %error, "skipped a private browser pipe frame that is not JSON");
@@ -407,6 +413,9 @@ mod tests {
         assert_eq!(next_frame_end(bytes, bytes.len()), None);
     }
 
+    /// A frame with half of a surrogate pair is an event with U+FFFD in its place, as the
+    /// WebSocket connection reads such a message; a frame that is not JSON is skipped, and the
+    /// pipe stays open for the event after it.
     #[tokio::test]
     async fn a_frame_that_is_not_json_is_skipped_and_the_next_event_arrives() {
         let (socket, mut peer) = tokio::net::UnixStream::pair().expect("socket pair");
@@ -415,7 +424,15 @@ mod tests {
             b"{\"method\":\"Test.half\",\"params\":{\"title\":\"\\ud83d\"}}\0not json\0{\"method\":\"Test.next\",\"params\":{}}\0",
         )
         .await
-        .expect("two bad frames and one good frame");
+        .expect("a frame with half a pair, a frame that is not JSON and a good frame");
+        let event = timeout(DEADLINE, client.next())
+            .await
+            .expect("half deadline")
+            .expect("half event")
+            .expect("a frame with half a surrogate pair is an event");
+        let value: Value = serde_json::from_str(event.to_text().expect("text")).expect("half event JSON");
+        assert_eq!(value["method"], "Test.half");
+        assert_eq!(value["params"]["title"], "\u{FFFD}");
         let event = timeout(DEADLINE, client.next())
             .await
             .expect("event deadline")
