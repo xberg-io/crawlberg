@@ -3579,7 +3579,9 @@ async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile(
 )]
 async fn the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_open() {
     const TEST_NAME: &str = "the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_open";
-    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-pipe-profile-check-{}", std::process::id()));
+    // ~keep Made as a launch makes it, where a snap Chrome reads it: a snap has a private /tmp.
+    let profile = ScratchProfileDir::create("crawlberg-pipe-profile-check-", None).expect("a profile directory");
+    let user_data_dir = profile.path().to_path_buf();
     let other_dir = std::env::temp_dir().join(format!("crawlberg-pipe-profile-other-{}", std::process::id()));
     let pool_config = BrowserPoolConfig {
         private_pipe: true,
@@ -3605,7 +3607,7 @@ async fn the_profile_check_of_a_pipe_launch_refuses_a_directory_chrome_did_not_o
 
     let _ = browser.kill().await;
     handler_task.abort();
-    let _ = std::fs::remove_dir_all(&user_data_dir);
+    drop(profile);
     let _ = std::fs::remove_dir_all(&other_dir);
 
     assert_eq!(
