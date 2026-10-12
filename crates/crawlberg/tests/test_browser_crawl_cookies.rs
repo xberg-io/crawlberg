@@ -581,7 +581,8 @@ async fn cookies_sent_by(site: &MockServer, at: &str, browser: bool) -> Vec<Vec<
 }
 
 /// A page that sets `c=1` and `keep=1` and sends its reader on to `/hop` after a wait Chrome
-/// does not get to: the crawl follows it, so `/hop` is a hop of the page's redirect chain.
+/// does not get to. The crawl does not follow a delayed refresh (#605): the page is a page of
+/// the crawl, and `/hop` is one of its links, so the crawl requests `/hop` next.
 fn page_that_sets_and_redirects() -> ResponseTemplate {
     let page = r#"<html><head><meta http-equiv="refresh" content="60; url=/hop"></head><body>first</body></html>"#;
     ResponseTemplate::new(200)
@@ -590,8 +591,8 @@ fn page_that_sets_and_redirects() -> ResponseTemplate {
         .append_header("set-cookie", "keep=1; Path=/")
 }
 
-/// Crawl the chain `/first` (browser) to `/hop` (HTTP, which answers `hop_cookie`) to `/last`
-/// (browser) in automatic mode, and return the cookies the browser sent to `/last`.
+/// Crawl `/first` (browser), whose link `/hop` (HTTP, which answers `hop_cookie`) redirects to
+/// `/last` (browser), in automatic mode, and return the cookies the browser sent to `/last`.
 async fn last_page_cookies_after_an_http_hop(test_name: &str, hop_cookie: &str) -> Option<Vec<String>> {
     let site = MockServer::start().await;
     browser_only_route(&site, "/first", page_that_sets_and_redirects()).await;
@@ -604,7 +605,11 @@ async fn last_page_cookies_after_an_http_hop(test_name: &str, hop_cookie: &str) 
 
     let pages = pages(test_name, crawl(&engine, &format!("{}/first", site.uri())).await)?;
 
-    assert_eq!(pages, owned(&[("/last", 200)]), "the chain must end on the last page");
+    assert_eq!(
+        pages,
+        owned(&[("/first", 200), ("/last", 200)]),
+        "the first page and the last page are the pages; the hop is a redirect to the last page"
+    );
     assert_eq!(
         cookies_sent_by(&site, "/first", true).await.len(),
         1,
