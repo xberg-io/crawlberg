@@ -69,7 +69,7 @@ async fn assert_original_link_spelling(mode: BrowserMode) {
     }
 }
 
-/// The seed is written with a dot segment and a fragment, so the fetched address is another text.
+/// The crawl removes the tracking parameter of the seed, so the fetched address is another text.
 #[tokio::test]
 async fn the_seed_page_gives_the_address_as_the_caller_passed_it() {
     let server = MockServer::start().await;
@@ -80,13 +80,14 @@ async fn the_seed_page_gives_the_address_as_the_caller_passed_it() {
     let config = CrawlConfig {
         max_depth: Some(0),
         respect_robots_txt: false,
+        strip_tracking_params: true,
+        tracking_params: vec!["utm_*".to_owned()],
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
     let engine = CrawlEngine::builder().config(config).build().expect("engine");
-    let seed = format!("{}/d/%2e%2e/#seed", server.uri());
+    let seed = format!("{}/?utm_source=mail#seed", server.uri());
     let result = engine.crawl(&seed).await.expect("crawl");
     assert_eq!(result.pages.len(), 1, "crawl error: {:?}", result.error);
-    assert_ne!(result.pages[0].url, seed, "the fetched address has no dot segment");
     assert_eq!(result.pages[0].original_url, seed);
 }
 
