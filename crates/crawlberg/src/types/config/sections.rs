@@ -14,7 +14,7 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
 /// html-to-markdown-rs as the conversion engine for all formats
 /// (markdown, plain text, djot).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 pub struct ContentConfig {
     /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
     pub output_format: String,

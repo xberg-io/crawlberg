@@ -343,3 +343,13 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         chrome_args: _,
     } = browser;
 }
+
+#[test]
+fn should_reject_unknown_keys_in_content_and_ssrf_json() {
+    for key in ["content", "ssrf"] {
+        let error = serde_json::from_value::<CrawlConfig>(json!({key: {"nope": 1}}))
+            .expect_err("unknown nested configuration must be rejected");
+        assert!(error.to_string().contains("unknown field `nope`"));
+        serde_json::from_value::<CrawlConfig>(json!({key: {}})).expect("known sections still accept their defaults");
+    }
+}

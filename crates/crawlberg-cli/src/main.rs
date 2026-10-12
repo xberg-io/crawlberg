@@ -8,6 +8,7 @@ use crawlberg::{
 };
 
 mod cli;
+mod config_diagnostic;
 mod telemetry;
 
 use cli::{
@@ -70,7 +71,7 @@ fn merge_json_config(config: &mut CrawlConfig, config_str: &str) -> Result<(), B
     }
     let mut config_json = serde_json::to_value(config.clone())?;
     merge_json_value(&mut config_json, overlay);
-    *config = serde_json::from_value(config_json)?;
+    *config = config_diagnostic::deserialize(config_json)?;
     Ok(())
 }
 
@@ -597,15 +598,7 @@ mod tests {
     fn merge_json_config_rejects_unknown_top_level_key() {
         let mut config = CrawlConfig::default();
         let error = merge_json_config(&mut config, r#"{"nope":1}"#).expect_err("an unknown key is not a setting");
-        let error = error
-            .downcast_ref::<serde_json::Error>()
-            .expect("the typed config read refuses the key");
-        assert_eq!(error.classify(), serde_json::error::Category::Data);
-        let message = error.to_string();
-        assert!(
-            message.starts_with("unknown field `nope`, expected one of "),
-            "unexpected message: {message}"
-        );
+        assert_eq!(error.to_string(), "nope: unknown key");
     }
 
     #[test]
