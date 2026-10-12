@@ -5,17 +5,21 @@
 
 #![cfg(feature = "browser-native")]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, HostMatcher, batch_scrape, create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, CrawlEngine, CrawlEngineHandle, CrawlError, HostMatcher,
+    PerDomainThrottle, batch_scrape, create_engine, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+mod common;
+use common::RecordedTurns;
 
 /// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
 /// 127.0.0.1 servers and the loopback test server are reachable.
@@ -652,9 +656,7 @@ async fn native_chain_outcome(
         respect_robots_txt: false,
         ..native_config(|c| BrowserConfig { mode, ..c })
     };
-    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
-        .await
-        .expect("the crawl must succeed");
+    let result = native_chain_crawl(site, config).await;
     let status = result.pages.first().map_or(0, |page| page.status_code);
     (
         result.redirect_count,
@@ -663,20 +665,48 @@ async fn native_chain_outcome(
     )
 }
 
+async fn native_chain_crawl(site: &MockServer, config: CrawlConfig) -> crawlberg::CrawlResult {
+    crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the crawl must succeed")
+}
+
+/// The error and the count of pages of a crawl of `site` at `max_redirects` with `mode`.
+async fn native_chain_failure(
+    site: &MockServer,
+    mode: crawlberg::BrowserMode,
+    max_redirects: usize,
+) -> (Option<String>, usize) {
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        max_redirects,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig { mode, ..c })
+    };
+    let result = native_chain_crawl(site, config).await;
+    (
+        result.error.map(|error| error.replace(&site.uri(), "")),
+        result.pages.len(),
+    )
+}
+
 /// The native backend stops a chain longer than `max_redirects` where HTTP mode stops it, in
 /// crawl and in scrape (#115).
 #[tokio::test]
 async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
-    let http = native_chain_outcome(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
+    let http = native_chain_failure(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
     assert_eq!(
         http,
-        (2, "/r2".to_owned(), 301),
-        "HTTP mode stops on the 3xx at the limit"
+        (
+            Some("ssrf_policy_violation: /r3 - redirect limit exceeded".to_owned()),
+            0
+        ),
+        "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
     let site = native_redirect_chain(5).await;
     assert_eq!(
-        native_chain_outcome(&site, crawlberg::BrowserMode::Always, 2).await,
+        native_chain_failure(&site, crawlberg::BrowserMode::Always, 2).await,
         http,
         "the native backend must report the chain the way HTTP mode does"
     );
@@ -692,13 +722,13 @@ async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
         respect_robots_txt: false,
         ..native_config(|c| c)
     };
-    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+    let error = scrape(&engine_with(config), &format!("{}/", site.uri()))
         .await
-        .expect("the scrape must succeed");
-    assert_eq!(
-        (scraped.status_code, scraped.final_url.trim_start_matches(&site.uri())),
-        (301, "/r2"),
-        "the scrape must stop on the 3xx at the limit"
+        .expect_err("the scrape must fail on the 3xx at the limit");
+    assert!(
+        matches!(&error, CrawlError::SsrfPolicyViolation { url, reason, .. }
+            if reason == "redirect limit exceeded" && url.ends_with("/r3")),
+        "the error must name the redirect limit and the address not followed: {error:?}"
     );
     let requested = native_requested_paths(&site).await;
     assert!(
@@ -1130,4 +1160,96 @@ async fn native_scrape_of_a_missing_seed_without_a_trailing_slash_is_not_found()
             other => panic!("{mode:?}: a missing seed must fail with not_found, got {other:?}"),
         }
     }
+}
+
+/// A native scrape asks again for a page that answers 429, up to `retry_count` times, as HTTP
+/// mode does.
+#[tokio::test]
+async fn native_scrape_retries_a_429_with_the_configured_budget() {
+    let site = MockServer::start().await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&hits);
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(move |_: &wiremock::Request| {
+            let status = if count.fetch_add(1, Ordering::SeqCst) < 2 {
+                429
+            } else {
+                200
+            };
+            ResponseTemplate::new(status).set_body_raw("<html><body><p>accepted</p></body></html>", "text/html")
+        })
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        respect_robots_txt: false,
+        retry_count: 2,
+        retry_codes: vec![429],
+        retry_initial_delay_ms: 10,
+        retry_max_delay_ms: 20,
+        ..native_config(|c| c)
+    };
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the third request is accepted");
+    assert_eq!(scraped.status_code, 200);
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+}
+
+/// Two native scrapes of one host, one after the other: the second gets its turn one delay of
+/// the domain after the first, and no page is asked for before its turn.
+#[tokio::test]
+async fn native_scrapes_of_one_host_keep_the_delay_of_the_domain() {
+    const DELAY: Duration = Duration::from_millis(1200);
+    let site = MockServer::start().await;
+    let arrivals = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&arrivals);
+    Mock::given(method("GET"))
+        .respond_with(move |_: &wiremock::Request| {
+            record.lock().expect("record").push(Instant::now());
+            ResponseTemplate::new(200).set_body_raw("<html><body><p>paced</p></body></html>", "text/html")
+        })
+        .mount(&site)
+        .await;
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let rate_limiter = RecordedTurns {
+        throttle: PerDomainThrottle::new(DELAY),
+        turns: Arc::clone(&turns),
+    };
+    let config = CrawlConfig {
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .rate_limiter(rate_limiter)
+        .build()
+        .expect("engine must build");
+    let engine = CrawlEngineHandle::from_engine(engine);
+    scrape(&engine, &format!("{}/first", site.uri())).await.expect("first");
+    scrape(&engine, &format!("{}/second", site.uri()))
+        .await
+        .expect("second");
+    let turns = turns.lock().expect("turns").clone();
+    let arrivals = arrivals.lock().expect("arrivals").clone();
+
+    let hosts: Vec<&str> = turns.iter().map(|(domain, _)| domain.as_str()).collect();
+    assert_eq!(
+        hosts,
+        ["127.0.0.1", "127.0.0.1"],
+        "each page takes one turn of its host"
+    );
+    // ~keep The product spaces the turns. The time from a turn to the arrival of the request is
+    // ~keep not the same for the two pages (the gap at the server was 1014 ms once at a delay of
+    // ~keep 1200 ms, at a host load of 50), so the gap at the server is not asserted.
+    let turn_gap = turns[1].1.duration_since(turns[0].1);
+    assert!(
+        turn_gap >= DELAY,
+        "the second turn must come one delay of {DELAY:?} after the first, got {turn_gap:?}"
+    );
+    assert_eq!(arrivals.len(), 2, "each page is asked for once");
+    assert!(
+        arrivals[0] >= turns[0].1 && arrivals[1] >= turns[1].1,
+        "no page is asked for before its turn: turns {turns:?}, arrivals {arrivals:?}"
+    );
 }

@@ -927,7 +927,14 @@ mod tests {
         config.browser.overall_timeout = std::time::Duration::from_millis(1);
         let before = crate::browser_pool::tests::profile_drops_here();
 
-        let fetched = super::super::one_shot_fetch("about:blank", &config, None, false).await;
+        let fetched = super::super::one_shot_fetch(
+            "about:blank",
+            &config,
+            None,
+            false,
+            tokio::time::Instant::now() + config.browser.overall_timeout,
+        )
+        .await;
 
         assert!(fetched.is_err(), "a Chrome launch cannot finish within a millisecond");
         tokio::time::timeout(crate::browser_pool::tests::PROCESS_TEST_WAIT, async {

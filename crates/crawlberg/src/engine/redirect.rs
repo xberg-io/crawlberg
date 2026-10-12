@@ -12,7 +12,9 @@ use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
-use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
+use crate::html::{
+    PageScan, effective_base_url, immediate_meta_refresh, immediate_refresh_target, mask_raw_text_markup,
+};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -427,12 +429,8 @@ pub(crate) enum Hop {
 ///
 /// # Errors
 ///
-/// Returns `Err` only on network-level failures (DNS, connection refused, timeout, …).
-/// Reaching `max_redirects` or detecting a cycle is **not** an error — the loop
-/// stops and the most recent response (the 3xx that would have redirected further)
-/// is returned to the caller. This matches the historical behavior of
-/// [`CrawlEngine::resolve_initial_redirects`], where the crawl would stop and
-/// surface a soft `state.error` rather than aborting the request.
+/// Returns `Err` on a network-level failure (DNS, connection refused, timeout, …), and when the
+/// chain ends on an HTTP redirect it may not follow: see [`unfollowed_redirect_error`].
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
 /// cannot reach a URL the configuration forbids, whatever order it does its own work in.
 ///
@@ -539,6 +537,11 @@ pub(crate) async fn follow_redirects(
 
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
+            if let Some(error) = unfollowed_redirect_error(&resp, &chain.current_url, |target| {
+                chain.unseen_key(target.as_str()).is_none()
+            }) {
+                return Err(error);
+            }
             prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
@@ -663,6 +666,24 @@ impl RedirectChain {
     }
 }
 
+/// The error for a chain that ends on `resp`, when `resp` is an HTTP redirect to an address the
+/// crawl can fetch. `visited` says whether the chain has requested the target.
+///
+/// A redirect with no page behind it is a failure, not a page (#613). The chain ends on such a
+/// response when the target is an address it has requested (a redirect loop) or when
+/// `max_redirects` leaves no hop.
+///
+/// ~keep Called once no redirect source of `resp` names a next hop, so a `Location` that loops
+/// ~keep back is an error only when no `Refresh` header and no meta refresh supersedes it.
+pub(crate) fn unfollowed_redirect_error<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    visited: impl Fn(&Url) -> bool,
+) -> Option<CrawlError> {
+    let target = http_redirect_target(resp, current_url)?;
+    crate::http::reject_redirect(&target, !visited(&target), false).err()
+}
+
 /// The response a 404 further down a redirect chain is reported as.
 fn synthetic_not_found() -> crate::tower::CrawlResponse {
     crate::tower::CrawlResponse::new(
@@ -725,6 +746,41 @@ impl RedirectSignals for crate::http::HttpResponse {
     fn body(&self) -> &str {
         &self.body
     }
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+impl RedirectSignals for crate::ssrf_intercept::StoppedResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        self.header("content-type").unwrap_or_default()
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+/// [`unfollowed_redirect_error`] for a navigation that Chrome made from `requested` and that
+/// stopped on `resp` at `landed`.
+///
+/// ~keep Chrome follows the redirects of a navigation itself, so the addresses known here are
+/// ~keep the one requested and the one that answered last. A loop through a third address is
+/// ~keep reported with the reason of the redirect limit.
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) fn stopped_navigation_error<R: RedirectSignals>(
+    resp: &R,
+    requested: &str,
+    landed: &str,
+) -> Option<CrawlError> {
+    unfollowed_redirect_error(resp, landed, |target| {
+        [requested, landed]
+            .iter()
+            .any(|seen| Url::parse(seen).is_ok_and(|seen| seen == *target))
+    })
 }
 
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
@@ -840,7 +896,7 @@ fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Opti
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
     let refresh = resp.header("refresh")?;
-    let target = refresh_target(refresh)?;
+    let target = immediate_refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
 
@@ -863,7 +919,7 @@ fn meta_refresh_target<R: RedirectSignals>(
     let parsed_html = mask_raw_text_markup(resp.body());
     let found = crate::html::parse_html(&parsed_html.text)
         .ok()
-        .and_then(|doc| detect_meta_refresh(&doc))
+        .and_then(|doc| immediate_meta_refresh(&doc))
         .map(|target| {
             let base = Url::parse(current_url)
                 .map(|document_url| effective_base_url(parsed_html.base_href.as_deref(), &document_url).to_string())
@@ -1226,7 +1282,7 @@ mod tests {
         let resp = response(
             200,
             &[("refresh", ".; url=/from-header")],
-            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+            r#"<html><head><meta http-equiv="refresh" content="0; url=/from-meta"></head></html>"#,
         );
         let chain = chain_at("https://example.com/start", &[]);
 
@@ -1629,7 +1685,7 @@ mod tests {
         let second = Some("https://example.com/second".to_owned());
         assert_eq!(refresh_hop(None, &["0; url=/first", "0; url=/second"]), second);
         assert_eq!(refresh_hop(None, &["3; url=/first", "0; url=/second"]), second);
-        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), None);
         assert_eq!(
             refresh_hop(None, &["0; url=/first", "3; url=/second"]),
             Some("https://example.com/first".to_owned())
@@ -1658,8 +1714,18 @@ mod tests {
         );
     }
 
-    /// A `javascript:` refresh target is no refresh at all: the next meta refresh is used whatever
-    /// its delay, and a lone one leaves the chain where it is (#279). ~keep
+    /// A `Refresh` header with a delay leaves the chain on the page that carries it (#605).
+    #[test]
+    fn a_delayed_refresh_header_is_not_a_hop() {
+        assert_eq!(refresh_hop(Some("5; url=/later"), &[]), None);
+        assert_eq!(
+            refresh_hop(Some("0; url=/now"), &[]),
+            Some("https://example.com/now".to_owned())
+        );
+    }
+
+    /// A `javascript:` refresh target is ignored; the next immediate refresh is used,
+    /// and a lone one leaves the chain where it is (#279). ~keep
     #[test]
     fn a_javascript_meta_refresh_is_ignored() {
         for first in [
@@ -1669,7 +1735,7 @@ mod tests {
             "0; url=java&#9;script:void(0)",
         ] {
             assert_eq!(
-                refresh_hop(None, &[first, "3; url=/second"]),
+                refresh_hop(None, &[first, "0; url=/second"]),
                 Some("https://example.com/second".to_owned()),
                 "{first:?} must be ignored"
             );
@@ -1683,7 +1749,7 @@ mod tests {
     fn a_javascript_refresh_header_is_ignored() {
         assert_eq!(refresh_hop(Some("0; url=javascript:void(0)"), &[]), None);
         assert_eq!(
-            refresh_hop(Some("0; url=javascript:void(0)"), &["3; url=/second"]),
+            refresh_hop(Some("0; url=javascript:void(0)"), &["0; url=/second"]),
             Some("https://example.com/second".to_owned())
         );
     }

@@ -200,12 +200,10 @@ async fn ssrf_is_still_enforced_on_a_traversal_redirect_target() {
     );
 }
 
-/// Reaching `max_redirects` mid-traversal is not an error: the chain stops and the crawl
-/// reports the most recent 3xx response, matching the seed's existing behaviour
-/// (`should_report_the_hops_already_followed_when_a_later_hop_is_refused` in
-/// `test_redirect_policy.rs`).
+/// A chain that reaches `max_redirects` mid-traversal stops, and the 3xx it stops on is not
+/// reported as a page (#613).
 #[tokio::test]
-async fn redirect_chain_reaching_max_redirects_during_traversal_stops_and_reports_the_last_hop() {
+async fn redirect_chain_reaching_max_redirects_during_traversal_stops_and_reports_no_page() {
     let mock = MockServer::start().await;
     mount_robots(&mock, ALLOW_ALL).await;
     mount_page(&mock, "/", "<html><body><a href=\"/old\">Link</a></body></html>").await;
@@ -222,28 +220,16 @@ async fn redirect_chain_reaching_max_redirects_during_traversal_stops_and_report
         !log.iter().any(|entry| entry == "/c"),
         "the hop past max_redirects must never be requested, got {log:?}"
     );
+    for hop in ["/old", "/a", "/b"] {
+        assert!(
+            log.iter().any(|entry| entry == hop),
+            "exactly max_redirects hops are followed before the chain stops: {hop} is not in {log:?}"
+        );
+    }
     assert_eq!(
-        result.pages.len(),
-        2,
-        "the seed and the /old entry (stopped mid-chain) are the crawl's two pages"
-    );
-    let stopped_page = result
-        .pages
-        .iter()
-        .find(|p| p.url.ends_with("/old"))
-        .expect("the /old entry must still be reported, carrying the last hop it reached");
-    assert_eq!(
-        stopped_page.redirect_count, 2,
-        "exactly max_redirects hops were followed before the chain stopped"
-    );
-    assert_eq!(
-        stopped_page.status_code, 301,
-        "the reported response is the unfollowed 3xx the chain stopped on, not a 200"
-    );
-    assert!(
-        stopped_page.final_url.ends_with("/b"),
-        "the chain must stop at the hop max_redirects allows, not its target, got {}",
-        stopped_page.final_url
+        result.pages.iter().map(|page| page.status_code).collect::<Vec<_>>(),
+        [200],
+        "the seed is the only page: a redirect with no page behind it is not a page"
     );
 }
 

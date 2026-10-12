@@ -21,7 +21,8 @@ pub use filter::{Bm25Filter, NoopFilter};
 pub use frontier::{InMemoryFrontier, LifoFrontier};
 #[cfg(feature = "ai")]
 pub use llm_extractor::{InFlightBound, LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
-#[cfg(test)]
+// ~keep The engine gives its browser paths this limiter when `rate_limit_ms` is unset.
+#[cfg(any(test, feature = "browser", feature = "browser-native"))]
 pub use rate_limiter::NoopRateLimiter;
 pub use rate_limiter::PerDomainThrottle;
 pub use store::NoopStore;

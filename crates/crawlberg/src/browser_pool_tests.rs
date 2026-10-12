@@ -2201,9 +2201,8 @@ async fn opening_a_page_replaces_a_dead_chrome_before_its_handler_task_finishes(
     };
     let config = crate::types::CrawlConfig::default();
     let opened = match tokio::time::timeout(Duration::from_secs(60), pool.try_new_page(None, &config)).await {
-        Ok(Ok((page, watch, _))) => {
-            drop(page);
-            watch.close().await;
+        Ok(Ok(page)) => {
+            page.close().await;
             Ok(pool_profile_path(&pool).await)
         }
         Ok(Err(error)) => Err(error.to_string()),
@@ -5051,6 +5050,105 @@ async fn a_closed_cdp_socket_cancels_a_command_waiting_for_its_response() {
     assert!(matches!(ended, Ok(Ok(()))), "the handler must end, got {ended:?}");
 }
 
+#[cfg(feature = "browser")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_refetch_both_inflight_pages_after_the_pooled_browser_crashes() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let site = MockServer::start().await;
+    Mock::given(path("/warmup"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>warmup</p>", "text/html"))
+        .mount(&site)
+        .await;
+    let arrivals = Arc::new(AtomicUsize::new(0));
+    let arrived = Arc::clone(&arrivals);
+    Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(move |request: &wiremock::Request| {
+            // ~keep Only the two pages count. A full Chrome also asks for the icon of the tab,
+            // ~keep which made the count 6 and let the crash come with one page loading.
+            if matches!(request.url.path(), "/one" | "/two") {
+                arrived.fetch_add(1, Ordering::SeqCst);
+            }
+            ResponseTemplate::new(200)
+                .set_body_raw("<p>recovered</p>", "text/html")
+                .set_delay(Duration::from_millis(500))
+        })
+        .with_priority(10)
+        .mount(&site)
+        .await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let config = crate::CrawlConfig {
+        browser: crate::BrowserConfig {
+            mode: crate::BrowserMode::Always,
+            session_affinity: false,
+            ..Default::default()
+        },
+        browser_pool: Some(Arc::clone(&pool)),
+        retry_count: 2,
+        retry_codes: vec![429, 503],
+        retry_initial_delay_ms: 10,
+        retry_max_delay_ms: 20,
+        ..crate::CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = crate::create_engine(Some(config)).expect("engine");
+    crate::scrape(&engine, &format!("{}/warmup", site.uri()))
+        .await
+        .expect("warmup");
+    let browser = Arc::clone(&pool.state.lock().await.as_ref().expect("launched browser").browser);
+    let first_engine = engine.clone();
+    let first_url = format!("{}/one", site.uri());
+    let first = tokio::spawn(async move { crate::scrape(&first_engine, &first_url).await });
+    let second_url = format!("{}/two", site.uri());
+    let second = tokio::spawn(async move { crate::scrape(&engine, &second_url).await });
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while arrivals.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("both pages must be loading before the crash");
+    let _ = browser
+        .execute(chromiumoxide::cdp::browser_protocol::browser::CrashParams::default())
+        .await;
+    for task in [first, second] {
+        let result = tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("fetch deadline")
+            .expect("fetch task")
+            .expect("fetch recovered");
+        assert_eq!(result.status_code, 200);
+    }
+    assert_eq!(
+        arrivals.load(Ordering::SeqCst),
+        4,
+        "each page is fetched once before and once after the crash"
+    );
+    pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn should_keep_a_pages_original_handler_after_the_pool_relaunches() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let original = pool.acquire_page().await.expect("first page");
+    let end = original.handler_end.clone();
+    let browser = Arc::clone(&pool.state.lock().await.as_ref().expect("browser state").browser);
+    let _ = browser
+        .execute(chromiumoxide::cdp::browser_protocol::browser::CrashParams::default())
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), end.ended())
+        .await
+        .expect("original handler must report the crash");
+    let replacement = pool.acquire_page().await.expect("replacement page");
+    assert!(end.has_ended());
+    assert!(!replacement.handler_end.has_ended());
+    assert!(Arc::ptr_eq(&end.0, &original.handler_end.0));
+    assert!(!Arc::ptr_eq(&end.0, &replacement.handler_end.0));
+    replacement.close().await;
+    original.close().await;
+    pool.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_stalled_or_cancelled_close_preserves_other_live_pages_and_the_browser_generation() {
     for cancelled in [false, true] {
@@ -5147,5 +5245,58 @@ async fn a_dropped_page_retains_its_permit_until_its_context_is_disposed() {
     assert_eq!(
         remaining, original,
         "the dropped page must leave no browser context behind"
+    );
+}
+
+/// A page that is parked for its site when Chrome dies belongs to the dead Chrome. The next fetch
+/// of the site must open a page on the new Chrome. With no retry configured, a fetch that took
+/// the parked page would fail.
+#[cfg(feature = "browser")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_parked_on_a_crashed_browser_is_not_used_for_the_next_fetch() {
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let site = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<p>parked</p>", "text/html"))
+        .mount(&site)
+        .await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let config = crate::CrawlConfig {
+        browser: crate::BrowserConfig {
+            mode: crate::BrowserMode::Always,
+            session_affinity: true,
+            ..Default::default()
+        },
+        browser_pool: Some(Arc::clone(&pool)),
+        browser_session_pool: Some(Arc::new(crate::browser_session_pool::BrowserSessionPool::new())),
+        retry_count: 0,
+        ..crate::CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = crate::create_engine(Some(config)).expect("engine");
+    crate::scrape(&engine, &format!("{}/first", site.uri()))
+        .await
+        .expect("the first fetch parks its page");
+    let (browser, end) = {
+        let state = pool.state.lock().await;
+        let state = state.as_ref().expect("launched browser");
+        (Arc::clone(&state.browser), state.handler_end.clone())
+    };
+    let _ = browser
+        .execute(chromiumoxide::cdp::browser_protocol::browser::CrashParams::default())
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), end.ended())
+        .await
+        .expect("the handler must report the crash");
+    let second = tokio::time::timeout(
+        Duration::from_secs(60),
+        crate::scrape(&engine, &format!("{}/second", site.uri())),
+    )
+    .await
+    .expect("the second fetch must end");
+    let status = second.map(|page| page.status_code);
+    pool.shutdown().await;
+    assert!(
+        matches!(status, Ok(200)),
+        "the fetch after the crash must use a page of the new Chrome, got {status:?}"
     );
 }

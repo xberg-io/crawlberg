@@ -34,6 +34,51 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
+// ~keep The generated CDP schema exposes newer URLPattern syntax only; the browser config
+// ~keep promises the legacy '*' glob syntax, which Chrome's deprecated `urls` field accepts.
+#[derive(serde::Serialize)]
+struct BlockedUrls {
+    urls: Vec<String>,
+}
+
+impl chromiumoxide::Method for BlockedUrls {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Network.setBlockedURLs".into()
+    }
+}
+
+impl chromiumoxide::Command for BlockedUrls {
+    type Response = chromiumoxide::cdp::browser_protocol::network::SetBlockedUrLsReturns;
+}
+
+/// The command that sets the blocked URL patterns of a page, or `None` when the list is empty.
+///
+/// ~keep A page starts with no blocked pattern, and a page kept for another fetch gets its
+/// ~keep patterns cleared first (`clear_blocked_urls`). So an empty list needs no command, and a
+/// ~keep command that is not sent cannot fail the fetch.
+fn blocked_urls_command(patterns: &[String]) -> Option<BlockedUrls> {
+    (!patterns.is_empty()).then(|| BlockedUrls {
+        urls: patterns.to_vec(),
+    })
+}
+
+/// Clear the blocked URL patterns that the fetch with `config` set on `page`, before the page is
+/// kept for another fetch. Returns `false` when the page still has them: such a page is not kept.
+///
+/// ~keep The next fetch on the page can have other patterns, or none. A fetch with no pattern
+/// ~keep sends no command, so the patterns must not outlive the fetch that set them.
+pub(super) async fn clear_blocked_urls(page: &chromiumoxide::Page, config: &CrawlConfig) -> bool {
+    if config.browser.block_url_patterns.is_empty() {
+        return true;
+    }
+    let cleared = tokio::time::timeout(
+        config.browser.shutdown_timeout,
+        page.execute(BlockedUrls { urls: Vec::new() }),
+    )
+    .await;
+    matches!(cleared, Ok(Ok(_)))
+}
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -47,7 +92,28 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// than that ends on the redirect response at the limit, the way the HTTP fetch path ends. A
 /// navigation the page starts past the limit is dropped, and the page keeps its document. A
 /// response Chrome does not commit (204, 205, 304) ends the fetch on that response.
+///
+/// Setup, navigation and rendering use the deadline shared by every attempt of this fetch.
+/// The caller waits for the domain turn before acquiring the page.
 pub(super) async fn page_fetch(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    prior_cookies: Option<&[BrowserCookie]>,
+    want_screenshot: bool,
+    deadline: tokio::time::Instant,
+) -> Result<BrowserPage, CrawlError> {
+    tokio::time::timeout_at(
+        deadline,
+        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot),
+    )
+    .await
+    .unwrap_or_else(|_| Err(super::overall_deadline_error(config.browser.overall_timeout)))
+}
+
+/// Set `page` up and read `url` from it, in the turn of its domain.
+async fn fetch_in_turn(
     url: &str,
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
@@ -62,6 +128,11 @@ pub(super) async fn page_fetch(
     }
 
     apply_user_agent(page, config, stealth).await?;
+    if let Some(command) = blocked_urls_command(&config.browser.block_url_patterns) {
+        page.execute(command)
+            .await
+            .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
+    }
 
     if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
@@ -335,7 +406,9 @@ async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stea
     if resolved_ua.is_empty() {
         return Ok(());
     }
-    page.set_user_agent(&resolved_ua)
+    let mut params = chromiumoxide::cdp::browser_protocol::emulation::SetUserAgentOverrideParams::new(&resolved_ua);
+    params.user_agent_metadata = super::user_agent::metadata(&resolved_ua);
+    page.execute(params)
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     Ok(())
@@ -473,6 +546,20 @@ mod tests {
             "https://user:secret@10.0.0.1/".to_owned(),
             "denied by SSRF policy: private_network".to_owned(),
         ))
+    }
+
+    #[test]
+    fn an_empty_blocked_url_list_sends_no_command() {
+        assert!(blocked_urls_command(&[]).is_none());
+        let patterns = ["*.png".to_owned(), "*://ads.example/*".to_owned()];
+        let command = blocked_urls_command(&patterns).expect("a list with patterns sends the command");
+        assert_eq!(command.urls, patterns);
+    }
+
+    #[test]
+    fn the_command_that_clears_the_patterns_of_a_kept_page_carries_an_empty_list() {
+        let empty = serde_json::to_value(BlockedUrls { urls: Vec::new() }).expect("serialize empty patterns");
+        assert_eq!(empty, serde_json::json!({"urls": []}));
     }
 
     #[test]

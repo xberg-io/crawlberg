@@ -31,8 +31,8 @@ use chromiumoxide::cdp::browser_protocol::network::{
     Cookie, CookieParam, ErrorReason, EventLoadingFailed, Headers, ResourceType, TimeSinceEpoch,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
-    DialogType, EventFrameNavigated, EventFrameStoppedLoading, EventJavascriptDialogOpening, FrameId,
-    HandleJavaScriptDialogParams,
+    ClientNavigationReason, DialogType, EventFrameNavigated, EventFrameRequestedNavigation, EventFrameStoppedLoading,
+    EventJavascriptDialogOpening, FrameId, HandleJavaScriptDialogParams,
 };
 use chromiumoxide::cdp::browser_protocol::storage::{
     GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
@@ -55,6 +55,28 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::net::userinfo;
 use crate::normalize::resolve_redirect;
 use crate::types::CrawlConfig;
+
+// ~keep Chrome still emits this deprecated event, but the generated CDP schema omits it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshScheduled {
+    frame_id: FrameId,
+    delay: f64,
+    reason: ClientNavigationReason,
+    url: String,
+}
+
+enum RefreshNavigation {
+    Scheduled(Arc<RefreshScheduled>),
+    Requested(Arc<EventFrameRequestedNavigation>),
+}
+
+impl chromiumoxide::types::MethodType for RefreshScheduled {
+    fn method_id() -> chromiumoxide::types::MethodId {
+        "Page.frameScheduledNavigation".into()
+    }
+}
+impl chromiumoxide::cdp::CustomEvent for RefreshScheduled {}
 
 /// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
@@ -127,6 +149,7 @@ pub(crate) struct InterceptOutcome {
     redirects_followed: usize,
     /// Whether the main frame has sent the request of its first navigation.
     navigation_started: bool,
+    pending_refresh: Option<url::Url>,
     /// Set once the requested navigation is over: later navigations are not counted.
     navigation_ended: bool,
     /// ~keep Whether the check has dropped a main-frame navigation past the redirect limit or one
@@ -891,6 +914,7 @@ enum Command {
         Arc<WatchedPage>,
         chromiumoxide::listeners::EventStream<EventFrameNavigated>,
         chromiumoxide::listeners::EventStream<EventLoadingFailed>,
+        BoxStream<'static, Arc<RefreshNavigation>>,
         DialogAnswers,
         oneshot::Sender<Result<Option<BrowserContextId>, String>>,
     ),
@@ -1526,6 +1550,18 @@ impl FirewallHandle {
             .event_listener::<EventLoadingFailed>()
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+        let scheduled = page
+            .event_listener::<RefreshScheduled>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register refresh listener: {e}")))?;
+        let requested = page
+            .event_listener::<EventFrameRequestedNavigation>()
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to register requested navigation listener: {e}")))?;
+        let requested = Box::pin(futures::stream::select(
+            scheduled.map(|event| Arc::new(RefreshNavigation::Scheduled(event))),
+            requested.map(|event| Arc::new(RefreshNavigation::Requested(event))),
+        ));
         let dialogs = page
             .event_listener::<EventJavascriptDialogOpening>()
             .await
@@ -1557,6 +1593,7 @@ impl FirewallHandle {
                 Arc::clone(&watched),
                 navigations,
                 failures,
+                requested,
                 dialog_answers(&watched, page, dialogs),
                 ack,
             ))
@@ -2916,6 +2953,7 @@ async fn serve(
     let mut commands_open = true;
     let mut navigations: SelectAll<BoxStream<'static, Committed>> = SelectAll::new();
     let mut failures: SelectAll<BoxStream<'static, Failed>> = SelectAll::new();
+    let mut refreshes: SelectAll<BoxStream<'static, (Arc<WatchedPage>, Arc<RefreshNavigation>)>> = SelectAll::new();
     let mut dialogs: SelectAll<DialogAnswers> = SelectAll::new();
     // ~keep Queries run concurrently so CDP latency cannot stall requests or commands, while
     // ~keep `FuturesOrdered` applies their answers in the lifecycle-event order consumed here.
@@ -3005,10 +3043,10 @@ async fn serve(
                         }
                     }
                 }
-                Some(Command::Watch(_, _, _, _, ack)) if stopping.is_some() => {
+                Some(Command::Watch(_, _, _, _, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
-                Some(Command::Watch(page, navigated, failed, answers, ack)) => {
+                Some(Command::Watch(page, navigated, failed, requested, answers, ack)) => {
                     let owned_context = {
                         let mut registry = lock(&shared.registry);
                         // ~keep `Opened` precedes `Watch` on this queue; capture its context only after registration.
@@ -3026,6 +3064,7 @@ async fn serve(
                     };
                     navigations.push(commits_of(&page, navigated));
                     failures.push(failures_of(&page, failed));
+                    refreshes.push(events_of(&page, requested));
                     dialogs.push(answers);
                     #[cfg(test)]
                     if let Some(gate) = &shared.delays.watch_ack_gate {
@@ -3062,6 +3101,9 @@ async fn serve(
             Some((page, navigated)) = navigations.next(), if !navigations.is_empty() => {
                 record_commit(&page, &navigated);
             }
+            Some((page, requested)) = refreshes.next(), if !refreshes.is_empty() => {
+                record_refresh_request(&page, &requested);
+            }
             event = events.paused.next() => match event {
                 Some(event) => {
                     // ~keep Chrome sends a commit before any later paused response, and chromiumoxide
@@ -3069,6 +3111,9 @@ async fn serve(
                     // ~keep first and the committed loader is current when a response is recorded.
                     while let Some(Some((page, navigated))) = navigations.next().now_or_never() {
                         record_commit(&page, &navigated);
+                    }
+                    while let Some(Some((page, requested))) = refreshes.next().now_or_never() {
+                        record_refresh_request(&page, &requested);
                     }
                     #[cfg(test)]
                     {
@@ -3754,7 +3799,11 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
         Some(Owner::Watched(page)) => {
             let in_flight = paused.matched(page);
             let page = &in_flight.0;
-            let verdict = judge(shared, page, event, paused_at).await;
+            let verdict = if should_preserve_refresh_page(page, event) {
+                Verdict::Abort
+            } else {
+                judge(shared, page, event, paused_at).await
+            };
             let verdict = if page.ending.load(Ordering::Acquire) {
                 Verdict::Refuse
             } else {
@@ -3881,6 +3930,49 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         self.0.in_flight.fetch_sub(1, Ordering::AcqRel);
     }
+}
+
+fn record_refresh_request(page: &WatchedPage, navigation: &RefreshNavigation) {
+    let mut state = lock(&page.outcome);
+    match navigation {
+        RefreshNavigation::Scheduled(event) if event.frame_id == page.main_frame => {
+            state.pending_refresh = matches!(
+                event.reason,
+                ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+            )
+            .then_some(event.delay)
+            .filter(|delay| *delay >= 1.0)
+            .and_then(|_| refresh_request_key(&event.url));
+        }
+        RefreshNavigation::Requested(event)
+            if event.frame_id == page.main_frame
+                && !matches!(
+                    event.reason,
+                    ClientNavigationReason::MetaTagRefresh | ClientNavigationReason::HttpHeaderRefresh
+                ) =>
+        {
+            state.pending_refresh = None;
+        }
+        _ => {}
+    }
+}
+
+fn should_preserve_refresh_page(page: &WatchedPage, event: &EventRequestPaused) -> bool {
+    if is_response_stage(event) || event.frame_id != page.main_frame || event.resource_type != ResourceType::Document {
+        return false;
+    }
+    lock(&page.outcome)
+        .pending_refresh
+        .take()
+        .is_some_and(|target| Some(target) == refresh_request_key(&event.request.url))
+}
+
+// ~keep CDP scheduling includes fragments and userinfo; Fetch pauses the network URL without them.
+fn refresh_request_key(raw: &str) -> Option<url::Url> {
+    userinfo::parse(raw).map(|mut url| {
+        url.set_fragment(None);
+        url
+    })
 }
 
 async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> Verdict {
@@ -6270,6 +6362,24 @@ mod tests {
         registry.targets.iter().map(|(id, _)| id.inner().as_str()).collect()
     }
 
+    #[test]
+    fn should_keep_a_structural_tab_out_of_the_pages_popup_close_set() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let context = BrowserContextId::new("CONTEXT");
+        lock(&shared.registry).register_context(context.clone(), None);
+        lock(&shared.registry)
+            .opened
+            .insert(page.root.clone(), Some(context.clone()));
+        let tab_event = in_context(target_created("TAB", "tab", None, None, None), &context);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        install_watch(&mut lock(&shared.registry), &page).expect("watch installs");
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
+        page.ending.store(true, Ordering::Release);
+        assert!(adopt_target(&shared, &tab_event.target_info).is_none());
+        assert_eq!(owned(&lock(&shared.registry)), vec!["ROOT"]);
+    }
+
     /// A frame of a watched page that Chrome hosts in a target of its own is one of the page's
     /// frames, not a target to close; a popup opened from inside that frame is the page's popup,
     /// kept while the page is watched and closed at once once the page is ending; and the frame
@@ -8506,19 +8616,6 @@ mod race_tests {
         close(browser).await;
     }
 
-    /// The id of the frame target whose URL starts with `prefix`, if `browser` has one.
-    async fn frame_target_of(browser: &Browser, prefix: &str) -> Option<TargetId> {
-        browser
-            .execute(GetTargetsParams::default())
-            .await
-            .ok()?
-            .result
-            .target_infos
-            .into_iter()
-            .find(|info| info.r#type == "iframe" && info.url.starts_with(prefix))
-            .map(|info| info.target_id)
-    }
-
     /// A loopback server on `a.localhost` answering every request with `body` as HTML, counting
     /// the requests for `/ok`.
     async fn frame_site(body: String) -> (String, Arc<AtomicUsize>) {
@@ -8551,13 +8648,14 @@ mod race_tests {
         (url, ok_hits)
     }
 
-    /// A page keeps a cross-site frame Chrome hosts in a target of its own: the frame's requests
+    /// A page keeps a cross-site frame: the frame's requests
     /// are judged by the page's policy, the park closes the page's popups and not the frame, and
     /// a stop of an external browser does not wait for it. The parked page is still open after
     /// the park.
     ///
     /// ~keep The frame is on `a.localhost`, a different site from the page's `localhost`, so
-    /// ~keep Chrome gives it a target of its own. Closing that target closes the page (measured on
+    /// ~keep Full Chrome can give it a target of its own; headless shell can keep it in-process.
+    /// ~keep Closing a frame target closes the page (measured on
     /// ~keep Chrome 154), which is what the park did to the page it was keeping.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_parked_page_keeps_its_cross_site_frame_and_stays_open() {
@@ -8597,18 +8695,28 @@ mod race_tests {
                  document.body.appendChild(frame); 1"
             ))
             .await;
-        let mut frame_target = None;
-        for _ in 0..50 {
-            frame_target = frame_target_of(&browser, "http://a.localhost").await;
-            if frame_target.is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
         let frame_allowed = served(&ok_hits).await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
+        let refused = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let refused = watch.refused_urls().await;
+                if refused.iter().any(|url| url == &denied) {
+                    break refused;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the frame must attempt its denied request");
         watch.park().await;
+        let frame_state = page
+            .evaluate("JSON.stringify({frame: document.querySelector('iframe') !== null, count: window.frames.length})")
+            .await;
+        let frame_kept = frame_state
+            .as_ref()
+            .ok()
+            .and_then(|value| value.clone().into_value::<String>().ok())
+            .is_some_and(|value| value.contains("\"frame\":true") && value.contains("\"count\":1"));
+        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
         let open_after_park = open_targets(&browser).await.contains(&root);
         let stopped = tokio::time::timeout(Duration::from_secs(15), firewall.stop())
             .await
@@ -8618,16 +8726,20 @@ mod race_tests {
         }
 
         assert!(
-            frame_target.is_some(),
-            "{test_name}: the cross-site frame must get a target of its own"
-        );
-        assert!(
             frame_allowed,
             "{test_name}: the frame's request to its own site must be allowed through"
         );
         assert!(
             frame_refused,
             "{test_name}: the frame's request to the denied address must be refused"
+        );
+        assert!(
+            refused.iter().any(|url| url == &denied),
+            "{test_name}: the policy must have checked and refused the frame's request, got {refused:?}"
+        );
+        assert!(
+            frame_kept,
+            "{test_name}: parking must keep the frame in the open page, got {frame_state:?}, page open {open_after_park}"
         );
         assert!(open_after_park, "{test_name}: parking must leave the page open");
         assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");

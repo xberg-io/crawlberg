@@ -109,6 +109,43 @@ pub(crate) async fn read_body_bounded(
     Ok((resp.bytes().await?.to_vec(), false))
 }
 
+/// The content codings that a server uses to compress a page. The HTTP client removes
+/// `Content-Encoding` when it decodes a body, and it matches the exact bytes `gzip`, `deflate`
+/// and `br` only. A coding of this list that is still on the response therefore names bytes
+/// that are not the page: another spelling (`GZIP`, `x-gzip`) or a list (`gzip, identity`).
+const COMPRESSED_CODINGS: [&str; 9] = [
+    "gzip",
+    "x-gzip",
+    "deflate",
+    "br",
+    "zstd",
+    "compress",
+    "x-compress",
+    "dcb",
+    "dcz",
+];
+
+/// Refuse a response whose body is still compressed.
+///
+/// `identity`, an empty value and a label that is not a compression coding (a charset such as
+/// `UTF-8` that a server put in the wrong header) leave the body as the server sent it, so the
+/// page is returned.
+pub(crate) fn validate_content_encoding(headers: &reqwest::header::HeaderMap) -> Result<(), crate::error::CrawlError> {
+    for encoding in headers.get_all(reqwest::header::CONTENT_ENCODING) {
+        let encoding = String::from_utf8_lossy(encoding.as_bytes());
+        if encoding.split(',').any(|token| {
+            COMPRESSED_CODINGS
+                .iter()
+                .any(|coding| token.trim().eq_ignore_ascii_case(coding))
+        }) {
+            return Err(crate::error::CrawlError::unsupported(format!(
+                "undecoded Content-Encoding: {encoding}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Read a response body via [`read_body_bounded`] and lossily decode it as UTF-8,
 /// returning an empty string on any read error.
 ///
