@@ -44,10 +44,7 @@ impl CrawlEngine {
         url: &str,
         forced_user_agent: Option<&str>,
     ) -> Result<ScrapeResult, CrawlError> {
-        self.config.validate()?;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        self.warn_if_capture_screenshot_is_a_no_op();
+        self.scrape_preflight()?;
 
         // ~keep Short-circuit chromiumoxide BrowserMode::Always/Stealth when a screenshot was
         // ~keep requested: the generic `fetch_response`/`follow_redirects` path converts to
@@ -93,15 +90,12 @@ impl CrawlEngine {
                 RedirectResolution::Refused { refusal, .. } => return Err(refusal.into_error()),
             };
 
-            let status = outcome.final_response.status;
-            if outcome.final_response.soft_error {
-                return Ok(self.bodyless_status_result(status, outcome.final_url));
-            }
-            if outcome.final_response.status == 404
-                && outcome.final_response.body.is_empty()
-                && outcome.redirect_count > 0
+            if outcome.final_response.soft_error
+                || (outcome.final_response.status == 404
+                    && outcome.final_response.body.is_empty()
+                    && outcome.redirect_count > 0)
             {
-                return Ok(self.bodyless_status_result(404, outcome.final_url));
+                return Ok(self.bodyless_status_result(outcome.final_response.status, outcome.final_url));
             }
             (
                 outcome.final_url,
@@ -116,6 +110,38 @@ impl CrawlEngine {
         #[cfg(target_arch = "wasm32")]
         let page_scan = None;
 
+        self.scrape_resolved(final_url, response, page_scan, browser_used_for_fetch)
+            .await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) async fn scrape_redirect_outcome(
+        &self,
+        outcome: super::redirect::RedirectOutcome,
+    ) -> Result<ScrapeResult, CrawlError> {
+        if outcome.final_response.soft_error
+            || (outcome.final_response.status == 404
+                && outcome.final_response.body.is_empty()
+                && outcome.redirect_count > 0)
+        {
+            return Ok(self.bodyless_status_result(outcome.final_response.status, outcome.final_url));
+        }
+        self.scrape_resolved(
+            outcome.final_url,
+            outcome.final_response,
+            outcome.page_scan,
+            outcome.browser_used,
+        )
+        .await
+    }
+
+    pub(super) async fn scrape_resolved(
+        &self,
+        final_url: String,
+        response: crate::tower::CrawlResponse,
+        page_scan: Option<crate::html::PageScan>,
+        browser_used_for_fetch: bool,
+    ) -> Result<ScrapeResult, CrawlError> {
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &response,
@@ -141,6 +167,13 @@ impl CrawlEngine {
         }
 
         Ok(result)
+    }
+
+    pub(super) fn scrape_preflight(&self) -> Result<(), CrawlError> {
+        self.config.validate()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.warn_if_capture_screenshot_is_a_no_op();
+        Ok(())
     }
 
     /// Warn when `capture_screenshot` is set on a configuration that cannot honour it.

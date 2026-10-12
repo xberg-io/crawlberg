@@ -9,6 +9,23 @@ use async_trait::async_trait;
 use crate::error::CrawlError;
 use crate::traits::{Frontier, FrontierEntry};
 
+fn pop_excluding_hosts(queue: &mut VecDeque<FrontierEntry>, n: usize, hosts: &[String]) -> Vec<FrontierEntry> {
+    let mut batch = Vec::with_capacity(n.min(queue.len()));
+    let mut index = 0;
+    while index < queue.len() && batch.len() < n {
+        let host = url::Url::parse(&queue[index].url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_default();
+        if hosts.contains(&host) {
+            index += 1;
+        } else {
+            batch.push(queue.remove(index).expect("valid queue index"));
+        }
+    }
+    batch
+}
+
 /// A simple in-memory URL frontier with deduplication.
 ///
 /// FIFO: entries are popped in the order they were pushed, which makes the crawl
@@ -60,6 +77,18 @@ impl Frontier for InMemoryFrontier {
             }
         }
         Ok(batch)
+    }
+
+    async fn pop_batch_excluding_hosts(
+        &self,
+        n: usize,
+        hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(Some(pop_excluding_hosts(
+            &mut self.queue.lock().expect("lock poisoned"),
+            n,
+            hosts,
+        )))
     }
 
     async fn is_seen(&self, url: &str) -> Result<bool, CrawlError> {
@@ -137,6 +166,18 @@ impl Frontier for LifoFrontier {
         Ok(batch)
     }
 
+    async fn pop_batch_excluding_hosts(
+        &self,
+        n: usize,
+        hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(Some(pop_excluding_hosts(
+            &mut self.queue.lock().expect("lock poisoned"),
+            n,
+            hosts,
+        )))
+    }
+
     async fn is_seen(&self, url: &str) -> Result<bool, CrawlError> {
         Ok(self.seen.lock().expect("lock poisoned").contains(url))
     }
@@ -163,6 +204,56 @@ impl Frontier for LifoFrontier {
 mod tests {
     use super::*;
     use crate::traits::FrontierEntry;
+
+    #[tokio::test]
+    async fn should_select_free_hosts_without_reordering_or_changing_retained_entries() {
+        for lifo in [false, true] {
+            let frontier: std::sync::Arc<dyn Frontier> = if lifo {
+                std::sync::Arc::new(LifoFrontier::new())
+            } else {
+                std::sync::Arc::new(InMemoryFrontier::new())
+            };
+            let entries = (0..4)
+                .map(|id| FrontierEntry {
+                    original_url: Some(format!("https://source.test/{id}?original=%2f")),
+                    url: format!(
+                        "https://{}/raw%2f?id={id}",
+                        if id % 2 == 0 { "slow.test" } else { "free.test" }
+                    ),
+                    depth: id + 9,
+                    doc_depth: id as u32 + 7,
+                    priority: id as f64 + 0.25,
+                })
+                .collect::<Vec<_>>();
+            for entry in &entries {
+                frontier.push(entry.clone()).await.unwrap();
+            }
+            let selected = frontier
+                .pop_batch_excluding_hosts(2, &["slow.test".into()])
+                .await
+                .unwrap()
+                .unwrap();
+            let expected = if lifo {
+                vec![entries[3].clone(), entries[1].clone()]
+            } else {
+                vec![entries[1].clone(), entries[3].clone()]
+            };
+            assert_eq!(
+                serde_json::to_value(&selected).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+            let retained = frontier.pop_batch(4).await.unwrap();
+            let expected = if lifo {
+                vec![entries[2].clone(), entries[0].clone()]
+            } else {
+                vec![entries[0].clone(), entries[2].clone()]
+            };
+            assert_eq!(
+                serde_json::to_value(retained).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+        }
+    }
 
     // ~keep The claim is one step only if no other thread can run between its check and its mark, so
     // ~keep the test needs threads in parallel: tasks on one thread never interleave inside a call

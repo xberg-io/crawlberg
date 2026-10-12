@@ -146,6 +146,19 @@ pub trait Frontier: Send + Sync {
         Ok(batch)
     }
 
+    /// Pop eligible entries without moving entries on excluded hosts.
+    ///
+    /// ~keep `None` means this backend has no host-aware selection. The engine then uses
+    /// its existing bounded window; fairness beyond that window requires an override.
+    /// Supported implementations preserve each entry and the order of retained entries.
+    async fn pop_batch_excluding_hosts(
+        &self,
+        _n: usize,
+        _hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(None)
+    }
+
     /// Return the number of entries in the frontier.
     async fn len(&self) -> Result<usize, CrawlError>;
 
