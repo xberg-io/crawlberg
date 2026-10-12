@@ -129,7 +129,8 @@ pub struct BrowserConfig {
     /// returned within this deadline fails with a timeout error (in
     /// milliseconds when serialized). The wait for the delay of the domain
     /// (`rate_limit_ms`) is not counted, so a delay longer than this deadline
-    /// does not fail the page.
+    /// does not fail the page. A scrape with the native backend is not bounded
+    /// by this deadline.
     ///
     /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
     /// not counted against this deadline: an already-computed result is
