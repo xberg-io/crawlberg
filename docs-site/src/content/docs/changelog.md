@@ -34,7 +34,7 @@ title: "Changelog"
   `original_url: None`. The added fields are the last fields of `CrawlPageResult`, `LinkInfo` and
   `ContentConfig`. In Python, Dart, Zig and Swift, a v1.10.3 constructor call of these three
   types needs no change, and Java keeps the v1.10.3 constructor beside the full one; the entry
-  for #717 under Fixed gives the form of the added fields in each binding. A Go struct literal
+  for #717 under Fixed gives the form of the added fields in the bindings it names. A Go struct literal
   without keys must add the new fields. In the serialized JSON of these three types, the added
   keys are last: a consumer that compares JSON text with the output of an earlier build of the
   main branch sees a different key order, and the values are equal. A `Frontier` that stores
