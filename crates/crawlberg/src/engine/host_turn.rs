@@ -63,7 +63,6 @@ pub(super) struct HostTurns<J> {
     queues: std::collections::HashMap<HostKey, std::collections::VecDeque<QueuedTurn<J>>>,
     // ~keep Head data stays outside cancellable limiter futures so shutdown can recover parked continuations.
     heads: std::collections::HashMap<HostKey, QueuedTurn<J>>,
-    waiting: std::collections::HashSet<HostKey>,
     turns: futures::stream::FuturesUnordered<TurnFuture>,
     limiter: Arc<dyn RateLimiter>,
     context: Option<Arc<CooperativeContext>>,
@@ -74,7 +73,6 @@ impl<J: Send + 'static> HostTurns<J> {
         Self {
             queues: Default::default(),
             heads: Default::default(),
-            waiting: Default::default(),
             turns: Default::default(),
             limiter,
             context: None,
@@ -125,53 +123,48 @@ impl<J: Send + 'static> HostTurns<J> {
             host: job.host,
             limiter: Arc::as_ptr(&limiter) as *const () as usize,
         };
-        self.queues.entry(key).or_default().push_back(QueuedTurn {
+        let queued = QueuedTurn {
             id,
             data: job.data,
             waiting,
             context,
             limiter,
-        });
-        self.start_waiters();
+        };
+        if self.heads.contains_key(&key) {
+            self.queues.entry(key).or_default().push_back(queued);
+        } else {
+            self.start_waiter(key, queued);
+        }
     }
 
     pub(super) fn blocked_hosts(&self) -> Vec<String> {
-        self.waiting.iter().map(|key| key.host.clone()).collect()
+        self.heads.keys().map(|key| key.host.clone()).collect()
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.turns.is_empty()
     }
 
-    fn start_waiters(&mut self) {
-        for (key, queue) in &mut self.queues {
-            if self.waiting.contains(key) || queue.is_empty() {
-                continue;
-            }
-            let queued = queue.pop_front().expect("nonempty host queue");
-            self.waiting.insert(key.clone());
-            let key = key.clone();
-            let limiter = queued.limiter.clone();
-            let context = queued.context.clone();
-            self.heads.insert(key.clone(), queued);
-            self.turns.push(Box::pin(async move {
-                use futures::FutureExt;
-                let result = match std::panic::AssertUnwindSafe(async {
-                    match context {
-                        Some(context) => admit_host(context, limiter, key.host.clone()).await.map(Some),
-                        None => limiter.acquire(&key.host).await.map(|()| None),
-                    }
-                })
-                .catch_unwind()
-                .await
-                {
-                    Ok(result) => result.map_err(TurnError::Failed),
-                    Err(_) => Err(TurnError::Panicked),
-                };
-                CompletedTurn { key, result }
-            }));
-        }
-        self.queues.retain(|_, queue| !queue.is_empty());
+    fn start_waiter(&mut self, key: HostKey, queued: QueuedTurn<J>) {
+        let limiter = queued.limiter.clone();
+        let context = queued.context.clone();
+        self.heads.insert(key.clone(), queued);
+        self.turns.push(Box::pin(async move {
+            use futures::FutureExt;
+            let result = match std::panic::AssertUnwindSafe(async {
+                match context {
+                    Some(context) => admit_host(context, limiter, key.host.clone()).await.map(Some),
+                    None => limiter.acquire(&key.host).await.map(|()| None),
+                }
+            })
+            .catch_unwind()
+            .await
+            {
+                Ok(result) => result.map_err(TurnError::Failed),
+                Err(_) => Err(TurnError::Panicked),
+            };
+            CompletedTurn { key, result }
+        }));
     }
 
     pub(super) async fn next(&mut self) -> Option<(usize, J, Result<HostGrant, TurnError>)> {
@@ -185,20 +178,24 @@ impl<J: Send + 'static> HostTurns<J> {
             limiter,
             ..
         } = queued;
-        self.waiting.remove(&key);
+        if let Some(queue) = self.queues.get_mut(&key) {
+            let next = queue.pop_front().expect("a queued host retains its next turn");
+            if queue.is_empty() {
+                self.queues.remove(&key);
+            }
+            self.start_waiter(key.clone(), next);
+        }
         let grant = result.map(|activity| HostGrant {
             limiter: Arc::new(GrantedTurn::new(key.host, limiter.clone())),
             base: limiter,
             activity,
         });
-        self.start_waiters();
         drop(waiting);
         Some((id, data, grant))
     }
 
     pub(super) fn drain(&mut self) -> Vec<(usize, J)> {
         self.turns = Default::default();
-        self.waiting.clear();
         self.heads
             .drain()
             .map(|(_, queued)| queued)
@@ -272,6 +269,110 @@ mod tests {
         }
     }
 
+    type BenchmarkPayload = (usize, super::super::CrawlEngine, super::super::redirect::RedirectCursor);
+
+    fn host_benchmark_jobs(
+        engine: &super::super::CrawlEngine,
+        hosts: usize,
+        repeats: usize,
+    ) -> (Arc<RecordingLimiter>, Vec<HostJob<BenchmarkPayload>>) {
+        let jobs = (0..hosts * repeats)
+            .map(|id| {
+                let host = format!("host{}.example.test", id % hosts);
+                let url = format!("http://{host}/{id}");
+                HostJob {
+                    host,
+                    data: (
+                        id,
+                        engine.clone(),
+                        super::super::redirect::RedirectCursor::new(&url, engine.config.max_redirects),
+                    ),
+                }
+            })
+            .collect();
+        (Arc::new(RecordingLimiter::default()), jobs)
+    }
+
+    async fn drive_host_benchmark(
+        limiter: Arc<RecordingLimiter>,
+        jobs: Vec<HostJob<BenchmarkPayload>>,
+        expected: usize,
+    ) {
+        let mut turns = HostTurns::new(limiter.clone());
+        for (id, job) in jobs.into_iter().enumerate() {
+            turns.push(id, job);
+        }
+        let mut seen = vec![false; expected];
+        while let Some((id, data, grant)) = turns.next().await {
+            assert_eq!(id, data.0);
+            assert!(!seen[id]);
+            seen[id] = true;
+            assert!(grant.is_ok());
+            std::hint::black_box(data);
+        }
+        assert_eq!(seen.into_iter().filter(|seen| *seen).count(), expected);
+        assert_eq!(limiter.acquisitions.lock().unwrap().len(), expected);
+    }
+
+    #[test]
+    #[ignore = "manual Criterion comparison of host scheduling independently of HTTP transport"]
+    fn measure_host_turn_backlog() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let engine = super::super::CrawlEngine::builder().build().unwrap();
+        let output = std::env::var("HOST_BENCH_OUTPUT").expect("benchmark output directory is required");
+        assert!(
+            !output.trim().is_empty(),
+            "benchmark output directory must not be empty"
+        );
+        let mut criterion = criterion::Criterion::default()
+            .sample_size(20)
+            .warm_up_time(Duration::from_millis(100))
+            .measurement_time(Duration::from_millis(500))
+            .output_directory(std::path::Path::new(&output));
+        let baseline = std::env::var("HOST_BENCH_BASELINE").unwrap();
+        criterion = if baseline == "b24" {
+            criterion.save_baseline(baseline)
+        } else {
+            criterion.retain_baseline("b24".into(), true)
+        };
+        let mut group = criterion.benchmark_group("host_turn_dispatch");
+        for hosts in [250, 500, 1_000, 2_000] {
+            for repeats in [1, 3] {
+                group.bench_function(format!("{hosts}x{repeats}"), |bench| {
+                    bench.iter_batched(
+                        || host_benchmark_jobs(&engine, hosts, repeats),
+                        |(limiter, jobs)| runtime.block_on(drive_host_benchmark(limiter, jobs, hosts * repeats)),
+                        criterion::BatchSize::PerIteration,
+                    );
+                });
+            }
+        }
+        group.finish();
+        criterion.final_summary();
+    }
+
+    #[tokio::test]
+    async fn should_forward_granted_turn_feedback_to_the_original_custom_limiter() {
+        let limiter = Arc::new(RecordingLimiter::default());
+        let mut turns = HostTurns::new(limiter.clone());
+        turns.push(
+            0,
+            HostJob {
+                host: "free".into(),
+                data: (),
+            },
+        );
+        let (_, _, grant) = turns.next().await.unwrap();
+        let grant = grant.ok().expect("custom admission succeeds");
+        grant.limiter.acquire("free").await.unwrap();
+        grant.limiter.record_response("free", 429).await.unwrap();
+        assert_eq!(*limiter.acquisitions.lock().unwrap(), ["free"]);
+        assert_eq!(*limiter.responses.lock().unwrap(), [("free".into(), 429)]);
+    }
+
     #[tokio::test]
     async fn should_apply_custom_admission_once_and_forward_response_recording() {
         let limiter = Arc::new(RecordingLimiter::default());
@@ -305,6 +406,85 @@ mod tests {
         acquired.sort();
         assert_eq!(acquired, ["free", "refused"]);
         assert_eq!(*limiter.responses.lock().unwrap(), [("free".into(), 200)]);
+    }
+
+    #[tokio::test]
+    async fn should_return_every_input_after_admission_errors_operation_errors_and_panics() {
+        const INPUTS: usize = 1_000;
+        let limiter = Arc::new(RecordingLimiter::default());
+        let jobs = (0..INPUTS)
+            .map(|id| HostJob {
+                host: if id == 0 { "refused".into() } else { format!("free{id}") },
+                data: id,
+            })
+            .collect();
+        let mut results = super::super::continuation::run_resumable_jobs(
+            jobs,
+            4,
+            limiter.clone(),
+            |id| format!("input{id}"),
+            |id, routing| async move {
+                routing.primary().acquire(&format!("free{id}")).await?;
+                match id {
+                    500 => Err(CrawlError::other("page operation refused")),
+                    501 => panic!("page operation panic"),
+                    _ => Ok(HostStep::Done(id)),
+                }
+            },
+        )
+        .await;
+        results.sort_by_key(|(id, _)| *id);
+        assert_eq!(results.len(), INPUTS);
+        for (expected, (id, result)) in results.iter().enumerate() {
+            assert_eq!(*id, expected);
+            let error = match expected {
+                0 => Some("other: custom admission refused"),
+                500 => Some("other: page operation refused"),
+                501 => Some("other: task panicked while processing input501"),
+                _ => None,
+            };
+            if let Some(error) = error {
+                assert_eq!(result.as_ref().unwrap_err().to_string(), error);
+            } else {
+                assert_eq!(*result.as_ref().unwrap(), expected);
+            }
+        }
+        assert_eq!(limiter.acquisitions.lock().unwrap().len(), INPUTS);
+    }
+
+    #[tokio::test]
+    async fn should_preserve_each_hosts_fifo_order_across_a_large_mixed_backlog() {
+        const HOSTS: usize = 1_000;
+        const TURNS_PER_HOST: usize = 3;
+        let limiter = Arc::new(RecordingLimiter::default());
+        let mut turns = HostTurns::new(limiter.clone());
+        for id in 0..HOSTS * TURNS_PER_HOST {
+            turns.push(
+                id,
+                HostJob {
+                    host: format!("host{}", id % HOSTS),
+                    data: id,
+                },
+            );
+        }
+        let mut next = vec![0; HOSTS];
+        for _ in 0..HOSTS * TURNS_PER_HOST {
+            let (id, data, grant) = turns.next().await.expect("every input retains its host turn");
+            let host = id % HOSTS;
+            assert_eq!(data, id);
+            assert_eq!(id / HOSTS, next[host], "one host retains FIFO admission");
+            next[host] += 1;
+            grant
+                .ok()
+                .expect("admission succeeds")
+                .limiter
+                .acquire(&format!("host{host}"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(next, vec![TURNS_PER_HOST; HOSTS]);
+        assert_eq!(limiter.acquisitions.lock().unwrap().len(), HOSTS * TURNS_PER_HOST);
+        assert!(turns.next().await.is_none());
     }
 
     #[tokio::test]

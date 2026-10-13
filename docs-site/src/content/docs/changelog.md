@@ -102,6 +102,8 @@ title: "Changelog"
 
 ### Changed
 
+- Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
+  Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
   error source. A chain that reaches its final page within the limit and a redirect without
   `Location` still succeed. (#695)
@@ -400,6 +402,8 @@ title: "Changelog"
 - With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
   Chrome 155 opens targets of its own in each new browser context and does not close them on
   request; the engine waited for them to close before it kept the page. (#694)
+- Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
+  Foreign-retirement census validation and retirement use one registry lock. (#701)
 
 ## [1.10.2] - 2026-10-06
 

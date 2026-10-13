@@ -357,6 +357,80 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[derive(Default)]
+    struct BlockedHosts {
+        active: Arc<AtomicUsize>,
+        acquired: AtomicUsize,
+    }
+
+    struct ActiveAdmission(Arc<AtomicUsize>);
+
+    impl Drop for ActiveAdmission {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RateLimiter for Arc<BlockedHosts> {
+        async fn acquire(&self, host: &str) -> Result<(), CrawlError> {
+            self.acquired.fetch_add(1, Ordering::SeqCst);
+            if host != "free" {
+                self.active.fetch_add(1, Ordering::SeqCst);
+                let _guard = ActiveAdmission(self.active.clone());
+                std::future::pending::<()>().await;
+            }
+            Ok(())
+        }
+        async fn record_response(&self, _: &str, _: u16) -> Result<(), CrawlError> {
+            Ok(())
+        }
+        async fn set_crawl_delay(&self, _: &str, _: std::time::Duration) -> Result<(), CrawlError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn should_reach_a_late_free_host_and_cancel_all_earlier_admission_waiters() {
+        const BLOCKED_HOSTS: usize = 1_000;
+        let limiter = Arc::new(BlockedHosts::default());
+        let free = Arc::new(tokio::sync::Notify::new());
+        let done = free.clone();
+        let jobs = (0..=BLOCKED_HOSTS)
+            .map(|id| super::super::host_turn::HostJob {
+                host: if id == BLOCKED_HOSTS {
+                    "free".into()
+                } else {
+                    format!("blocked{id}")
+                },
+                data: id,
+            })
+            .collect();
+        let running = tokio::spawn(run_resumable_jobs(
+            jobs,
+            1,
+            Arc::new(limiter.clone()),
+            |id| format!("input{id}"),
+            move |id, routing| {
+                let done = done.clone();
+                async move {
+                    routing.primary().acquire("free").await?;
+                    assert_eq!(id, BLOCKED_HOSTS);
+                    done.notify_one();
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(5), free.notified())
+            .await
+            .expect("a parked initial backlog cannot hide the last free host");
+        assert_eq!(limiter.acquired.load(Ordering::SeqCst), BLOCKED_HOSTS + 1);
+        assert_eq!(limiter.active.load(Ordering::SeqCst), BLOCKED_HOSTS);
+        running.abort();
+        assert!(running.await.unwrap_err().is_cancelled());
+        assert_eq!(limiter.active.load(Ordering::SeqCst), 0);
+    }
+
     struct FailingSecondAdmission(AtomicUsize);
 
     #[async_trait::async_trait]
