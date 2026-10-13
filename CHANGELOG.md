@@ -190,6 +190,10 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- The v1.10.3 constructors of `ContentConfig`, `LinkInfo` and `CrawlPageResult` work again in
+  the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
+  Python, Dart, Kotlin and Swift, optional trailing arguments in PHP and WebAssembly, a second
+  constructor or the builder in Java, and optional struct fields in Zig and Go.
 - Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
   guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
   This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no

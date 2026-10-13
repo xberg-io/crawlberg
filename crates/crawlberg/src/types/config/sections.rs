@@ -15,6 +15,26 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
 /// (markdown, plain text, djot).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "output_format",
+        "preprocessing_preset",
+        "remove_navigation",
+        "remove_forms",
+        "strip_tags",
+        "preserve_tags",
+        "exclude_selectors",
+        "skip_images",
+        "max_depth",
+        "wrap",
+        "wrap_width",
+        "include_document_structure",
+        "extract_metadata"
+    ])
+)]
 pub struct ContentConfig {
     /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
     pub output_format: String,
@@ -57,6 +77,16 @@ pub struct ContentConfig {
     pub wrap: bool,
     /// Wrap width when `wrap` is enabled. Default: `80`.
     pub wrap_width: usize,
+    /// Include document structure tree in output. Default: `true`.
+    pub include_document_structure: bool,
+    /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
+    /// `<head>`) to the markdown output. Default: `true`.
+    ///
+    /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
+    /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
+    /// is populated independently by `crate::html::metadata::extract_metadata` from the
+    /// parsed DOM, so turning this off does not lose any metadata field. ~keep
+    pub extract_metadata: bool,
     /// Replace paragraph source line breaks with spaces. Default: `false`.
     pub strip_newlines: bool,
     /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
@@ -69,16 +99,6 @@ pub struct ContentConfig {
     pub compact_tables: bool,
     /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
     pub keep_inline_images_in: Vec<String>,
-    /// Include document structure tree in output. Default: `true`.
-    pub include_document_structure: bool,
-    /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
-    /// `<head>`) to the markdown output. Default: `true`.
-    ///
-    /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
-    /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
-    /// is populated independently by `crate::html::metadata::extract_metadata` from the
-    /// parsed DOM, so turning this off does not lose any metadata field. ~keep
-    pub extract_metadata: bool,
 }
 
 impl Default for ContentConfig {

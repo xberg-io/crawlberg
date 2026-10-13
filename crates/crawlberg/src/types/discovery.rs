@@ -35,14 +35,15 @@ impl std::fmt::Display for LinkType {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = ["url", "text", "link_type", "rel", "nofollow"])
+)]
 pub struct LinkInfo {
     /// The resolved URL of the link.
     pub url: String,
-    /// Link address resolved against the page's base without changing path spelling.
-    /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
-    /// URL credentials are removed. <!-- ~keep -->
-    #[serde(default)]
-    pub original_url: String,
     /// The visible text of the link.
     pub text: String,
     /// The classification of the link.
@@ -51,6 +52,11 @@ pub struct LinkInfo {
     pub rel: Option<String>,
     /// Whether the link has `rel="nofollow"`.
     pub nofollow: bool,
+    /// Link address resolved against the page's base without changing path spelling.
+    /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+    /// URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
 }
 
 /// The source of an image reference.

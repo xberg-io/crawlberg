@@ -229,13 +229,42 @@ pub struct ScrapeResult {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "url",
+        "normalized_url",
+        "status_code",
+        "content_type",
+        "html",
+        "body_size",
+        "metadata",
+        "links",
+        "images",
+        "feeds",
+        "json_ld",
+        "depth",
+        "stayed_on_domain",
+        "was_skipped",
+        "is_pdf",
+        "detected_charset",
+        "markdown",
+        "extracted_data",
+        "extraction_meta",
+        "downloaded_document",
+        "browser_used",
+        "final_url",
+        "redirect_count",
+        "noindex_detected",
+        "nofollow_detected",
+        "ssrf_refused_urls"
+    ])
+)]
 pub struct CrawlPageResult {
     /// The original URL of the page.
     pub url: String,
-    /// Seed address as supplied, or the discovered link address resolved against its base.
-    /// Preserves source spelling through redirects; URL credentials are removed. <!-- ~keep -->
-    #[serde(default)]
-    pub original_url: String,
     /// The normalized URL of the page.
     pub normalized_url: String,
     /// The HTTP status code of the response.
@@ -297,6 +326,10 @@ pub struct CrawlPageResult {
     /// their credentials, each listed once. The page is kept; only the refused requests failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssrf_refused_urls: Vec<String>,
+    /// Seed address as supplied, or the discovered link address resolved against its base.
+    /// Preserves source spelling through redirects; URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
 }
 
 /// The result of a multi-page crawl operation.
