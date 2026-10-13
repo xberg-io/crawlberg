@@ -58,6 +58,10 @@ async fn should_preserve_existing_output_when_hidden_text_is_disabled() {
     assert_eq!(result.markdown.expect("markdown").content.trim(), DROPPED);
     let default: ContentConfig = serde_json::from_str("{}").expect("default content");
     assert_eq!(serde_json::to_value(default).expect("serialize")["keep_hidden"], false);
+    // The option decides the output of this page: the same page gives the hidden text when it is on.
+    let engine = create_engine(Some(config(true, BrowserMode::Never))).expect("engine builds");
+    let result = scrape(&engine, &site.uri()).await.expect("scrape succeeds");
+    assert_eq!(result.markdown.expect("markdown").content.trim(), KEPT);
 }
 
 #[tokio::test]
@@ -182,6 +186,40 @@ async fn check_hidden_content_exclusions(mode: BrowserMode) {
 #[tokio::test]
 async fn should_apply_default_and_custom_exclusions_when_keeping_hidden_http_content() {
     check_hidden_content_exclusions(BrowserMode::Never).await;
+}
+
+const TABLE_EXCLUSION_PAGE: &str = r#"<!doctype html><html><body>
+<p>Visible sentence.</p>
+<p hidden class="hx">Excluded hidden paragraph.</p>
+<table><tr><th>Head</th><th>Other</th></tr>
+<tr><td>Shown cell</td><td hidden class="hx">ExcludedHiddenCell</td></tr></table>
+</body></html>"#;
+
+/// Pins a DEFECT of the converter on purpose (issue 730): a selector does not remove a table
+/// cell, a row or a row group, so a hidden `td` that the caller excluded stays when
+/// `keep_hidden` is on. The fix of issue 730 must change the last assertion to `!contains`.
+#[tokio::test]
+async fn should_still_keep_an_excluded_hidden_table_cell_until_issue_730_is_fixed() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TABLE_EXCLUSION_PAGE, "text/html"))
+        .mount(&site)
+        .await;
+    let mut configuration = config(true, BrowserMode::Never);
+    configuration.content.exclude_selectors = vec!["noscript".to_owned(), ".hx".to_owned()];
+    let engine = create_engine(Some(configuration)).expect("engine builds");
+    let result = scrape(&engine, &site.uri()).await.expect("scrape succeeds");
+    let markdown = result.markdown.expect("markdown").content;
+    assert!(markdown.contains("Shown cell"), "{markdown}");
+    assert!(
+        !markdown.contains("Excluded hidden paragraph."),
+        "the selector removes an element that is not a table part: {markdown}"
+    );
+    assert!(
+        markdown.contains("ExcludedHiddenCell"),
+        "issue 730 is fixed: assert that the cell is absent: {markdown}"
+    );
 }
 
 #[cfg(feature = "browser")]

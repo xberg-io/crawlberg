@@ -39,7 +39,9 @@ title: "Changelog"
 ### Added
 
 - `ContentConfig.keep_hidden` keeps text in hidden elements and body templates in HTTP, browser
-  and cached responses. It defaults to `false`; explicit exclusions, scripts and styles remain excluded. (#625)
+  and cached responses. It defaults to `false`. Scripts and styles remain excluded. Explicit
+  exclusions still apply, except to table cells, rows and row groups: a selector does not remove
+  those, so a hidden cell that `exclude_selectors` names stays in the output (#730). (#625)
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
@@ -104,8 +106,21 @@ title: "Changelog"
 
 ### Changed
 
-- An image with an empty `src` renders its alternative text. `<img src="" alt="a">` gives `a`;
-  it gave `![a](<>)`. (#691)
+- **A link with an empty `href` points to its page.** `<a href="">a</a>` gave `[a](<>)` and gives
+  `[a](https://example.com/page)` on the page `https://example.com/page`. (#691)
+- **An image with no usable source is its alternative text.** `<img src="" alt="a">` gave
+  `![a](<>)` and gives `a`. The same holds for a missing `src`, a `src` of white space, an image
+  with a `title` and an image in a link, where `[![a](<>)](u)` is now `[a](u)`. With no
+  alternative text the image writes nothing. The output also changes for `srcset=""` with no
+  `src`, for `<picture>` and for an image in a table cell. (#691)
+- **A definition list has a blank line between a term and its description.** With the `minimal`
+  preprocessing preset, `<dl><dt>T</dt><dd>D</dd></dl>` gave `T` and `D` on two lines and gives
+  `T`, a blank line and `D`. (#691)
+- **A page with text that is only white space converts.** `<img alt=""> <img>` failed with
+  `Internal panic: begin > end` and gives Markdown. (#691)
+- The converter `html-to-markdown` moves past 3.17.2, to revision `c0bab70578` until its next
+  release. The four entries above are its output changes that were measured in crawlberg; its
+  changelog has the full list. (#691)
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and

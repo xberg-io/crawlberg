@@ -100,7 +100,8 @@ pub struct ContentConfig {
     /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
     pub keep_inline_images_in: Vec<String>,
     /// Keep text hidden by HTML attributes or inline styles, including body templates.
-    /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
+    /// Default: `false`. Scripts and styles remain excluded. Explicit exclusions still apply,
+    /// except to table cells, rows and row groups: a selector does not remove those (#730).
     pub keep_hidden: bool,
 }
 
