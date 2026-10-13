@@ -38,6 +38,8 @@ title: "Changelog"
 
 ### Added
 
+- `ContentConfig.keep_hidden` keeps text in hidden elements and body templates in HTTP, browser
+  and cached responses. It defaults to `false`; explicit exclusions, scripts and styles remain excluded. (#625)
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
