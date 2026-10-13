@@ -858,8 +858,8 @@ mod tests {
     async fn leaves_an_empty_image_or_media_source_empty() {
         let mut wrong = Vec::new();
         for (html, expected) in [
-            (r#"<p><img src="" alt="a"></p>"#, "![a](<>)\n"),
-            (r#"<p><img src="" srcset="" alt="a"></p>"#, "![a](<>)\n"),
+            (r#"<p><img src="" alt="a"></p>"#, "a\n"),
+            (r#"<p><img src="" srcset="" alt="a"></p>"#, "a\n"),
             (r#"<video src="">clip</video>"#, "clip\n"),
         ] {
             let md = markdown_at(html, "https://example.com/docs/index.html").await;

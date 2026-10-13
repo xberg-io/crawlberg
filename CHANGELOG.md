@@ -104,6 +104,8 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- An image with an empty `src` renders its alternative text. `<img src="" alt="a">` gives `a`;
+  it gave `![a](<>)`. (#691)
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
