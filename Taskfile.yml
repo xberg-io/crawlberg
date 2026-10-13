@@ -92,6 +92,7 @@ tasks:
   ci:released-constructors:
     desc: Check that the bindings keep every constructor of the last release
     cmds:
+      - python3 scripts/ci/test_released_constructors.py
       - python3 scripts/ci/check_released_constructors.py
 
   setup:
