@@ -129,6 +129,40 @@ class BrokenConstructorTests(unittest.TestCase):
         self.assert_fails(errors("class Options:\n    wrap: bool\n"), "Options", "no constructor")
 
 
+def facade(parameters: str) -> dict[str, dict[str, bool]]:
+    lines = ["public struct Link: Codable {", f"    public init({parameters}) {{", "    }"]
+    lines += ["    public init(from decoder: any Decoder) throws {", "    }", "}"]
+    return CHECK.parse_swift_facade("\n".join(lines))
+
+
+SWIFT_RELEASED = 'url: String, rel: String? = nil, marks: [String] = [",", "("], nofollow: Bool'
+
+
+class SwiftFacadeTests(unittest.TestCase):
+    def test_labels_and_defaults_are_read(self) -> None:
+        assert facade(SWIFT_RELEASED) == {"Link": {"url": False, "rel": True, "marks": True, "nofollow": False}}
+
+    def test_a_new_argument_with_a_default_passes(self) -> None:
+        head = facade(SWIFT_RELEASED + ', originalUrl: String = ""')
+        assert CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG) == []
+
+    def test_a_new_required_argument_fails(self) -> None:
+        head = facade(SWIFT_RELEASED + ", originalUrl: String")
+        found = CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG)
+        assert found == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
+
+    def test_a_lost_default_a_removed_label_and_a_new_order_fail(self) -> None:
+        head = facade("nofollow: Bool, url: String, rel: String?")
+        found = "\n".join(CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG))
+        assert "Link: the Swift initializer labels of v1.0.0 are in another order" in found
+        assert "Link.rel: the Swift argument has a default in v1.0.0 and is required now" in found
+        assert "Link.marks: the Swift initializer argument of v1.0.0 is removed or renamed" in found
+
+    def test_a_struct_with_no_initializer_at_the_head_fails(self) -> None:
+        found = CHECK.compare_swift(facade(SWIFT_RELEASED), {}, TAG)
+        assert found == ["Link: the Swift struct of v1.0.0 has no public initializer at the head"]
+
+
 class ReleaseTagTests(unittest.TestCase):
     def test_the_highest_version_is_chosen_in_any_list_order(self) -> None:
         # ~keep The list has no ancestry: `v1.10.3` on a release branch is chosen like any other.

@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 STUB = "packages/python/crawlberg/_crawlberg.pyi"
+SWIFT_FACADE = "packages/swift/Sources/Crawlberg/Crawlberg.swift"
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+SWIFT_STRUCT = re.compile(r"^public struct (\w+)\b")
+SWIFT_INIT = re.compile(r"^    public init\((.*)\) \{$")
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,55 @@ def compare(released: dict[str, BoundType], head: dict[str, BoundType], tag: str
     return errors
 
 
+def split_swift_parameters(parameters: str) -> list[str]:
+    """Split at each comma that is not in brackets or in a string literal."""
+    parts, depth, quoted, start = [], 0, False, 0
+    for index, character in enumerate(parameters):
+        if character == '"' and parameters[index - 1 : index] != "\\":
+            quoted = not quoted
+        elif not quoted and character in "([<":
+            depth += 1
+        elif not quoted and character in ")]>":
+            depth -= 1
+        elif not quoted and depth == 0 and character == ",":
+            parts.append(parameters[start:index].strip())
+            start = index + 1
+    return [*parts, parameters[start:].strip()] if parameters.strip() else []
+
+
+def parse_swift_facade(source: str) -> dict[str, dict[str, bool]]:
+    """Return, for each public struct, the labels of its memberwise initializer: label -> has a default."""
+    types: dict[str, dict[str, bool]] = {}
+    name = None
+    for line in source.splitlines():
+        if declared := SWIFT_STRUCT.match(line):
+            name = declared[1]
+        elif name and name not in types and (init := SWIFT_INIT.match(line)) and not init[1].startswith("from "):
+            parameters = split_swift_parameters(init[1])
+            types[name] = {parameter.split(":")[0]: " = " in parameter for parameter in parameters}
+    return types
+
+
+def compare_swift(released: dict[str, dict[str, bool]], head: dict[str, dict[str, bool]], tag: str) -> list[str]:
+    """Return why a Swift call with the labels of the released initializer does not compile at the head."""
+    errors = []
+    for name, labels in released.items():
+        now = head.get(name)
+        if now is None:
+            errors.append(f"{name}: the Swift struct of {tag} has no public initializer at the head")
+            continue
+        if [label for label in now if label in labels] != [label for label in labels if label in now]:
+            errors.append(f"{name}: the Swift initializer labels of {tag} are in another order")
+        for label, had_default in labels.items():
+            if label not in now:
+                errors.append(f"{name}.{label}: the Swift initializer argument of {tag} is removed or renamed")
+            elif had_default and not now[label]:
+                errors.append(f"{name}.{label}: the Swift argument has a default in {tag} and is required now")
+        for label in (label for label, has_default in now.items() if label not in labels and not has_default):
+            errors.append(f"{name}.{label}: the new Swift initializer argument is required: no call of {tag} compiles")
+    return errors
+
+
 def git(*arguments: str) -> str:
     return subprocess.run(["git", *arguments], check=True, capture_output=True, text=True).stdout
 
@@ -165,10 +217,10 @@ def newest_release_tag(tags: list[str]) -> str | None:
     return max(releases, key=lambda tag: tuple(int(part) for part in tag[1:].split(".")), default=None)
 
 
-def released_stub(tag: str) -> str | None:
+def released_stub(tag: str, path: str = STUB) -> str | None:
     """Return the stub in the tree of the tag, or `None` when the tag has no such file."""
     try:
-        return git("show", f"{tag}:{STUB}")
+        return git("show", f"{tag}:{path}")
     except subprocess.CalledProcessError:
         return None
 
@@ -176,6 +228,7 @@ def released_stub(tag: str) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--stub", default=STUB, help="the stub of the head (default: %(default)s)")
+    parser.add_argument("--swift", default=SWIFT_FACADE, help="the Swift facade of the head (default: %(default)s)")
     options = parser.parse_args()
 
     tag = newest_release_tag(git("tag", "--list", "v[0-9]*").split())
@@ -194,6 +247,14 @@ def main() -> int:
         return 1
 
     errors = compare(released, head, tag)
+    # ~keep The stub does not show a typed facade that drops the recorded default. The Swift
+    # facade states each default in its source, so it is compared with no Swift toolchain.
+    swift = released_stub(tag, SWIFT_FACADE)
+    if swift is None:
+        errors.append(f"{SWIFT_FACADE} does not exist at {tag}: no Swift initializer was compared")
+    else:
+        swift_head = parse_swift_facade(Path(options.swift).read_text(encoding="utf-8"))
+        errors.extend(compare_swift(parse_swift_facade(swift), swift_head, tag))
     if not errors:
         print(f"ok: the {len(released)} constructors of {tag} are kept")
         return 0
@@ -205,7 +266,9 @@ def main() -> int:
         "  2. Move the field to the end of the struct and record the released fields on the struct:\n"
         '     `#[cfg_attr(alef, alef(legacy_constructor_fields = ["..."]))]`. The pinned alef must accept the type of the field.\n'
         f"  3. Restore the field list of {tag}: the same names, types, order and defaults.\n"
-        "Then run `task alef:generate`."
+        "Then run `task alef:generate`.\n"
+        "A Swift line above with a recorded constructor on the struct: the pinned alef writes the new\n"
+        "field as a required argument of the public Swift initializer. The fix is in alef, not here."
     )
     return 1
 
