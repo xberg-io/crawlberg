@@ -102,6 +102,8 @@ title: "Changelog"
 
 ### Changed
 
+- Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
+  Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
   error source. A chain that reaches its final page within the limit and a redirect without
   `Location` still succeed. (#695)
