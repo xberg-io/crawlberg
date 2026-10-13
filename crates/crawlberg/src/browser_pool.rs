@@ -1512,7 +1512,7 @@ fn spawn_handler_then(
         end: end.clone(),
         handler,
     };
-    let handle = tokio::spawn(async move {
+    let running = async move {
         loop {
             let Ok(event) = tokio::time::timeout(HANDLER_WAKE_INTERVAL, watched.handler.next()).await else {
                 continue;
@@ -1522,7 +1522,11 @@ fn spawn_handler_then(
             };
             if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
                 let cause = websocket_error_text(error);
-                tracing::warn!(error = %cause, "the browser's CDP websocket failed; its CDP handler ends");
+                tracing::warn!(
+                    browser_handler_task_id = ?tokio::task::try_id(),
+                    error = %cause,
+                    "the browser's CDP websocket failed; its CDP handler ends"
+                );
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }
@@ -1531,14 +1535,23 @@ fn spawn_handler_then(
             #[cfg(unix)]
             if let Err(chromiumoxide::error::CdpError::Pipe(error)) = &event {
                 let cause = format!("the browser's CDP pipe connection closed: {error}");
-                tracing::warn!(error = %cause, "the browser's CDP pipe failed; its CDP handler ends");
+                tracing::warn!(
+                    browser_handler_task_id = ?tokio::task::try_id(),
+                    error = %cause,
+                    "the browser's CDP pipe failed; its CDP handler ends"
+                );
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }
         }
         drop(watched);
         after_end.await;
-    });
+    };
+    #[cfg(test)]
+    use tracing::instrument::WithSubscriber as _;
+    #[cfg(test)]
+    let running = running.with_current_subscriber();
+    let handle = tokio::spawn(running);
     (handle, end)
 }
 

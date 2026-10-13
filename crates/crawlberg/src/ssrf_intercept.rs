@@ -2535,8 +2535,8 @@ where
                     }
                     return child_fail(shared, "root_attachment_deadline");
                 }
-                if structural_sessions.values().any(|target| target.deadline <= now) {
-                    return child_fail(shared, "structural_attachment_deadline");
+                if let Some(target) = structural_sessions.values().find(|target| target.deadline <= now) {
+                    return failure::structural_fail(shared, target);
                 }
                 let expired = pending
                     .iter()
