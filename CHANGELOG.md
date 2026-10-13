@@ -188,8 +188,10 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
-  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
+- On Linux with Tokio's pidfd reaper, browser launch preserves waitable host `SIGCHLD`
+  handlers, masks and flags, avoiding Go's fatal signal-stack error.
+- For automatic-reaping signal dispositions, Unix browser launch initializes Tokio's `SIGCHLD`
+  listener before starting the guardian, allowing launch with `SIG_IGN` or `SA_NOCLDWAIT`.
   This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
   longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
   explicitly wait for its own children; exited, unwaited children remain zombies. Existing

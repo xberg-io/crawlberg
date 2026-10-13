@@ -306,8 +306,16 @@ impl ProcessTree {
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
 #[cfg(unix)]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
-    // ~keep Ignored SIGCHLD auto-reaps guardian probes; Tokio's Linux pidfd path can skip signal registration.
-    let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+    // SAFETY: sigaction writes the live action; querying with a null new action changes no handler. ~keep
+    let mut inherited: libc::sigaction = unsafe { std::mem::zeroed() };
+    if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut inherited) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // ~keep Auto-reaping breaks guardian probes. Waitable host handlers need no normalization;
+    // ~keep Tokio registration otherwise drops Go's SA_ONSTACK even when its Linux pidfd path needs no signal.
+    if inherited.sa_sigaction == libc::SIG_IGN || inherited.sa_flags & libc::SA_NOCLDWAIT != 0 {
+        let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+    }
     let group = std::sync::Arc::new(unix_group::Group::start()?);
     command
         .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
