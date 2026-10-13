@@ -1,4 +1,6 @@
 import asyncio
+import ctypes
+import errno
 import os
 import socket
 import subprocess
@@ -99,10 +101,41 @@ def test_should_raise_typed_http_and_connection_errors(local_server: _Server) ->
     asyncio.run(verify())
 
 
+def _workqueue_threads() -> int:
+    if sys.platform != "darwin":
+        return 0
+    from urllib import request
+
+    system_proxy_query = getattr(request, "getproxies_macosx_sysconf", None)
+    if not callable(system_proxy_query):
+        raise RuntimeError("macOS system proxy query is unavailable")
+    # ~keep A missing queue and a contended queue both report ESRCH; initialize before measuring either.
+    system_proxy_query()
+    proc_pidworkqueueinfo = 12
+    workqueue_info = (ctypes.c_uint32 * 4)()
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    libproc.proc_pidinfo.restype = ctypes.c_int
+    size = ctypes.sizeof(workqueue_info)
+    deadline = time.monotonic() + 0.1
+    while True:
+        ctypes.set_errno(0)
+        observed = libproc.proc_pidinfo(os.getpid(), proc_pidworkqueueinfo, 0, ctypes.byref(workqueue_info), size)
+        error = ctypes.get_errno()
+        if observed == size:
+            return int(workqueue_info[0])
+        if observed != 0 or error != errno.ESRCH or time.monotonic() >= deadline:
+            raise OSError(error, f"reading macOS workqueue threads returned {observed} bytes, expected {size}")
+        time.sleep(0.001)
+
+
 def _threads() -> int:
     if sys.platform == "linux":
         return len(list(Path("/proc/self/task").iterdir()))
-    return len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
+    workqueues = _workqueue_threads()
+    total = len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
+    # ~keep SystemConfiguration workqueues outlive Tokio, including after Python-only proxy queries.
+    return total - workqueues
 
 
 def _settled_threads(expected: int) -> int:
@@ -397,3 +430,36 @@ def test_should_close_an_unread_crawl_stream_within_the_exit_wait_bound() -> Non
         server.shutdown()
         server.server_close()
         worker.join()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS framework workqueues")
+def test_should_count_application_threads_without_counting_framework_workqueues() -> None:
+    """A framework queue is excluded, while a live application thread still counts."""
+    script = """
+import runpy
+import sys
+import threading
+import _scproxy
+
+counters = runpy.run_path(sys.argv[1])
+threads = counters["_threads"]
+assert threads() == 1
+_scproxy._get_proxy_settings()
+_scproxy._get_proxies()
+assert threads() == 1
+assert counters["_workqueue_threads"]() > 0
+stop = threading.Event()
+worker = threading.Thread(target=stop.wait)
+worker.start()
+try:
+    assert threads() == 2
+finally:
+    stop.set()
+    worker.join()
+assert counters["_settled_threads"](1) == 1
+print("application thread counted; framework workqueues excluded", flush=True)
+"""
+    result = _run(script, str(Path(__file__).resolve()))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "application thread counted; framework workqueues excluded"
+    assert result.stderr == ""
