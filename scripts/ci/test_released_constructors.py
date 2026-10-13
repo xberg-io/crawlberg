@@ -129,5 +129,28 @@ class BrokenConstructorTests(unittest.TestCase):
         self.assert_fails(errors("class Options:\n    wrap: bool\n"), "Options", "no constructor")
 
 
+class ReleaseTagTests(unittest.TestCase):
+    def test_the_highest_version_is_chosen_in_any_list_order(self) -> None:
+        # ~keep The list has no ancestry: `v1.10.3` on a release branch is chosen like any other.
+        assert CHECK.newest_release_tag(["v1.10.3", "v1.9.0", "v1.10.0", "v1.2.11"]) == "v1.10.3"
+        assert CHECK.newest_release_tag(["v1.10.0", "v1.10.3", "v1.9.0"]) == "v1.10.3"
+
+    def test_versions_compare_by_number(self) -> None:
+        assert CHECK.newest_release_tag(["v1.9.0", "v1.10.0", "v1.2.30"]) == "v1.10.0"
+
+    def test_a_pre_release_is_ignored(self) -> None:
+        assert CHECK.newest_release_tag(["v1.10.3", "v1.11.0-rc.1", "v2.0.0-rc.4"]) == "v1.10.3"
+
+    def test_other_tag_shapes_are_ignored(self) -> None:
+        assert CHECK.newest_release_tag(["v1.10.3", "packages/go/v1.11.0", "v2", "v1.11"]) == "v1.10.3"
+
+    def test_no_release_tag_gives_none(self) -> None:
+        assert CHECK.newest_release_tag(["v1.0.0-rc.1", "packages/go/v1.0.0"]) is None
+
+    def test_a_tag_without_the_stub_gives_none(self) -> None:
+        # ~keep The empty tree has no file, like a release older than the Python binding.
+        assert CHECK.released_stub("4b825dc642cb6eb9a060e54bf8d69288fbee4904") is None
+
+
 if __name__ == "__main__":
     unittest.main()

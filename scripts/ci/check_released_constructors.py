@@ -154,9 +154,23 @@ def git(*arguments: str) -> str:
     return subprocess.run(["git", *arguments], check=True, capture_output=True, text=True).stdout
 
 
-def newest_release_tag() -> str | None:
-    tags = git("tag", "--list", "v[0-9]*", "--merged", "HEAD", "--sort=-version:refname").split()
-    return next((tag for tag in tags if RELEASE_TAG.match(tag)), None)
+def newest_release_tag(tags: list[str]) -> str | None:
+    """Return the release with the highest version, wherever its commit is.
+
+    A release tag can point at a commit of a release branch, which is not an ancestor of the
+    head. The newest tag that is an ancestor is then an older release, so ancestry is not used.
+    A pre-release (`v1.2.3-rc.1`) and a package tag (`packages/go/v1.2.3`) are not releases here.
+    """
+    releases = [tag for tag in tags if RELEASE_TAG.match(tag)]
+    return max(releases, key=lambda tag: tuple(int(part) for part in tag[1:].split(".")), default=None)
+
+
+def released_stub(tag: str) -> str | None:
+    """Return the stub in the tree of the tag, or `None` when the tag has no such file."""
+    try:
+        return git("show", f"{tag}:{STUB}")
+    except subprocess.CalledProcessError:
+        return None
 
 
 def main() -> int:
@@ -164,13 +178,15 @@ def main() -> int:
     parser.add_argument("--stub", default=STUB, help="the stub of the head (default: %(default)s)")
     options = parser.parse_args()
 
-    tag = newest_release_tag()
+    tag = newest_release_tag(git("tag", "--list", "v[0-9]*").split())
     if tag is None:
-        print(
-            "::error::no release tag `vX.Y.Z` is reachable from HEAD. Fetch the tags: this check would compare nothing"
-        )
+        print("::error::this checkout has no release tag `vX.Y.Z`. Fetch the tags: this check would compare nothing")
         return 1
-    released = parse_stub(git("show", f"{tag}:{STUB}"))
+    source = released_stub(tag)
+    if source is None:
+        print(f"::error::{STUB} does not exist at {tag}. The check does not use an older release: nothing was compared")
+        return 1
+    released = parse_stub(source)
     head = parse_stub(Path(options.stub).read_text(encoding="utf-8"))
     print(f"released constructors: {tag} has {len(released)} bound types, {options.stub} has {len(head)}")
     if not released:
