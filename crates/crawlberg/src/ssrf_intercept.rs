@@ -2368,6 +2368,9 @@ async fn serve_child_targets(
     }
 }
 
+mod failure;
+use failure::child_fail;
+
 async fn serve_child_targets_with_timeout<S>(
     mut socket: S,
     commands: &mut mpsc::Receiver<ChildCommand>,
@@ -2391,13 +2394,13 @@ where
     let mut deadlines = tokio::time::interval(tick.max(Duration::from_millis(1)));
     loop {
         if drains.iter().any(|drain| drain.deadline <= tokio::time::Instant::now()) {
-            return false;
+            return child_fail(shared, "drain_deadline");
         }
         if !drains.is_empty()
             && (pending.values().any(|command| command.context.is_none())
                 || structural_sessions.values().any(|target| target.context.is_none()))
         {
-            return false;
+            return child_fail(shared, "unattributed_pending_drain");
         }
         let mut waiting = Vec::new();
         for drain in std::mem::take(&mut drains) {
@@ -2429,12 +2432,12 @@ where
                 Some(ChildCommand::Drain { context, done }) => {
                     if !child_context_retired(&lock(&shared.registry), &context)
                         || pending.len() + drains.len() >= CHILD_CONTROLLER_PENDING_LIMIT {
-                        return false;
+                        return child_fail(shared, "invalid_drain_request");
                     }
-                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                     if child_socket_write(&mut socket, child_message(
                         id, "Target.getTargets", serde_json::json!({ "filter": [{}] }), None,
-                    ), command_timeout).await.is_err() { return false; }
+                    ), command_timeout).await.is_err() { return child_fail(shared, "drain_census_write"); }
                     pending.insert(id, child_pending_in(
                         ChildPendingKind::DrainCensus { context: context.clone(), done }, command_timeout, Some(context),
                     ));
@@ -2454,11 +2457,11 @@ where
                         >= CHILD_CONTROLLER_PENDING_LIMIT
                     {
                         let _ = done.send(Err("child-target controller capacity exceeded".to_owned()));
-                        return false;
+                        return child_fail(shared, "capacity_exceeded");
                     }
                     let Some(id) = child_command_id(&mut next_id) else {
                         let _ = done.send(Err("child-target controller command id exhausted".to_owned()));
-                        return false;
+                        return child_fail(shared, "id_exhausted");
                     };
                     if let Err(error) = child_socket_write(
                         &mut socket,
@@ -2470,7 +2473,7 @@ where
                         let _ = done.send(Err(format!(
                             "failed to arm browser-wide child-target interception: {error}"
                         )));
-                        return false;
+                        return child_fail(shared, "global_attach_write");
                     }
                     global_requested = true;
                     pending.insert(
@@ -2481,11 +2484,11 @@ where
                 Some(ChildCommand::Arm { root, done }) => {
                     if !global_armed {
                         let _ = done.send(Err("browser-wide child-target interception is not enabled".to_owned()));
-                        return false;
+                        return child_fail(shared, "global_attach_not_armed");
                     }
                     if !child_policy_acknowledged(&lock(&shared.registry), &root) {
                         let _ = done.send(Err("root target has no acknowledged policy".to_owned()));
-                        return false;
+                        return child_fail(shared, "root_policy_unacknowledged");
                     }
                     if armed_targets.contains(&root) {
                         let _ = done.send(Ok(()));
@@ -2501,7 +2504,7 @@ where
                         >= CHILD_CONTROLLER_PENDING_LIMIT
                     {
                         let _ = done.send(Err("child-target controller capacity exceeded".to_owned()));
-                        return false;
+                        return child_fail(shared, "capacity_exceeded");
                     }
                     if let Some(previous) = root_waiters.insert(
                         root,
@@ -2511,7 +2514,7 @@ where
                         },
                     ) {
                         let _ = previous.done.send(Err("root target arm was superseded".to_owned()));
-                        return false;
+                        return child_fail(shared, "root_arm_superseded");
                     }
                 }
                 Some(ChildCommand::Stop) | None => {
@@ -2530,10 +2533,10 @@ where
                             .done
                             .send(Err("timed out waiting for the root target attachment".to_owned()));
                     }
-                    return false;
+                    return child_fail(shared, "root_attachment_deadline");
                 }
                 if structural_sessions.values().any(|target| target.deadline <= now) {
-                    return false;
+                    return child_fail(shared, "structural_attachment_deadline");
                 }
                 let expired = pending
                     .iter()
@@ -2559,11 +2562,11 @@ where
                             | ChildPendingKind::DrainCensus { .. } | ChildPendingKind::ForeignRetirementCensus { .. } => {}
                         }
                     }
-                    return false;
+                    return child_fail(shared, "pending_command_deadline");
                 }
             }
             message = socket.next() => {
-                let Some(Ok(message)) = message else { return false };
+                let Some(Ok(message)) = message else { return child_fail(shared, "socket_read_or_end") };
                 let text = match message {
                     async_tungstenite::tungstenite::Message::Text(text) => text,
                     async_tungstenite::tungstenite::Message::Ping(payload) => {
@@ -2572,17 +2575,17 @@ where
                             async_tungstenite::tungstenite::Message::Pong(payload),
                             command_timeout,
                         ).await.is_err() {
-                            return false;
+                            return child_fail(shared, "pong_write");
                         }
                         continue;
                     }
-                    async_tungstenite::tungstenite::Message::Close(_) => return false,
+                    async_tungstenite::tungstenite::Message::Close(_) => return child_fail(shared, "socket_close_frame"),
                     _ => continue,
                 };
                 // ~keep The driver's reader: a Page event of a popup can hold half of a surrogate
                 // ~keep pair (a frame name, a window name), which `serde_json` alone refuses.
                 let Ok(value) = chromiumoxide::conn::parse_message::<serde_json::Value>(text.as_ref()) else {
-                    return false;
+                    return child_fail(shared, "message_parse");
                 };
                 if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
                     let Some(command) = pending.remove(&id) else { continue };
@@ -2608,10 +2611,10 @@ where
                             _ => None,
                         };
                         if let Some((target, session)) = ended {
-                            let Some(census_id) = child_command_id(&mut next_id) else { return false };
+                            let Some(census_id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                             if child_socket_write(&mut socket, child_message(census_id, "Target.getTargets",
                                 serde_json::json!({}), None), command_timeout).await.is_err() {
-                                return false;
+                                return child_fail(shared, "foreign_census_write");
                             }
                             let mut census = child_pending_in(
                                 ChildPendingKind::ForeignRetirementCensus { target, session },
@@ -2628,7 +2631,7 @@ where
                                     "failed to arm browser-wide child-target interception: {}",
                                     error.as_deref().unwrap_or("missing CDP result")
                                 )));
-                                return false;
+                                return child_fail(shared, "global_attach_ack");
                             }
                             global_armed = true;
                             let _ = done.send(Ok(()));
@@ -2647,19 +2650,19 @@ where
                                         error.as_deref().unwrap_or("missing CDP result")
                                     )));
                                 }
-                                return false;
+                                return child_fail(shared, "recursive_attach_ack");
                             }
                             if armed_targets.len() >= CHILD_CONTROLLER_PENDING_LIMIT
                                 && !armed_targets.contains(&target)
                             {
-                                return false;
+                                return child_fail(shared, "capacity_exceeded");
                             }
                             armed_targets.insert(target.clone());
                             // ~keep Chrome reports a page under a debugger-held tab as not waiting,
                             // ~keep but resuming only the tab leaves window.open blocked. Resume the
                             // ~keep child session after its recursive interception boundary is armed.
                             if waiting_for_debugger || structural_parent.is_some() {
-                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                                 if let Err(write_error) = child_socket_write(&mut socket, child_message(
                                     id,
                                     "Runtime.runIfWaitingForDebugger",
@@ -2671,13 +2674,13 @@ where
                                             "failed to resume the armed root target: {write_error}"
                                         )));
                                     }
-                                    return false;
+                                    return child_fail(shared, "root_resume_write");
                                 }
                                 pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: session.clone() }, command_timeout, command_context.clone()));
                             }
                             let ready_parent = if let Some(parent_session) = structural_parent {
                                 let Some(parent) = structural_sessions.get_mut(&parent_session) else {
-                                    return false;
+                                    return child_fail(shared, "structural_parent_missing");
                                 };
                                 parent.child_boundary_acknowledged = true;
                                 take_ready_structural(&mut structural_sessions, &parent_session)
@@ -2687,7 +2690,7 @@ where
                             if let Some(parent) = ready_parent
                                 && parent.waiting_for_debugger
                             {
-                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                                 if child_socket_write(
                                     &mut socket,
                                     child_message(
@@ -2701,31 +2704,31 @@ where
                                 .await
                                 .is_err()
                                 {
-                                    return false;
+                                    return child_fail(shared, "structural_resume_write");
                                 }
                                 pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: parent.session.clone() }, command_timeout, command_context.clone()));
                             }
                             if let Some(waiter) = root_waiters.remove(&target) {
                                 if !child_policy_acknowledged(&lock(&shared.registry), &target) {
                                     let _ = waiter.done.send(Err("root target has no acknowledged policy".to_owned()));
-                                    return false;
+                                    return child_fail(shared, "root_policy_unacknowledged");
                                 }
                                 let _ = waiter.done.send(Ok(()));
                             }
                         }
                         ChildPendingKind::StructuralArm { session } => {
                             if !acknowledged {
-                                return false;
+                                return child_fail(shared, "structural_attach_ack");
                             }
                             let Some(target) = structural_sessions.get_mut(&session) else {
-                                return false;
+                                return child_fail(shared, "structural_target_missing");
                             };
                             target.arm_acknowledged = true;
                             let ready = take_ready_structural(&mut structural_sessions, &session);
                             if let Some(target) = ready
                                 && target.waiting_for_debugger
                             {
-                                let Some(id) = child_command_id(&mut next_id) else { return false };
+                                let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                                 if child_socket_write(
                                     &mut socket,
                                     child_message(
@@ -2739,22 +2742,22 @@ where
                                 .await
                                 .is_err()
                                 {
-                                    return false;
+                                    return child_fail(shared, "structural_resume_write");
                                 }
                                 pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: target.session.clone() }, command_timeout, command_context.clone()));
                             }
                         }
-                        ChildPendingKind::Boundary { .. } | ChildPendingKind::Close if !acknowledged => return false,
+                        ChildPendingKind::Boundary { .. } | ChildPendingKind::Close if !acknowledged => return child_fail(shared, "boundary_or_close_ack"),
                         ChildPendingKind::Boundary { .. } | ChildPendingKind::Close => {}
                         ChildPendingKind::ForeignRetirementCensus { target, session } => {
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
-                                else { return false };
+                                else { return child_fail(shared, "foreign_census_parse") };
                             let registry = lock(&shared.registry);
                             if !acknowledged || !child_context_is_foreign_in(&registry, shared.origin, command_context.as_ref())
                                 || infos.iter().any(|info| info.target_id == target)
                                 || root_waiters.contains_key(&target)
                                 || !matches!(registry.ownership.get(&target), None | Some(TargetOwnership::Other)) {
-                                return false;
+                                return child_fail(shared, "foreign_retirement_unproved");
                             }
                             structural_sessions.remove(&session);
                             session_targets.remove(&session);
@@ -2771,11 +2774,11 @@ where
                             });
                         }
                         ChildPendingKind::DrainCensus { context, done } => {
-                            let Some(infos) = value["result"].get("targetInfos") else { return false };
-                            let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(infos.clone()) else { return false };
+                            let Some(infos) = value["result"].get("targetInfos") else { return child_fail(shared, "drain_census_missing") };
+                            let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(infos.clone()) else { return child_fail(shared, "drain_census_parse") };
                             if !acknowledged || !child_context_retired(&lock(&shared.registry), &context)
                                 || infos.iter().any(|info| info.browser_context_id.as_ref() == Some(&context)) {
-                                return false;
+                                return child_fail(shared, "drain_retirement_unproved");
                             }
                             // ~keep Disposed sessions can lose Runtime resume replies. Both sockets
                             // ~keep proved this exact context has no targets, so only its resumes are obsolete.
@@ -2792,7 +2795,7 @@ where
                 match value.get("method").and_then(serde_json::Value::as_str) {
                     Some("Target.targetDestroyed") => {
                         let Some(target) = value["params"]["targetId"].as_str().map(TargetId::new) else {
-                            return false;
+                            return child_fail(shared, "destroyed_target_missing");
                         };
                         let ended_tabs = structural_sessions.values()
                             .filter(|structural| structural.target == target)
@@ -2801,7 +2804,7 @@ where
                         for (session, context) in ended_tabs {
                             let registry = lock(&shared.registry);
                             if !child_context_is_foreign_in(&registry, shared.origin, context.as_ref()) {
-                                return false;
+                                return child_fail(shared, "nonforeign_structural_destroy");
                             }
                             structural_sessions.remove(&session);
                             pending.retain(|_, command| {
@@ -2831,13 +2834,13 @@ where
                         session_targets.retain(|_, attached| attached != &target);
                         if let Some(waiter) = root_waiters.remove(&target) {
                             let _ = waiter.done.send(Err("root target was destroyed before it was armed".to_owned()));
-                            return false;
+                            return child_fail(shared, "root_destroyed_before_arm");
                         }
                         continue;
                     }
                     Some("Target.detachedFromTarget") => {
                         let Some(session) = value["params"]["sessionId"].as_str() else {
-                            return false;
+                            return child_fail(shared, "detached_session_missing");
                         };
                         if let Some(structural) = structural_sessions.remove(session) {
                             // ~keep Another client's tab may close while its recursive arm is queued.
@@ -2846,7 +2849,7 @@ where
                             let registry = lock(&shared.registry);
                             let foreign = child_context_is_foreign_in(&registry, shared.origin, structural.context.as_ref());
                             if !foreign {
-                                return false;
+                                return child_fail(shared, "nonforeign_structural_detach");
                             }
                             pending.retain(|_, command| {
                                 let ended_tab = match &command.kind {
@@ -2876,7 +2879,7 @@ where
                                 let _ = waiter.done.send(Err(
                                     "root target detached before its boundary was acknowledged".to_owned(),
                                 ));
-                                return false;
+                                return child_fail(shared, "root_detached_before_arm");
                             }
                         }
                         continue;
@@ -2899,7 +2902,7 @@ where
                         if let Some(session) = popup {
                             let accept = serde_json::from_value::<DialogType>(value["params"]["type"].clone())
                                 .is_ok_and(|kind| dialog_is_accepted(&kind));
-                            let Some(id) = child_command_id(&mut next_id) else { return false };
+                            let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                             if child_socket_write(
                                 &mut socket,
                                 child_message(
@@ -2913,7 +2916,7 @@ where
                             .await
                             .is_err()
                             {
-                                return false;
+                                return child_fail(shared, "dialog_write");
                             }
                         }
                         continue;
@@ -2922,14 +2925,14 @@ where
                     _ => continue,
                 }
                 let Ok(attached) = serde_json::from_value::<ChildAttached>(value["params"].clone()) else {
-                    return false;
+                    return child_fail(shared, "attached_target_parse");
                 };
                 let parent_session = value
                     .get("sessionId")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned);
                 if !global_requested {
-                    return false;
+                    return child_fail(shared, "global_attach_not_requested");
                 }
                 if attached.target_info.browser_context_id.as_ref().is_some_and(|context|
                     drained_contexts.contains(context) && child_context_retired(&lock(&shared.registry), context)) {
@@ -2944,7 +2947,7 @@ where
                 )
                     >= CHILD_CONTROLLER_PENDING_LIMIT
                 {
-                    return false;
+                    return child_fail(shared, "capacity_exceeded");
                 }
                 if attached.target_info.r#type == "tab" {
                     // ~keep A tab is never recorded as a target: it holds no document and sends no
@@ -2965,9 +2968,9 @@ where
                         .insert(attached.session_id.clone(), structural)
                         .is_some()
                     {
-                        return false;
+                        return child_fail(shared, "structural_session_reused");
                     }
-                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                     if child_socket_write(
                         &mut socket,
                         child_message(
@@ -2982,7 +2985,7 @@ where
                     .is_err()
                     {
                         structural_sessions.remove(&attached.session_id);
-                        return false;
+                        return child_fail(shared, "structural_attach_write");
                     }
                     pending.insert(
                         id,
@@ -3007,12 +3010,12 @@ where
                 };
                 let structural_parent = parent_session.filter(|session| structural_sessions.contains_key(session));
                 if !(attached.waiting_for_debugger || structural_parent.is_some() || permitted || other) {
-                    return false;
+                    return child_fail(shared, "unproved_attached_boundary");
                 }
                 if !(permitted || other) {
                     if attached.target_info.r#type != "iframe" {
                         if lock(&shared.registry).opened.contains_key(&target) {
-                            return false;
+                            return child_fail(shared, "opened_target_policy_missing");
                         }
                         // ~keep Closing a page under a paused tab destroys that tab too. Retire
                         // ~keep its pending boundary before the expected detach and late arm ACK.
@@ -3022,14 +3025,14 @@ where
                                 !matches!(&command.kind, ChildPendingKind::StructuralArm { session } if session == parent)
                             });
                         }
-                        let Some(id) = child_command_id(&mut next_id) else { return false };
+                        let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                         if child_socket_write(&mut socket, child_message(
                                     id,
                                     "Target.closeTarget",
                                     serde_json::json!({ "targetId": target }),
                                     None,
                                 ), command_timeout).await.is_err() {
-                            return false;
+                            return child_fail(shared, "target_close_write");
                         }
                         pending.insert(id, child_pending_in(ChildPendingKind::Close, command_timeout,
                             attached.target_info.browser_context_id.clone()));
@@ -3049,7 +3052,7 @@ where
                 // ~keep the check records it as opened, and it has no opener. Its watch answers
                 // ~keep its dialogs, so its Page events stay off this socket.
                 if permitted && attached.target_info.r#type == "page" && attached.target_info.opener_id.is_some() {
-                    let Some(id) = child_command_id(&mut next_id) else { return false };
+                    let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                     if child_socket_write(
                         &mut socket,
                         child_message(id, "Page.enable", serde_json::json!({}), Some(&attached.session_id)),
@@ -3058,17 +3061,17 @@ where
                     .await
                     .is_err()
                     {
-                        return false;
+                        return child_fail(shared, "page_enable_write");
                     }
                 }
-                let Some(id) = child_command_id(&mut next_id) else { return false };
+                let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                 if child_socket_write(&mut socket, child_message(
                     id,
                     "Target.setAutoAttach",
                     child_recursive_arm_params(),
                     Some(&attached.session_id),
                 ), command_timeout).await.is_err() {
-                    return false;
+                    return child_fail(shared, "recursive_attach_write");
                 }
                 session_targets.insert(attached.session_id.clone(), target.clone());
                 pending.insert(
@@ -4916,9 +4919,11 @@ mod tests {
             .expect("disable test client Nagle delay");
         let mut server = accepted.await.expect("WebSocket accept task");
         let (commands, mut receiver) = mpsc::channel(super::CHILD_CONTROLLER_PENDING_LIMIT);
-        let controller = tokio::spawn(async move {
-            serve_child_targets_with_timeout(client, &mut receiver, &shared, command_timeout).await
-        });
+        use tracing::instrument::WithSubscriber as _;
+        let controller = tokio::spawn(
+            async move { serve_child_targets_with_timeout(client, &mut receiver, &shared, command_timeout).await }
+                .with_current_subscriber(),
+        );
         let (done, enabled) = oneshot::channel();
         commands
             .send(super::ChildCommand::Enable { done })
@@ -7152,6 +7157,8 @@ mod tests {
 
         assert!(!controller.await.expect("child controller task"));
     }
+
+    mod failure_phases;
 
     #[tokio::test]
     async fn a_cancelled_arm_caller_does_not_leave_a_pending_command() {
