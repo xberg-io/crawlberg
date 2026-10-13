@@ -28,7 +28,7 @@ use quick_xml::events::{BytesRef, Event};
 use url::Url;
 
 use crate::html::is_fetchable_scheme;
-use crate::http::http_fetch_sitemap;
+use crate::http::{AdmitEvery, RateLimited, http_fetch_sitemap_with_policy};
 use crate::map::MapFilter;
 use crate::normalize::resolve_redirect;
 use crate::types::{CrawlConfig, SitemapUrl};
@@ -245,7 +245,14 @@ pub(crate) async fn fetch_sitemap_tree(
     context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
-    let resp = match http_fetch_sitemap(sitemap_url, context.config, context.client).await {
+    let resp = match http_fetch_sitemap_with_policy(
+        sitemap_url,
+        context.config,
+        context.client,
+        &mut RateLimited::new(AdmitEvery, context.limiter),
+    )
+    .await
+    {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
@@ -269,6 +276,7 @@ pub(crate) struct SitemapWalkContext<'a> {
     pub(crate) config: &'a CrawlConfig,
     pub(crate) client: &'a reqwest::Client,
     pub(crate) filter: &'a MapFilter,
+    pub(crate) limiter: Option<&'a dyn crate::traits::RateLimiter>,
     /// The parsed address of every urlset entry the walk has returned so far.
     ///
     /// ~keep One context serves one `map()` call, so this deduplicates across every document
@@ -283,6 +291,7 @@ impl<'a> SitemapWalkContext<'a> {
             config,
             client,
             filter,
+            limiter: None,
             seen_entries: std::sync::Mutex::default(),
         }
     }
@@ -566,7 +575,14 @@ async fn fetch_child_sitemap(
     depth: u32,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<SitemapUrl> {
-    let Ok(child_resp) = http_fetch_sitemap(child_url, context.config, context.client).await else {
+    let Ok(child_resp) = http_fetch_sitemap_with_policy(
+        child_url,
+        context.config,
+        context.client,
+        &mut RateLimited::new(AdmitEvery, context.limiter),
+    )
+    .await
+    else {
         return Vec::new();
     };
 

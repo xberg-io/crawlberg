@@ -488,7 +488,7 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
             Err(error) => error,
         };
         assert!(
-            matches!(&error, CrawlError::SsrfPolicyViolation { reason, .. } if reason == "redirect limit exceeded"),
+            matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == "redirect limit exceeded"),
             "capture_screenshot={capture_screenshot}: the error must name the redirect limit: {error:?}"
         );
         let requested = requested_paths(&site).await;

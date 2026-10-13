@@ -8,7 +8,9 @@ use url::Url;
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
 use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup, media_type_essence};
-use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
+use crate::http::{
+    AdmitEvery, Fetched, RateLimited, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap_with_policy,
+};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_gzip,
@@ -41,10 +43,11 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     let parsed_url = seed.url().clone();
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
-    let context = SitemapWalkContext::new(config, &client, &filter);
+    let mut context = SitemapWalkContext::new(config, &client, &filter);
+    context.limiter = Some(engine.map_rate_limiter());
 
     if config.respect_robots_txt {
-        let urls = sitemap_urls_from_robots(url, config, &client, &context).await;
+        let urls = sitemap_urls_from_robots(&parsed_url, config, &client, &context).await?;
         if !urls.is_empty() {
             return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
@@ -66,8 +69,13 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     #[cfg(not(target_arch = "wasm32"))]
     let mut policy =
         crate::engine::redirect::RedirectPolicy::new(engine, &client, &filter.exclude_paths, &include_paths);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        policy.robots_limiter = context.limiter;
+    }
     #[cfg(target_arch = "wasm32")]
-    let mut policy = crate::http::AdmitEvery;
+    let policy = crate::http::AdmitEvery;
+    let mut policy = RateLimited::new(policy, context.limiter);
     let page = fetch_with_retry(
         url,
         config,
@@ -87,11 +95,11 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
 /// Returns an empty vector when robots.txt is unreadable or advertises no sitemaps,
 /// which the caller treats as "no hints" and falls through to `/sitemap.xml`.
 async fn sitemap_urls_from_robots(
-    url: &str,
+    url: &Url,
     config: &CrawlConfig,
     client: &reqwest::Client,
     context: &SitemapWalkContext<'_>,
-) -> Vec<SitemapUrl> {
+) -> Result<Vec<SitemapUrl>, CrawlError> {
     // ~keep The sitemap discovery stays fail-open where the crawl fails closed. It reads
     // robots.txt only to discover `Sitemap:` directives, so there is no access decision here to
     // fail closed on: the direct fetch makes that decision for every URL it requests. Both
@@ -100,12 +108,20 @@ async fn sitemap_urls_from_robots(
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
     let (crate::helpers::RobotsOutcome::Rules(rules), Some(robots_url)) =
-        crate::helpers::fetch_robots_document(url, config, client, ua).await
+        crate::helpers::fetch_robots_document_with_policy(
+            url.as_str(),
+            config,
+            client,
+            ua,
+            &mut RateLimited::new(AdmitEvery, context.limiter),
+        )
+        .await
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    crate::helpers::set_robots_crawl_delay(context.limiter, url, rules.crawl_delay).await?;
     if rules.sitemaps.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut all_urls = Vec::new();
@@ -121,7 +137,7 @@ async fn sitemap_urls_from_robots(
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
     }
-    all_urls
+    Ok(all_urls)
 }
 
 /// The URL to fetch for one robots.txt `Sitemap:` directive, resolved against `robots_url`, the
@@ -152,7 +168,14 @@ async fn sitemap_urls_from_well_known(
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
     let sitemap_url = format!("{}://{}/sitemap.xml", parsed_url.scheme(), parsed_url.authority());
-    let Ok(sitemap_resp) = http_fetch_sitemap(&sitemap_url, config, client).await else {
+    let Ok(sitemap_resp) = http_fetch_sitemap_with_policy(
+        &sitemap_url,
+        config,
+        client,
+        &mut RateLimited::new(AdmitEvery, context.limiter),
+    )
+    .await
+    else {
         return Vec::new();
     };
     if !reads_as_sitemap(&sitemap_resp.body_bytes, &sitemap_resp.body) {
@@ -221,7 +244,7 @@ async fn urls_from_direct_response(
             Some(page_scan) => page_scan.attach(&resp.body),
             None => mask_raw_text_markup(&resp.body),
         };
-        return links_as_sitemap_urls(&page, &base_url);
+        return links_as_sitemap_urls(&page, &base_url, &resp.headers);
     }
 
     Vec::new()
@@ -229,8 +252,13 @@ async fn urls_from_direct_response(
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
 /// normalized URL. A link to a place on the page itself is not a URL of its own and is skipped.
-fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(page, parsed_url);
+fn links_as_sitemap_urls(
+    page: &MaskedHtml<'_>,
+    parsed_url: &Url,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<SitemapUrl> {
+    let mut links = extract_links(page, parsed_url);
+    crate::html::append_refresh_header_link(&mut links, headers, parsed_url);
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
@@ -2004,27 +2032,55 @@ mod tests {
         assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
-    /// The crawl's successful final address and status, for comparison with map. ~keep
     async fn crawl_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
+        let engine = crate::CrawlEngine::builder()
+            .config(CrawlConfig {
+                max_depth: Some(0),
+                ..config.clone()
+            })
+            .build()
+            .expect("engine builds");
+        let result = engine.crawl(url).await.expect("crawl completes");
+        assert_eq!(result.pages.len(), 1, "the crawl must report its seed's response");
+        assert_eq!(result.error, None);
+        let page = &result.pages[0];
+        (page.final_url.replace(base, ""), page.status_code)
+    }
+
+    async fn scrape_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
         let engine = crate::CrawlEngine::builder()
             .config(config.clone())
             .build()
-            .expect("engine builds");
-        let page = engine.scrape(url).await.expect("the crawl does not fail on this chain");
+            .expect("engine");
+        let page = engine.scrape(url).await.expect("scrape returns its terminal response");
         (page.final_url.replace(base, ""), page.status_code)
     }
 
     async fn assert_crawl_redirect_error(url: &str, config: &CrawlConfig) {
         let engine = crate::CrawlEngine::builder()
-            .config(config.clone())
+            .config(CrawlConfig {
+                max_depth: Some(0),
+                ..config.clone()
+            })
             .build()
             .expect("engine");
-        let error = engine.scrape(url).await.expect_err("invalid redirect chain");
-        assert!(matches!(error, CrawlError::SsrfPolicyViolation { .. }), "{error}");
+        let result = engine.crawl(url).await.expect("crawl reports its failed seed");
+        assert!(
+            result.pages.is_empty(),
+            "an exhausted redirect must not produce a terminal 3xx page"
+        );
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("too_many_redirects:")),
+            "{:?}",
+            result.error
+        );
     }
 
     #[tokio::test]
-    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         let start = r#"<html><head><meta http-equiv="refresh" content="0; url=/missing"></head>
@@ -2039,7 +2095,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/start"), &config).await,
+            scrape_stop(&base, &format!("{base}/start"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }
@@ -2064,7 +2120,7 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            matches!(&result, Err(CrawlError::TooManyRedirects { .. })),
             "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
@@ -2090,7 +2146,7 @@ mod tests {
         let result = map(&format!("{base}/a"), &config).await;
 
         assert_eq!(request_count(&mock, "/a").await, 1, "/a must be requested once");
-        assert!(matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })));
+        assert!(matches!(result, Err(CrawlError::TooManyRedirects { .. })));
         assert_crawl_redirect_error(&format!("{base}/a"), &config).await;
     }
 
@@ -2197,7 +2253,7 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            matches!(&result, Err(CrawlError::TooManyRedirects { .. })),
             "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
@@ -2243,7 +2299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         mount_redirect(&mock, "/r0", "/missing").await;
@@ -2256,7 +2312,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            scrape_stop(&base, &format!("{base}/r0"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }

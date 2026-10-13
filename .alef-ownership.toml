@@ -4157,6 +4157,7 @@ owned_paths = [
   "e2e/c/Makefile",
   "e2e/java/.mvn/wrapper/maven-wrapper.properties",
   "e2e/node/.npmrc",
+  "e2e/php/composer.json",
   "packages/csharp/README.md",
   "packages/elixir/README.md",
   "packages/go/README.md",
@@ -4178,5 +4179,6 @@ owned_paths = [
   "test_apps/java/.mvn/wrapper/maven-wrapper.properties",
   "test_apps/kotlin_android/gradle/wrapper/gradle-wrapper.jar",
   "test_apps/node/.npmrc",
+  "test_apps/php/composer.json",
   "test_apps/php/phpunit.xml",
 ]

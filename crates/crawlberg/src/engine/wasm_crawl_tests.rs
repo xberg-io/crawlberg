@@ -1282,9 +1282,8 @@ async fn sequential_crawl_excluded_link_does_not_advance_the_rotation() {
     drop(mock);
 }
 
-/// The loop reads robots.txt once per origin and agent: three pages after the seed under two
-/// rotating agents cost the loop two robots.txt requests. Each page's scrape reads it once
-/// more for its `is_allowed` report, so the fixture sees 2 + 4.
+// ~keep The sequential loop caches two rotating agents locally; page scrapes fill the engine's
+// ~keep two agent-specific cache entries once each and reuse them for later is_allowed reports.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_reads_robots_txt_once_per_origin_and_agent() {
@@ -1319,8 +1318,8 @@ async fn sequential_crawl_reads_robots_txt_once_per_origin_and_agent() {
         .filter(|request| request.url.path() == "/robots.txt")
         .count();
     assert_eq!(
-        robots_requests, 6,
-        "the loop must read robots.txt once per agent (2), plus one read per page scrape (4)"
+        robots_requests, 4,
+        "two loop-agent reads plus two engine-cache fills; later scrapes reuse cached rules"
     );
     drop(mock);
 }

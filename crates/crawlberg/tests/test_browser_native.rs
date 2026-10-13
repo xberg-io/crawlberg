@@ -697,10 +697,7 @@ async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
     let http = native_chain_failure(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
     assert_eq!(
         http,
-        (
-            Some("ssrf_policy_violation: /r3 - redirect limit exceeded".to_owned()),
-            0
-        ),
+        (Some("too_many_redirects: redirect limit exceeded".to_owned()), 0),
         "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
@@ -726,8 +723,9 @@ async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
         .await
         .expect_err("the scrape must fail on the 3xx at the limit");
     assert!(
-        matches!(&error, CrawlError::SsrfPolicyViolation { url, reason, .. }
-            if reason == "redirect limit exceeded" && url.ends_with("/r3")),
+        matches!(&error, CrawlError::TooManyRedirects { message, source: Some(source) }
+            if message == "redirect limit exceeded"
+                && format!("{source:?}").contains("/r3")),
         "the error must name the redirect limit and the address not followed: {error:?}"
     );
     let requested = native_requested_paths(&site).await;

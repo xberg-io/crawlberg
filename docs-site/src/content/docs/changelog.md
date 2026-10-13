@@ -6,6 +6,11 @@ title: "Changelog"
 
 ### Upgrading
 
+- Swift `RustBridge` wrappers for `AuthConfig`, `CrawlEvent`, `HostMatcher` and `PageAction` now
+  return tagged JSON with their payloads from `to_string()`, including authentication credential
+  fields. The facade `toString()` still returns the variant tag.
+- **`CrawlError` gained `TooManyRedirects`.** Exhaustive Rust error matches need the new case.
+  Redirect exhaustion uses its own error family; the underlying network error remains its source. (#676)
 - **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
   it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
   for the new variant. (#695)
@@ -190,6 +195,16 @@ title: "Changelog"
 
 ### Fixed
 
+- Maps keep zero-delay defaults while configured and custom limiters pace robots, sitemap children
+  and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
+  sitemap-index child takes its own configured host delay. (#681)
+- Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. (#676)
+- Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
+  fragments use the normal conversion path, preserving conversion failures. (#677, #682)
+- Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
+- CLI configuration errors report nested paths and JSON types; unknown content and SSRF keys fail
+  validation. (#679)
 - Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
   native child exits. Linux Dart applications that start their own child processes remain affected.
 - Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,

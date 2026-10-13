@@ -6,6 +6,7 @@ use super::HostMatcher;
 
 /// SSRF policy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SsrfPolicy {
     /// If true, reject URLs that resolve to private/metadata IP ranges.
     #[serde(default = "default_deny_private")]
