@@ -101,3 +101,46 @@ async fn should_preserve_link_spelling_in_http_results_after_normalization_and_r
 async fn should_preserve_link_spelling_in_browser_results_after_normalization_and_redirects() {
     assert_original_link_spelling(BrowserMode::Always).await;
 }
+
+#[tokio::test]
+async fn should_remove_link_credentials_without_rewriting_query_or_fragment() {
+    let cases = [
+        (r"/\user:pass@other.test/x?y=://z@w", "http://other.test/x?y=://z@w"),
+        (r"http://user:pass@other.test/a", r"http://other.test/a"),
+        (r"http:\\user:pass@other.test\a", "http://other.test/a"),
+        (r"http:/\user:pass@other.test/a", "http://other.test/a"),
+        (
+            r"http:\\user:pass@other.test\x?y=://z@w",
+            "http://other.test/x?y=://z@w",
+        ),
+        (
+            r"http:/\user:pass@other.test/x#f=://z@w",
+            "http://other.test/x#f=://z@w",
+        ),
+    ];
+    let server = MockServer::start().await;
+    let html = cases
+        .iter()
+        .map(|(href, _)| format!("<a href=\"{href}\">link</a>"))
+        .collect::<String>();
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(html, "text/html"))
+        .mount(&server)
+        .await;
+    let engine = CrawlEngine::builder()
+        .config(CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        })
+        .build()
+        .expect("engine");
+    let result = engine.scrape(&server.uri()).await.expect("scrape");
+    assert_eq!(result.links.len(), cases.len());
+    for (link, (href, expected)) in result.links.iter().zip(cases) {
+        assert_eq!(link.original_url, expected, "href: {href}");
+        let parsed = url::Url::parse(&link.url).expect("resolved URL");
+        assert_eq!(parsed.username(), "");
+        assert_eq!(parsed.password(), None);
+    }
+}

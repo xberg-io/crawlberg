@@ -496,6 +496,11 @@ async fn interact_url_local(
     page.document_decoder = config.document_decoder;
     configure_page_interception(&mut page, config);
     navigate_configured(&mut page, url, config).await?;
+    // ~keep Rendering returns an unfinished redirect for the crawl's hop policy to reject;
+    // interaction has no later hop policy and must reject it before running page actions.
+    if let Some(error) = page.unfollowed_redirect.take() {
+        return Err(error);
+    }
 
     if let Some(wait) = post_navigation_wait {
         tokio::time::sleep(wait).await;

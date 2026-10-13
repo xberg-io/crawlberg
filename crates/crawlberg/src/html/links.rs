@@ -171,7 +171,13 @@ fn starts_with_authority(reference: &str) -> bool {
 }
 
 fn remove_original_userinfo(original: &str) -> Option<String> {
-    let start = original.find("://")? + 3;
+    let parsed = Url::parse(original).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let after_scheme = &original[original.find(':')? + 1..];
+    let authority = after_scheme.strip_prefix("//")?;
+    let start = original.len() - authority.len();
     let authority_end = original[start..]
         .find(['/', '?', '#', '\\'])
         .map_or(original.len(), |end| start + end);
@@ -275,6 +281,38 @@ mod tests {
             let links = extract(&format!("<a href=\"{href}\">link</a>"), "https://example.com/");
             assert_eq!(links.len(), 1);
             assert_eq!(links[0].original_url, expected);
+        }
+    }
+
+    #[test]
+    fn should_redact_backslash_authorities_without_changing_query_or_fragment() {
+        for (href, expected) in [
+            (r"/\user:pass@other.test/x?y=://z@w", "http://other.test/x?y=://z@w"),
+            (
+                r"http:\\user:pass@other.test\x?y=://z@w",
+                "http://other.test/x?y=://z@w",
+            ),
+            (
+                r"http:/\user:pass@other.test/x#f=://z@w",
+                "http://other.test/x#f=://z@w",
+            ),
+            (
+                r"http:\/user:pass@other.test/x?y=://z@w",
+                "http://other.test/x?y=://z@w",
+            ),
+            (
+                r"http:////user:pass@other.test/x?y=://z@w",
+                "http://other.test/x?y=://z@w",
+            ),
+            (
+                r"http://first@user:pass@other.test/x?y=://z@w",
+                "http://other.test/x?y=://z@w",
+            ),
+        ] {
+            let links = extract(&format!("<a href=\"{href}\">link</a>"), "http://example.com/");
+            assert_eq!(links.len(), 1, "{href}");
+            assert_eq!(links[0].original_url, expected, "{href}");
+            assert!(!links[0].url.contains("user:pass"), "{href}");
         }
     }
 

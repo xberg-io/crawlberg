@@ -20,6 +20,7 @@ pub const UNTRUSTED_CALLER_FORBIDDEN_FIELDS: &[&str] = &[
     "/browser/endpoint",
     "/browser/chrome_path",
     "/browser/chrome_args",
+    "/browser/private_pipe",
     "/browser/eval_script",
     "/browser/session_affinity",
     "/browser_profile",
@@ -60,6 +61,7 @@ impl CrawlConfig {
         self.browser.endpoint = operator.browser.endpoint.clone();
         self.browser.chrome_path = operator.browser.chrome_path.clone();
         self.browser.chrome_args = operator.browser.chrome_args.clone();
+        self.browser.private_pipe = operator.browser.private_pipe;
         self.browser.eval_script = operator.browser.eval_script.clone();
         self.browser.session_affinity = operator.browser.session_affinity;
         self.browser_profile = operator.browser_profile.clone();

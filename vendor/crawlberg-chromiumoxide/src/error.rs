@@ -23,6 +23,11 @@ pub enum CdpError {
     Ws(#[from] tungstenite::Error),
     #[error("{0}")]
     Io(#[from] io::Error),
+    /// The private debugging pipe of a launched browser failed or closed. Only the connection
+    /// of the pipe makes this value: a browser with a debugging port never reports it.
+    #[cfg(unix)]
+    #[error("{0}")]
+    Pipe(crate::pipe::PipeError),
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
     #[error("{0}")]

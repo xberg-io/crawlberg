@@ -23,13 +23,15 @@ use crate::cmd::{CommandMessage, to_command_response};
 use crate::conn::Connection;
 use crate::error::{BrowserStderr, CdpError, Result};
 use crate::handler::browser::BrowserContext;
-use crate::handler::{Handler, HandlerConfig, HandlerMessage};
+use crate::handler::{Handler, HandlerConfig, HandlerConnection, HandlerMessage};
 use crate::listeners::{EventListenerRequest, EventStream};
 use crate::page::Page;
 use crate::utils;
 
 mod argument;
 mod config;
+#[cfg(unix)]
+mod pipe;
 
 /// A [`Browser`] is created when chromiumoxide connects to a Chromium instance.
 #[derive(Debug)]
@@ -45,6 +47,15 @@ pub struct Browser {
     debug_ws_url: String,
     /// The context of the browser
     browser_context: BrowserContext,
+    #[cfg(unix)]
+    pipe_hub: Option<crate::pipe::PipeHub>,
+}
+
+struct LaunchConnection {
+    address: String,
+    connection: HandlerConnection,
+    #[cfg(unix)]
+    hub: Option<crate::pipe::PipeHub>,
 }
 
 /// Browser connection information.
@@ -129,6 +140,8 @@ impl Browser {
             config: None,
             child: None,
             debug_ws_url,
+            #[cfg(unix)]
+            pipe_hub: None,
             browser_context,
         };
         Ok((browser, fut))
@@ -159,6 +172,10 @@ impl Browser {
 
         // Launch a new chromium instance
         let mut child = spawn(&config)?;
+        // A child that `BrowserConfig::command` started on a private debugging pipe holds this
+        // end of it. A child with none printed a web socket url on its stderr.
+        #[cfg(unix)]
+        let pipe = child.take_debugging_pipe();
 
         /// Faillible initialization to run once the child process is created.
         ///
@@ -167,17 +184,34 @@ impl Browser {
         async fn with_child(
             config: &BrowserConfig,
             child: &mut Child,
-        ) -> Result<(String, Connection<CdpEventMessage>)> {
+            #[cfg(unix)] pipe: Option<std::os::unix::net::UnixStream>,
+        ) -> Result<LaunchConnection> {
+            #[cfg(unix)]
+            if let Some(pipe) = pipe {
+                return self::pipe::initialize(pipe, child, config.launch_timeout).await;
+            }
             let dur = config.launch_timeout;
             let timeout_fut = Box::pin(tokio::time::sleep(dur));
 
             // extract the ws:
             let debug_ws_url = ws_url_from_output(child, timeout_fut).await?;
             let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
-            Ok((debug_ws_url, conn))
+            Ok(LaunchConnection {
+                address: debug_ws_url,
+                connection: HandlerConnection::WebSocket(conn),
+                #[cfg(unix)]
+                hub: None,
+            })
         }
 
-        let (debug_ws_url, conn) = match with_child(&config, &mut child).await {
+        let launch = match with_child(
+            &config,
+            &mut child,
+            #[cfg(unix)]
+            pipe,
+        )
+        .await
+        {
             Ok(conn) => conn,
             Err(e) => {
                 // An initialization error occurred, clean up the process
@@ -214,14 +248,16 @@ impl Browser {
             manage_child_targets: config.manage_child_targets,
         };
 
-        let fut = Handler::new(conn, rx, handler_config);
+        let fut = Handler::with_connection(launch.connection, rx, handler_config);
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
             sender: tx,
             config: Some(config),
             child: Some(child),
-            debug_ws_url,
+            debug_ws_url: launch.address,
+            #[cfg(unix)]
+            pipe_hub: launch.hub,
             browser_context,
         };
 
@@ -385,6 +421,15 @@ impl Browser {
     /// Returns the address of the websocket this browser is attached to
     pub fn websocket_address(&self) -> &String {
         &self.debug_ws_url
+    }
+
+    /// For a browser that was launched on a private debugging pipe: a future that opens one
+    /// more CDP client of that pipe. `None` for every other browser: such a browser has a
+    /// WebSocket address, and a client connects to [`Self::websocket_address`].
+    #[cfg(unix)]
+    pub fn pipe_client(&self) -> Option<impl Future<Output = Result<crate::pipe::PipeClient>> + Send + use<>> {
+        let hub = self.pipe_hub.clone()?;
+        Some(async move { hub.open_client().await })
     }
 
     /// Whether the BrowserContext is incognito.
@@ -608,7 +653,81 @@ mod tests {
             child: Some(child),
             debug_ws_url: String::new(),
             browser_context: BrowserContext::default(),
+            pipe_hub: None,
         }
+    }
+
+    /// The address of a WebSocket server that sends each of its first two clients one text
+    /// message of `size` bytes in one frame.
+    async fn server_of_one_message(size: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("client");
+                // ~keep A client that refuses the frame stops reading, so its write never ends:
+                // ~keep each client has its own task.
+                tokio::spawn(async move {
+                    let mut socket = async_tungstenite::tokio::accept_async(stream).await.expect("handshake");
+                    let _ = socket
+                        .send(async_tungstenite::tungstenite::Message::Text("a".repeat(size).into()))
+                        .await;
+                });
+            }
+        });
+        format!("ws://{address}")
+    }
+
+    /// An independent client of a browser with a debugging port has the default limits of the
+    /// WebSocket: a message over the frame limit of 16 MiB ends the client with an error. The
+    /// child-target controller of the request firewall is such a client. The connection of the
+    /// handler has no limit and reads the same message whole.
+    #[tokio::test]
+    async fn an_independent_websocket_client_refuses_a_message_over_the_frame_limit() {
+        use async_tungstenite::tungstenite::Error as WsError;
+        use futures::StreamExt;
+
+        const OVER_THE_FRAME_LIMIT: usize = (16 << 20) + 1;
+        const WAIT: Duration = Duration::from_secs(60);
+
+        let browser = Browser {
+            sender: channel(1).0,
+            config: None,
+            child: None,
+            debug_ws_url: server_of_one_message(OVER_THE_FRAME_LIMIT).await,
+            browser_context: BrowserContext::default(),
+            pipe_hub: None,
+        };
+
+        // ~keep The firewall opens its client with this call, on the address of the browser.
+        let (mut independent, _) = async_tungstenite::tokio::connect_async(browser.websocket_address().as_str())
+            .await
+            .expect("independent client");
+        let refused = tokio::time::timeout(WAIT, independent.next())
+            .await
+            .expect("the independent client must answer");
+        assert!(
+            matches!(refused, Some(Err(WsError::Capacity(_)))),
+            "a message over the frame limit must end the independent client with a capacity error"
+        );
+
+        let mut handler_client = Connection::<CdpEventMessage>::connect(browser.websocket_address())
+            .await
+            .expect("client of the handler");
+        let whole = tokio::time::timeout(WAIT, handler_client.next())
+            .await
+            .expect("the client of the handler must answer");
+        // ~keep The message is not a protocol message, so the connection gives its whole text
+        // ~keep back in the error.
+        let whole_size = match whole {
+            Some(Err(CdpError::InvalidMessage(text, _))) => Some(text.len()),
+            _ => None,
+        };
+        assert_eq!(
+            whole_size,
+            Some(OVER_THE_FRAME_LIMIT),
+            "the client of the handler must read the whole message"
+        );
     }
 
     /// Collects the message of every event.

@@ -26,6 +26,9 @@ use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
+#[cfg(unix)]
+mod profile_confirmation;
+
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -171,14 +174,15 @@ pub(crate) fn disable_non_proxied_udp(user_data_dir: &std::path::Path) -> Result
     std::fs::write(&path, preferences.to_string()).map_err(|e| failed(&e))
 }
 
-/// How long [`confirm_profile_in_use`] waits for Chrome's `DevToolsActivePort` file.
+/// How long [`confirm_profile_in_use`] waits for Chrome to confirm the prepared profile.
 const PROFILE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Confirm that `browser`, just launched on `user_data_dir`, opened that directory, so the
 /// WebRTC preference [`disable_non_proxied_udp`] wrote there is in effect. If it did not, kill
 /// the browser and return an error: the crawl never runs with the policy off.
 ///
-/// ~keep Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
+/// ~keep Pipe launches prove the profile namespace with a local blob download before policy setup.
+/// ~keep A Chrome launched with `--remote-debugging-port=0` writes its DevTools port and browser
 /// ~keep path into `<user-data-dir>/DevToolsActivePort` as it prints them on stderr, where
 /// ~keep chromiumoxide reads the websocket address. A sandboxed Chrome, such as a strictly
 /// ~keep confined snap with a private /tmp, opens another directory at the same path and writes
@@ -188,6 +192,15 @@ pub(crate) async fn confirm_profile_in_use(
     browser: &mut Browser,
     user_data_dir: &std::path::Path,
 ) -> Result<(), CrawlError> {
+    #[cfg(unix)]
+    if let Some(client) = browser.pipe_client() {
+        // ~keep Keep this launch-only protocol exchange out of generated bindings' inline future layout.
+        let result = Box::pin(profile_confirmation::confirm(browser, user_data_dir, client)).await;
+        if result.is_err() {
+            let _ = browser.kill().await;
+        }
+        return result;
+    }
     let deadline = tokio::time::Instant::now() + PROFILE_CONFIRM_TIMEOUT;
     while !wrote_devtools_port(user_data_dir, browser.websocket_address()) {
         if tokio::time::Instant::now() >= deadline {
@@ -294,13 +307,18 @@ pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
 /// refuse are an error here too, for the pool, whose config never passes through `validate`.
 /// `section` names the config the options came from (`browser` or `BrowserPoolConfig`), and
 /// the error names the key in it.
+///
+/// `private_pipe` is the `private_pipe` key of that config: the one place where a launch of
+/// crawlberg chooses between the debugging port and the private debugging pipe.
 pub(crate) fn apply_launch_overrides(
     mut builder: BrowserConfigBuilder,
     section: &str,
     chrome_path: Option<&std::path::Path>,
     chrome_args: &[String],
+    private_pipe: bool,
     proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
+    builder = builder.private_pipe(private_pipe);
     #[cfg(test)]
     let test_chrome_path = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").map(std::path::PathBuf::from);
     #[cfg(test)]
@@ -354,9 +372,9 @@ const PROFILE_REMOVAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// ~keep helper processes (renderers, the GPU process, the network and storage services) outlive
 /// ~keep the browser process for a moment and keep writing into the directory, so a removal made
 /// ~keep while they run fails part-way or is undone, which left a profile behind in 6 of 20 drops
-/// ~keep on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
-/// ~keep process group and kills only the browser process, which orphans the helpers: their
-/// ~keep parent is then init or a subreaper, so no parent pid or process group leads back to the
+/// ~keep on Linux (xberg-io/crawlberg#415). Upstream chromiumoxide 0.9.1 started Chrome in the
+/// ~keep caller's process group and killed only the browser process, orphaning helpers: their
+/// ~keep parent became init or a subreaper, so no parent pid or process group led back to the
 /// ~keep browser. They are found by the `--user-data-dir` flag that Chrome passes to each of them,
 /// ~keep which still names them after the browser process is gone, and by the executable of the
 /// ~keep Chrome that [`Self::launch`] started, which each of them runs.
@@ -555,18 +573,27 @@ fn start_listed_chrome_reading(
     // ~keep helpers through it, which a main process that is already dead no longer leads to.
     let mut child = config.command().kill_on_drop(false).spawn()?;
     let launched = child.inner.id().and_then(read);
-    if launched.is_none() && child.tree().is_none() {
-        // ~keep A Chrome that has ended is no longer shown on macOS. Its exit is the cause of
-        // ~keep the failed launch then, not the read.
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(std::io::Error::other(format!(
-                "the Chrome that was started ended at once ({status})"
-            )));
-        }
-        let outcome = match child.inner.start_kill() {
+    // ~keep Unix still requires its process record; a guardian does not validate /proc access.
+    let missing_record = launched.is_none() && (cfg!(unix) || child.tree().is_none());
+    if missing_record {
+        // ~keep A non-exec launcher can exit before its Chrome. Stop its owned group while
+        // ~keep the launch handle still retains the original leader (#674).
+        #[cfg(unix)]
+        let stopped = child.start_kill_group();
+        #[cfg(not(unix))]
+        let stopped = child.inner.start_kill();
+        let outcome = match stopped {
             Ok(()) => "it was stopped right after its start".to_owned(),
             Err(error) => format!("it can still run, because the attempt to stop it failed: {error}"),
         };
+        // ~keep Preserve a natural launcher's exit as the cause; a signal sent above is cleanup.
+        if let Ok(Some(status)) = child.try_wait()
+            && status.code().is_some()
+        {
+            return Err(std::io::Error::other(format!(
+                "the Chrome that was started ended at once ({status}); {outcome}"
+            )));
+        }
         return Err(std::io::Error::other(format!(
             "the process table does not show the Chrome that was started, so it could not be stopped later; {outcome}. \
              On Linux, run this program where the `/proc` of its own process id namespace is mounted. \
@@ -1274,6 +1301,7 @@ fn build_pool_launch_builder(
         "BrowserPoolConfig",
         config.chrome_path.as_deref(),
         &config.chrome_args,
+        config.private_pipe,
         None,
     )
 }
@@ -1297,6 +1325,9 @@ pub struct BrowserPoolConfig {
     /// Checked by the rules of `BrowserConfig::chrome_args` when the pool launches Chrome:
     /// a refused entry makes `warm` and `acquire_page` return an error.
     pub chrome_args: Vec<String>,
+    /// Launch Chrome on a private debugging pipe, not on a debugging port, by the rules of
+    /// `BrowserConfig::private_pipe`. Default: `false`. Ignored when `browser_endpoint` is set.
+    pub private_pipe: bool,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
 }
@@ -1311,6 +1342,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
             browser_endpoint,
             chrome_path,
             chrome_args,
+            private_pipe,
             launch_timeout,
         } = self;
         f.debug_struct("BrowserPoolConfig")
@@ -1323,6 +1355,7 @@ impl std::fmt::Debug for BrowserPoolConfig {
             )
             .field("chrome_path", chrome_path)
             .field("chrome_args", &crate::chrome_args::RedactedChromeArgs(chrome_args))
+            .field("private_pipe", private_pipe)
             .field("launch_timeout", launch_timeout)
             .finish()
     }
@@ -1335,6 +1368,7 @@ impl Default for BrowserPoolConfig {
             browser_endpoint: None,
             chrome_path: None,
             chrome_args: Vec::new(),
+            private_pipe: false,
             launch_timeout: Duration::from_secs(30),
         }
     }
@@ -1488,6 +1522,15 @@ fn spawn_handler_then(
             if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
                 let cause = websocket_error_text(error);
                 tracing::warn!(error = %cause, "the browser's CDP websocket failed; its CDP handler ends");
+                let _ = watched.end.0.cause.set(cause);
+                break;
+            }
+            // ~keep Only the connection of a private debugging pipe makes this error, so this
+            // ~keep arm never runs for a browser with a debugging port.
+            #[cfg(unix)]
+            if let Err(chromiumoxide::error::CdpError::Pipe(error)) = &event {
+                let cause = format!("the browser's CDP pipe connection closed: {error}");
+                tracing::warn!(error = %cause, "the browser's CDP pipe failed; its CDP handler ends");
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }
@@ -2104,6 +2147,7 @@ impl BrowserPool {
             && browser.endpoint.is_none()
             && self.config.chrome_path == browser.chrome_path
             && self.config.chrome_args == browser.chrome_args
+            && self.config.private_pipe == browser.private_pipe
     }
 
     /// Eagerly launch the Chrome process so that the first
@@ -2596,6 +2640,40 @@ pub(crate) fn assert_launch_overrides_reach_the_builder(
         missing.to_string().contains("/nonexistent/crawlberg-chrome"),
         "the error must name the path, got: {missing}"
     );
+}
+
+/// Assert that `build`, given the `private_pipe` key, chooses the transport on the command line of
+/// Chrome: the debugging port for `false`, and on Unix the private debugging pipe for `true`.
+/// Shared by the builder test of each of the three launch paths.
+#[cfg(test)]
+pub(crate) fn assert_private_pipe_chooses_the_transport(
+    build: impl Fn(bool) -> Result<BrowserConfigBuilder, CrawlError>,
+) {
+    let binary = crate::types::executable_temp_file("transport");
+    let command_line = |private_pipe: bool| {
+        let config = build(private_pipe)
+            .expect("the launch builder must accept the key")
+            .chrome_executable(&binary)
+            .build()
+            .expect("the launch configuration must build");
+        format!("{:?}", config.command())
+    };
+    let port = command_line(false);
+    let pipe = command_line(true);
+    let _ = std::fs::remove_file(&binary);
+
+    assert!(
+        port.contains("--remote-debugging-port=0") && !port.contains("--remote-debugging-pipe"),
+        "without the key Chrome must get a debugging port and no pipe: {port}"
+    );
+    if cfg!(unix) {
+        assert!(
+            pipe.contains("--remote-debugging-pipe") && !pipe.contains("--remote-debugging-port"),
+            "with the key Chrome must get the pipe and no debugging port: {pipe}"
+        );
+    } else {
+        assert_eq!(pipe, port, "the key must change nothing where there is no pipe");
+    }
 }
 
 #[cfg(test)]

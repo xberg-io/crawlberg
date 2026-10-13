@@ -6,6 +6,9 @@ title: "Changelog"
 
 ### Upgrading
 
+- **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
+  it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
+  for the new variant. (#695)
 - **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
   `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
   `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
@@ -19,6 +22,10 @@ title: "Changelog"
   served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
   entries must set `decoded` to `true` for a body it stored as decoded text:
   `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+- **`BrowserConfig` and `BrowserPoolConfig` each have a new public field, `private_pipe`.** A
+  Rust struct literal that names every field must add it; a literal with `..Default::default()`
+  needs no change. The language packages are not changed: their `BrowserConfig` has no new
+  field and its constructors take the same arguments.
 - **`CrawlPageResult`, `LinkInfo`, `FrontierEntry` and `ContentConfig` have new public fields.**
   The first three have `original_url`. `ContentConfig` has `strip_newlines`, `bullets`,
   `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
@@ -31,6 +38,13 @@ title: "Changelog"
 
 ### Added
 
+- The vendored browser process `Command::get_args()` exposes a read-only iterator over the
+  configured arguments. It does not change their order or launch behavior.
+  ([#702](https://github.com/xberg-io/crawlberg/pull/702))
+- `Frontier::pop_batch_excluding_hosts` selects entries whose hosts are not waiting for a
+  rate-limiter turn, without removing or reordering retained entries. Return `Some(entries)`
+  to support this selection, or `None` to retain the existing bounded-window fallback. The
+  built-in FIFO and LIFO frontiers support it. (#684)
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
@@ -39,6 +53,34 @@ title: "Changelog"
   interface have no class for any error case: read the text there. In PHP the text starts with
   `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
   reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- **`browser.private_pipe` starts Chrome on a private debugging pipe (Linux and macOS).** The
+  key is a `bool` and its default is `false`: a caller that sets nothing gets the Chrome of the
+  release before, with a debugging port on 127.0.0.1. With `true`:
+  - The Chrome that crawlberg starts listens on no TCP port. crawlberg speaks the DevTools
+    protocol with it over the pipe, so no other local process can drive the browser of a crawl.
+    The profile directory of that Chrome has no `DevToolsActivePort` file. (#624)
+  - The Chrome ends when the last process that holds the pipe ends. The process that started
+    the Chrome holds it: when no other process does, the Chrome ends when that process exits,
+    is killed with SIGKILL or gets a SIGTERM that it does not handle. A process that the owner
+    forked without `exec` holds a copy of the pipe, and the Chrome runs until that process ends
+    too. A process that the owner started with `exec` does not hold the pipe. Without the key
+    this change does nothing for the Chrome of a killed process. (#620)
+  - Limit: the pipe is less reliable than the debugging port when the machine is loaded. On a
+    host at a load of 18 to 45, with 22 browser tests in parallel, the firewall test file was
+    green in 2 of 10 runs on the pipe against 8 of 10 on the debugging port. In 5 of the 10 pipe
+    runs a scrape failed with `failed to open page after relaunch: browser: failed to create
+    page: oneshot canceled`; in 0 of the 10 runs on the debugging port. The cause is not known.
+  - On Windows the key changes nothing. A Chrome behind `browser.endpoint` belongs to the caller
+    and is not changed. The native backend ignores the key, with a warning.
+  - The Rust `BrowserPoolConfig` has the same key for the Chrome that a pool launches. A scrape
+    or crawl on a shared pool uses the pool's key. `CrawlConfig::adopt_operator_egress` sets the
+    key from the operator, and `reject_untrusted_fields` refuses `/browser/private_pipe` from
+    an untrusted caller.
+  - The key is in the Rust API and in a `CrawlConfig` that crawlberg reads as JSON. The
+    language packages (Python, Node, PHP, Ruby, Go, Java, C#, Kotlin, Swift, Dart, Elixir, Zig,
+    WebAssembly, C) do not have it yet: a new constructor argument breaks the callers of some
+    of them, and the generator release that adds an argument without that break is not out.
+  #620 and #624 are fixed only with the key on.
 - `ContentConfig` has six options for the form of the Markdown. `strip_newlines` writes a line
   break in the HTML source of a paragraph as a space. `bullets` sets the list markers for each
   level of nesting, and `list_indent_width` the spaces for each level. `strong_em_symbol` sets the
@@ -60,6 +102,11 @@ title: "Changelog"
 
 ### Changed
 
+- Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
+  error source. A chain that reaches its final page within the limit and a redirect without
+  `Location` still succeed. (#695)
+- Link results remove credentials from `original_url` even when a link uses backslashes or
+  embedded tabs and newlines. Query strings and fragments are kept, with that normalization. (#696)
 - **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
   page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
   `/item?` are two pages. The same parameters in a different order are still one page. A site
@@ -141,11 +188,28 @@ title: "Changelog"
 
 ### Fixed
 
+- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
+  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
+  This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
+  longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
+  explicitly wait for its own children; exited, unwaited children remain zombies. Existing
+  callable signal handlers remain chained. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
+- Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
+  terminal document responses finish without waiting for HTML readiness when downloads are disabled.
+  Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
+- Refused Unix browser launchers stop their descendants, and parent signal termination stops the
+  owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
+  parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
+- Batch crawls with more seeds than `max_concurrent` complete after host waits by sharing
+  each seed's permit acquisition. Ready batch scrape operations run on parallel runtime tasks
+  while retaining the configured concurrency bound. (#684)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
 - Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
   controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
+- A shared browser pool works with the default session-affinity setting when no session pool is supplied;
+  each request gets a fresh page in the shared Chrome. (#703)
 - With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
   pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
   one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
@@ -333,6 +397,9 @@ title: "Changelog"
   back until the next page opened, so a page closed outside the request check kept its browser
   context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
   already ended for pooled pages. (#595)
+- With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
+  Chrome 155 opens targets of its own in each new browser context and does not close them on
+  request; the engine waited for them to close before it kept the page. (#694)
 
 ## [1.10.2] - 2026-10-06
 

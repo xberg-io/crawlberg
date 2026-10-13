@@ -12,6 +12,10 @@ impl ArgsBuilder {
         self.0.contains_key(key)
     }
 
+    pub fn remove(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
     pub fn arg<T: Into<Arg>>(&mut self, arg: T) -> &mut Self {
         let arg = arg.into();
         if let Some(values) = self.0.get_mut(&arg.key) {

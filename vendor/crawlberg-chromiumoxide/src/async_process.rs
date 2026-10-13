@@ -11,6 +11,8 @@ use tokio::process;
 pub struct Command {
     inner: process::Command,
     kill_on_drop: bool,
+    #[cfg(unix)]
+    debugging_pipe: bool,
 }
 
 impl Command {
@@ -25,12 +27,18 @@ impl Command {
         Self {
             inner,
             kill_on_drop: true,
+            #[cfg(unix)]
+            debugging_pipe: false,
         }
     }
 
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
         self.inner.arg(arg);
         self
+    }
+
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.inner.as_std().get_args()
     }
 
     pub fn args<I, S>(&mut self, args: I) -> &mut Self
@@ -75,9 +83,54 @@ impl Command {
         self
     }
 
+    /// Give the child a private debugging pipe on the descriptors 3 and 4, where a browser started
+    /// with `--remote-debugging-pipe` reads and writes the protocol. The spawned [`Child`] holds
+    /// this end of the pipe.
+    #[cfg(unix)]
+    pub(crate) fn debugging_pipe(&mut self) -> &mut Self {
+        self.debugging_pipe = true;
+        self
+    }
+
     pub fn spawn(&mut self) -> std::io::Result<Child> {
+        #[cfg(unix)]
+        let pipe = if self.debugging_pipe {
+            Some(self.attach_debugging_pipe()?)
+        } else {
+            None
+        };
         let (inner, tree) = spawn_in_tree(&mut self.inner)?;
-        Ok(Child::new(inner, tree, self.kill_on_drop))
+        Ok(Child::new(
+            inner,
+            tree,
+            self.kill_on_drop,
+            #[cfg(unix)]
+            pipe,
+        ))
+    }
+
+    /// Make the pipe of the next child and return this end of it.
+    #[cfg(unix)]
+    fn attach_debugging_pipe(&mut self) -> std::io::Result<std::os::unix::net::UnixStream> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let (parent, child) = std::os::unix::net::UnixStream::pair()?;
+        // SAFETY: duplicating above Chrome's reserved fds avoids collisions during pre_exec. ~keep
+        let fd = unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fcntl returned a new descriptor whose sole owner is this value. ~keep
+        let descriptor = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: only async-signal-safe descriptor operations run between fork and exec. ~keep
+        unsafe {
+            self.inner.pre_exec(move || {
+                if libc::dup2(descriptor.as_raw_fd(), 3) < 0 || libc::dup2(descriptor.as_raw_fd(), 4) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        Ok(parent)
     }
 }
 
@@ -90,11 +143,19 @@ pub struct Child {
     spawner: u32,
     /// Whether the runtime kills the child when this handle is dropped.
     killed_on_drop: bool,
+    /// This end of the private debugging pipe, for a child that was started on one.
+    #[cfg(unix)]
+    debugging_pipe: Option<std::os::unix::net::UnixStream>,
 }
 
 /// Wrapper for an async child process.
 impl Child {
-    fn new(mut inner: process::Child, tree: Option<ProcessTree>, killed_on_drop: bool) -> Self {
+    fn new(
+        mut inner: process::Child,
+        tree: Option<ProcessTree>,
+        killed_on_drop: bool,
+        #[cfg(unix)] debugging_pipe: Option<std::os::unix::net::UnixStream>,
+    ) -> Self {
         let stderr = inner.stderr.take();
         Self {
             inner,
@@ -102,7 +163,16 @@ impl Child {
             tree,
             spawner: std::process::id(),
             killed_on_drop,
+            #[cfg(unix)]
+            debugging_pipe,
         }
+    }
+
+    /// Take this end of the private debugging pipe. `None` for a child that was started with a
+    /// debugging port, and after the first call.
+    #[cfg(unix)]
+    pub(crate) fn take_debugging_pipe(&mut self) -> Option<std::os::unix::net::UnixStream> {
+        self.debugging_pipe.take()
     }
 
     /// Whether the runtime kills the child when this handle is dropped. `false` when the caller
@@ -129,6 +199,28 @@ impl Child {
         self.inner.kill().await
     }
 
+    /// Signal this launch's Unix process group, before waiting for its leader.
+    ///
+    /// ~keep The guardian holds the group ID even when a non-exec launcher exits. The launch
+    /// ~keep handle must still be unreaped, so a completed handle cannot initiate teardown.
+    #[cfg(unix)]
+    pub fn start_kill_group(&mut self) -> std::io::Result<()> {
+        if !self.spawned_here() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the browser group belongs to another process",
+            ));
+        }
+        if self.inner.id().is_none() {
+            return Err(std::io::Error::other("the browser leader was already reaped"));
+        }
+        self.tree
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no owned browser group"))?
+            .0
+            .signal()
+    }
+
     /// Asynchronously wait for the child process to exit
     pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
         self.inner.wait().await
@@ -148,7 +240,7 @@ impl Child {
 
     /// Return the inner process
     ///
-    /// On Windows the process ends when the last clone of its [`ProcessTree`] is dropped. Clone
+    /// The process ends when the last clone of its [`ProcessTree`] is dropped. Clone
     /// [`Self::tree`] first to keep it running.
     pub fn into_inner(self) -> process::Child {
         let mut inner = self.inner;
@@ -180,12 +272,14 @@ impl futures::AsyncRead for ChildStderr {
 ///
 /// On Windows it is a job object that the child joins before it runs its first instruction, so
 /// every process the child starts is born in it. The system ends them all when the last clone is
-/// dropped and when the owning process ends, by any route. No other platform has one, and
-/// [`Child::tree`] is `None` there.
+/// dropped and when the owning process ends, by any route. On Unix a guardian owns the
+/// group and ends it when the guardian observes parent death, including signal termination.
+/// Other platforms return `None` from [`Child::tree`].
 #[derive(Debug, Clone)]
 pub struct ProcessTree(
     #[cfg(windows)] std::sync::Arc<job::Job>,
-    #[cfg(not(windows))] std::convert::Infallible,
+    #[cfg(unix)] std::sync::Arc<unix_group::Group>,
+    #[cfg(not(any(windows, unix)))] std::convert::Infallible,
 );
 
 impl ProcessTree {
@@ -197,7 +291,11 @@ impl ProcessTree {
         {
             self.0.stop(std::time::Instant::now() + limit)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            self.0.stop(limit)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = limit;
             match self.0 {}
@@ -206,7 +304,17 @@ impl ProcessTree {
 }
 
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
+    // ~keep Ignored SIGCHLD auto-reaps guardian probes; Tokio's Linux pidfd path can skip signal registration.
+    let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+    let group = std::sync::Arc::new(unix_group::Group::start()?);
+    command
+        .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
+    Ok((command.spawn()?, Some(ProcessTree(group))))
+}
+
+#[cfg(not(any(windows, unix)))]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
     Ok((command.spawn()?, None))
 }
@@ -352,6 +460,59 @@ mod tests {
             assert_eq!(calls, 2);
             assert_eq!(ids, [1100, 2200, 3300]);
         }
+    }
+
+    // ~keep The refusal signals a group before waiting; prove Tokio retains an exited leader.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exited_group_leader_is_not_reaped_until_its_handle_is_waited() {
+        let mut command = super::Command::new("sh");
+        command.args(["-c", "exit 3"]).kill_on_drop(false);
+        let mut child = command.spawn().expect("launcher must start");
+        let pid = child.inner.id().expect("unwaited child must have a pid");
+        let mut peer = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("peer must start");
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        let zombie = loop {
+            #[cfg(target_os = "linux")]
+            let zombie = std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .expect("process status must be readable")
+                .lines()
+                .any(|line| line.starts_with("State:") && line.split_whitespace().nth(1) == Some("Z"));
+            #[cfg(not(target_os = "linux"))]
+            let zombie = {
+                let state = std::process::Command::new("ps")
+                    .args(["-o", "stat=", "-p", &pid.to_string()])
+                    .output()
+                    .expect("process status must be readable");
+                String::from_utf8_lossy(&state.stdout).trim().starts_with('Z')
+            };
+            if zombie {
+                break true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        let held_id = child.inner.id();
+        let status = child.try_wait().expect("exited leader must be waitable");
+        let cleared_id = child.inner.id();
+        let after_reap = child.start_kill_group();
+        let peer_running = peer.try_wait().expect("peer must be waitable").is_none();
+        let _ = peer.kill();
+        let _ = peer.wait();
+        assert!(zombie, "runtime must leave the held leader unreaped after SIGCHLD");
+        assert_eq!(held_id, Some(pid));
+        assert_eq!(status.and_then(|status| status.code()), Some(3));
+        assert_eq!(cleared_id, None);
+        assert!(
+            after_reap.is_err(),
+            "reaped leader must never supply a recycled group id"
+        );
+        assert!(peer_running, "unrelated group must stay alive");
     }
 
     /// The bytes of a list with the two counts `assigned` and `listed`, then `ids` at `id_width` bytes each.
@@ -705,3 +866,14 @@ mod job {
         }
     }
 }
+
+#[cfg(all(unix, test))]
+#[path = "async_process/unix_tests.rs"]
+mod unix_tests;
+
+#[cfg(unix)]
+#[path = "async_process/unix_group.rs"]
+mod unix_group;
+
+#[cfg(all(test, unix))]
+mod unix_signal_tests;

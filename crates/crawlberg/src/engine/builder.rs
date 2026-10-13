@@ -336,6 +336,8 @@ impl CrawlEngineBuilder {
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
             robots_cache: self.robots_cache.unwrap_or_default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            crawl_schedule: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
             #[cfg(feature = "browser")]
