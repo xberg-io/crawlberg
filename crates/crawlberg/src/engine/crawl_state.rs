@@ -94,6 +94,7 @@ pub(super) struct FetchResult {
     pub(super) redirect_count: usize,
     /// The URLs the browser's SSRF check refused for requests the page sent.
     pub(super) ssrf_refused_urls: Vec<String>,
+    pub(super) browser_result_cookies: Vec<CookieInfo>,
     /// The extraction's read of `body`, taken by the markdown conversion so the page is read once.
     pub(super) page_scan: Option<PageScan>,
 }

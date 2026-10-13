@@ -10,7 +10,7 @@ use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
-use super::cookies::{apply_prior_cookies, page_cookies};
+use super::cookies::{apply_prior_cookies, page_cookies, result_cookie_delta};
 use super::launch::resolve_default_user_agent;
 use crate::chrome_frame::{
     committed_document, document_charset, error_page_error, page_content, read_one_document_within, wait_for_selector,
@@ -139,6 +139,11 @@ async fn fetch_in_turn(
     }
 
     apply_prior_cookies(watch, prior_cookies).await?;
+    let baseline = if config.cookies_enabled {
+        page_cookies(watch).await?
+    } else {
+        Vec::new()
+    };
 
     let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
@@ -154,6 +159,9 @@ async fn fetch_in_turn(
     }
     let mut rendered = rendered?;
     rendered.cookies = page_cookies(watch).await?;
+    if config.cookies_enabled {
+        rendered.result_cookies = result_cookie_delta(&baseline, &rendered.cookies, url, &rendered.response.final_url);
+    }
     rendered.refused = refused;
     Ok(rendered)
 }
@@ -281,6 +289,7 @@ async fn render(
         redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        result_cookies: Vec::new(),
         text: BodyText::Decoded { charset },
     })
 }
@@ -299,6 +308,7 @@ fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> 
         redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        result_cookies: Vec::new(),
         text: BodyText::Undecoded,
     }
 }
