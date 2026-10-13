@@ -194,6 +194,8 @@ title: "Changelog"
   the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
   Python, Dart, Kotlin and Swift, optional trailing arguments in PHP and WebAssembly, a second
   constructor or the builder in Java, and optional struct fields in Zig and Go.
+- A retired owned browser starts its process and profile cleanup before waiting on its security
+  controller, so cleanup finishes even if the host stops driving the runtime before dropping the pool.
 - Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
   native child exits. Linux Dart applications that start their own child processes remain affected.
 - Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,

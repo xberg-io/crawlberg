@@ -1442,19 +1442,20 @@ impl BrowserState {
     /// Terminate a browser whose security controller disappeared. A launched Chrome is killed
     /// rather than given a graceful CDP close, because the failed handler cannot acknowledge it. ~keep
     async fn fail_closed(self) {
+        let profile = self.user_data_dir.as_ref().map(|dir| dir.path().to_path_buf());
+        // ~keep Start owned-process teardown before awaiting the security controller: a host can
+        // ~keep stop driving its runtime after the supervisor took this state from the pool.
+        if let Some(user_data_dir) = self.user_data_dir {
+            user_data_dir.teardown_and_wait().await;
+        }
         self.firewall.stop().await;
         let Some(browser) = Arc::into_inner(self.browser) else {
             self.handler_handle.abort();
-            if let Some(user_data_dir) = self.user_data_dir {
-                user_data_dir.teardown_and_wait().await;
-            }
             return;
         };
-        match self.user_data_dir {
-            Some(user_data_dir) => {
-                let profile = user_data_dir.path().to_path_buf();
+        match profile {
+            Some(profile) => {
                 kill_browser(browser, self.handler_handle, profile, HANDLER_SHUTDOWN_TIMEOUT).await;
-                drop(user_data_dir);
             }
             None => {
                 release_browser(
