@@ -5627,6 +5627,8 @@ mod tests {
         assert!(controller.await.expect("child controller task"));
     }
 
+    mod retirement;
+
     enum ArmOwner {
         Other,
         Owned,
