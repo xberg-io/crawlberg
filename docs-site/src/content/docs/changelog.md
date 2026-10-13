@@ -31,9 +31,13 @@ title: "Changelog"
   `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
   struct literal that names every field must add them. `..Default::default()` needs no change
   for `CrawlPageResult`, `LinkInfo` and `ContentConfig`; for `FrontierEntry` set
-  `original_url: None`. In Java, Swift, Dart and Zig, a call that builds one of these types with
-  every field must pass the new ones. In Kotlin and Go, a call that passes the fields by
-  position must change, because `original_url` is the second field. A `Frontier` that stores
+  `original_url: None`. The added fields are the last fields of `CrawlPageResult`, `LinkInfo` and
+  `ContentConfig`. In Python, Dart, Zig and Swift, a v1.10.3 constructor call of these three
+  types needs no change, and Java keeps the v1.10.3 constructor beside the full one; the entry
+  for #717 under Fixed gives the form of the added fields in each binding. A Go struct literal
+  without keys must add the new fields. In the serialized JSON of these three types, the added
+  keys are last: a consumer that compares JSON text with the output of an earlier build of the
+  main branch sees a different key order, and the values are equal. A `Frontier` that stores
   its entries reads an entry of an earlier release with no change.
 
 ### Added
