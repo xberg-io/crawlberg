@@ -187,13 +187,18 @@ All notable changes to crawlberg are documented here.
 - The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
   and `-platform` names the release platform. On a Linux host with musl, the command now selects
   the `linux-<arch>-musl` platform.
+- Swift: `to_string()` of a `CrawlEvent` and of the bridge values of `AuthConfig`, `HostMatcher`
+  and `PageAction` returns the JSON of the value. Before, it returned the name of the variant
+  (`"page"`, `"basic"`, `"exact"`, `"click"`).
 
 ### Fixed
 
 - The v1.10.3 constructors of `ContentConfig`, `LinkInfo` and `CrawlPageResult` work again in
   the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
-  Python, Dart, Kotlin and Swift, optional trailing arguments in PHP and WebAssembly, a second
-  constructor or the builder in Java, and optional struct fields in Zig and Go.
+  Python, Dart and Kotlin, and in Swift for `ContentConfig` and `LinkInfo`; in Swift,
+  `original_url` of `CrawlPageResult` is the last positional argument of `new_with_fields`.
+  They are optional trailing arguments in PHP and WebAssembly, a second constructor or the
+  builder in Java, and optional struct fields in Zig and Go.
 - A retired owned browser starts its process and profile cleanup before waiting on its security
   controller, so cleanup finishes even if the host stops driving the runtime before dropping the pool.
 - Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing

@@ -35,7 +35,9 @@ jobs:
 
   # ~keep A field added in the middle of a bound struct changes every positional constructor of
   # the bindings, and nothing compared them with the last release (#717). The check reads the
-  # generated Python stub of the newest release tag, so the checkout needs the tags.
+  # generated Python stub and the Swift sources of the newest release tag, so the checkout needs
+  # the tags. The Swift reader is the tree-sitter grammar: the pinned wheels must install, or the
+  # check fails at its import.
   released-constructors:
     name: Released constructors
     runs-on: ubuntu-latest
@@ -43,6 +45,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install the Swift reader
+        run: python3 -m pip install -r scripts/ci/requirements-released-constructors.txt
       - name: Test the check
         run: python3 scripts/ci/test_released_constructors.py
       - name: Check the constructors of the last release
@@ -58,6 +65,9 @@ jobs:
           python-version: "3.13"
       - name: Install workflow parser
         run: python3 -m pip install PyYAML==6.0.3
+      # ~keep The discovery below also runs the tests of the released-constructor check.
+      - name: Install the Swift reader
+        run: python3 -m pip install -r scripts/ci/requirements-released-constructors.txt
       - name: Test native package publication
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
       - name: Check consumer release pins

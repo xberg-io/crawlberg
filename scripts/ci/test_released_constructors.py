@@ -132,44 +132,138 @@ class BrokenConstructorTests(unittest.TestCase):
         self.assert_fails(errors("class Options:\n    wrap: bool\n"), "Options", "no constructor")
 
 
-def facade(parameters: str) -> dict[str, dict[str, bool]]:
-    lines = ["public struct Link: Codable {", f"    public init({parameters}) {{", "    }"]
-    lines += ["    public init(from decoder: any Decoder) throws {", "    }", "}"]
-    return CHECK.parse_swift_facade("\n".join(lines))
-
-
 SWIFT_RELEASED = 'url: String, rel: String? = nil, marks: [String] = [",", "("], nofollow: Bool'
+DECODER = "public init(from decoder: any Decoder) throws {\n    }"
 
 
-class SwiftFacadeTests(unittest.TestCase):
-    def test_labels_and_defaults_are_read(self) -> None:
-        assert facade(SWIFT_RELEASED) == {"Link": {"url": False, "rel": True, "marks": True, "nofollow": False}}
+def swift_text(parameters: str, *, declaration: str = "public init", owner: str = "public struct Link: Codable") -> str:
+    """Return a type with one initializer of `parameters` and the `Decodable` initializer, as alef writes it."""
+    return f"{owner} {{\n    {declaration}({parameters}) {{\n    }}\n    {DECODER}\n}}\n"
+
+
+def facade(parameters: str, **shape: str) -> dict[str, CHECK.SwiftInitializer]:
+    return CHECK.parse_swift(swift_text(parameters, **shape))
+
+
+def swift_errors(head: str, released: str = swift_text(SWIFT_RELEASED)) -> list[str]:
+    return CHECK.compare_swift(CHECK.parse_swift(released), CHECK.parse_swift(head), TAG)
+
+
+class SwiftReaderTests(unittest.TestCase):
+    def test_labels_types_and_defaults_are_read(self) -> None:
+        read = facade(SWIFT_RELEASED)
+        memberwise_key = "Link(url: String, rel: String?, marks: [String], nofollow: Bool)"
+        assert list(read) == [memberwise_key, "Link(from decoder: any Decoder)"]
+        memberwise, decoder = read.values()
+        assert [(p.label, p.type, p.default) for p in memberwise.parameters] == [
+            ("url", "String", None),
+            ("rel", "String?", "nil"),
+            ("marks", "[String]", '[",", "("]'),
+            ("nofollow", "Bool", None),
+        ]
+        assert memberwise.effects == ()
+        assert decoder.effects == ("throws",)
+        assert (decoder.parameters[0].label, decoder.parameters[0].name) == ("from", "decoder")
+
+    def test_a_multi_line_initializer_is_read(self) -> None:
+        assert list(CHECK.parse_swift(SWIFT_MULTI_LINE)) == ["Link(url: String)"]
+
+    def test_a_positional_generic_initializer_of_a_bridge_class_is_read(self) -> None:
+        read = CHECK.parse_swift(BRIDGE_TEXT)
+        assert list(read) == ["Box(ptr: UnsafeMutableRawPointer)", "Box(_ url: G, _ depth: UInt)"]
+        assert [p.name for p in read["Box(_ url: G, _ depth: UInt)"].parameters] == ["url", "depth"]
+
+    def test_a_private_initializer_an_unavailable_one_and_a_protocol_requirement_are_not_constructors(self) -> None:
+        text = "public struct Link {\n    init(url: String) {}\n    @available(*, unavailable) public init(x: Int) {}\n}\n"
+        text += "public protocol P {\n    init(y: Int)\n}\n"
+        assert CHECK.parse_swift(text) == {}
+
+    def test_the_bridge_file_of_the_head_names_crawl_page_result(self) -> None:
+        # ~keep swift-bridge writes `$` in identifiers; the grammar reads the file all the same.
+        bridge = (ROOT / CHECK.SWIFT_BRIDGE).read_text(encoding="utf-8")
+        read = CHECK.parse_swift(bridge, CHECK.SWIFT_BRIDGE)
+        assert any(key.startswith("CrawlPageResult(_ url: GenericIntoRustString, ") for key in read), list(read)[:3]
+
+
+class SwiftComparisonTests(unittest.TestCase):
+    def assert_fails(self, found: list[str], *parts: str) -> None:
+        assert any(all(part in error for part in parts) for error in found), found
 
     def test_a_new_argument_with_a_default_passes(self) -> None:
-        head = facade(SWIFT_RELEASED + ', originalUrl: String = ""')
-        assert CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG) == []
+        assert swift_errors(swift_text(SWIFT_RELEASED + ', originalUrl: String = ""')) == []
 
     def test_a_new_required_argument_fails(self) -> None:
-        head = facade(SWIFT_RELEASED + ", originalUrl: String")
-        found = CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG)
+        found = swift_errors(swift_text(SWIFT_RELEASED + ", originalUrl: String"))
         assert found == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
 
     def test_a_lost_default_a_removed_label_and_a_new_order_fail(self) -> None:
-        head = facade("nofollow: Bool, url: String, rel: String?")
-        found = "\n".join(CHECK.compare_swift(facade(SWIFT_RELEASED), head, TAG))
+        found = "\n".join(swift_errors(swift_text("nofollow: Bool, url: String, rel: String?")))
         assert "Link: the Swift initializer labels of v1.0.0 are in another order" in found
         assert "Link.rel: the Swift argument has a default in v1.0.0 and is required now" in found
         assert "Link.marks: the Swift initializer argument of v1.0.0 is removed or renamed" in found
 
     def test_a_struct_with_no_initializer_at_the_head_fails(self) -> None:
         found = CHECK.compare_swift(facade(SWIFT_RELEASED), {}, TAG)
-        assert found == ["Link: the Swift struct of v1.0.0 has no public initializer at the head"]
+        assert found == ["Link: the Swift type of v1.0.0 has no public initializer at the head"]
+
+    def test_a_changed_argument_type_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED.replace("nofollow: Bool", "nofollow: String")))
+        self.assert_fails(found, "Link.nofollow", "type changed from `Bool` to `String`")
+
+    def test_a_changed_default_value_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED.replace("rel: String? = nil", 'rel: String? = "nofollow"')))
+        self.assert_fails(found, "Link.rel", 'default changed from `nil` to `"nofollow"`')
+
+    def test_an_initializer_given_to_another_type_fails(self) -> None:
+        head = SWIFT_NO_INITIALIZER + swift_text(SWIFT_RELEASED, owner="extension LinkType")
+        self.assert_fails(swift_errors(head), "Link: the Swift type of v1.0.0 has no public initializer")
+
+    def test_a_convenience_initializer_with_a_new_required_argument_fails(self) -> None:
+        shape = {"declaration": "public convenience init", "owner": "public class Link"}
+        released = swift_text(SWIFT_RELEASED, **shape)
+        found = swift_errors(swift_text(SWIFT_RELEASED + ", originalUrl: String", **shape), released)
+        self.assert_fails(found, "Link.originalUrl", "required")
+
+    def test_an_inlinable_initializer_with_a_new_required_argument_fails(self) -> None:
+        shape = {"declaration": "@inlinable public init"}
+        released = swift_text(SWIFT_RELEASED, **shape)
+        found = swift_errors(swift_text(SWIFT_RELEASED + ", originalUrl: String", **shape), released)
+        self.assert_fails(found, "Link.originalUrl", "required")
+
+    def test_an_initializer_in_an_extension_at_the_end_with_a_new_required_argument_fails(self) -> None:
+        released = SWIFT_NO_INITIALIZER + swift_text(SWIFT_RELEASED, owner="extension Link")
+        head = SWIFT_NO_INITIALIZER + swift_text(SWIFT_RELEASED + ", originalUrl: String", owner="extension Link")
+        self.assert_fails(swift_errors(head, released), "Link.originalUrl", "required")
+
+    def test_an_initializer_made_unavailable_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, declaration="@available(*, unavailable) public init"))
+        self.assert_fails(found, "Link.url", "removed or renamed")
+
+    def test_a_closure_argument_hides_no_later_required_argument(self) -> None:
+        released = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool")
+        head = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool, originalUrl: String")
+        self.assert_fails(swift_errors(head, released), "Link.originalUrl", "required")
+
+    def test_a_new_positional_argument_of_a_bridge_class_fails(self) -> None:
+        head = BRIDGE_TEXT.replace("_ depth: UInt)", "_ depth: UInt, _ original_url: G)")
+        self.assert_fails(swift_errors(head, BRIDGE_TEXT), "Box.original_url", "required")
+
+    def test_a_gained_throws_fails(self) -> None:
+        head = swift_text(SWIFT_RELEASED).replace(f"{SWIFT_RELEASED}) {{", f"{SWIFT_RELEASED}) throws {{")
+        assert swift_errors(head) == ["Link: the Swift initializer of v1.0.0 is `init`, the head is `init throws`"]
 
 
 SWIFT_TEXT = "public struct Link: Codable {\n    public init(url: String) {\n    }\n}\n"
-# ~keep A released facade in a form that the reader does not know: the initializer is on two lines.
-SWIFT_DRIFTED = "public struct Link: Codable {\n    public init(\n        url: String) {\n    }\n}\n"
+SWIFT_MULTI_LINE = "public struct Link: Codable {\n    public init(\n        url: String) {\n    }\n}\n"
+# ~keep Text that is not Swift at the top of the facade, as a merge or a hand edit leaves it.
+SWIFT_NOT_SWIFT = "This file is generated; do not edit.\n" + SWIFT_TEXT
 SWIFT_NO_INITIALIZER = "public struct Link: Codable {\n    public let url: String\n}\n"
+BRIDGE_TEXT = (
+    "public class Box: BoxRef {\n    public override init(ptr: UnsafeMutableRawPointer) {\n"
+    "        super.init(ptr: ptr)\n    }\n}\n"
+    "extension Box {\n    public convenience init<G: IntoRustString>(_ url: G, _ depth: UInt) {\n"
+    "        self.init(ptr: __swift_bridge__$Box$new(url, depth))\n    }\n}\n"
+)
 STUB_NO_CONSTRUCTOR = "class Options:\n    wrap: bool\n"
 
 
@@ -251,10 +345,10 @@ class FailClosedTests(unittest.TestCase):
         assert status == 1, output
         assert f"::error::{CHECK.SWIFT_FACADE} exists at v1.0.0 and head/{CHECK.SWIFT_FACADE} does not exist" in output
 
-    def test_a_swift_initializer_in_an_unknown_form_fails_with_the_file_and_the_line(self) -> None:
-        status, output = gate((CHECK.SWIFT_FACADE, SWIFT_DRIFTED, SWIFT_TEXT))
+    def test_a_swift_source_that_is_not_swift_fails_with_the_file_and_the_line(self) -> None:
+        status, output = gate((CHECK.SWIFT_FACADE, SWIFT_NOT_SWIFT, SWIFT_TEXT))
         assert status == 1, output
-        assert f"::error::v1.0.0:{CHECK.SWIFT_FACADE}:2: parse error" in output
+        assert f"::error::v1.0.0:{CHECK.SWIFT_FACADE}:1: parse error: text that the Swift grammar" in output
 
     def test_a_stub_that_is_not_python_fails_with_the_file_and_the_line(self) -> None:
         status, output = gate((CHECK.STUB, stub(), stub() + "class Broken(:\n"))
