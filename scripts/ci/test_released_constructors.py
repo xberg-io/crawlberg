@@ -230,6 +230,22 @@ class FailClosedTests(unittest.TestCase):
         assert status == 1, output
         assert "nothing was compared" in output
 
+    def test_the_stub_absent_at_the_release_fails_with_the_swift_facade_compared(self) -> None:
+        status, output = gate((CHECK.STUB, None, stub()), (CHECK.SWIFT_FACADE, SWIFT_TEXT, SWIFT_TEXT))
+        assert status == 1, output
+        assert f"::error::the stub of v1.0.0 is missing: {CHECK.STUB}" in output.splitlines()
+        assert "nothing was compared" not in output
+
+    def test_the_stub_absent_at_the_head_fails(self) -> None:
+        status, output = gate((CHECK.STUB, stub(), None), (CHECK.SWIFT_FACADE, SWIFT_TEXT, SWIFT_TEXT))
+        assert status == 1, output
+        assert f"::error::{CHECK.STUB} exists at v1.0.0 and head/{CHECK.STUB} does not exist" in output
+
+    def test_no_source_given_fails(self) -> None:
+        status, output = gate()
+        assert status == 1, output
+        assert "nothing was compared" in output
+
     def test_a_source_absent_at_the_head_fails(self) -> None:
         status, output = gate((CHECK.STUB, stub(), stub()), (CHECK.SWIFT_FACADE, SWIFT_TEXT, None))
         assert status == 1, output

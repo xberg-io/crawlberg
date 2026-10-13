@@ -12,8 +12,11 @@ The check fails closed. `check_source` applies one rule to every source in `SOUR
   at the head, and every released type must be found at the head. If not, the check fails and
   names the source, the two counts and the first missing type.
 - A source that exists at the release tag and is absent at the head fails.
-- A source that is absent at the release tag is not compared. The output says so in a line
-  `not compared: <path> absent at <tag>`. If no source is compared, the check fails.
+- The Python stub is the primary source. If it is absent at the release tag, the check fails.
+- The Swift facade is a secondary source: a release can be older than the Swift package. If it
+  is absent at the release tag, it is not compared, and the output says so in a line
+  `not compared: <path> absent at <tag>`.
+- If the number of sources that are compared is zero, the check fails.
 - A source that a reader cannot parse fails with the file and the line. No reader returns an
   empty result for text that it does not understand.
 
@@ -265,11 +268,16 @@ class Source:
     path: str
     parse: Callable[[str, str], dict[str, Any]]
     compare: Callable[[dict[str, Any], dict[str, Any], str], list[str]]
+    # ~keep A primary source must exist at the release tag. A secondary source can be newer than the tag.
+    primary: bool
 
 
 # ~keep The stub does not show a typed facade that drops the recorded default. The Swift
 # facade states each default in its source, so it is compared with no Swift toolchain.
-SOURCES = (Source(STUB, parse_stub, compare), Source(SWIFT_FACADE, parse_swift_facade, compare_swift))
+SOURCES = (
+    Source(STUB, parse_stub, compare, primary=True),
+    Source(SWIFT_FACADE, parse_swift_facade, compare_swift, primary=False),
+)
 
 
 class Input(NamedTuple):
@@ -290,16 +298,17 @@ def check_source(tag: str, item: Input) -> Result:
     """Apply the rule of the module docstring to one source. This is the only place that applies it."""
     path = item.source.path
     if item.released_text is None:
-        return Result(f"not compared: {path} absent at {tag}", [], None)
+        missing_stub = [f"the stub of {tag} is missing: {path}"] if item.source.primary else []
+        return Result(f"not compared: {path} absent at {tag}", missing_stub, None)
     if item.head_text is None:
         error = f"{path} exists at {tag} and {item.head_path} does not exist at the head"
-        return Result(f"{path}: {tag} has the file, the head ({item.head_path}) does not", [error], 0)
+        return Result(f"not compared: {path} absent at the head ({item.head_path})", [error], None)
     try:
         released = item.source.parse(item.released_text, f"{tag}:{path}")
         head = item.source.parse(item.head_text, item.head_path)
     except SyntaxError as error:
         found = f"{error.filename}:{error.lineno}: parse error: {error.msg}"
-        return Result(f"{path}: {tag} and the head ({item.head_path}) are not compared: parse error", [found], 0)
+        return Result(f"not compared: {path} has a parse error", [found], None)
     missing = [name for name in released if name not in head]
     kept = sum(1 for name, was in released.items() if not item.source.compare({name: was}, head, tag))
     counts = f"{tag} has {len(released)} constructors, the head ({item.head_path}) has {len(head)}"
@@ -319,7 +328,7 @@ def run(tag: str, inputs: list[Input]) -> int:
     errors = [error for result in results for error in result.errors]
     compared = [result.kept for result in results if result.kept is not None]
     if not compared:
-        errors.append(f"no source exists at {tag}. The check does not use an older release: nothing was compared")
+        errors.append(f"no source of {tag} was compared with the head: nothing was compared")
     if not errors:
         print(f"ok: the {sum(compared)} constructors of {tag} are kept")
         return 0
