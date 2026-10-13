@@ -1010,15 +1010,14 @@ mod tests {
                 .build()
         };
         let test_name = "an_interact_session_whose_chrome_dies_ends_with_an_error";
-        let Some(mut launched) =
+        let Some(launched) =
             crate::browser_pool::tests::expect_chrome_or_skip(test_name, launch_or_connect(&config).await)
         else {
             return;
         };
         let chrome = launched
             .0
-            .get_mut_child()
-            .and_then(|child| child.as_mut_inner().id())
+            .process_id()
             .map(sysinfo::Pid::from_u32)
             .expect("a launched Chrome must have a process");
         let killer = tokio::spawn(async move {

@@ -312,6 +312,50 @@ mod resource_tests {
         }
     }
 
+    #[allow(unsafe_code)]
+    fn waitable_exit_pid(pid: libc::pid_t) -> Option<libc::pid_t> {
+        // SAFETY: inspect only the owned PID without consuming its exit status. ~keep
+        let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: the owned PID and writable status are valid; WNOWAIT leaves reaping to its native owner. ~keep
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut status,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == -1 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
+            return None;
+        }
+        assert_eq!(result, 0, "inspect this child's wait status");
+        // SAFETY: successful waitid initialized this signal information for the child status. ~keep
+        Some(unsafe { status.si_pid() })
+    }
+
+    fn owned_child_is_reaped(pid: libc::pid_t) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while waitable_exit_pid(pid).is_some() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(WAIT_INTERVAL);
+        }
+        true
+    }
+
+    #[allow(unsafe_code)]
+    fn reap_owned_child(pid: libc::pid_t) {
+        // SAFETY: collect only this exact unreaped PID after terminating its owned tree. ~keep
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, 0) },
+            pid,
+            "clean up the unreaped owned child"
+        );
+    }
+
     #[test]
     fn caller_owned_drop_reaps_natural_exit_without_ending_the_held_tree() {
         if !runs_in_isolated_process("caller_owned_drop_reaps_natural_exit_without_ending_the_held_tree") {
@@ -320,27 +364,41 @@ mod resource_tests {
         let runtime = runtime();
         let _entered = runtime.enter();
         let baseline = resources();
-        let mut command = Command::new("/bin/sleep");
-        command.arg("0.1").kill_on_drop(false).stderr(Stdio::piped());
-        let child = command.spawn_managed().expect("managed child");
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "read marker"])
+            .stdin(Stdio::piped())
+            .kill_on_drop(false)
+            .stderr(Stdio::piped());
+        let mut child = command.spawn_managed().expect("managed child");
+        let pid = child.id().expect("owned child PID") as libc::pid_t;
         let tree = child.tree().expect("tree").clone();
-        let with_child = resources();
+        let stdin = child
+            .inner
+            .as_mut()
+            .expect("native child")
+            .stdin
+            .take()
+            .expect("child stdin");
+        assert_eq!(child.try_wait().expect("live child status"), None);
         drop(child);
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while resources().0 != baseline.0 {
-            assert!(
-                Instant::now() < deadline,
-                "reserved waiter must finish after natural exit"
-            );
-            std::thread::sleep(WAIT_INTERVAL);
-        }
-        // ~keep The caller intentionally retains the tree; compare only released child stderr before tree teardown.
-        assert!(
-            resources().1 < with_child.1,
-            "child stderr must close while caller owns the tree"
+        // ~keep The external pipe holds the child alive through Drop, forcing the reserved waiter handoff.
+        assert_eq!(
+            waitable_exit_pid(pid),
+            Some(0),
+            "the held stdin must keep this child alive after Drop"
         );
+        drop(stdin);
+        let reaped = owned_child_is_reaped(pid);
         assert!(tree.stop(DROP_TIMEOUT));
         drop(tree);
+        if !reaped {
+            reap_owned_child(pid);
+        }
+        assert!(
+            reaped,
+            "the reserved waiter must reap the exact owned PID after natural exit"
+        );
         resources_return_to(baseline);
     }
 

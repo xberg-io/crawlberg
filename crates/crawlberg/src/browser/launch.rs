@@ -1104,15 +1104,14 @@ mod tests {
             ..CrawlConfig::builder().allow_private_networks(true).build()
         };
         let test_name = "a_one_shot_fetch_whose_chrome_dies_ends_at_once_and_leaves_no_profile_directory";
-        let Some(mut launched) =
+        let Some(launched) =
             crate::browser_pool::tests::expect_chrome_or_skip(test_name, launch_or_connect(&config).await)
         else {
             return;
         };
         let chrome = launched
             .0
-            .get_mut_child()
-            .and_then(|child| child.as_mut_inner().id())
+            .process_id()
             .map(sysinfo::Pid::from_u32)
             .expect("a launched Chrome must have a process");
         let profile = launched
