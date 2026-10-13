@@ -104,3 +104,56 @@ async fn a_child_socket_ending_during_requested_stop_reports_no_failure() {
         "a requested stop is not unexpected failure"
     );
 }
+
+#[tokio::test]
+async fn an_unproved_running_child_ends_the_controller_before_further_traffic() {
+    use async_tungstenite::tungstenite::{Error, Message, error::ProtocolError};
+
+    let (ended, events) = captured_child_events(async {
+        let page = watched("ROOT");
+        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let owned_context = register_owned_context(&shared, &page);
+        let unregistered_context = BrowserContextId::new("UNREGISTERED-CONTEXT");
+        assert_ne!(owned_context, unregistered_context);
+        let (mut socket, _commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(2)).await;
+        send_attached_target_with_waiting(
+            &mut socket,
+            "S-UNPROVED",
+            "UNPROVED",
+            "worker",
+            Some("ROOT"),
+            &unregistered_context,
+            false,
+        )
+        .await;
+        let probe_sent = socket.send(Message::Ping(b"after-unproved-child".to_vec().into())).await;
+        if probe_sent.is_ok() {
+            let response = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .expect("the controller must terminate the controlled socket");
+            assert!(
+                matches!(
+                    response,
+                    None | Some(Ok(Message::Close(_)))
+                        | Some(Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)))
+                ),
+                "an unproved running child must end the controller without resuming, closing or processing further traffic: {response:?}"
+            );
+        }
+        let ended = tokio::time::timeout(Duration::from_secs(2), controller)
+            .await
+            .expect("unproved boundary termination")
+            .expect("controller task");
+        assert!(matches!(
+            lock(&shared.registry).ownership.get(&TargetId::new("UNPROVED")),
+            Some(TargetOwnership::Quarantined)
+        ));
+        ended
+    })
+    .await;
+    assert!(!ended, "an unproved running child must fail closed");
+    assert_eq!(events.len(), 1, "one first controller failure must be reported");
+    assert_eq!(events[0]["fields"]["phase"], "child_target_controller");
+    assert_eq!(events[0]["fields"]["reason"], "unproved_attached_boundary");
+}
