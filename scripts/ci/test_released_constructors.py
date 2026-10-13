@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -163,6 +166,86 @@ class SwiftFacadeTests(unittest.TestCase):
         assert found == ["Link: the Swift struct of v1.0.0 has no public initializer at the head"]
 
 
+SWIFT_TEXT = "public struct Link: Codable {\n    public init(url: String) {\n    }\n}\n"
+# ~keep A released facade in a form that the reader does not know: the initializer is on two lines.
+SWIFT_DRIFTED = "public struct Link: Codable {\n    public init(\n        url: String) {\n    }\n}\n"
+SWIFT_NO_INITIALIZER = "public struct Link: Codable {\n    public let url: String\n}\n"
+STUB_NO_CONSTRUCTOR = "class Options:\n    wrap: bool\n"
+
+
+def gate(*inputs: tuple[str, str | None, str | None]) -> tuple[int, str]:
+    """Run the gate on `(source, released text, head text)` rows. Return its exit status and its output."""
+    sources = {source.path: source for source in CHECK.SOURCES}
+    rows = [CHECK.Input(sources[path], released, f"head/{path}", head) for path, released, head in inputs]
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        status = CHECK.run(TAG, rows)
+    return status, output.getvalue()
+
+
+class FailClosedTests(unittest.TestCase):
+    def test_both_sources_print_their_counts_and_pass(self) -> None:
+        status, output = gate((CHECK.STUB, stub(), stub()), (CHECK.SWIFT_FACADE, SWIFT_TEXT, SWIFT_TEXT))
+        assert status == 0, output
+        assert f"{CHECK.STUB}: v1.0.0 has 1 constructors, the head (head/{CHECK.STUB}) has 1, 1 kept" in output
+        swift = CHECK.SWIFT_FACADE
+        assert f"{swift}: v1.0.0 has 1 constructors, the head (head/{swift}) has 1, 1 kept" in output
+        assert "ok: the 2 constructors of v1.0.0 are kept" in output
+
+    def test_a_released_swift_facade_with_no_recognized_initializer_fails(self) -> None:
+        # ~keep The head has a broken call. With no released initializer, no comparison names it.
+        head = SWIFT_TEXT.replace("url: String", "url: String, originalUrl: String")
+        status, output = gate((CHECK.STUB, stub(), stub()), (CHECK.SWIFT_FACADE, SWIFT_NO_INITIALIZER, head))
+        assert status == 1, output
+        assert f"::error::{CHECK.SWIFT_FACADE}: v1.0.0 has 0 constructors, the head" in output
+        assert "has 1. The check does not pass" in output
+
+    def test_a_head_swift_facade_with_no_recognized_initializer_fails(self) -> None:
+        status, output = gate((CHECK.SWIFT_FACADE, SWIFT_TEXT, SWIFT_NO_INITIALIZER))
+        assert status == 1, output
+        assert "has 1 constructors, the head" in output
+        assert "has 0, the first missing type is `Link`" in output
+
+    def test_a_released_stub_with_no_recognized_constructor_fails(self) -> None:
+        status, output = gate((CHECK.STUB, STUB_NO_CONSTRUCTOR, stub()), (CHECK.SWIFT_FACADE, SWIFT_TEXT, SWIFT_TEXT))
+        assert status == 1, output
+        assert f"::error::{CHECK.STUB}: v1.0.0 has 0 constructors, the head" in output
+
+    def test_a_head_that_lost_a_released_type_fails(self) -> None:
+        released = stub() + stub().replace("Options", "Extras")
+        status, output = gate((CHECK.STUB, released, stub()))
+        assert status == 1, output
+        assert "v1.0.0 has 2 constructors, the head" in output
+        assert "has 1, the first missing type is `Extras`" in output
+        assert "has 1, 1 kept" in output
+
+    def test_a_source_absent_at_the_release_is_named_and_passes(self) -> None:
+        status, output = gate((CHECK.STUB, stub(), stub()), (CHECK.SWIFT_FACADE, None, SWIFT_TEXT))
+        assert status == 0, output
+        assert f"not compared: {CHECK.SWIFT_FACADE} absent at v1.0.0" in output.splitlines()
+        assert "ok: the 1 constructors of v1.0.0 are kept" in output
+
+    def test_no_source_at_the_release_fails(self) -> None:
+        status, output = gate((CHECK.STUB, None, stub()), (CHECK.SWIFT_FACADE, None, SWIFT_TEXT))
+        assert status == 1, output
+        assert "nothing was compared" in output
+
+    def test_a_source_absent_at_the_head_fails(self) -> None:
+        status, output = gate((CHECK.STUB, stub(), stub()), (CHECK.SWIFT_FACADE, SWIFT_TEXT, None))
+        assert status == 1, output
+        assert f"::error::{CHECK.SWIFT_FACADE} exists at v1.0.0 and head/{CHECK.SWIFT_FACADE} does not exist" in output
+
+    def test_a_swift_initializer_in_an_unknown_form_fails_with_the_file_and_the_line(self) -> None:
+        status, output = gate((CHECK.SWIFT_FACADE, SWIFT_DRIFTED, SWIFT_TEXT))
+        assert status == 1, output
+        assert f"::error::v1.0.0:{CHECK.SWIFT_FACADE}:2: parse error" in output
+
+    def test_a_stub_that_is_not_python_fails_with_the_file_and_the_line(self) -> None:
+        status, output = gate((CHECK.STUB, stub(), stub() + "class Broken(:\n"))
+        assert status == 1, output
+        assert f"::error::head/{CHECK.STUB}:6: parse error" in output
+
+
 class ReleaseTagTests(unittest.TestCase):
     def test_the_highest_version_is_chosen_in_any_list_order(self) -> None:
         # ~keep The list has no ancestry: `v1.10.3` on a release branch is chosen like any other.
@@ -184,6 +267,10 @@ class ReleaseTagTests(unittest.TestCase):
     def test_a_tag_without_the_stub_gives_none(self) -> None:
         # ~keep The empty tree has no file, like a release older than the Python binding.
         assert CHECK.released_stub("4b825dc642cb6eb9a060e54bf8d69288fbee4904") is None
+
+    def test_a_tag_that_git_does_not_know_is_an_error_not_an_absent_file(self) -> None:
+        with self.assertRaises(subprocess.CalledProcessError):
+            CHECK.released_stub("no-such-tag-of-this-repository")
 
 
 if __name__ == "__main__":

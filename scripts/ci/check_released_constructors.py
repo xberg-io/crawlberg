@@ -3,7 +3,22 @@
 
 The generated Python stub lists, for each bound type, the bound fields in struct order and the
 native constructor. The check compares the stub of the newest release tag with the stub of the
-working tree. Run it from the repository root. It needs git and the tags, and no Rust toolchain.
+working tree. The Swift facade is compared the same way, because it states each default in its
+source. Run it from the repository root. It needs git and the tags, and no Rust toolchain.
+
+The check fails closed. `check_source` applies one rule to every source in `SOURCES`:
+
+- A source that exists at the release tag must give at least one constructor at the release and
+  at the head, and every released type must be found at the head. If not, the check fails and
+  names the source, the two counts and the first missing type.
+- A source that exists at the release tag and is absent at the head fails.
+- A source that is absent at the release tag is not compared. The output says so in a line
+  `not compared: <path> absent at <tag>`. If no source is compared, the check fails.
+- A source that a reader cannot parse fails with the file and the line. No reader returns an
+  empty result for text that it does not understand.
+
+The output has one line for each source: the path, the tag, the count at the release, the count
+at the head and the count kept.
 """
 
 from __future__ import annotations
@@ -13,14 +28,19 @@ import ast
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, NamedTuple
 
 STUB = "packages/python/crawlberg/_crawlberg.pyi"
 SWIFT_FACADE = "packages/swift/Sources/Crawlberg/Crawlberg.swift"
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 SWIFT_STRUCT = re.compile(r"^public struct (\w+)\b")
 SWIFT_INIT = re.compile(r"^    public init\((.*)\) \{$")
+SWIFT_ANY_INIT = re.compile(r"^\s*public init\b")
+# ~keep The `Decodable` initializer is not a call that a caller writes with labels.
+SWIFT_DECODER_INIT = re.compile(r"^\s*public init\(from \w+: (any )?Decoder\) throws \{$")
 
 
 @dataclass(frozen=True)
@@ -59,10 +79,13 @@ def parse_signature(init: ast.FunctionDef) -> dict[str, Parameter]:
     return signature
 
 
-def parse_stub(source: str) -> dict[str, BoundType]:
-    """Return the types of the stub that have a constructor, by name."""
+def parse_stub(source: str, where: str = STUB) -> dict[str, BoundType]:
+    """Return the types of the stub that have a constructor, by name.
+
+    Text that is not Python raises `SyntaxError` with `where` and the line.
+    """
     types: dict[str, BoundType] = {}
-    for node in ast.parse(source).body:
+    for node in ast.parse(source, filename=where).body:
         if not isinstance(node, ast.ClassDef):
             continue
         bound = BoundType()
@@ -169,16 +192,24 @@ def split_swift_parameters(parameters: str) -> list[str]:
     return [*parts, parameters[start:].strip()] if parameters.strip() else []
 
 
-def parse_swift_facade(source: str) -> dict[str, dict[str, bool]]:
-    """Return, for each public struct, the labels of its memberwise initializer: label -> has a default."""
+def parse_swift_facade(source: str, where: str = SWIFT_FACADE) -> dict[str, dict[str, bool]]:
+    """Return, for each public struct, the labels of its memberwise initializer: label -> has a default.
+
+    A public initializer in a form that this reader does not know raises `SyntaxError` with
+    `where` and the line. The reader does not skip it: a skipped initializer is not compared.
+    """
     types: dict[str, dict[str, bool]] = {}
     name = None
-    for line in source.splitlines():
+    for number, line in enumerate(source.splitlines(), start=1):
         if declared := SWIFT_STRUCT.match(line):
             name = declared[1]
-        elif name and name not in types and (init := SWIFT_INIT.match(line)) and not init[1].startswith("from "):
-            parameters = split_swift_parameters(init[1])
-            types[name] = {parameter.split(":")[0]: " = " in parameter for parameter in parameters}
+        elif init := SWIFT_INIT.match(line):
+            if name and name not in types and not init[1].startswith("from "):
+                parameters = split_swift_parameters(init[1])
+                types[name] = {parameter.split(":")[0]: " = " in parameter for parameter in parameters}
+        elif SWIFT_ANY_INIT.match(line) and not SWIFT_DECODER_INIT.match(line):
+            message = "a public initializer in a form that the check does not read"
+            raise SyntaxError(message, (where, number, 1, line))
     return types
 
 
@@ -218,11 +249,90 @@ def newest_release_tag(tags: list[str]) -> str | None:
 
 
 def released_stub(tag: str, path: str = STUB) -> str | None:
-    """Return the stub in the tree of the tag, or `None` when the tag has no such file."""
-    try:
-        return git("show", f"{tag}:{path}")
-    except subprocess.CalledProcessError:
+    """Return the file in the tree of the tag, or `None` when the tag has no such file.
+
+    Only a tree without the path gives `None`. Any other failure of git raises.
+    """
+    if not git("ls-tree", "--name-only", tag, "--", path).strip():
         return None
+    return git("show", f"{tag}:{path}")
+
+
+@dataclass(frozen=True)
+class Source:
+    """One file that the check compares: its path, its reader and its comparison."""
+
+    path: str
+    parse: Callable[[str, str], dict[str, Any]]
+    compare: Callable[[dict[str, Any], dict[str, Any], str], list[str]]
+
+
+# ~keep The stub does not show a typed facade that drops the recorded default. The Swift
+# facade states each default in its source, so it is compared with no Swift toolchain.
+SOURCES = (Source(STUB, parse_stub, compare), Source(SWIFT_FACADE, parse_swift_facade, compare_swift))
+
+
+class Input(NamedTuple):
+    source: Source
+    released_text: str | None
+    head_path: str
+    head_text: str | None
+
+
+class Result(NamedTuple):
+    line: str
+    errors: list[str]
+    # ~keep `None`: the source is not compared.
+    kept: int | None
+
+
+def check_source(tag: str, item: Input) -> Result:
+    """Apply the rule of the module docstring to one source. This is the only place that applies it."""
+    path = item.source.path
+    if item.released_text is None:
+        return Result(f"not compared: {path} absent at {tag}", [], None)
+    if item.head_text is None:
+        error = f"{path} exists at {tag} and {item.head_path} does not exist at the head"
+        return Result(f"{path}: {tag} has the file, the head ({item.head_path}) does not", [error], 0)
+    try:
+        released = item.source.parse(item.released_text, f"{tag}:{path}")
+        head = item.source.parse(item.head_text, item.head_path)
+    except SyntaxError as error:
+        found = f"{error.filename}:{error.lineno}: parse error: {error.msg}"
+        return Result(f"{path}: {tag} and the head ({item.head_path}) are not compared: parse error", [found], 0)
+    missing = [name for name in released if name not in head]
+    kept = sum(1 for name, was in released.items() if not item.source.compare({name: was}, head, tag))
+    counts = f"{tag} has {len(released)} constructors, the head ({item.head_path}) has {len(head)}"
+    errors = []
+    if not released or not head or missing:
+        first = f", the first missing type is `{missing[0]}`" if missing else ""
+        errors.append(f"{path}: {counts}{first}. The check does not pass on a source that it cannot read in full")
+    errors.extend(item.source.compare(released, head, tag))
+    return Result(f"{path}: {counts}, {kept} kept", errors, kept)
+
+
+def run(tag: str, inputs: list[Input]) -> int:
+    """Print one line for each source and each error. Return the exit status."""
+    results = [check_source(tag, item) for item in inputs]
+    for result in results:
+        print(result.line)
+    errors = [error for result in results for error in result.errors]
+    compared = [result.kept for result in results if result.kept is not None]
+    if not compared:
+        errors.append(f"no source exists at {tag}. The check does not use an older release: nothing was compared")
+    if not errors:
+        print(f"ok: the {sum(compared)} constructors of {tag} are kept")
+        return 0
+    for error in errors:
+        print(f"::error::{error}")
+    print(_HELP.format(tag=tag))
+    return 1
+
+
+def read_head(path: str) -> str | None:
+    """Return the file of the working tree, or `None` when there is no such file."""
+    file = Path(path)
+    return file.read_text(encoding="utf-8") if file.is_file() else None
 
 
 def main() -> int:
@@ -235,42 +345,26 @@ def main() -> int:
     if tag is None:
         print("::error::this checkout has no release tag `vX.Y.Z`. Fetch the tags: this check would compare nothing")
         return 1
-    source = released_stub(tag)
-    if source is None:
-        print(f"::error::{STUB} does not exist at {tag}. The check does not use an older release: nothing was compared")
-        return 1
-    released = parse_stub(source)
-    head = parse_stub(Path(options.stub).read_text(encoding="utf-8"))
-    print(f"released constructors: {tag} has {len(released)} bound types, {options.stub} has {len(head)}")
-    if not released:
-        print(f"::error::{STUB} at {tag} has no type with a constructor. Nothing was compared")
-        return 1
-
-    errors = compare(released, head, tag)
-    # ~keep The stub does not show a typed facade that drops the recorded default. The Swift
-    # facade states each default in its source, so it is compared with no Swift toolchain.
-    swift = released_stub(tag, SWIFT_FACADE)
-    if swift is None:
-        errors.append(f"{SWIFT_FACADE} does not exist at {tag}: no Swift initializer was compared")
-    else:
-        swift_head = parse_swift_facade(Path(options.swift).read_text(encoding="utf-8"))
-        errors.extend(compare_swift(parse_swift_facade(swift), swift_head, tag))
-    if not errors:
-        print(f"ok: the {len(released)} constructors of {tag} are kept")
-        return 0
-    for error in errors:
-        print(f"::error::{error}")
-    print(
-        f"A call written against {tag} must still compile and mean the same. For each field above, do one of:\n"
-        "  1. Keep the field out of the bindings: put `#[cfg_attr(alef, alef(skip))]` on it.\n"
-        "  2. Move the field to the end of the struct and record the released fields on the struct:\n"
-        '     `#[cfg_attr(alef, alef(legacy_constructor_fields = ["..."]))]`. The pinned alef must accept the type of the field.\n'
-        f"  3. Restore the field list of {tag}: the same names, types, order and defaults.\n"
-        "Then run `task alef:generate`.\n"
-        "A Swift line above with a recorded constructor on the struct: the pinned alef writes the new\n"
-        "field as a required argument of the public Swift initializer. The fix is in alef, not here."
+    head_paths = (options.stub, options.swift)
+    return run(
+        tag,
+        [
+            Input(source, released_stub(tag, source.path), head_path, read_head(head_path))
+            for source, head_path in zip(SOURCES, head_paths, strict=True)
+        ],
     )
-    return 1
+
+
+_HELP = (
+    "A call written against {tag} must still compile and mean the same. For each field above, do one of:\n"
+    "  1. Keep the field out of the bindings: put `#[cfg_attr(alef, alef(skip))]` on it.\n"
+    "  2. Move the field to the end of the struct and record the released fields on the struct:\n"
+    '     `#[cfg_attr(alef, alef(legacy_constructor_fields = ["..."]))]`. The pinned alef must accept the type of the field.\n'
+    "  3. Restore the field list of {tag}: the same names, types, order and defaults.\n"
+    "Then run `task alef:generate`.\n"
+    "A Swift line above with a recorded constructor on the struct: the pinned alef writes the new\n"
+    "field as a required argument of the public Swift initializer. The fix is in alef, not here."
+)
 
 
 if __name__ == "__main__":
