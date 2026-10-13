@@ -184,6 +184,8 @@ title: "Changelog"
 
 ### Fixed
 
+- Detached, unowned browser UI sessions retire their pending interception arm without canceling the controller.
+  Newly watched targets, retired contexts and unrelated live sessions retain fail-closed handling. (#701)
 - Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
