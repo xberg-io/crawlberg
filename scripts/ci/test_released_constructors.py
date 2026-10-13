@@ -153,8 +153,10 @@ def swift_errors(head: str, released: str = swift_text(SWIFT_RELEASED)) -> list[
 class SwiftReaderTests(unittest.TestCase):
     def test_labels_types_and_defaults_are_read(self) -> None:
         read = facade(SWIFT_RELEASED)
-        memberwise_key = "Link(url: String, rel: String?, marks: [String], nofollow: Bool)"
-        assert list(read) == [memberwise_key, "Link(from decoder: any Decoder)"]
+        # ~keep The key is the whole declaration: the signature with the defaults, the form, the
+        # modifiers and the chain. Two initializers of one source never share it.
+        memberwise_key = f"Link({SWIFT_RELEASED}) init public public struct Link: Codable"
+        assert list(read) == [memberwise_key, "Link(from decoder: any Decoder) init throws public public struct Link: Codable"]
         memberwise, decoder = read.values()
         assert [(p.label, p.type, p.default) for p in memberwise.parameters] == [
             ("url", "String", None),
@@ -168,12 +170,13 @@ class SwiftReaderTests(unittest.TestCase):
         assert (decoder.parameters[0].label, decoder.parameters[0].name) == ("from", "decoder")
 
     def test_a_multi_line_initializer_is_read(self) -> None:
-        assert list(CHECK.parse_swift(SWIFT_MULTI_LINE)) == ["Link(url: String)"]
+        assert list(CHECK.parse_swift(SWIFT_MULTI_LINE)) == ["Link(url: String) init public public struct Link: Codable"]
 
     def test_a_positional_generic_initializer_of_a_bridge_class_is_read(self) -> None:
         read = CHECK.parse_swift(BRIDGE_TEXT)
-        assert list(read) == ["Box(ptr: UnsafeMutableRawPointer)", "Box(_ url: G, _ depth: UInt)"]
-        assert [p.name for p in read["Box(_ url: G, _ depth: UInt)"].parameters] == ["url", "depth"]
+        generic = "Box(_ url: G, _ depth: UInt) init<G: IntoRustString> public convenience extension Box"
+        assert list(read) == ["Box(ptr: UnsafeMutableRawPointer) init public override public class Box: BoxRef", generic]
+        assert [p.name for p in read[generic].parameters] == ["url", "depth"]
 
     def test_a_private_initializer_an_unavailable_one_and_a_protocol_requirement_are_not_constructors(self) -> None:
         text = "public struct Link {\n    init(url: String) {}\n    @available(*, unavailable) public init(x: Int) {}\n}\n"
@@ -279,17 +282,17 @@ class WholeDeclarationTests(unittest.TestCase):
         assert found == ["Link: the Swift initializer of v1.0.0 is `init`, the head is `init throws(CrawlError)`"]
 
     def test_n12_an_owner_made_internal_fails(self) -> None:
+        # ~keep The owner is the ceiling of the initializer's visibility: the head has no public one.
         found = swift_errors(swift_text(SWIFT_RELEASED, owner="struct Link: Codable"))
-        expected = "Link: around the Swift initializer v1.0.0 has `public struct Link: Codable`, the head has `struct Link: Codable`"
-        assert found == [expected]
+        assert found == ["Link: the Swift type of v1.0.0 has no public initializer at the head"]
 
     def test_n13_a_private_owner_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED, owner="private struct Link: Codable"))
-        self.assert_fails(found, "Link: around the Swift initializer", "the head has `private struct Link: Codable`")
+        assert found == ["Link: the Swift type of v1.0.0 has no public initializer at the head"]
 
     def test_n14_an_initializer_moved_to_a_fileprivate_extension_fails(self) -> None:
         head = SWIFT_NO_INITIALIZER + swift_text(SWIFT_RELEASED, owner="fileprivate extension Link")
-        self.assert_fails(swift_errors(head), "Link: around the Swift initializer", "the head has `fileprivate extension Link`")
+        assert swift_errors(head) == ["Link: the Swift type of v1.0.0 has no public initializer at the head"]
 
     def test_n15_a_gained_generic_clause_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED, declaration="public init<T: Sendable>"))
@@ -364,10 +367,17 @@ class WholeDeclarationTests(unittest.TestCase):
         assert raised.exception.lineno == 7
 
     def test_an_unknown_node_kind_around_the_initializer_fails_with_the_kind(self) -> None:
+        # ~keep A type inside a function is internal, so the reader never reaches its parent: the
+        # arm is reached with a body kind that the reader does not know.
+        with mock.patch.object(CHECK, "BODIES", CHECK.BODIES - {"enum_class_body"}):
+            with self.assertRaises(SyntaxError) as raised:
+                CHECK.parse_swift("public enum Link {\n    public init(url: String) {}\n}\n")
+        assert raised.exception.msg == "a `enum_class_body` node around the initializer that the reader does not classify"
+        assert raised.exception.lineno == 1
+
+    def test_a_type_inside_a_function_is_not_public(self) -> None:
         local = "func make() {\n    struct Link {\n        public init(url: String) {}\n    }\n}\n"
-        with self.assertRaises(SyntaxError) as raised:
-            CHECK.parse_swift(local)
-        assert raised.exception.msg == "a `statements` node around the initializer that the reader does not classify"
+        assert CHECK.parse_swift(local) == {}
 
     def test_an_added_argument_with_a_default_before_a_positional_argument_fails(self) -> None:
         head = BRIDGE_TEXT.replace("(_ url: G, _ depth: UInt)", "(_ url: G, limit: UInt = 0, _ depth: UInt)")
@@ -393,6 +403,169 @@ class WholeDeclarationTests(unittest.TestCase):
     def test_the_sources_name_the_stub_and_the_three_swift_files(self) -> None:
         paths = [source.path for source in CHECK.SOURCES]
         assert paths == [CHECK.STUB, CHECK.SWIFT_FACADE, CHECK.SWIFT_BRIDGE, CHECK.SWIFT_BRIDGE_CORE]
+
+
+M1_RELEASED = "public struct Box {\n    public init(a: Int) {}\n}\npublic extension Box {\n    init(b: String) {}\n}\n"
+M2_PAIR = "public class Box {\n    public init<G>(_ value: G) {}\n    public init<G: Equatable>(_ value: G) {}\n}\n"
+M2_TWINS = (
+    "public class Box<T> {\n    public init(_ value: Int) {}\n    public init(_ value: Int) async {}\n}\n"
+    "extension Box where T: Equatable {\n    public init(_ v: T) {}\n}\n"
+    "extension Box where T: Hashable {\n    public init(_ v: T) {}\n}\n"
+)
+
+
+class SixRowTests(unittest.TestCase):
+    """The two controls of the seventh maintainer review (M1, M2) and the rows A22 to A25 of the fourth review."""
+
+    def test_m1_an_initializer_of_a_public_extension_is_public_and_its_removal_fails(self) -> None:
+        read = CHECK.parse_swift(M1_RELEASED)
+        assert [(i.owner, i.modifiers, i.chain) for i in read.values()] == [("Box", "public", ("public struct Box",)), ("Box", "", ("public extension Box",))]
+        head = "public struct Box {\n    public init(a: Int) {}\n}\n"
+        found = swift_errors(head, M1_RELEASED)
+        assert found[0] == "Box: around the Swift initializer v1.0.0 has `public extension Box`, the head has `public struct Box`"
+        assert "Box.b: the Swift initializer argument of v1.0.0 is removed or renamed" in found
+        status, output = gate((CHECK.SWIFT_FACADE, M1_RELEASED, head))
+        assert status == 1, output
+        assert f"{CHECK.SWIFT_FACADE}: v1.0.0 has 2 constructors, the head (head/{CHECK.SWIFT_FACADE}) has 1, 1 kept" in output
+
+    def test_m1_the_effective_visibility_is_the_initializer_then_the_extension_under_every_enclosing_declaration(self) -> None:
+        hidden = (
+            "private extension Box {\n    public init(b: String) {}\n}\n",
+            "public extension Box {\n    internal init(b: String) {}\n}\n",
+            "extension Box {\n    init(b: String) {}\n}\n",
+            "struct Box {\n    public init(b: String) {}\n}\n",
+            "public struct Outer {\n    struct Box {\n        public init(b: String) {}\n    }\n}\n",
+            "public extension Outer {\n    struct Box {\n        init(b: String) {}\n    }\n}\n",
+            "public protocol P {\n    init(b: String)\n}\n",
+        )
+        for text in hidden:
+            assert CHECK.parse_swift(text) == {}, text
+        public = (
+            "extension Box {\n    public init(b: String) {}\n}\n",
+            "public extension Box {\n    init(b: String) {}\n}\n",
+            "open class Box {\n    public init(b: String) {}\n}\n",
+            "public struct Outer {\n    public struct Box {\n        public init(b: String) {}\n    }\n}\n",
+            "public extension Outer {\n    struct Box {\n        public init(b: String) {}\n    }\n}\n",
+            "@objc extension Box {\n    public init(b: String) {}\n}\n",
+        )
+        for text in public:
+            assert len(CHECK.parse_swift(text)) == 1, text
+
+    def test_m2_two_overloads_with_equal_parameters_are_both_read_and_the_removal_of_either_fails(self) -> None:
+        assert [i.form for i in CHECK.parse_swift(M2_PAIR).values()] == ["init<G>", "init<G: Equatable>"]
+        head = M2_PAIR.replace("    public init<G>(_ value: G) {}\n", "")
+        assert swift_errors(head, M2_PAIR) == ["Box: the Swift initializer of v1.0.0 is `init<G>`, the head is `init<G: Equatable>`"]
+        head = M2_PAIR.replace("    public init<G: Equatable>(_ value: G) {}\n", "")
+        assert swift_errors(head, M2_PAIR) == ["Box: the Swift initializer of v1.0.0 is `init<G: Equatable>`, the head is `init<G>`"]
+
+    def test_m2_an_async_twin_and_two_constrained_extensions_are_kept_apart(self) -> None:
+        assert len(CHECK.parse_swift(M2_TWINS)) == 4
+        head = M2_TWINS.replace("    public init(_ value: Int) async {}\n", "")
+        assert swift_errors(head, M2_TWINS) == ["Box: the Swift initializer of v1.0.0 is `init async`, the head is `init`"]
+        head = M2_TWINS.replace("extension Box where T: Hashable {\n    public init(_ v: T) {}\n}\n", "")
+        expected = "Box: around the Swift initializer v1.0.0 has `extension Box where T: Hashable`, the head has `extension Box where T: Equatable`"
+        assert swift_errors(head, M2_TWINS) == [expected]
+
+    def test_m2_one_declaration_twice_fails_the_parse(self) -> None:
+        with self.assertRaises(SyntaxError) as raised:
+            CHECK.parse_swift("public struct Box {\n    public init(a: Int) {}\n    public init(a: Int) {}\n}\n")
+        assert raised.exception.msg == "a second declaration of `Box(a: Int) init public public struct Box`"
+        assert raised.exception.lineno == 3
+
+    def test_m2_a_removed_initializer_passes_only_when_a_kept_one_takes_each_of_its_calls(self) -> None:
+        # ~keep `Box(a: 1)` compiles against `init(a: Int, b: Int = 0)`: the rule of the comparison.
+        two = "public struct Box {\n    public init(a: Int) {}\n    public init(a: Int, b: Int = 0) {}\n}\n"
+        assert swift_errors(two.replace("    public init(a: Int) {}\n", ""), two) == []
+        head = two.replace("    public init(a: Int, b: Int = 0) {}\n", "")
+        assert swift_errors(head, two) == ["Box.b: the Swift initializer argument of v1.0.0 is removed or renamed"]
+
+    def test_a22_an_added_defaulted_closure_before_a_released_defaulted_closure_fails(self) -> None:
+        released = swift_text(SWIFT_RELEASED + ", onDone: (() -> Void)? = nil")
+        head = swift_text(SWIFT_RELEASED + ", onStart: (() -> Void)? = nil, onDone: (() -> Void)? = nil")
+        assert swift_errors(head, released) == [
+            "Link.onStart: the new Swift initializer argument comes before the argument `onDone` of v1.0.0, "
+            "which has a function type: a trailing closure of v1.0.0 binds another parameter"
+        ]
+
+    def test_a22_an_added_defaulted_closure_at_the_end_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED + ", onDone: (() -> Void)? = nil"))
+        assert found == ["Link.onDone: the new Swift initializer argument has a function type: a trailing closure of v1.0.0 binds it"]
+
+    def test_a22_an_added_defaulted_argument_before_a_released_closure_fails_and_after_it_passes(self) -> None:
+        released = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool")
+        head = swift_text(SWIFT_RELEASED + ", extra: Int = 0, accept: (String) -> Bool")
+        self.assertEqual(len(swift_errors(head, released)), 1)
+        assert "Link.extra: the new Swift initializer argument comes before the argument `accept` of v1.0.0" in swift_errors(head, released)[0]
+        head = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool, extra: Int = 0")
+        assert swift_errors(head, released) == []
+
+    def test_a24_a_dollar_is_compared_as_the_file_writes_it(self) -> None:
+        released = swift_text(SWIFT_RELEASED.replace("rel: String? = nil", 'rel: String? = "$"'))
+        head = swift_text(SWIFT_RELEASED.replace("rel: String? = nil", 'rel: String? = "_"'))
+        assert swift_errors(head, released) == ['Link.rel: the Swift argument default changed from `"$"` to `"_"`']
+        read = CHECK.parse_swift("public class CbWrapper$crawl {\n    public init(cb: Wrapper$Result) {}\n}\n")
+        assert [(i.owner, i.parameters[0].type, i.chain) for i in read.values()] == [("CbWrapper$crawl", "Wrapper$Result", ("public class CbWrapper$crawl",))]
+
+    def test_a25_a_platform_unavailable_initializer_stays_a_released_call(self) -> None:
+        declaration = "@available(macOS, unavailable) public init"
+        released = swift_text(SWIFT_RELEASED, declaration=declaration)
+        assert [i.modifiers for i in CHECK.parse_swift(released).values()] == ["@available(macOS, unavailable) public", "public"]
+        head = swift_text(SWIFT_RELEASED + ", originalUrl: String", declaration=declaration)
+        assert swift_errors(head, released) == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
+        head = swift_text(SWIFT_RELEASED, declaration="@available(iOS, unavailable) public init")
+        self.assert_fails(swift_errors(head, released), "has the modifiers `@available(macOS, unavailable) public`", "`@available(iOS, unavailable) public`")
+
+    def test_a25_an_initializer_unavailable_everywhere_is_not_a_constructor(self) -> None:
+        read = CHECK.parse_swift(swift_text(SWIFT_RELEASED, declaration='@available(*, unavailable, renamed: "x") public init'))
+        assert [i.form for i in read.values()] == ["init throws"]
+
+    def assert_fails(self, found: list[str], *parts: str) -> None:
+        assert any(all(part in error for part in parts) for error in found), found
+
+
+class FailClosedBranchTests(unittest.TestCase):
+    """Each arm that fails the parse is reached by an input, or by a kind set made smaller."""
+
+    def assert_parse_fails(self, text: str, message: str, line: int) -> None:
+        with self.assertRaises(SyntaxError) as raised:
+            CHECK.parse_swift(text)
+        assert (raised.exception.msg, raised.exception.lineno) == (message, line)
+
+    def test_a_child_of_an_enclosing_declaration_of_another_kind_fails_with_the_kind(self) -> None:
+        text = "public indirect enum E {\n    public init(x: Int) {}\n}\n"
+        self.assert_parse_fails(text, "a `indirect` node around the initializer that the reader does not classify", 1)
+
+    def test_a_directive_that_opens_no_block_fails_with_its_token(self) -> None:
+        text = "public struct L {\n#else\n    public init(x: Int) {}\n}\n"
+        self.assert_parse_fails(text, "a `#else` directive before the initializer that the reader does not classify", 2)
+
+    def test_a_modifiers_child_of_another_kind_fails_with_the_kind(self) -> None:
+        with mock.patch.object(CHECK, "MODIFIERS", CHECK.MODIFIERS - {"member_modifier"}):
+            self.assert_parse_fails(BRIDGE_TEXT, "a `member_modifier` node of the modifiers that the reader does not classify", 2)
+
+    def test_a_parameter_child_of_another_kind_fails_with_the_kind(self) -> None:
+        text = swift_text(SWIFT_RELEASED.replace("nofollow: Bool", "nofollow: @escaping @Sendable () -> Bool"))
+        self.assert_parse_fails(text, "a `type_modifiers` node of a parameter that the reader does not classify", 2)
+
+    def test_a_parameter_without_a_type_is_a_parse_error_before_the_read(self) -> None:
+        # ~keep The grammar gives every `parameter` a name and a type; without one the file fails
+        # before any initializer is read, so the reader has no arm for it.
+        for parameters in ("x:", "x", "x: , y: Int"):
+            text = f"public struct L {{\n    public init({parameters}) {{}}\n}}\n"
+            self.assert_parse_fails(text, "text that the Swift grammar does not read", 2)
+
+    def test_an_initializer_outside_every_type_fails(self) -> None:
+        self.assert_parse_fails("public init(x: Int) {}\n", "an initializer that no type declares", 1)
+
+    def test_two_initializers_under_different_directives_are_both_read(self) -> None:
+        # ~keep The chain is part of the key: the `#if` and the `#else` arm hold one declaration each.
+        text = "public struct L {\n#if os(Linux)\n    public init(x: Int) {}\n#else\n    public init(x: Int) {}\n#endif\n}\n"
+        assert [i.chain for i in CHECK.parse_swift(text).values()] == [("public struct L", "#if os(Linux)"), ("public struct L", "#if os(Linux) #else")]
+
+    def test_a_comment_inside_a_default_and_a_type_is_not_compared(self) -> None:
+        released = swift_text(SWIFT_RELEASED + ', x: [String] = [",", "("], y: Dictionary<String, Int> = [:]')
+        head = swift_text(SWIFT_RELEASED + ', x: [String] = [",", /* c */ "("], y: Dictionary<String, /* c */ Int> = [:]')
+        assert swift_errors(head, released) == []
 
 
 SWIFT_TEXT = "public struct Link: Codable {\n    public init(url: String) {\n    }\n}\n"

@@ -14,11 +14,15 @@ declaration is the chain of enclosing declarations (each one's attributes, modif
 generic clause, inheritance and `where` clause, and each `#if` open around the initializer), the
 initializer's attributes and modifiers, `init` with `?` or `!`, its generic clause, and everything
 between `)` and the body, as text from the parse tree with comments and whitespace out. The one
-permitted difference: the head may add parameters, each with a default, none before a released
-positional parameter. Every released parameter is present in the released order with an equal
-label, internal name, type text (with `inout`, `@escaping` and `...`) and default text. A node of
-a declaration that the reader does not classify fails the parse with the kind of the node, so a
-new grammar form fails closed. Each rule can give a false failure, never a false pass.
+permitted difference: the head may add parameters, each with a default, none that a released call
+can pass without its label (`compare_initializer` states the rule). Every released parameter is
+present in the released order with an equal label, internal name, type text (with `inout`,
+`@escaping` and `...`) and default text. An initializer counts when a caller outside the module
+can call it: `public` decides that, once, from the initializer's own modifier, the enclosing
+extension's, and every enclosing declaration. A source holds every initializer it declares: the
+whole declaration is the key, and two equal declarations fail the parse. A node of a declaration
+that the reader does not classify fails the parse with the kind of the node, so a new grammar
+form fails closed. Each rule can give a false failure, never a false pass.
 
 The check fails closed. `check_source` applies one rule to every source in `SOURCES`:
 
@@ -209,11 +213,14 @@ class SwiftParameter:
     # ~keep The text after the colon: `inout`, `@escaping`, the type and `...`, as a call sees it.
     type: str
     default: str | None
+    # ~keep True when the type holds a function type anywhere (`() -> Void`, `(() -> Void)?`):
+    # a released call may pass the parameter as a trailing closure, with no label.
+    closure: bool
 
     @property
     def declaration(self) -> str:
         head = self.label if self.label == self.name else f"{self.label} {self.name}"
-        return f"{head}: {self.type}"
+        return f"{head}: {self.type}" if self.default is None else f"{head}: {self.type} = {self.default}"
 
     @property
     def where(self) -> str:
@@ -238,9 +245,14 @@ class SwiftInitializer:
 
     @property
     def key(self) -> str:
-        """The signature as a caller reads it, `Owner(label: Type, ...)`, and the `#if` it is under."""
+        """The whole declaration as one text, the signature `Owner(label: Type = default, ...)` first.
+
+        Two initializers of one source have one key only when they are one declaration twice, so a
+        dictionary by key holds every overload: `init<G>(_ value: G)` and its twin with
+        `<G: Equatable>` differ in `form`, an `async` twin too, and two extensions differ in `chain`.
+        """
         signature = f"{self.owner}({', '.join(parameter.declaration for parameter in self.parameters)})"
-        return signature + "".join(f" under {link}" for link in self.chain if link.startswith("#"))
+        return " ".join((signature, self.form, self.modifiers, *self.chain))
 
 
 class UnreadNode(Exception):
@@ -255,6 +267,8 @@ class UnreadNode(Exception):
 # a new grammar form is never compared by accident. The parameter list and the body are read by
 # their own rules.
 COMMENTS = frozenset({"comment", "multiline_comment"})
+KINDS = frozenset(SWIFT.node_kind_for_id(kind) or "" for kind in range(SWIFT.node_kind_count))
+MODIFIERS = frozenset({"attribute"} | {kind for kind in KINDS if kind.endswith("_modifier")})
 INITIALIZER_HEAD = frozenset({"init", "?", "bang", "type_parameters"})
 INITIALIZER_TAIL = frozenset({"async", "throws", "throws_clause", "type_constraints"})
 PARAMETER_LIST = frozenset({"(", ",", "=", ")"})
@@ -271,8 +285,9 @@ def nodes(node: Node) -> Iterator[Node]:
         yield from nodes(child)
 
 
-def text(node: Node) -> str:
-    return node.text.decode() if node.text else ""
+def text(source: bytes, node: Node) -> str:
+    """The text of `node` in `source`, the bytes the file has: never the text the tree was parsed from."""
+    return source[node.start_byte : node.end_byte].decode()
 
 
 def leaves(node: Node) -> Iterator[Node]:
@@ -284,7 +299,7 @@ def leaves(node: Node) -> Iterator[Node]:
         yield node
 
 
-def tokens(*items: Node) -> Iterator[str]:
+def tokens(source: bytes, *items: Node) -> Iterator[str]:
     """Yield the tokens of the nodes in order, with the comments out.
 
     A leaf of the tree is a token. Text between two leaves that is not a comment is a token too:
@@ -293,10 +308,9 @@ def tokens(*items: Node) -> Iterator[str]:
     for item in items:
         end = item.start_byte
         for node in leaves(item):
-            gap = item.text[end - item.start_byte : node.start_byte - item.start_byte] if item.text else b""
-            yield from gap.decode().split()
+            yield from source[end : node.start_byte].decode().split()
             if node.type not in COMMENTS:
-                yield text(node)
+                yield text(source, node)
             end = node.end_byte
 
 
@@ -308,10 +322,10 @@ def spaced(before: str, token: str) -> bool:
     return not (token[0] in "(<" and word)
 
 
-def normal(*items: Node) -> str:
+def normal(source: bytes, *items: Node) -> str:
     """Return the text of the nodes with the comments out and the whitespace made canonical."""
     out = ""
-    for token in tokens(*items):
+    for token in tokens(source, *items):
         if token:
             out += f" {token}" if out and spaced(out, token) else token
     return out
@@ -326,7 +340,7 @@ def classified(node: Node, known: frozenset[str], where: str) -> list[Node]:
     return children
 
 
-def open_directives(parent: Node, child: Node) -> list[str]:
+def open_directives(source: bytes, parent: Node, child: Node) -> list[str]:
     """Return the text of each `#if` that is open at `child` among the children of `parent`."""
     stack: list[str] = []
     for sibling in parent.children:
@@ -336,9 +350,9 @@ def open_directives(parent: Node, child: Node) -> list[str]:
             continue
         token = sibling.children[0].type
         if token == "#if":
-            stack.append(normal(sibling))
+            stack.append(normal(source, sibling))
         elif token in ("#elseif", "#else") and stack:
-            stack[-1] = f"{stack[-1]} {normal(sibling)}"
+            stack[-1] = f"{stack[-1]} {normal(source, sibling)}"
         elif token == "#endif" and stack:
             stack.pop()
         else:
@@ -346,8 +360,54 @@ def open_directives(parent: Node, child: Node) -> list[str]:
     return stack
 
 
-def enclosing(node: Node) -> tuple[str, tuple[str, ...]] | None:
-    """Return the owner path and the chain of `node`, or `None` when a protocol holds it.
+def visibility(source: bytes, declaration: Node) -> str | None:
+    """Return the visibility modifier that a declaration writes, or `None`."""
+    modifiers = next((child for child in declaration.children if child.type == "modifiers"), None)
+    written = [text(source, item) for item in modifiers.children if item.type == "visibility_modifier"] if modifiers else []
+    return written[0] if written else None
+
+
+def extension(declaration: Node) -> bool:
+    return any(child.type == "extension" for child in declaration.children)
+
+
+def level(source: bytes, declaration: Node) -> str:
+    """Return the access level of a declaration, as Swift resolves it.
+
+    The level is the visibility modifier the declaration writes. Without one, a member of an
+    extension has the level of the extension (`public extension Box { init() }` is public), and
+    every other declaration is `internal`.
+    """
+    own = visibility(source, declaration)
+    if own:
+        return own
+    holder = declaration.parent.parent if declaration.parent and declaration.parent.type in BODIES else None
+    return level(source, holder) if holder is not None and extension(holder) else "internal"
+
+
+def public(source: bytes, node: Node) -> bool:
+    """True when a caller outside the module can call the initializer `node`: the one decision.
+
+    The initializer's own level (`level`) must be `public` or `open`, and so must the level of
+    every enclosing declaration: the owner type, each type around it, and each extension that
+    writes a visibility modifier. A `fileprivate extension`, an `internal` type and a type without
+    a modifier hide their initializers. A protocol holds a requirement, not a call. An extension
+    without a visibility modifier hides nothing: its members carry their own levels.
+    """
+    declarations: list[Node] = []
+    parent = node.parent
+    while parent is not None:
+        if parent.type in ("protocol_body", "protocol_declaration"):
+            return False
+        if parent.type == "class_declaration":
+            declarations.append(parent)
+        parent = parent.parent
+    ceilings = [item for item in declarations if not extension(item) or visibility(source, item)]
+    return all(level(source, item) in ("public", "open") for item in (node, *ceilings))
+
+
+def enclosing(source: bytes, node: Node) -> tuple[str, tuple[str, ...]]:
+    """Return the owner path and the chain of `node`.
 
     The chain has, outermost first, each enclosing declaration without its body and each `#if`
     that is open around the initializer. An enclosing node of another kind raises.
@@ -356,15 +416,13 @@ def enclosing(node: Node) -> tuple[str, tuple[str, ...]] | None:
     chain: list[str] = []
     child, parent = node, node.parent
     while parent is not None:
-        links = open_directives(parent, child)
+        links = open_directives(source, parent, child)
         if child.type == "class_declaration":
             head = [item for item in classified(child, OWNER_HEAD | BODIES, "around the initializer") if item.type not in BODIES]
             name = child.child_by_field_name("name")
-            names.insert(0, text(name) if name else "")
-            links.append(normal(*head))
+            names.insert(0, text(source, name) if name else "")
+            links.append(normal(source, *head))
         chain[:0] = links
-        if parent.type in ("protocol_body", "protocol_declaration"):
-            return None
         if parent.type not in BODIES and parent.type not in ("class_declaration", "source_file"):
             raise UnreadNode(parent, f"a `{parent.type}` node around the initializer that the reader does not classify")
         child, parent = parent, parent.parent
@@ -373,17 +431,23 @@ def enclosing(node: Node) -> tuple[str, tuple[str, ...]] | None:
     return ".".join(names), tuple(chain)
 
 
-def unavailable(modifiers: Node | None) -> bool:
-    """True when an `@available` attribute has the argument `unavailable`, read as a node."""
+def unavailable(source: bytes, modifiers: Node | None) -> bool:
+    """True for `@available(*, unavailable, ...)`, read as nodes: no platform can call it.
+
+    `@available(macOS, unavailable)` keeps the initializer: another platform calls it, and the
+    attribute text is compared like any other.
+    """
     for attribute in modifiers.children if modifiers else ():
-        if attribute.type != "attribute" or normal(attribute.children[1]) != "available":
+        if attribute.type != "attribute" or normal(source, attribute.children[1]) != "available":
             continue
-        if any(item.type == "simple_identifier" and text(item) == "unavailable" for item in attribute.children):
+        arguments = [item for item in attribute.children[2:] if item.type not in ("(", ",", ")")]
+        everywhere = bool(arguments) and arguments[0].type == "*"
+        if everywhere and any(item.type == "simple_identifier" and text(source, item) == "unavailable" for item in arguments):
             return True
     return False
 
 
-def swift_parameter(node: Node) -> SwiftParameter:
+def swift_parameter(source: bytes, node: Node) -> SwiftParameter:
     label = name = None
     declared: list[Node] = []
     for index, child in enumerate(node.children):
@@ -391,62 +455,66 @@ def swift_parameter(node: Node) -> SwiftParameter:
         if child.type in COMMENTS or child.type == ":":
             continue
         if field_name == "external_name":
-            label = text(child)
+            label = text(source, child)
         elif field_name == "name" and child.type == "simple_identifier":
-            name = text(child)
+            name = text(source, child)
         elif field_name == "name" or child.type in ("parameter_modifiers", "..."):
             declared.append(child)
         else:
             raise UnreadNode(child, f"a `{child.type}` node of a parameter that the reader does not classify")
-    if name is None or not declared:
-        raise UnreadNode(node, "a parameter without a name or a type")
-    return SwiftParameter(label or name, name, normal(*declared), None)
+    # ~keep The grammar gives every `parameter` a name and a type: `init(x)` and `init(x:)` are
+    # parse errors, which `parse_swift` raises before it reads any initializer.
+    assert name is not None and declared, node
+    closure = any(item.type == "function_type" for item in declared for item in nodes(item))
+    return SwiftParameter(label or name, name, normal(source, *declared), None, closure)
 
 
-def swift_initializer(node: Node) -> SwiftInitializer | None:
+def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
     """Return the public initializer that `node` declares, or `None` when a caller cannot call it.
 
-    A caller cannot call an initializer that is not `public` or `open`, that an `@available`
-    attribute marks `unavailable`, or that a protocol requires. Every other initializer is read
-    whole. A child of the initializer, of a parameter, of the modifiers or of an enclosing
-    declaration that the reader does not classify raises `UnreadNode`.
+    A caller cannot call an initializer that `public` refuses, or that `@available(*, unavailable)`
+    marks. Every other initializer is read whole. A child of the initializer, of a parameter, of
+    the modifiers or of an enclosing declaration that the reader does not classify raises
+    `UnreadNode`.
     """
     modifiers = next((child for child in node.children if child.type == "modifiers"), None)
-    visibility = [text(item) for item in modifiers.children if item.type == "visibility_modifier"] if modifiers else []
-    if not any(item in ("public", "open") for item in visibility) or unavailable(modifiers):
+    if not public(source, node) or unavailable(source, modifiers):
         return None
-    for item in modifiers.children if modifiers else ():
-        if item.type not in COMMENTS and item.type != "attribute" and not item.type.endswith("_modifier"):
-            raise UnreadNode(item, f"a `{item.type}` node of the modifiers that the reader does not classify")
-    found = enclosing(node)
-    if found is None:
-        return None
-    owner, chain = found
+    if modifiers:
+        classified(modifiers, MODIFIERS, "of the modifiers")
+    owner, chain = enclosing(source, node)
     parameters: list[SwiftParameter] = []
     form: list[Node] = []
     for index, child in enumerate(node.children):
         if child.type == "parameter":
-            parameters.append(swift_parameter(child))
+            parameters.append(swift_parameter(source, child))
         elif node.field_name_for_child(index) == "default_value" and parameters:
-            parameters[-1] = replace(parameters[-1], default=normal(child))
+            parameters[-1] = replace(parameters[-1], default=normal(source, child))
         elif child.type in INITIALIZER_HEAD or child.type in INITIALIZER_TAIL:
             form.append(child)
         elif child.type not in PARAMETER_LIST | COMMENTS | {"modifiers", "function_body"}:
             raise UnreadNode(child, f"a `{child.type}` node of the initializer that the reader does not classify")
-    return SwiftInitializer(owner, chain, normal(modifiers) if modifiers else "", normal(*form), tuple(parameters))
+    written = normal(source, modifiers) if modifiers else ""
+    return SwiftInitializer(owner, chain, written, normal(source, *form), tuple(parameters))
 
 
 def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitializer]:
-    """Return every public initializer of the file by its signature `Owner(label: Type, ...)`.
+    """Return every public initializer of the file by its whole declaration (`SwiftInitializer.key`).
 
     The Swift grammar of tree-sitter reads the file: a `struct`, `class`, `enum`, `actor` or
     `extension` owns each initializer, and the reader keeps the whole declaration. Text that the
-    grammar does not read raises `SyntaxError` with `where` and the line: an `ERROR` or a missing
-    node anywhere in the file fails. A node of a declaration that the reader does not classify
-    raises `SyntaxError` with the kind of the node. The grammar does not know `$` in an identifier
-    (swift-bridge writes `__swift_bridge__$Vec_String$len`), so the reader reads `$` as `_`.
+    grammar does not read raises `SyntaxError` with `where` and the line: an error anywhere in the
+    file fails before any initializer is read. A node of a declaration that the reader does not
+    classify raises `SyntaxError` with the kind of the node. Two initializers with one whole
+    declaration raise `SyntaxError` too: no declaration overwrites another.
+
+    The grammar does not know `$` in an identifier (swift-bridge writes `CbWrapper$crawl` and
+    `__swift_bridge__$Vec_String$len`), so the tree is parsed from a copy with `_` for each `$`.
+    The copy has the byte length of the file (one byte for one byte), so every node range is a
+    range of the file, and every text that the reader keeps or compares is read from the file.
     """
-    tree = Parser(SWIFT).parse(source.replace("$", "_").encode())
+    data = source.encode()
+    tree = Parser(SWIFT).parse(data.replace(b"$", b"_"))
     initializers: dict[str, SwiftInitializer] = {}
 
     def error(node: Node, what: str) -> SyntaxError:
@@ -454,15 +522,18 @@ def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitia
         line = source.splitlines()[row] if row < len(source.splitlines()) else ""
         return SyntaxError(what, (where, row + 1, column + 1, line))
 
+    if tree.root_node.has_error:
+        broken = next(node for node in nodes(tree.root_node) if node.has_error and not any(child.has_error for child in node.children))
+        raise error(broken, "text that the Swift grammar does not read")
     for node in nodes(tree.root_node):
-        if node.type == "ERROR" or node.is_missing:
-            raise error(node, "text that the Swift grammar does not read")
         if node.type != "init_declaration":
             continue
         try:
-            initializer = swift_initializer(node)
+            initializer = swift_initializer(data, node)
         except UnreadNode as unread:
             raise error(unread.node, str(unread)) from None
+        if initializer and initializer.key in initializers:
+            raise error(node, f"a second declaration of `{initializer.key}`")
         if initializer:
             initializers[initializer.key] = initializer
     return initializers
@@ -472,10 +543,15 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
     """Return why the declaration of `now` is not the declaration of `was` with defaulted parameters added.
 
     The rule is by exclusion: the whole declaration is equal, text by text, but for one permitted
-    difference. The head may add parameters, each with a default, and none before a released
-    positional (`_`) parameter: a positional call of the release binds the added one. An added
-    parameter before a released labelled parameter is permitted: Swift skips a defaulted parameter
-    whose label the call does not write. Every rule can give a false failure, never a false pass.
+    difference. The head may add parameters, each with a default. Swift skips a defaulted
+    parameter whose label the call does not write, so an added parameter is refused only where a
+    released call passes an argument with no label: before a released positional (`_`)
+    parameter, which a positional call binds to the added one; before a released parameter of
+    function type, which a trailing closure of the release may bind, and the added one then takes
+    the closure when it has a function type itself; and anywhere when the added parameter has a
+    function type, since a trailing closure of the release may bind it. A type that holds a
+    function type anywhere (`(() -> Void)?`, `[() -> Void]`) counts as a function type: a false
+    failure at worst. Every rule can give a false failure, never a false pass.
     """
     errors = []
     for before, after in zip_longest(was.chain, now.chain, fillvalue="no declaration"):
@@ -506,12 +582,22 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
             continue
         where = f"{was.owner}.{parameter.where}"
         positional = next((other for other in remaining if other.label == "_"), None)
+        closure = next((other for other in remaining if other.closure), None)
         if parameter.default is None:
             errors.append(f"{where}: the new Swift initializer argument is required: no call of {tag} compiles")
         elif positional is not None:
             errors.append(
                 f"{where}: the new Swift initializer argument comes before the positional argument "
                 f"`{positional.name}` of {tag}: a positional call of {tag} binds another value"
+            )
+        elif closure is not None:
+            errors.append(
+                f"{where}: the new Swift initializer argument comes before the argument `{closure.where}` of {tag}, "
+                f"which has a function type: a trailing closure of {tag} binds another parameter"
+            )
+        elif parameter.closure:
+            errors.append(
+                f"{where}: the new Swift initializer argument has a function type: a trailing closure of {tag} binds it"
             )
     removed = f"the Swift initializer argument of {tag} is removed or renamed"
     errors.extend(f"{was.owner}.{parameter.where}: {removed}" for parameter in remaining)
@@ -521,7 +607,13 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
 def compare_swift(released: dict[str, SwiftInitializer], head: dict[str, SwiftInitializer], tag: str) -> list[str]:
     """Return why a Swift call written against a released initializer does not compile at the head.
 
-    A released initializer is compared with the head initializer of its owner that differs least.
+    A released initializer is compared with the head initializer of its owner that differs least,
+    and it passes only with no difference. One head initializer may satisfy several released
+    ones: each satisfaction is the rule of `compare_initializer`, so every call of each satisfied
+    released initializer compiles against it. A removed initializer therefore passes only when a
+    kept one of the same owner is its declaration with defaulted parameters added, and that is a
+    removal no released call sees. A removed overload whose twin differs anywhere else (the
+    generic clause, `async`, the extension) has no head initializer with no difference and fails.
     """
     errors: list[str] = []
     lost: set[str] = set()
@@ -612,8 +704,8 @@ def check_source(tag: str, item: Input) -> Result:
     except SyntaxError as error:
         found = f"{error.filename}:{error.lineno}: parse error: {error.msg}"
         return Result(f"not compared: {path} has a parse error", [found], None)
-    # ~keep A key is a type, or a type and its signature in parentheses. The rule is on the type:
-    # the signature of a kept initializer changes when a parameter with a default is added.
+    # ~keep A key is a type, or a type and its whole declaration from `(`. The rule is on the type:
+    # the declaration of a kept initializer changes when a parameter with a default is added.
     owners = {name.partition("(")[0] for name in head}
     missing = [name.partition("(")[0] for name in released if name.partition("(")[0] not in owners]
     kept = sum(1 for name, was in released.items() if not item.source.compare({name: was}, head, tag))
