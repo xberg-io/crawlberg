@@ -123,6 +123,17 @@ async fn should_preserve_link_spelling_in_http_results_after_normalization_and_r
 #[cfg(feature = "browser")]
 #[tokio::test]
 async fn should_preserve_link_spelling_in_browser_results_after_normalization_and_redirects() {
+    // ~keep Retain the controller or transport failure before a cancelled page command obscures it.
+    tracing_subscriber::fmt()
+        .with_env_filter(concat!(
+            "crawlberg::browser_pool=debug,",
+            "crawlberg::ssrf_intercept=debug,",
+            "chromiumoxide::handler=warn"
+        ))
+        .with_ansi(false)
+        .with_test_writer()
+        .try_init()
+        .expect("install browser failure diagnostics");
     assert_original_link_spelling(BrowserMode::Always).await;
 }
 
