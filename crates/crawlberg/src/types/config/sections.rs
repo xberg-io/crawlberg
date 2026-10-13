@@ -27,6 +27,12 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
     "max_depth",
     "wrap",
     "wrap_width",
+    "strip_newlines",
+    "bullets",
+    "list_indent_width",
+    "strong_em_symbol",
+    "compact_tables",
+    "keep_inline_images_in",
     "include_document_structure",
     "extract_metadata",
 ]))]
