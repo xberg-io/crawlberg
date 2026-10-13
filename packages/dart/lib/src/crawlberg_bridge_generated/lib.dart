@@ -935,7 +935,8 @@ class ContentConfig {
   final List<String> keepInlineImagesIn;
 
   /// Keep text hidden by HTML attributes or inline styles, including body templates.
-  /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
+  /// Default: `false`. Scripts and styles remain excluded. Explicit exclusions still apply,
+  /// except to table cells, rows and row groups: a selector does not remove those (#730).
   final bool keepHidden;
 
   const ContentConfig({
