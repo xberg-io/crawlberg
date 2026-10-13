@@ -1,20 +1,20 @@
 use futures::{SinkExt, StreamExt};
 use tokio::io::AsyncReadExt;
 
-use super::{Child, LaunchConnection};
+use super::{LaunchConnection, SpawnedChild};
 use crate::error::{CdpError, Result};
 use crate::handler::HandlerConnection;
 use crate::pipe::{PipeConnection, PipeHub};
 
 pub(super) async fn initialize(
     pipe: std::os::unix::net::UnixStream,
-    child: &mut Child,
+    child: &mut SpawnedChild,
     timeout: std::time::Duration,
 ) -> Result<LaunchConnection> {
     pipe.set_nonblocking(true)?;
     let (hub, mut connection) = PipeHub::start(tokio::net::UnixStream::from_std(pipe)?);
     // ~keep Chrome still writes diagnostics on stderr in pipe mode; drain it so its buffer cannot block CDP.
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = child.take_stderr() {
         tokio::spawn(async move {
             let mut stderr = stderr.into_inner();
             let mut buffer = [0; 4096];

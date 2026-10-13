@@ -56,4 +56,5 @@ if [ -n "$MOCK_SERVERS_LINE" ]; then
 fi
 
 cd "$DART_DIR"
-exec dart test
+# ~keep Kernel mode's persistent compiler starts Dart's wait-any-child reaper, stealing native browser child exits.
+exec dart test --compiler=source

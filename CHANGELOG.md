@@ -104,6 +104,8 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
+  Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
   error source. A chain that reaches its final page within the limit and a redirect without
   `Location` still succeed. (#695)
@@ -187,15 +189,31 @@ All notable changes to crawlberg are documented here.
 - The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
   and `-platform` names the release platform. On a Linux host with musl, the command now selects
   the `linux-<arch>-musl` platform.
+- Swift: `to_string()` of a `CrawlEvent` and of the bridge values of `AuthConfig`, `HostMatcher`
+  and `PageAction` returns the JSON of the value. Before, it returned the name of the variant
+  (`"page"`, `"basic"`, `"exact"`, `"click"`).
 
 ### Fixed
 
-- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
-  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
-  This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
-  longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
-  explicitly wait for its own children; exited, unwaited children remain zombies. Existing
-  callable signal handlers remain chained. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
+- The v1.10.3 constructors of `ContentConfig`, `LinkInfo` and `CrawlPageResult` work again in
+  the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
+  Python, Dart and Kotlin, and in Swift for `ContentConfig` and `LinkInfo`; in Swift,
+  `original_url` of `CrawlPageResult` is the last positional argument of `new_with_fields`.
+  They are optional trailing arguments in PHP and WebAssembly, a second constructor or the
+  builder in Java, and optional struct fields in Zig and Go.
+- A retired owned browser starts its process and profile cleanup before waiting on its security
+  controller, so cleanup finishes even if the host stops driving the runtime before dropping the pool.
+- Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
+  native child exits. Linux Dart applications that start their own child processes remain affected.
+- Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,
+  preserving waitable host `SIGCHLD` handlers, masks and flags and avoiding Go's fatal signal-stack error.
+  Managed launches reserve one waiter thread before spawning; failed launches and completed children release it.
+  The vendored driver exposes additive managed launch APIs; its legacy Tokio launch and raw child APIs retain
+  their existing signal-registry behavior.
+- Managed Unix launches normalize `SIG_IGN` and clear `SA_NOCLDWAIT` before starting the guardian,
+  preserving callable handlers, signal masks and other flags. These dispositions no longer provide
+  kernel reaping, even after the Crawlberg runtime is dropped: the host must explicitly wait for its
+  own children, or exited children remain zombies. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
 - Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
@@ -402,6 +420,8 @@ All notable changes to crawlberg are documented here.
 - With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
   Chrome 155 opens targets of its own in each new browser context and does not close them on
   request; the engine waited for them to close before it kept the page. (#694)
+- Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
+  Foreign-retirement census validation and retirement use one registry lock. (#701)
 
 ## [1.10.3] - 2026-10-09
 

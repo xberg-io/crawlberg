@@ -18,7 +18,7 @@ use chromiumoxide_cdp::cdp::{CdpEventMessage, IntoEventKind};
 use chromiumoxide_types::*;
 
 pub use self::config::{BrowserConfig, BrowserConfigBuilder, LAUNCH_TIMEOUT};
-use crate::async_process::{Child, ExitStatus};
+use crate::async_process::{Child, ExitStatus, ManagedChild, SpawnedChild};
 use crate::cmd::{CommandMessage, to_command_response};
 use crate::conn::Connection;
 use crate::error::{BrowserStderr, CdpError, Result};
@@ -42,7 +42,7 @@ pub struct Browser {
     /// How the spawned chromium instance was configured, if any
     config: Option<BrowserConfig>,
     /// The spawned chromium instance
-    child: Option<Child>,
+    child: Option<SpawnedChild>,
     /// The debug web socket url of the chromium instance
     debug_ws_url: String,
     /// The context of the browser
@@ -164,8 +164,34 @@ impl Browser {
     /// `spawn` gets the final config and runs once, before the wait for the web socket url. A
     /// caller that must know the process from the moment it exists records it there.
     pub async fn launch_with(
-        mut config: BrowserConfig,
+        config: BrowserConfig,
         spawn: impl FnOnce(&BrowserConfig) -> io::Result<Child>,
+    ) -> Result<(Self, Handler)> {
+        Self::launch_process(config, |config| spawn(config).map(SpawnedChild::Runtime)).await
+    }
+
+    /// Launch with native Unix child waits, avoiding process-wide SIGCHLD registration.
+    /// Managed instances expose their child through [`Self::get_mut_managed_child`].
+    pub async fn launch_managed(config: BrowserConfig) -> Result<(Self, Handler)> {
+        Self::launch_managed_with(config, BrowserConfig::launch_managed).await
+    }
+
+    /// Like [`Self::launch_managed`], with the managed process recorded by the caller at spawn.
+    pub async fn launch_managed_with(
+        config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<ManagedChild>,
+    ) -> Result<(Self, Handler)> {
+        #[cfg(unix)]
+        {
+            Self::launch_process(config, |config| spawn(config).map(SpawnedChild::Managed)).await
+        }
+        #[cfg(not(unix))]
+        Self::launch_with(config, spawn).await
+    }
+
+    async fn launch_process(
+        mut config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<SpawnedChild>,
     ) -> Result<(Self, Handler)> {
         // Canonalize paths to reduce issues with sandboxing
         config.executable = utils::canonicalize_except_snap(config.executable).await?;
@@ -183,7 +209,7 @@ impl Browser {
         /// errors are caught and that the child process is properly cleaned-up.
         async fn with_child(
             config: &BrowserConfig,
-            child: &mut Child,
+            child: &mut SpawnedChild,
             #[cfg(unix)] pipe: Option<std::os::unix::net::UnixStream>,
         ) -> Result<LaunchConnection> {
             #[cfg(unix)]
@@ -342,12 +368,30 @@ impl Browser {
     /// [`Browser::wait`], [`Browser::try_wait`] and [`Browser::kill`], and a drop there leaves the
     /// instance running: only the process that spawned it ends it.
     pub fn get_mut_child(&mut self) -> Option<&mut Child> {
-        self.own_child()
+        self.own_child()?.runtime_mut()
+    }
+
+    /// The native-wait child of a managed launch, in its spawning process.
+    pub fn get_mut_managed_child(&mut self) -> Option<&mut ManagedChild> {
+        self.own_child()?.managed_mut()
+    }
+
+    /// Whether this process owns a launched instance, for either wait backend.
+    pub fn has_owned_process(&self) -> bool {
+        self.child.as_ref().is_some_and(SpawnedChild::spawned_here)
+    }
+
+    /// The unreaped child ID for either wait backend, in the spawning process.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child
+            .as_ref()
+            .filter(|child| child.spawned_here())
+            .and_then(SpawnedChild::id)
     }
 
     /// The spawned chromium instance, in the process that spawned it. Every call that waits for
     /// the instance or ends it goes through here.
-    fn own_child(&mut self) -> Option<&mut Child> {
+    fn own_child(&mut self) -> Option<&mut SpawnedChild> {
         self.child.as_mut().filter(|child| child.spawned_here())
     }
 
@@ -577,12 +621,12 @@ impl Drop for Browser {
 /// - [`CdpError::LaunchIo`]: an input/output error occurs when await the process exit or reading
 ///   the browser's stderr: end of stream, invalid UTF-8, other
 async fn ws_url_from_output(
-    child_process: &mut Child,
+    child_process: &mut SpawnedChild,
     timeout_fut: impl Future<Output = ()> + Unpin,
 ) -> Result<String> {
     use futures::{AsyncBufReadExt, FutureExt};
     let mut timeout_fut = timeout_fut.fuse();
-    let stderr = child_process.stderr.take().expect("no stderror");
+    let stderr = child_process.take_stderr().expect("no stderror");
     let mut stderr_bytes = Vec::<u8>::new();
     let mut exit_status_fut = Box::pin(child_process.wait()).fuse();
     let mut buf = futures::io::BufReader::new(stderr);
@@ -650,7 +694,7 @@ mod tests {
         Browser {
             sender: channel(1).0,
             config: None,
-            child: Some(child),
+            child: Some(SpawnedChild::Runtime(child)),
             debug_ws_url: String::new(),
             browser_context: BrowserContext::default(),
             pipe_hub: None,

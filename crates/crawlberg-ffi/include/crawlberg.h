@@ -1286,6 +1286,20 @@ int32_t cberg_content_config_wrap(CBERGAlefHandle handle);
 uintptr_t cberg_content_config_wrap_width(CBERGAlefHandle handle);
 
 /**
+ * Get the `include_document_structure` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_include_document_structure(CBERGAlefHandle handle);
+
+/**
+ * Get the `extract_metadata` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_extract_metadata(CBERGAlefHandle handle);
+
+/**
  * Get the `strip_newlines` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1332,20 +1346,6 @@ int32_t cberg_content_config_compact_tables(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_content_config_keep_inline_images_in(CBERGAlefHandle handle);
-
-/**
- * Get the `include_document_structure` field from a `ContentConfig`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-int32_t cberg_content_config_include_document_structure(CBERGAlefHandle handle);
-
-/**
- * Get the `extract_metadata` field from a `ContentConfig`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-int32_t cberg_content_config_extract_metadata(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
@@ -2114,15 +2114,6 @@ void cberg_crawl_page_result_free(CBERGAlefHandle handle);
 char *cberg_crawl_page_result_url(CBERGAlefHandle handle);
 
 /**
- * Get the `original_url` field from a `CrawlPageResult`.
- * A non-null returned pointer is owned by the caller.
- * It must be freed with `cberg_free_string`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-char *cberg_crawl_page_result_original_url(CBERGAlefHandle handle);
-
-/**
  * Get the `normalized_url` field from a `CrawlPageResult`.
  * A non-null returned pointer is owned by the caller.
  * It must be freed with `cberg_free_string`.
@@ -2326,6 +2317,15 @@ int32_t cberg_crawl_page_result_nofollow_detected(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_crawl_page_result_ssrf_refused_urls(CBERGAlefHandle handle);
+
+/**
+ * Get the `original_url` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_page_result_original_url(CBERGAlefHandle handle);
 
 /**
  * Create a `CrawlResult` from a JSON string. Returns null on failure.
@@ -3164,15 +3164,6 @@ void cberg_link_info_free(CBERGAlefHandle handle);
 char *cberg_link_info_url(CBERGAlefHandle handle);
 
 /**
- * Get the `original_url` field from a `LinkInfo`.
- * A non-null returned pointer is owned by the caller.
- * It must be freed with `cberg_free_string`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-char *cberg_link_info_original_url(CBERGAlefHandle handle);
-
-/**
  * Get the `text` field from a `LinkInfo`.
  * A non-null returned pointer is owned by the caller.
  * It must be freed with `cberg_free_string`.
@@ -3205,6 +3196,15 @@ char *cberg_link_info_rel(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_link_info_nofollow(CBERGAlefHandle handle);
+
+/**
+ * Get the `original_url` field from a `LinkInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_link_info_original_url(CBERGAlefHandle handle);
 
 /**
  * Create a `MapResult` from a JSON string. Returns null on failure.

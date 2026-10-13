@@ -904,6 +904,18 @@ class ContentConfig {
   /// Wrap width when `wrap` is enabled. Default: `80`.
   final PlatformInt64 wrapWidth;
 
+  /// Include document structure tree in output. Default: `true`.
+  final bool includeDocumentStructure;
+
+  /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
+  /// `<head>`) to the markdown output. Default: `true`.
+  ///
+  /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
+  /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
+  /// is populated independently by `crate::html::metadata::extract_metadata` from the
+  /// parsed DOM, so turning this off does not lose any metadata field.
+  final bool extractMetadata;
+
   /// Replace paragraph source line breaks with spaces. Default: `false`.
   final bool stripNewlines;
 
@@ -922,22 +934,6 @@ class ContentConfig {
   /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
   final List<String> keepInlineImagesIn;
 
-  /// Include document structure tree in output. Default: `true`.
-  final bool includeDocumentStructure;
-
-  /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
-  /// `<head>`) to the markdown output. Default: `true`.
-  ///
-  /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
-  /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
-  /// is populated independently by `crate::html::metadata::extract_metadata` from the
-  /// parsed DOM, so turning this off does not lose any metadata field.
-  final bool extractMetadata;
-
-  /// Keep text hidden by HTML attributes or inline styles, including body templates.
-  /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
-  final bool keepHidden;
-
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -950,15 +946,14 @@ class ContentConfig {
     this.maxDepth,
     required this.wrap,
     required this.wrapWidth,
-    required this.stripNewlines,
-    required this.bullets,
-    required this.listIndentWidth,
-    required this.strongEmSymbol,
-    required this.compactTables,
-    required this.keepInlineImagesIn,
     required this.includeDocumentStructure,
     required this.extractMetadata,
-    this.keepHidden = false,
+    this.stripNewlines = false,
+    this.bullets = "-*+",
+    this.listIndentWidth = 2,
+    this.strongEmSymbol = "*",
+    this.compactTables = false,
+    this.keepInlineImagesIn = const [],
   });
 
   @override
@@ -974,15 +969,14 @@ class ContentConfig {
       maxDepth.hashCode ^
       wrap.hashCode ^
       wrapWidth.hashCode ^
+      includeDocumentStructure.hashCode ^
+      extractMetadata.hashCode ^
       stripNewlines.hashCode ^
       bullets.hashCode ^
       listIndentWidth.hashCode ^
       strongEmSymbol.hashCode ^
       compactTables.hashCode ^
-      keepInlineImagesIn.hashCode ^
-      includeDocumentStructure.hashCode ^
-      extractMetadata.hashCode ^
-      keepHidden.hashCode;
+      keepInlineImagesIn.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1000,15 +994,14 @@ class ContentConfig {
           maxDepth == other.maxDepth &&
           wrap == other.wrap &&
           wrapWidth == other.wrapWidth &&
+          includeDocumentStructure == other.includeDocumentStructure &&
+          extractMetadata == other.extractMetadata &&
           stripNewlines == other.stripNewlines &&
           bullets == other.bullets &&
           listIndentWidth == other.listIndentWidth &&
           strongEmSymbol == other.strongEmSymbol &&
           compactTables == other.compactTables &&
-          keepInlineImagesIn == other.keepInlineImagesIn &&
-          includeDocumentStructure == other.includeDocumentStructure &&
-          extractMetadata == other.extractMetadata &&
-          keepHidden == other.keepHidden;
+          keepInlineImagesIn == other.keepInlineImagesIn;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.
@@ -1641,10 +1634,6 @@ class CrawlPageResult {
   /// The original URL of the page.
   final String url;
 
-  /// Seed address as supplied, or the discovered link address resolved against its base.
-  /// Preserves source spelling through redirects; URL credentials are removed. <!-- -->
-  final String originalUrl;
-
   /// The normalized URL of the page.
   final String normalizedUrl;
 
@@ -1725,9 +1714,12 @@ class CrawlPageResult {
   /// their credentials, each listed once. The page is kept; only the refused requests failed.
   final List<String> ssrfRefusedUrls;
 
+  /// Seed address as supplied, or the discovered link address resolved against its base.
+  /// Preserves source spelling through redirects; URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   const CrawlPageResult({
     required this.url,
-    required this.originalUrl,
     required this.normalizedUrl,
     required this.statusCode,
     required this.contentType,
@@ -1753,12 +1745,12 @@ class CrawlPageResult {
     required this.noindexDetected,
     required this.nofollowDetected,
     required this.ssrfRefusedUrls,
+    this.originalUrl = "",
   });
 
   @override
   int get hashCode =>
       url.hashCode ^
-      originalUrl.hashCode ^
       normalizedUrl.hashCode ^
       statusCode.hashCode ^
       contentType.hashCode ^
@@ -1783,7 +1775,8 @@ class CrawlPageResult {
       redirectCount.hashCode ^
       noindexDetected.hashCode ^
       nofollowDetected.hashCode ^
-      ssrfRefusedUrls.hashCode;
+      ssrfRefusedUrls.hashCode ^
+      originalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1791,7 +1784,6 @@ class CrawlPageResult {
       other is CrawlPageResult &&
           runtimeType == other.runtimeType &&
           url == other.url &&
-          originalUrl == other.originalUrl &&
           normalizedUrl == other.normalizedUrl &&
           statusCode == other.statusCode &&
           contentType == other.contentType &&
@@ -1816,7 +1808,8 @@ class CrawlPageResult {
           redirectCount == other.redirectCount &&
           noindexDetected == other.noindexDetected &&
           nofollowDetected == other.nofollowDetected &&
-          ssrfRefusedUrls == other.ssrfRefusedUrls;
+          ssrfRefusedUrls == other.ssrfRefusedUrls &&
+          originalUrl == other.originalUrl;
 }
 
 /// The result of a multi-page crawl operation.
@@ -2388,11 +2381,6 @@ class LinkInfo {
   /// The resolved URL of the link.
   final String url;
 
-  /// Link address resolved against the page's base without changing path spelling.
-  /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
-  /// URL credentials are removed. <!-- -->
-  final String originalUrl;
-
   /// The visible text of the link.
   final String text;
 
@@ -2405,23 +2393,28 @@ class LinkInfo {
   /// Whether the link has `rel="nofollow"`.
   final bool nofollow;
 
+  /// Link address resolved against the page's base without changing path spelling.
+  /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+  /// URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   const LinkInfo({
     required this.url,
-    required this.originalUrl,
     required this.text,
     required this.linkType,
     this.rel,
     required this.nofollow,
+    this.originalUrl = "",
   });
 
   @override
   int get hashCode =>
       url.hashCode ^
-      originalUrl.hashCode ^
       text.hashCode ^
       linkType.hashCode ^
       rel.hashCode ^
-      nofollow.hashCode;
+      nofollow.hashCode ^
+      originalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2429,11 +2422,11 @@ class LinkInfo {
       other is LinkInfo &&
           runtimeType == other.runtimeType &&
           url == other.url &&
-          originalUrl == other.originalUrl &&
           text == other.text &&
           linkType == other.linkType &&
           rel == other.rel &&
-          nofollow == other.nofollow;
+          nofollow == other.nofollow &&
+          originalUrl == other.originalUrl;
 }
 
 /// The classification of a link.

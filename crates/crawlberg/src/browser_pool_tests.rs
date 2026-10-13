@@ -1704,7 +1704,7 @@ pub(crate) fn try_a_profile_and_a_launch_after_the_exit_hook() -> std::path::Pat
                 let _entered = runtime.as_ref().map(tokio::runtime::Runtime::enter);
                 let outcome = match start_listed_chrome(dir.path(), &config) {
                     Ok((mut child, _)) => {
-                        let _ = child.inner.start_kill();
+                        let _ = child.start_kill();
                         "started"
                     }
                     Err(_) => "refused",
@@ -1859,6 +1859,45 @@ fn a_pool_dropped_where_no_runtime_runs_stops_its_chrome_and_removes_its_profile
 
     assert_profile_directory_is_gone_for_good(&path);
     drop(runtime);
+}
+
+// ~keep A supervisor can retire its browser just before the host stops driving its runtime.
+#[test]
+fn a_failed_browser_releases_its_profile_before_cleanup_waits_on_a_paused_runtime() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime must build");
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    runtime
+        .block_on(pool.warm())
+        .expect("Chrome must launch for the retirement regression");
+    let (pending, path) = runtime.block_on(async {
+        let state = pool.state.lock().await.take().expect("a warm pool must own a browser");
+        let path = state
+            .user_data_dir
+            .as_ref()
+            .expect("an owned profile")
+            .path()
+            .to_path_buf();
+        state.handler_handle.abort();
+        let mut pending = Box::pin(state.fail_closed());
+        assert!(
+            futures::poll!(pending.as_mut()).is_pending(),
+            "retirement must reach its first wait"
+        );
+        (pending, path)
+    });
+    drop(pool);
+    let removed_while_paused = wait_for_removal(&path);
+    drop(pending);
+    drop(runtime);
+    assert!(
+        removed_while_paused,
+        "retirement must release the owned profile while the runtime is paused: {}",
+        path.display()
+    );
+    assert_profile_directory_is_gone_for_good(&path);
 }
 
 /// A pool dropped without `shutdown` logs no warning that its browser "was not closed manually".
@@ -4800,7 +4839,7 @@ async fn a_launch_whose_process_cannot_be_read_stops_it_and_fails() {
     let recorded = live_profiles().get(&path).map(|profile| profile.launched);
     let error = match outcome {
         Ok((mut child, _)) => {
-            let _ = child.inner.start_kill();
+            let _ = child.start_kill();
             None
         }
         Err(error) => Some(error.to_string()),
@@ -4837,7 +4876,7 @@ async fn a_launch_records_the_process_it_started_and_the_teardown_stops_it() {
     let path = dir.path().to_path_buf();
 
     let (child, launched) = start_listed_chrome(&path, &config).expect("the script must start");
-    let started = child.inner.id();
+    let started = child.id();
     let listed = live_profiles().get(&path).and_then(|profile| profile.launched);
     dir.0.as_mut().expect("the teardown is there").launched = launched;
     // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
@@ -4944,7 +4983,7 @@ async fn a_launch_whose_chrome_ended_before_the_read_reports_its_exit() {
 
     let error = match outcome {
         Ok((mut child, _)) => {
-            let _ = child.inner.start_kill();
+            let _ = child.start_kill();
             None
         }
         Err(error) => Some(error.to_string()),

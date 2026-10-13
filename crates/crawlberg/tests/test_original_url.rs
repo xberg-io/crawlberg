@@ -42,10 +42,34 @@ async fn assert_original_link_spelling(mode: BrowserMode) {
         respect_robots_txt: false,
         ..CrawlConfig::builder().allow_private_networks(true).build()
     };
-    let engine = CrawlEngine::builder().config(config).build().expect("engine");
+    let errors = RecordedFetchErrors::default();
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .event_emitter(errors.clone())
+        .build()
+        .expect("engine");
     let seed = format!("{base}/#seed");
     let result = engine.crawl(&seed).await.expect("crawl");
-    assert_eq!(result.pages.len(), hrefs.len() + 1, "crawl error: {:?}", result.error);
+    assert_eq!(result.pages.len(), hrefs.len() + 1, "{}", {
+        let fetch_errors = errors.0.lock().expect("recorded fetch errors").clone();
+        let requests = server.received_requests().await.expect("recorded requests");
+        format!(
+            concat!(
+                "crawl error: {:?}; returned pages: {:?}; expected links: {:?}; ",
+                "fetch errors: {:?}; requests: {:?}; Chrome: {:?}"
+            ),
+            result.error,
+            result
+                .pages
+                .iter()
+                .map(|page| (&page.url, &page.original_url, &page.final_url))
+                .collect::<Vec<_>>(),
+            hrefs.iter().map(|href| format!("{base}{href}")).collect::<Vec<_>>(),
+            fetch_errors,
+            requests.iter().map(|request| &request.url).collect::<Vec<_>>(),
+            std::env::var_os("CHROME")
+        )
+    });
     let start = result.pages.iter().find(|page| page.depth == 0).expect("seed page");
     assert_eq!(start.original_url, seed);
     assert_eq!(
@@ -99,6 +123,17 @@ async fn should_preserve_link_spelling_in_http_results_after_normalization_and_r
 #[cfg(feature = "browser")]
 #[tokio::test]
 async fn should_preserve_link_spelling_in_browser_results_after_normalization_and_redirects() {
+    // ~keep Retain the controller or transport failure before a cancelled page command obscures it.
+    tracing_subscriber::fmt()
+        .with_env_filter(concat!(
+            "crawlberg::browser_pool=debug,",
+            "crawlberg::ssrf_intercept=debug,",
+            "chromiumoxide::handler=warn"
+        ))
+        .with_ansi(false)
+        .with_test_writer()
+        .try_init()
+        .expect("install browser failure diagnostics");
     assert_original_link_spelling(BrowserMode::Always).await;
 }
 
@@ -143,4 +178,20 @@ async fn should_remove_link_credentials_without_rewriting_query_or_fragment() {
         assert_eq!(parsed.username(), "");
         assert_eq!(parsed.password(), None);
     }
+}
+
+#[derive(Clone, Default)]
+struct RecordedFetchErrors(std::sync::Arc<std::sync::Mutex<Vec<crawlberg::traits::ErrorEvent>>>);
+
+#[async_trait::async_trait]
+impl crawlberg::traits::EventEmitter for RecordedFetchErrors {
+    async fn on_page(&self, _: &crawlberg::traits::PageEvent) {}
+
+    async fn on_error(&self, event: &crawlberg::traits::ErrorEvent) {
+        self.0.lock().expect("recorded fetch errors").push(event.clone());
+    }
+
+    async fn on_complete(&self, _: &crawlberg::traits::CompleteEvent) {}
+
+    async fn on_discovered(&self, _: &str, _: usize) {}
 }

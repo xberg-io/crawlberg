@@ -109,6 +109,34 @@ impl Command {
         ))
     }
 
+    /// Spawn a child whose waits do not register a process-wide signal handler on Unix.
+    pub fn spawn_managed(&mut self) -> std::io::Result<ManagedChild> {
+        #[cfg(unix)]
+        {
+            let reaper = managed::NativeReaper::reserve()?;
+            let pipe = if self.debugging_pipe {
+                Some(self.attach_debugging_pipe()?)
+            } else {
+                None
+            };
+            managed::normalize_reaping()?;
+            let group = std::sync::Arc::new(unix_group::Group::start()?);
+            let group_id =
+                i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?;
+            use std::os::unix::process::CommandExt;
+            self.inner.as_std_mut().process_group(group_id);
+            ManagedChild::new(
+                self.inner.as_std_mut().spawn()?,
+                ProcessTree(group),
+                self.kill_on_drop,
+                pipe,
+                reaper,
+            )
+        }
+        #[cfg(not(unix))]
+        self.spawn()
+    }
+
     /// Make the pipe of the next child and return this end of it.
     #[cfg(unix)]
     fn attach_debugging_pipe(&mut self) -> std::io::Result<std::os::unix::net::UnixStream> {
@@ -190,6 +218,16 @@ impl Child {
     /// The tree of processes this child is the root of, where the operating system keeps one.
     pub fn tree(&self) -> Option<&ProcessTree> {
         self.tree.as_ref()
+    }
+
+    /// The child ID while its exit status has not been collected.
+    pub fn id(&self) -> Option<u32> {
+        self.inner.id()
+    }
+
+    /// Signal this child without waiting for its exit status.
+    pub fn start_kill(&mut self) -> std::io::Result<()> {
+        self.inner.start_kill()
     }
 
     /// Kill the child process synchronously and asynchronously wait for the
@@ -306,8 +344,16 @@ impl ProcessTree {
 /// Spawn `command`, in a [`ProcessTree`] of its own where the platform has one.
 #[cfg(unix)]
 fn spawn_in_tree(command: &mut process::Command) -> std::io::Result<(process::Child, Option<ProcessTree>)> {
-    // ~keep Ignored SIGCHLD auto-reaps guardian probes; Tokio's Linux pidfd path can skip signal registration.
-    let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+    // SAFETY: sigaction writes the live action; querying with a null new action changes no handler. ~keep
+    let mut inherited: libc::sigaction = unsafe { std::mem::zeroed() };
+    if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut inherited) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // ~keep Auto-reaping breaks guardian probes. Waitable host handlers need no normalization;
+    // ~keep Tokio registration otherwise drops Go's SA_ONSTACK even when its Linux pidfd path needs no signal.
+    if inherited.sa_sigaction == libc::SIG_IGN || inherited.sa_flags & libc::SA_NOCLDWAIT != 0 {
+        let _child_signals = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+    }
     let group = std::sync::Arc::new(unix_group::Group::start()?);
     command
         .process_group(i32::try_from(group.id()).map_err(|_| std::io::Error::other("browser group ID is too large"))?);
@@ -877,3 +923,103 @@ mod unix_group;
 
 #[cfg(all(test, unix))]
 mod unix_signal_tests;
+
+#[cfg(unix)]
+#[path = "async_process/managed.rs"]
+mod managed;
+#[cfg(unix)]
+pub use managed::ManagedChild;
+#[cfg(not(unix))]
+pub type ManagedChild = Child;
+
+#[derive(Debug)]
+pub(crate) enum SpawnedChild {
+    Runtime(Child),
+    #[cfg(unix)]
+    Managed(ManagedChild),
+}
+
+impl SpawnedChild {
+    pub(crate) fn runtime_mut(&mut self) -> Option<&mut Child> {
+        match self {
+            Self::Runtime(child) => Some(child),
+            #[cfg(unix)]
+            Self::Managed(_) => None,
+        }
+    }
+
+    pub(crate) fn managed_mut(&mut self) -> Option<&mut ManagedChild> {
+        match self {
+            #[cfg(unix)]
+            Self::Runtime(_) => None,
+            #[cfg(not(unix))]
+            Self::Runtime(child) => Some(child),
+            #[cfg(unix)]
+            Self::Managed(child) => Some(child),
+        }
+    }
+
+    pub(crate) fn spawned_here(&self) -> bool {
+        match self {
+            Self::Runtime(child) => child.spawned_here(),
+            #[cfg(unix)]
+            Self::Managed(child) => child.spawned_here(),
+        }
+    }
+
+    pub(crate) fn killed_on_drop(&self) -> bool {
+        match self {
+            Self::Runtime(child) => child.killed_on_drop(),
+            #[cfg(unix)]
+            Self::Managed(child) => child.killed_on_drop(),
+        }
+    }
+
+    pub(crate) fn id(&self) -> Option<u32> {
+        match self {
+            Self::Runtime(child) => child.id(),
+            #[cfg(unix)]
+            Self::Managed(child) => child.id(),
+        }
+    }
+
+    pub(crate) fn take_stderr(&mut self) -> Option<ChildStderr> {
+        match self {
+            Self::Runtime(child) => child.stderr.take(),
+            #[cfg(unix)]
+            Self::Managed(child) => child.stderr.take(),
+        }
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn take_debugging_pipe(&mut self) -> Option<std::os::unix::net::UnixStream> {
+        match self {
+            Self::Runtime(child) => child.take_debugging_pipe(),
+            Self::Managed(child) => child.take_debugging_pipe(),
+        }
+    }
+
+    pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        match self {
+            Self::Runtime(child) => child.try_wait(),
+            #[cfg(unix)]
+            Self::Managed(child) => child.try_wait(),
+        }
+    }
+
+    pub(crate) async fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        match self {
+            Self::Runtime(child) => child.wait().await,
+            #[cfg(unix)]
+            Self::Managed(child) => child.wait().await,
+        }
+    }
+
+    pub(crate) async fn kill(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Runtime(child) => child.kill().await,
+            #[cfg(unix)]
+            Self::Managed(child) => child.kill().await,
+        }
+    }
+}

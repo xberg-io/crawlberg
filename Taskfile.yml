@@ -89,6 +89,15 @@ tasks:
     cmds:
       - python3 scripts/ci/test_chrome_runtime.py
 
+  ci:released-constructors:
+    desc: Check that the bindings keep every constructor of the last release
+    preconditions:
+      - sh: python3 -c 'import tree_sitter_swift'
+        msg: "The Swift reader of the check is missing. Run: python3 -m pip install -r scripts/ci/requirements-released-constructors.txt (in a virtual environment)"
+    cmds:
+      - python3 scripts/ci/test_released_constructors.py
+      - python3 scripts/ci/check_released_constructors.py
+
   setup:
     desc: "Install all dependencies and dev tools"
     cmds:

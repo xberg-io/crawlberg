@@ -399,6 +399,11 @@ impl BrowserConfig {
         self.command().spawn()
     }
 
+    /// Spawn using native Unix waits, preserving a waitable host's SIGCHLD action.
+    pub fn launch_managed(&self) -> io::Result<async_process::ManagedChild> {
+        self.command().spawn_managed()
+    }
+
     /// The command that [`Self::launch`] spawns. A caller that stops the browser process itself
     /// changes the command first, with [`async_process::Command::kill_on_drop`].
     ///
