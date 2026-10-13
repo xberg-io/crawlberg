@@ -3,7 +3,10 @@
 
 The generated Python stub lists, for each bound type, the bound fields in struct order and the
 native constructor. The check compares the stub of the newest release tag with the stub of the
-working tree. The Swift sources are compared the same way: every public initializer of every
+working tree. Public static/class Swift factories returning `Self` or their owner are checked
+separately, with the same declaration rules and owner plus function name matching; overloads
+are retained. Zero factories at the release is valid and never relaxes constructor counts.
+The Swift sources are compared the same way: every public initializer of every
 type, read with the Swift grammar of tree-sitter (`tree-sitter-swift`, pinned in
 `scripts/ci/requirements-released-constructors.txt`). Run it from the repository root. It needs
 git and the tags, and no Rust or Swift toolchain.
@@ -49,11 +52,13 @@ import ast
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 REQUIREMENTS = "scripts/ci/requirements-released-constructors.txt"
 try:
@@ -255,7 +260,19 @@ class SwiftInitializer:
         return " ".join((signature, self.form, self.modifiers, *self.chain))
 
 
-class UnreadNode(Exception):
+@dataclass(frozen=True)
+class SwiftFactory(SwiftInitializer):
+    """One public type factory, including its function name and whole declaration."""
+
+    name: str
+
+    @property
+    def key(self) -> str:
+        signature = f"{self.owner}.{self.name}({', '.join(parameter.declaration for parameter in self.parameters)})"
+        return " ".join((signature, self.form, self.modifiers, *self.chain))
+
+
+class UnreadNodeError(Exception):
     """A node of a declaration that the reader does not classify. The parse fails with its kind."""
 
     def __init__(self, node: Node, what: str) -> None:
@@ -314,20 +331,20 @@ def tokens(source: bytes, *items: Node) -> Iterator[str]:
             end = node.end_byte
 
 
-def spaced(before: str, token: str) -> bool:
-    """True when canonical Swift writes a space between the two tokens."""
+def spaced(before: str, lexeme: str) -> bool:
+    """True when canonical Swift writes a space between the two lexemes."""
     word = before[-1].isalnum() or before[-1] in "_>?!"
-    if before[-1] in "([<@." or token[0] in ")]>,:?!." or token == "...":
+    if before[-1] in "([<@." or lexeme[0] in ")]>,:?!." or lexeme == "...":
         return False
-    return not (token[0] in "(<" and word)
+    return not (lexeme[0] in "(<" and word)
 
 
 def normal(source: bytes, *items: Node) -> str:
     """Return the text of the nodes with the comments out and the whitespace made canonical."""
     out = ""
-    for token in tokens(source, *items):
-        if token:
-            out += f" {token}" if out and spaced(out, token) else token
+    for lexeme in tokens(source, *items):
+        if lexeme:
+            out += f" {lexeme}" if out and spaced(out, lexeme) else lexeme
     return out
 
 
@@ -336,7 +353,7 @@ def classified(node: Node, known: frozenset[str], where: str) -> list[Node]:
     children = [child for child in node.children if child.type not in COMMENTS]
     for child in children:
         if child.type not in known:
-            raise UnreadNode(child, f"a `{child.type}` node {where} that the reader does not classify")
+            raise UnreadNodeError(child, f"a `{child.type}` node {where} that the reader does not classify")
     return children
 
 
@@ -348,22 +365,26 @@ def open_directives(source: bytes, parent: Node, child: Node) -> list[str]:
             break
         if sibling.type != "directive":
             continue
-        token = sibling.children[0].type
-        if token == "#if":
+        directive = sibling.children[0].type
+        if directive == "#if":
             stack.append(normal(source, sibling))
-        elif token in ("#elseif", "#else") and stack:
+        elif directive in ("#elseif", "#else") and stack:
             stack[-1] = f"{stack[-1]} {normal(source, sibling)}"
-        elif token == "#endif" and stack:
+        elif directive == "#endif" and stack:
             stack.pop()
         else:
-            raise UnreadNode(sibling, f"a `{token}` directive before the initializer that the reader does not classify")
+            raise UnreadNodeError(
+                sibling, f"a `{directive}` directive before the initializer that the reader does not classify"
+            )
     return stack
 
 
 def visibility(source: bytes, declaration: Node) -> str | None:
     """Return the visibility modifier that a declaration writes, or `None`."""
     modifiers = next((child for child in declaration.children if child.type == "modifiers"), None)
-    written = [text(source, item) for item in modifiers.children if item.type == "visibility_modifier"] if modifiers else []
+    written = (
+        [text(source, item) for item in modifiers.children if item.type == "visibility_modifier"] if modifiers else []
+    )
     return written[0] if written else None
 
 
@@ -418,16 +439,22 @@ def enclosing(source: bytes, node: Node) -> tuple[str, tuple[str, ...]]:
     while parent is not None:
         links = open_directives(source, parent, child)
         if child.type == "class_declaration":
-            head = [item for item in classified(child, OWNER_HEAD | BODIES, "around the initializer") if item.type not in BODIES]
+            head = [
+                item
+                for item in classified(child, OWNER_HEAD | BODIES, "around the initializer")
+                if item.type not in BODIES
+            ]
             name = child.child_by_field_name("name")
             names.insert(0, text(source, name) if name else "")
             links.append(normal(source, *head))
         chain[:0] = links
         if parent.type not in BODIES and parent.type not in ("class_declaration", "source_file"):
-            raise UnreadNode(parent, f"a `{parent.type}` node around the initializer that the reader does not classify")
+            raise UnreadNodeError(
+                parent, f"a `{parent.type}` node around the initializer that the reader does not classify"
+            )
         child, parent = parent, parent.parent
     if not names:
-        raise UnreadNode(node, "an initializer that no type declares")
+        raise UnreadNodeError(node, "an initializer that no type declares")
     return ".".join(names), tuple(chain)
 
 
@@ -442,7 +469,9 @@ def unavailable(source: bytes, modifiers: Node | None) -> bool:
             continue
         arguments = [item for item in attribute.children[2:] if item.type not in ("(", ",", ")")]
         everywhere = bool(arguments) and arguments[0].type == "*"
-        if everywhere and any(item.type == "simple_identifier" and text(source, item) == "unavailable" for item in arguments):
+        if everywhere and any(
+            item.type == "simple_identifier" and text(source, item) == "unavailable" for item in arguments
+        ):
             return True
     return False
 
@@ -461,7 +490,7 @@ def swift_parameter(source: bytes, node: Node) -> SwiftParameter:
         elif field_name == "name" or child.type in ("parameter_modifiers", "..."):
             declared.append(child)
         else:
-            raise UnreadNode(child, f"a `{child.type}` node of a parameter that the reader does not classify")
+            raise UnreadNodeError(child, f"a `{child.type}` node of a parameter that the reader does not classify")
     # ~keep The grammar gives every `parameter` a name and a type: `init(x)` and `init(x:)` are
     # parse errors, which `parse_swift` raises before it reads any initializer.
     assert name is not None and declared, node
@@ -475,7 +504,7 @@ def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
     A caller cannot call an initializer that `public` refuses, or that `@available(*, unavailable)`
     marks. Every other initializer is read whole. A child of the initializer, of a parameter, of
     the modifiers or of an enclosing declaration that the reader does not classify raises
-    `UnreadNode`.
+    `UnreadNodeError`.
     """
     modifiers = next((child for child in node.children if child.type == "modifiers"), None)
     if not public(source, node) or unavailable(source, modifiers):
@@ -493,9 +522,50 @@ def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
         elif child.type in INITIALIZER_HEAD or child.type in INITIALIZER_TAIL:
             form.append(child)
         elif child.type not in PARAMETER_LIST | COMMENTS | {"modifiers", "function_body"}:
-            raise UnreadNode(child, f"a `{child.type}` node of the initializer that the reader does not classify")
+            raise UnreadNodeError(child, f"a `{child.type}` node of the initializer that the reader does not classify")
     written = normal(source, modifiers) if modifiers else ""
     return SwiftInitializer(owner, chain, written, normal(source, *form), tuple(parameters))
+
+
+def swift_factory(source: bytes, node: Node) -> SwiftFactory | None:
+    """Read a public static/class function returning Self or its enclosing type."""
+    modifiers = next((child for child in node.children if child.type == "modifiers"), None)
+    if not modifiers or not public(source, node) or unavailable(source, modifiers):
+        return None
+    kinds = {normal(source, child) for child in modifiers.children}
+    if not kinds.intersection({"static", "class"}):
+        return None
+    owner, chain = enclosing(source, node)
+    returned = next(
+        (child for index, child in enumerate(node.children) if index and node.children[index - 1].type == "->"), None
+    )
+    if returned is None:
+        return None
+    result = normal(source, returned).partition("<")[0]
+    if result not in {"Self", owner, owner.rsplit(".", 1)[-1]}:
+        return None
+    classified(modifiers, MODIFIERS, "of the factory modifiers")
+    parameters: list[SwiftParameter] = []
+    form: list[Node] = []
+    name = ""
+    allowed = INITIALIZER_HEAD | INITIALIZER_TAIL | {"func", "simple_identifier", "->", returned.type}
+    for index, child in enumerate(node.children):
+        if child.type == "parameter":
+            parameters.append(swift_parameter(source, child))
+        elif node.field_name_for_child(index) == "default_value" and parameters:
+            parameters[-1] = replace(parameters[-1], default=normal(source, child))
+        elif child.type in allowed:
+            form.append(child)
+            if child.type == "simple_identifier" and node.field_name_for_child(index) == "name":
+                name = text(source, child)
+        elif child.type not in PARAMETER_LIST | COMMENTS | {"modifiers", "function_body"}:
+            raise UnreadNodeError(child, f"a `{child.type}` node of the factory that the reader does not classify")
+    return SwiftFactory(owner, chain, normal(source, modifiers), normal(source, *form), tuple(parameters), name)
+
+
+def parse_swift_factories(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftFactory]:
+    """Return every public type factory without treating factory absence as unread constructors."""
+    return _parse_swift(source, where, "function_declaration", swift_factory)
 
 
 def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitializer]:
@@ -513,9 +583,21 @@ def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitia
     The copy has the byte length of the file (one byte for one byte), so every node range is a
     range of the file, and every text that the reader keeps or compares is read from the file.
     """
+    return _parse_swift(source, where, "init_declaration", swift_initializer)
+
+
+SwiftDeclaration = TypeVar("SwiftDeclaration", bound=SwiftInitializer)
+
+
+def _parse_swift(
+    source: str,
+    where: str,
+    kind: str,
+    reader: Callable[[bytes, Node], SwiftDeclaration | None],
+) -> dict[str, SwiftDeclaration]:
     data = source.encode()
     tree = Parser(SWIFT).parse(data.replace(b"$", b"_"))
-    initializers: dict[str, SwiftInitializer] = {}
+    initializers: dict[str, SwiftDeclaration] = {}
 
     def error(node: Node, what: str) -> SyntaxError:
         row, column = node.start_point
@@ -523,14 +605,18 @@ def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitia
         return SyntaxError(what, (where, row + 1, column + 1, line))
 
     if tree.root_node.has_error:
-        broken = next(node for node in nodes(tree.root_node) if node.has_error and not any(child.has_error for child in node.children))
+        broken = next(
+            node
+            for node in nodes(tree.root_node)
+            if node.has_error and not any(child.has_error for child in node.children)
+        )
         raise error(broken, "text that the Swift grammar does not read")
     for node in nodes(tree.root_node):
-        if node.type != "init_declaration":
+        if node.type != kind:
             continue
         try:
-            initializer = swift_initializer(data, node)
-        except UnreadNode as unread:
+            initializer = reader(data, node)
+        except UnreadNodeError as unread:
             raise error(unread.node, str(unread)) from None
         if initializer and initializer.key in initializers:
             raise error(node, f"a second declaration of `{initializer.key}`")
@@ -559,7 +645,9 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
             errors.append(f"{was.owner}: around the Swift initializer {tag} has `{before}`, the head has `{after}`")
             break
     if now.modifiers != was.modifiers:
-        errors.append(f"{was.owner}: the Swift initializer of {tag} has the modifiers `{was.modifiers}`, the head has `{now.modifiers}`")
+        errors.append(
+            f"{was.owner}: the Swift initializer of {tag} has the modifiers `{was.modifiers}`, the head has `{now.modifiers}`"
+        )
     if now.form != was.form:
         errors.append(f"{was.owner}: the Swift initializer of {tag} is `{was.form}`, the head is `{now.form}`")
     labels, head_labels = [p.label for p in was.parameters], [p.label for p in now.parameters]
@@ -616,15 +704,23 @@ def compare_swift(released: dict[str, SwiftInitializer], head: dict[str, SwiftIn
     generic clause, `async`, the extension) has no head initializer with no difference and fails.
     """
     errors: list[str] = []
-    lost: set[str] = set()
+    lost: set[tuple[str, str | None]] = set()
     for was in released.values():
-        candidates = [now for now in head.values() if now.owner == was.owner]
+        was_name = was.name if isinstance(was, SwiftFactory) else None
+        candidates = [
+            now
+            for now in head.values()
+            if now.owner == was.owner and (now.name if isinstance(now, SwiftFactory) else None) == was_name
+        ]
         if candidates:
             found = min((compare_initializer(was, now, tag) for now in candidates), key=len)
+            if isinstance(was, SwiftFactory):
+                found = [error.replace("Swift initializer", f"Swift factory `{was.name}`") for error in found]
             errors.extend(error for error in found if error not in errors)
-        elif was.owner not in lost:
-            lost.add(was.owner)
-            errors.append(f"{was.owner}: the Swift type of {tag} has no public initializer at the head")
+        elif (identity := (was.owner, was_name)) not in lost:
+            lost.add(identity)
+            kind = f"factory `{was.name}`" if isinstance(was, SwiftFactory) else "initializer"
+            errors.append(f"{was.owner}: the Swift type of {tag} has no public {kind} at the head")
     return errors
 
 
@@ -715,7 +811,27 @@ def check_source(tag: str, item: Input) -> Result:
         first = f", the first missing type is `{missing[0]}`" if missing else ""
         errors.append(f"{path}: {counts}{first}. The check does not pass on a source that it cannot read in full")
     errors.extend(item.source.compare(released, head, tag))
-    return Result(f"{path}: {counts}, {kept} kept", errors, kept)
+    line = f"{path}: {counts}, {kept} kept"
+    if item.source.parse is parse_swift:
+        factory_line, factory_errors = check_factories(tag, item)
+        line += f"\n{factory_line}"
+        errors.extend(factory_errors)
+    return Result(line, errors, kept)
+
+
+def check_factories(tag: str, item: Input) -> tuple[str, list[str]]:
+    """Compare factories of a present Swift source; zero released factories is valid."""
+    path = item.source.path
+    assert item.released_text is not None and item.head_text is not None
+    try:
+        released = parse_swift_factories(item.released_text, f"{tag}:{path}")
+        head = parse_swift_factories(item.head_text, item.head_path)
+    except SyntaxError as error:
+        found = f"{error.filename}:{error.lineno}: parse error: {error.msg}"
+        return f"not compared: {path} factories have a parse error", [found]
+    kept = sum(1 for name, was in released.items() if not compare_swift({name: was}, head, tag))
+    line = f"{path}: {tag} has {len(released)} factories, the head ({item.head_path}) has {len(head)}, {kept} kept"
+    return line, compare_swift(released, head, tag)
 
 
 def run(tag: str, inputs: list[Input]) -> int:

@@ -59,6 +59,12 @@ tasks:
     cmds:
       - swift test
 
+  test:released-constructors:
+    desc: Compile and test hand-written Swift calls from v1.10.3 against the current package
+    dir: packages/swift
+    cmds:
+      - swift test --filter ReleasedConstructorTests
+
   lint:
     desc: Lint and format Swift code with auto-fix
     dir: packages/swift

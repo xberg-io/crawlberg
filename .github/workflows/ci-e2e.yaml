@@ -541,6 +541,12 @@ jobs:
             [ -e "$f" ] && ln -sf "$(pwd)/$f" "target/debug/$(basename "$f")"
           done
 
+      - name: Check released constructor calls
+        # ~keep These hand-written release calls import the actual binding, outside the generated E2E surface.
+        if: matrix.lang == 'swift' || matrix.lang == 'python'
+        run: task ${{ matrix.lang }}:test:released-constructors
+        shell: bash
+
       - name: Run tests
         run: ${{ matrix.test-cmd }}
         shell: bash
