@@ -303,6 +303,7 @@ fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
             | crate::error::CrawlError::ConversionFailed { .. }
             | crate::error::CrawlError::BrowserError { .. }
             | crate::error::CrawlError::BrowserTimeout { .. }
+            | crate::error::CrawlError::TooManyRedirects { .. }
             | crate::error::CrawlError::SsrfPolicyViolation { .. },
         ) => ObservedOutcome::Permanent,
         Some(

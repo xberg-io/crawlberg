@@ -91,3 +91,42 @@ fn download_of_an_html_page_prints_the_url_without_its_password() {
         "the output must not carry the password: {stdout}{stderr}"
     );
 }
+
+#[test]
+fn should_report_config_paths_and_json_types_in_both_entrypoints() {
+    let cases = [
+        (r#"{"max_depth":"x"}"#, "max_depth: expected a JSON number"),
+        (
+            r#"{"browser":{"timeout":"x"}}"#,
+            "browser.timeout: expected a JSON number",
+        ),
+        (r#"{"browser":false}"#, "browser: expected a JSON object"),
+        (
+            r#"{"respect_robots_txt":12}"#,
+            "respect_robots_txt: expected a JSON boolean",
+        ),
+        (r#"{"nope":1}"#, "nope: unknown key"),
+        (r#"{"content":{"nope":1}}"#, "content.nope: unknown key"),
+        (r#"{"ssrf":{"nope":1}}"#, "ssrf.nope: unknown key"),
+        (r#"{"browser":{"nope":1}}"#, "browser.nope: unknown key"),
+    ];
+    assert_eq!(cases.len(), 8);
+    let mut observed = 0;
+    for command in ["scrape", "interact"] {
+        for (config, expected) in cases {
+            let mut invocation = cargo_bin();
+            invocation.args([command, "https://example.com", "--config", config]);
+            if command == "interact" {
+                invocation.args(["--actions", "[]"]);
+            }
+            let output = invocation.output().expect("the CLI must run");
+            let stderr = String::from_utf8(output.stderr).expect("diagnostic is UTF-8");
+            assert_eq!(output.status.code(), Some(1), "{command}: {stderr}");
+            assert!(stderr.contains(expected), "{command} {config}: {stderr}");
+            assert!(!stderr.contains("expected one of"), "{stderr}");
+            assert!(!stderr.contains("usize") && !stderr.contains("u64"), "{stderr}");
+            observed += 1;
+        }
+    }
+    assert_eq!(observed, 16);
+}

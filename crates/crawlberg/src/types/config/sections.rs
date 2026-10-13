@@ -14,7 +14,7 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
 /// html-to-markdown-rs as the conversion engine for all formats
 /// (markdown, plain text, djot).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 // ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
 // ~keep optional there. Add a new field at the END of the struct and leave this list alone.
 #[cfg_attr(

@@ -25,6 +25,32 @@ fn header_robots_directives(
     (value, directives)
 }
 
+pub(crate) struct ScrapeContext<'a> {
+    config: &'a CrawlConfig,
+    #[cfg(not(target_arch = "wasm32"))]
+    engine: Option<&'a crate::engine::CrawlEngine>,
+}
+
+impl<'a> From<&'a CrawlConfig> for ScrapeContext<'a> {
+    fn from(config: &'a CrawlConfig) -> Self {
+        Self {
+            config,
+            #[cfg(not(target_arch = "wasm32"))]
+            engine: None,
+        }
+    }
+}
+
+impl<'a> From<&'a crate::engine::CrawlEngine> for ScrapeContext<'a> {
+    fn from(engine: &'a crate::engine::CrawlEngine) -> Self {
+        Self {
+            config: &engine.config,
+            #[cfg(not(target_arch = "wasm32"))]
+            engine: Some(engine),
+        }
+    }
+}
+
 /// Build a `ScrapeResult` from a Tower [`CrawlResponse`](crate::tower::CrawlResponse).
 ///
 /// Runs the extraction pipeline (metadata, links, images, feeds, JSON-LD, assets)
@@ -33,13 +59,15 @@ fn header_robots_directives(
 /// `scrape()` and the wasm crawl loop (which takes its document from here) honour it too; the
 /// native crawl loop builds its own document record in `engine::page_result`.
 /// `page_scan` is the redirect check's read of `resp`'s body, when it made one.
-pub(crate) async fn scrape_from_crawl_response(
+pub(crate) async fn scrape_from_crawl_response<'a>(
     url: &str,
     resp: &crate::tower::CrawlResponse,
     page_scan: Option<PageScan>,
-    config: &CrawlConfig,
+    context: impl Into<ScrapeContext<'a>>,
     document_filter: Option<&crate::document::DocumentFilter>,
 ) -> Result<ScrapeResult, CrawlError> {
+    let context = context.into();
+    let config = context.config;
     let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
     let auth_header_sent = config.auth.is_some();
@@ -51,7 +79,7 @@ pub(crate) async fn scrape_from_crawl_response(
         .sent_user_agent
         .as_deref()
         .unwrap_or_else(|| default_robots_user_agent(config));
-    let robots = resolve_robots_status(url, &parsed_url, config, &client, sent_user_agent).await;
+    let robots = resolve_robots_status(url, &parsed_url, &context, &client, sent_user_agent).await;
     let response_meta = crate::http::extract_response_meta_from_hashmap(&resp.headers);
     let content_type = resp.content_type.clone();
     let mut decoded = decode_response_body(resp, page_scan, &content_type, &parsed_url, config);
@@ -80,7 +108,10 @@ pub(crate) async fn scrape_from_crawl_response(
         &header_robots,
         sent_user_agent,
     )?;
-    let extraction = body.extraction;
+    let mut extraction = body.extraction;
+    if decoded.is_html && !decoded.was_skipped {
+        crate::html::append_refresh_header_link(&mut extraction.links, &resp.headers, &parsed_url);
+    }
     let js_render_hint = body.js_render_hint;
     let downloaded_assets = download_discovered_assets(body.asset_refs, config, &client).await;
     // ~keep A binary or PDF body is not a page to convert, as in the crawl (`engine::page_result`).
@@ -196,10 +227,11 @@ struct RobotsStatus {
 async fn resolve_robots_status(
     url: &str,
     parsed_url: &Url,
-    config: &CrawlConfig,
+    context: &ScrapeContext<'_>,
     client: &reqwest::Client,
     sent_user_agent: &str,
 ) -> RobotsStatus {
+    let config = context.config;
     if !config.respect_robots_txt {
         return RobotsStatus {
             is_allowed: true,
@@ -223,9 +255,17 @@ async fn resolve_robots_status(
     } else {
         sent_user_agent
     };
-    match fetch_robots_outcome(url, config, client, ua).await {
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = if let Some(engine) = context.engine {
+        crate::engine::redirect::resolve_robots_outcome(engine, client, parsed_url, url, ua).await
+    } else {
+        std::sync::Arc::new(fetch_robots_outcome(url, config, client, ua).await)
+    };
+    #[cfg(target_arch = "wasm32")]
+    let outcome = std::sync::Arc::new(fetch_robots_outcome(url, config, client, ua).await);
+    match outcome.as_ref() {
         RobotsOutcome::Rules(rules) => RobotsStatus {
-            is_allowed: is_path_allowed(parsed_url.path(), &rules),
+            is_allowed: is_path_allowed(parsed_url.path(), rules),
             crawl_delay: rules.crawl_delay,
         },
         RobotsOutcome::AllowAll => RobotsStatus {
