@@ -9,6 +9,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -161,8 +162,9 @@ class SwiftReaderTests(unittest.TestCase):
             ("marks", "[String]", '[",", "("]'),
             ("nofollow", "Bool", None),
         ]
-        assert memberwise.effects == ()
-        assert decoder.effects == ("throws",)
+        assert memberwise.form == "init"
+        assert decoder.form == "init throws"
+        assert (memberwise.chain, memberwise.modifiers) == (("public struct Link: Codable",), "public")
         assert (decoder.parameters[0].label, decoder.parameters[0].name) == ("from", "decoder")
 
     def test_a_multi_line_initializer_is_read(self) -> None:
@@ -253,6 +255,146 @@ class SwiftComparisonTests(unittest.TestCase):
         assert swift_errors(head) == ["Link: the Swift initializer of v1.0.0 is `init`, the head is `init throws`"]
 
 
+def after_parameters(tail: str, *, declaration: str = "public init") -> str:
+    """Return the released type with `tail` between `)` and the body of the memberwise initializer."""
+    text = swift_text(SWIFT_RELEASED, declaration=declaration)
+    return text.replace(f"{SWIFT_RELEASED}) {{", f"{SWIFT_RELEASED}) {tail} {{")
+
+
+def bridge_errors(old: str, new: str) -> list[str]:
+    """Compare the bridge file of the head with a copy of it where `old`, once in the file, is `new`."""
+    bridge = (ROOT / CHECK.SWIFT_BRIDGE).read_text(encoding="utf-8")
+    assert bridge.count(old) == 1, old
+    return CHECK.compare_swift(CHECK.parse_swift(bridge), CHECK.parse_swift(bridge.replace(old, new)), TAG)
+
+
+class WholeDeclarationTests(unittest.TestCase):
+    """Every row of the third review that exited 0, and the two controls of the maintainer, fail."""
+
+    def assert_fails(self, found: list[str], *parts: str) -> None:
+        assert any(all(part in error for part in parts) for error in found), found
+
+    def test_n09_typed_throws_fails(self) -> None:
+        found = swift_errors(after_parameters("throws(CrawlError)"))
+        assert found == ["Link: the Swift initializer of v1.0.0 is `init`, the head is `init throws(CrawlError)`"]
+
+    def test_n12_an_owner_made_internal_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, owner="struct Link: Codable"))
+        expected = "Link: around the Swift initializer v1.0.0 has `public struct Link: Codable`, the head has `struct Link: Codable`"
+        assert found == [expected]
+
+    def test_n13_a_private_owner_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, owner="private struct Link: Codable"))
+        self.assert_fails(found, "Link: around the Swift initializer", "the head has `private struct Link: Codable`")
+
+    def test_n14_an_initializer_moved_to_a_fileprivate_extension_fails(self) -> None:
+        head = SWIFT_NO_INITIALIZER + swift_text(SWIFT_RELEASED, owner="fileprivate extension Link")
+        self.assert_fails(swift_errors(head), "Link: around the Swift initializer", "the head has `fileprivate extension Link`")
+
+    def test_n15_a_gained_generic_clause_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, declaration="public init<T: Sendable>"))
+        assert found == ["Link: the Swift initializer of v1.0.0 is `init`, the head is `init<T: Sendable>`"]
+
+    def test_n16_a_changed_generic_constraint_of_the_bridge_fails(self) -> None:
+        found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace(": IntoRustString>", ": FixedWidthInteger>"))
+        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        self.assert_fails(found, "the head is `init<GenericIntoRustString: FixedWidthInteger>`")
+
+    def test_n17_a_gained_where_clause_fails(self) -> None:
+        head = BRIDGE_TEXT.replace("_ depth: UInt) {", "_ depth: UInt) where G: FixedWidthInteger {")
+        found = swift_errors(head, BRIDGE_TEXT)
+        self.assert_fails(found, "Box: the Swift initializer of v1.0.0 is `init<G: IntoRustString>`")
+        self.assert_fails(found, "the head is `init<G: IntoRustString> where G: FixedWidthInteger`")
+
+    def test_n20_an_owner_moved_into_a_namespace_fails(self) -> None:
+        head = "public enum Models {\n" + swift_text(SWIFT_RELEASED) + "}\n"
+        assert all(key.startswith("Models.Link(") for key in CHECK.parse_swift(head))
+        assert swift_errors(head) == ["Link: the Swift type of v1.0.0 has no public initializer at the head"]
+
+    def test_n22_a_conditional_compilation_block_around_the_initializer_fails(self) -> None:
+        head = swift_text(SWIFT_RELEASED).replace("    public init(", "#if os(Linux)\n    public init(", 1)
+        head = head.replace(f"    }}\n    {DECODER}", f"    }}\n#endif\n    {DECODER}")
+        found = swift_errors(head)
+        assert found == ["Link: around the Swift initializer v1.0.0 has `no declaration`, the head has `#if os(Linux)`"]
+
+    def test_n22_a_conditional_compilation_block_around_the_owner_fails(self) -> None:
+        found = swift_errors("#if os(Linux)\n" + swift_text(SWIFT_RELEASED) + "#endif\n")
+        self.assert_fails(found, "Link: around the Swift initializer v1.0.0 has `public struct Link: Codable`, the head has `#if os(Linux)`")
+
+    def test_n28_two_positional_arguments_of_one_type_swapped_fail(self) -> None:
+        found = bridge_errors(BRIDGE_BATCH, BRIDGE_BATCH.replace("_ total_count: UInt, _ completed_count: UInt", "_ completed_count: UInt, _ total_count: UInt"))
+        self.assert_fails(found, "BatchCrawlResults.total_count: the Swift argument name changed from `total_count` to `completed_count`")
+        self.assert_fails(found, "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `total_count`")
+
+    def test_n29_a_gained_main_actor_attribute_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, declaration="@MainActor public init"))
+        assert found == ["Link: the Swift initializer of v1.0.0 has the modifiers `public`, the head has `@MainActor public`"]
+
+    def test_n30_a_gained_availability_attribute_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED, declaration="@available(macOS 99, *) public init"))
+        self.assert_fails(found, "Link: the Swift initializer of v1.0.0 has the modifiers `public`", "`@available(macOS 99, *) public`")
+
+    def test_n31_unavailable_inside_a_message_is_not_unavailable(self) -> None:
+        declaration = '@available(*, deprecated, message: "unavailable in 2.0") public init'
+        released = swift_text(SWIFT_RELEASED, declaration=declaration)
+        assert len(CHECK.parse_swift(released)) == 2
+        found = swift_errors(swift_text(SWIFT_RELEASED + ", originalUrl: String", declaration=declaration), released)
+        assert found == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
+
+    def test_n33_a_positional_argument_removed_and_one_appended_fails(self) -> None:
+        head = BRIDGE_BATCH.replace("_ completed_count: UInt, _ failed_count: UInt)", "_ failed_count: UInt, _ extra: UInt = 0)")
+        found = bridge_errors(BRIDGE_BATCH, head)
+        self.assert_fails(found, "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `failed_count`")
+
+    def test_the_maintainer_control_of_a_narrowed_generic_constraint_fails(self) -> None:
+        found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace(": IntoRustString>", ": IntoRustString & Equatable>"))
+        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        self.assert_fails(found, "the head is `init<GenericIntoRustString: IntoRustString & Equatable>`")
+
+    def test_the_maintainer_control_of_an_implicitly_unwrapped_initializer_fails(self) -> None:
+        found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace("convenience init<", "convenience init!<"))
+        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        self.assert_fails(found, "the head is `init!<GenericIntoRustString: IntoRustString>`")
+
+    def test_an_unknown_node_kind_under_the_initializer_fails_with_the_kind(self) -> None:
+        with mock.patch.object(CHECK, "INITIALIZER_HEAD", CHECK.INITIALIZER_HEAD - {"type_parameters"}):
+            with self.assertRaises(SyntaxError) as raised:
+                CHECK.parse_swift(BRIDGE_TEXT)
+        assert raised.exception.msg == "a `type_parameters` node of the initializer that the reader does not classify"
+        assert raised.exception.lineno == 7
+
+    def test_an_unknown_node_kind_around_the_initializer_fails_with_the_kind(self) -> None:
+        local = "func make() {\n    struct Link {\n        public init(url: String) {}\n    }\n}\n"
+        with self.assertRaises(SyntaxError) as raised:
+            CHECK.parse_swift(local)
+        assert raised.exception.msg == "a `statements` node around the initializer that the reader does not classify"
+
+    def test_an_added_argument_with_a_default_before_a_positional_argument_fails(self) -> None:
+        head = BRIDGE_TEXT.replace("(_ url: G, _ depth: UInt)", "(_ url: G, limit: UInt = 0, _ depth: UInt)")
+        found = swift_errors(head, BRIDGE_TEXT)
+        assert found == ["Box.limit: the new Swift initializer argument comes before the positional argument `depth` of v1.0.0: a positional call of v1.0.0 binds another value"]
+
+    def test_an_added_argument_with_a_default_before_a_labelled_argument_passes(self) -> None:
+        # ~keep Swift skips a defaulted parameter whose label the call does not write (N21).
+        assert swift_errors(swift_text("extra: Int = 0, " + SWIFT_RELEASED)) == []
+
+    def test_a_renamed_internal_name_fails(self) -> None:
+        found = swift_errors(swift_text(SWIFT_RELEASED.replace("url: String", "url u: String")))
+        assert found == ["Link.url: the Swift argument name changed from `url` to `u`"]
+
+    def test_a_gained_default_passes(self) -> None:
+        assert swift_errors(swift_text(SWIFT_RELEASED.replace("nofollow: Bool", "nofollow: Bool = false"))) == []
+
+    def test_comments_and_whitespace_are_not_compared(self) -> None:
+        parameters = SWIFT_RELEASED.replace("url: String,", "url:   String, /* c */")
+        head = f"public struct Link /* c */ : Codable {{\n    public /* c */ init({parameters} // c\n    ) {{\n    }}\n    {DECODER}\n}}\n"
+        assert swift_errors(head) == []
+
+    def test_the_sources_name_the_stub_and_the_three_swift_files(self) -> None:
+        paths = [source.path for source in CHECK.SOURCES]
+        assert paths == [CHECK.STUB, CHECK.SWIFT_FACADE, CHECK.SWIFT_BRIDGE, CHECK.SWIFT_BRIDGE_CORE]
+
+
 SWIFT_TEXT = "public struct Link: Codable {\n    public init(url: String) {\n    }\n}\n"
 SWIFT_MULTI_LINE = "public struct Link: Codable {\n    public init(\n        url: String) {\n    }\n}\n"
 # ~keep Text that is not Swift at the top of the facade, as a merge or a hand edit leaves it.
@@ -263,6 +405,15 @@ BRIDGE_TEXT = (
     "        super.init(ptr: ptr)\n    }\n}\n"
     "extension Box {\n    public convenience init<G: IntoRustString>(_ url: G, _ depth: UInt) {\n"
     "        self.init(ptr: __swift_bridge__$Box$new(url, depth))\n    }\n}\n"
+)
+# ~keep Two lines of the generated bridge file of the head, byte-equal to v1.10.3.
+BRIDGE_LINK_INFO = (
+    "public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, "
+    "_ text: GenericIntoRustString, _ link_type: LinkType, _ rel: Optional<GenericIntoRustString>, _ nofollow: Bool) {"
+)
+BRIDGE_BATCH = (
+    "public convenience init(_ results: RustVec<BatchCrawlResult>, _ total_count: UInt, "
+    "_ completed_count: UInt, _ failed_count: UInt) {"
 )
 STUB_NO_CONSTRUCTOR = "class Options:\n    wrap: bool\n"
 
