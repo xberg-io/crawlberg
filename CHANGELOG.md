@@ -188,6 +188,8 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
+  native child exits. Linux Dart applications that start their own child processes remain affected.
 - On Linux with Tokio's pidfd reaper, browser launch preserves waitable host `SIGCHLD`
   handlers, masks and flags, avoiding Go's fatal signal-stack error.
 - For automatic-reaping signal dispositions, Unix browser launch initializes Tokio's `SIGCHLD`
