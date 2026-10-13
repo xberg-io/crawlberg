@@ -183,6 +183,13 @@ class SwiftReaderTests(unittest.TestCase):
         text += "public protocol P {\n    init(y: Int)\n}\n"
         assert CHECK.parse_swift(text) == {}
 
+    def test_a_protocol_requirement_that_writes_public_is_not_a_constructor(self) -> None:
+        # ~keep Swift rejects a modifier on a requirement, but the grammar reads it. The level of
+        # the requirement is then `public`, and only the protocol around it hides it.
+        text = "public protocol Q {\n    public init(y: Int)\n}\n"
+        text += "public struct K {\n    public init(k: Int) {}\n}\n"
+        assert list(CHECK.parse_swift(text)) == ["K(k: Int) init public public struct K"]
+
     def test_the_bridge_file_of_the_head_names_crawl_page_result(self) -> None:
         # ~keep swift-bridge writes `$` in identifiers; the grammar reads the file all the same.
         bridge = (ROOT / CHECK.SWIFT_BRIDGE).read_text(encoding="utf-8")
