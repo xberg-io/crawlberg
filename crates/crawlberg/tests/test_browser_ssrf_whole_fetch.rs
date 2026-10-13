@@ -24,6 +24,8 @@ use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
+#[path = "common/foreign_network.rs"]
+mod foreign_network;
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
 const SECRET_MARKER: &str = "denied-marker";
@@ -525,12 +527,12 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     ) else {
         return;
     };
-    let Some((other_client, handler)) =
+    let Some((mut other_client, handler)) =
         common::expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(browser_config).await)
     else {
         return;
     };
-    common::spawn_handler(handler);
+    let handler_task = common::spawn_handler(handler);
     // ~keep The tab keeps its own tally in sessionStorage, which lasts across its reloads: a
     // ~keep fetch the check refuses rejects, one it continues resolves. The next reload waits
     // ~keep for the fetch to settle, so no fetch is cut off by its own page's unload.
@@ -541,9 +543,17 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     ))
     .await;
     let other_tab = other_client
-        .new_page(other_seed.as_str())
+        .new_page("about:blank")
         .await
         .expect("the other client's tab must open");
+    // ~keep Observe before navigation so failures preceding interception remain distinguishable.
+    let observer = foreign_network::Observer::start(&other_tab)
+        .await
+        .expect("foreign network observer");
+    other_tab
+        .goto(other_seed.as_str())
+        .await
+        .expect("the other client's tab must navigate");
     let (_site, seed) = seed_site(&format!("<p>start</p><script>window.open({d:?} + '?popup');</script>")).await;
     let mut config = config();
     config.ssrf.deny_private = false;
@@ -557,9 +567,20 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
             .count()
     };
     let before = count(&private.received_requests().await.expect("recording"), "other");
+    let before_refused = other_tab
+        .evaluate("Number(sessionStorage.getItem('refused') || 0)")
+        .await
+        .and_then(|result| result.into_value::<u64>().map_err(Into::into))
+        .ok();
+    // ~keep Events drain asynchronously; these snapshots bound observation, not exact CDP failure time.
+    let before_failures = observer.snapshot();
     let result = run(test_name, &seed, config).await;
     let received = private.received_requests().await.expect("recording");
     if result.is_none() {
+        drop(observer);
+        foreign_network::shutdown_owned_browser(&mut other_client, handler_task)
+            .await
+            .expect("owned external browser cleanup");
         return;
     }
     let during = count(&received, "other") - before;
@@ -575,6 +596,11 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let failures = observer.snapshot();
+    drop(observer);
+    foreign_network::shutdown_owned_browser(&mut other_client, handler_task)
+        .await
+        .expect("owned external browser cleanup");
     // ~keep The other tab reloads 100 ms after each fetch settles, so its requests come from
     // ~keep documents loaded while crawlberg's check is on; a document loaded before that is
     // ~keep never paused. No count of them is asserted beyond one: load decides how many fit
@@ -586,7 +612,8 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     assert_eq!(
         refused,
         Some(0),
-        "{test_name}: the check must refuse none of the other client's requests"
+        "{test_name}: the check must refuse none of the other client's requests; \
+         pre_scrape_refused={before_refused:?}, pre_scrape_network={before_failures:?}, network={failures:?}"
     );
     assert!(
         count(&received, "popup") >= 1,
