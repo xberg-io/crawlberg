@@ -2028,7 +2028,6 @@ enum ChildPendingKind {
     },
     RecursiveArm {
         target: TargetId,
-        other: bool,
         session: String,
         waiting_for_debugger: bool,
         structural_parent: Option<String>,
@@ -2639,7 +2638,6 @@ where
                             session,
                             waiting_for_debugger,
                             structural_parent,
-                            ..
                         } => {
                             if !acknowledged {
                                 if let Some(waiter) = root_waiters.remove(&target) {
@@ -2881,18 +2879,6 @@ where
                                 return false;
                             }
                         }
-                        // ~keep Chrome can detach an existing browser UI before its arm is answered (#701).
-                        // ~keep Retire only the observed unowned root session; a live or owned arm still fails closed.
-                        pending.retain(|_, command| !matches!(&command.kind,
-                            ChildPendingKind::RecursiveArm {
-                                target, session: pending_session, other: true, structural_parent: None,
-                                ..
-                            } if pending_session == session
-                                && !root_waiters.contains_key(target)
-                                && matches!(registry.ownership.get(target), None | Some(TargetOwnership::Other))
-                                && command.context.as_ref().is_none_or(|context| !registry.contexts.contains_key(context)
-                                    && !registry.retired_contexts.contains(context))
-                        ));
                         continue;
                     }
                     Some("Page.javascriptDialogOpening") => {
@@ -3090,7 +3076,6 @@ where
                     child_pending_in(
                         ChildPendingKind::RecursiveArm {
                             target,
-                            other,
                             session: attached.session_id,
                             waiting_for_debugger: attached.waiting_for_debugger,
                             structural_parent,
@@ -5648,6 +5633,9 @@ mod tests {
         RegisteredLater,
         WatchedLater,
         RetiredLater,
+        LaunchedBrowser,
+        SharedContext,
+        MissingContext,
     }
 
     async fn a_target_arm_with_a_late_session_error(detached: bool, owner: ArmOwner) -> bool {
@@ -5656,7 +5644,15 @@ mod tests {
         let owned = matches!(owner, ArmOwner::Owned);
         let survives = detached && matches!(owner, ArmOwner::Other);
         let page = watched("ROOT");
-        let shared = Arc::new(shared_with(&page, "OTHER"));
+        let mut shared = shared_with(&page, "OTHER");
+        if matches!(owner, ArmOwner::LaunchedBrowser) {
+            shared.origin = BrowserOrigin::Launched;
+        }
+        if matches!(owner, ArmOwner::SharedContext) {
+            shared.context = PageContext::Shared;
+            lock(&shared.registry).shared_context = true;
+        }
+        let shared = Arc::new(shared);
         let context = if owned {
             register_owned_context(&shared, &page)
         } else {
@@ -5665,7 +5661,22 @@ mod tests {
         let target = if owned { "ROOT" } else { "OTHER" };
         let (mut socket, commands, controller) =
             test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
-        send_attached_target_with_waiting(&mut socket, "S-OTHER", target, "browser_ui", None, &context, false).await;
+        if matches!(owner, ArmOwner::MissingContext) {
+            let attached = serde_json::json!({
+                "method": "Target.attachedToTarget",
+                "params": { "sessionId": "S-OTHER", "waitingForDebugger": false,
+                    "targetInfo": { "targetId": target, "type": "browser_ui", "title": "",
+                        "url": "chrome://privacy-sandbox-dialog/", "attached": true,
+                        "canAccessOpener": false } }
+            });
+            socket
+                .send(Message::Text(attached.to_string().into()))
+                .await
+                .expect("attach without context");
+        } else {
+            send_attached_target_with_waiting(&mut socket, "S-OTHER", target, "browser_ui", None, &context, false)
+                .await;
+        }
         let arm = next_child_message(&mut socket).await;
         assert_eq!(arm["sessionId"], "S-OTHER");
         match owner {
@@ -5686,7 +5697,11 @@ mod tests {
                     Some(TargetOwnership::Other)
                 ));
             }
-            ArmOwner::Other | ArmOwner::Owned => {}
+            ArmOwner::Other
+            | ArmOwner::Owned
+            | ArmOwner::LaunchedBrowser
+            | ArmOwner::SharedContext
+            | ArmOwner::MissingContext => {}
         }
         if detached {
             let event = serde_json::json!({
@@ -5773,7 +5788,7 @@ mod tests {
                 "params": { "sessionId": session, "waitingForDebugger": false,
                     "targetInfo": { "targetId": target, "type": "browser_ui", "title": "",
                         "url": "chrome://privacy-sandbox-dialog/", "attached": true,
-                        "canAccessOpener": false } }
+                        "canAccessOpener": false, "browserContextId": "FOREIGN" } }
             });
             socket
                 .send(Message::Text(event.to_string().into()))
@@ -5837,6 +5852,21 @@ mod tests {
     #[tokio::test]
     async fn an_other_session_watched_after_arming_still_fails_when_detached() {
         assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::WatchedLater).await);
+    }
+
+    #[tokio::test]
+    async fn a_launched_browser_cannot_retire_a_detached_other_session() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::LaunchedBrowser).await);
+    }
+
+    #[tokio::test]
+    async fn a_shared_context_cannot_retire_a_detached_other_session() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::SharedContext).await);
+    }
+
+    #[tokio::test]
+    async fn a_contextless_other_session_cannot_retire_its_detached_arm() {
+        assert!(!a_target_arm_with_a_late_session_error(true, ArmOwner::MissingContext).await);
     }
 
     #[tokio::test]

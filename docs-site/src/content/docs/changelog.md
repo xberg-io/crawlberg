@@ -400,8 +400,8 @@ title: "Changelog"
 - With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
   Chrome 155 opens targets of its own in each new browser context and does not close them on
   request; the engine waited for them to close before it kept the page. (#694)
-- Detached, unowned browser UI sessions retire their pending interception arm without canceling the controller.
-  Newly watched targets, retired contexts and unrelated live sessions retain fail-closed handling. (#701)
+- Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
+  Foreign-retirement census validation and retirement use one registry lock. (#701)
 
 ## [1.10.2] - 2026-10-06
 
