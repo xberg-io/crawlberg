@@ -190,6 +190,8 @@ title: "Changelog"
 
 ### Fixed
 
+- A retired owned browser starts its process and profile cleanup before waiting on its security
+  controller, so cleanup finishes even if the host stops driving the runtime before dropping the pool.
 - Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
   native child exits. Linux Dart applications that start their own child processes remain affected.
 - Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,

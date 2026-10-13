@@ -1861,6 +1861,45 @@ fn a_pool_dropped_where_no_runtime_runs_stops_its_chrome_and_removes_its_profile
     drop(runtime);
 }
 
+// ~keep A supervisor can retire its browser just before the host stops driving its runtime.
+#[test]
+fn a_failed_browser_releases_its_profile_before_cleanup_waits_on_a_paused_runtime() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime must build");
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    runtime
+        .block_on(pool.warm())
+        .expect("Chrome must launch for the retirement regression");
+    let (pending, path) = runtime.block_on(async {
+        let state = pool.state.lock().await.take().expect("a warm pool must own a browser");
+        let path = state
+            .user_data_dir
+            .as_ref()
+            .expect("an owned profile")
+            .path()
+            .to_path_buf();
+        state.handler_handle.abort();
+        let mut pending = Box::pin(state.fail_closed());
+        assert!(
+            futures::poll!(pending.as_mut()).is_pending(),
+            "retirement must reach its first wait"
+        );
+        (pending, path)
+    });
+    drop(pool);
+    let removed_while_paused = wait_for_removal(&path);
+    drop(pending);
+    drop(runtime);
+    assert!(
+        removed_while_paused,
+        "retirement must release the owned profile while the runtime is paused: {}",
+        path.display()
+    );
+    assert_profile_directory_is_gone_for_good(&path);
+}
+
 /// A pool dropped without `shutdown` logs no warning that its browser "was not closed manually".
 ///
 /// ~keep The pool starts its Chrome with no kill on drop and stops it in the profile teardown, so
