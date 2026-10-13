@@ -2679,7 +2679,7 @@ checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
 [[package]]
 name = "html-to-markdown-rs"
 version = "3.17.2"
-source = "git+https://github.com/xberg-io/html-to-markdown?rev=71b006db84473f848ff715351f6734d1e0db1be5#71b006db84473f848ff715351f6734d1e0db1be5"
+source = "git+https://github.com/xberg-io/html-to-markdown?rev=24260db2590774c5238d2f26c839abffa2b056c5#24260db2590774c5238d2f26c839abffa2b056c5"
 dependencies = [
  "ahash",
  "astral-tl",
