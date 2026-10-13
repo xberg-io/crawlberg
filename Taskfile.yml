@@ -89,6 +89,11 @@ tasks:
     cmds:
       - python3 scripts/ci/test_chrome_runtime.py
 
+  ci:released-constructors:
+    desc: Check that the bindings keep every constructor of the last release
+    cmds:
+      - python3 scripts/ci/check_released_constructors.py
+
   setup:
     desc: "Install all dependencies and dev tools"
     cmds:
