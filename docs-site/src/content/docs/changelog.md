@@ -184,6 +184,12 @@ title: "Changelog"
 
 ### Fixed
 
+- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
+  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
+  This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
+  longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
+  explicitly wait for its own children; exited, unwaited children remain zombies. Existing
+  callable signal handlers remain chained. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
 - Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
