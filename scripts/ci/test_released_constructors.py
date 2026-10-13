@@ -9,7 +9,11 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest import mock
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -35,6 +39,18 @@ def stub(fields: tuple[str, ...] = FIELDS, arguments: str = ARGUMENTS) -> str:
 
 def errors(head: str, released: str | None = None) -> list[str]:
     return CHECK.compare(CHECK.parse_stub(released or stub()), CHECK.parse_stub(head), TAG)
+
+
+@contextlib.contextmanager
+def expected_error[Error: Exception](kind: type[Error]) -> Iterator[list[Error]]:
+    """Capture an expected parser error with no third-party test dependency."""
+    caught: list[Error] = []
+    try:
+        yield caught
+    except kind as error:
+        caught.append(error)
+    else:
+        raise AssertionError(f"expected {kind.__name__}")
 
 
 class KeptConstructorTests(unittest.TestCase):
@@ -156,7 +172,10 @@ class SwiftReaderTests(unittest.TestCase):
         # ~keep The key is the whole declaration: the signature with the defaults, the form, the
         # modifiers and the chain. Two initializers of one source never share it.
         memberwise_key = f"Link({SWIFT_RELEASED}) init public public struct Link: Codable"
-        assert list(read) == [memberwise_key, "Link(from decoder: any Decoder) init throws public public struct Link: Codable"]
+        assert list(read) == [
+            memberwise_key,
+            "Link(from decoder: any Decoder) init throws public public struct Link: Codable",
+        ]
         memberwise, decoder = read.values()
         assert [(p.label, p.type, p.default) for p in memberwise.parameters] == [
             ("url", "String", None),
@@ -170,16 +189,23 @@ class SwiftReaderTests(unittest.TestCase):
         assert (decoder.parameters[0].label, decoder.parameters[0].name) == ("from", "decoder")
 
     def test_a_multi_line_initializer_is_read(self) -> None:
-        assert list(CHECK.parse_swift(SWIFT_MULTI_LINE)) == ["Link(url: String) init public public struct Link: Codable"]
+        assert list(CHECK.parse_swift(SWIFT_MULTI_LINE)) == [
+            "Link(url: String) init public public struct Link: Codable"
+        ]
 
     def test_a_positional_generic_initializer_of_a_bridge_class_is_read(self) -> None:
         read = CHECK.parse_swift(BRIDGE_TEXT)
         generic = "Box(_ url: G, _ depth: UInt) init<G: IntoRustString> public convenience extension Box"
-        assert list(read) == ["Box(ptr: UnsafeMutableRawPointer) init public override public class Box: BoxRef", generic]
+        assert list(read) == [
+            "Box(ptr: UnsafeMutableRawPointer) init public override public class Box: BoxRef",
+            generic,
+        ]
         assert [p.name for p in read[generic].parameters] == ["url", "depth"]
 
     def test_a_private_initializer_an_unavailable_one_and_a_protocol_requirement_are_not_constructors(self) -> None:
-        text = "public struct Link {\n    init(url: String) {}\n    @available(*, unavailable) public init(x: Int) {}\n}\n"
+        text = (
+            "public struct Link {\n    init(url: String) {}\n    @available(*, unavailable) public init(x: Int) {}\n}\n"
+        )
         text += "public protocol P {\n    init(y: Int)\n}\n"
         assert CHECK.parse_swift(text) == {}
 
@@ -307,7 +333,9 @@ class WholeDeclarationTests(unittest.TestCase):
 
     def test_n16_a_changed_generic_constraint_of_the_bridge_fails(self) -> None:
         found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace(": IntoRustString>", ": FixedWidthInteger>"))
-        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        self.assert_fails(
+            found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`"
+        )
         self.assert_fails(found, "the head is `init<GenericIntoRustString: FixedWidthInteger>`")
 
     def test_n17_a_gained_where_clause_fails(self) -> None:
@@ -329,20 +357,40 @@ class WholeDeclarationTests(unittest.TestCase):
 
     def test_n22_a_conditional_compilation_block_around_the_owner_fails(self) -> None:
         found = swift_errors("#if os(Linux)\n" + swift_text(SWIFT_RELEASED) + "#endif\n")
-        self.assert_fails(found, "Link: around the Swift initializer v1.0.0 has `public struct Link: Codable`, the head has `#if os(Linux)`")
+        self.assert_fails(
+            found,
+            "Link: around the Swift initializer v1.0.0 has `public struct Link: Codable`, the head has `#if os(Linux)`",
+        )
 
     def test_n28_two_positional_arguments_of_one_type_swapped_fail(self) -> None:
-        found = bridge_errors(BRIDGE_BATCH, BRIDGE_BATCH.replace("_ total_count: UInt, _ completed_count: UInt", "_ completed_count: UInt, _ total_count: UInt"))
-        self.assert_fails(found, "BatchCrawlResults.total_count: the Swift argument name changed from `total_count` to `completed_count`")
-        self.assert_fails(found, "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `total_count`")
+        found = bridge_errors(
+            BRIDGE_BATCH,
+            BRIDGE_BATCH.replace(
+                "_ total_count: UInt, _ completed_count: UInt", "_ completed_count: UInt, _ total_count: UInt"
+            ),
+        )
+        self.assert_fails(
+            found,
+            "BatchCrawlResults.total_count: the Swift argument name changed from `total_count` to `completed_count`",
+        )
+        self.assert_fails(
+            found,
+            "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `total_count`",
+        )
 
     def test_n29_a_gained_main_actor_attribute_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED, declaration="@MainActor public init"))
-        assert found == ["Link: the Swift initializer of v1.0.0 has the modifiers `public`, the head has `@MainActor public`"]
+        assert found == [
+            "Link: the Swift initializer of v1.0.0 has the modifiers `public`, the head has `@MainActor public`"
+        ]
 
     def test_n30_a_gained_availability_attribute_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED, declaration="@available(macOS 99, *) public init"))
-        self.assert_fails(found, "Link: the Swift initializer of v1.0.0 has the modifiers `public`", "`@available(macOS 99, *) public`")
+        self.assert_fails(
+            found,
+            "Link: the Swift initializer of v1.0.0 has the modifiers `public`",
+            "`@available(macOS 99, *) public`",
+        )
 
     def test_n31_unavailable_inside_a_message_is_not_unavailable(self) -> None:
         declaration = '@available(*, deprecated, message: "unavailable in 2.0") public init'
@@ -352,35 +400,50 @@ class WholeDeclarationTests(unittest.TestCase):
         assert found == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
 
     def test_n33_a_positional_argument_removed_and_one_appended_fails(self) -> None:
-        head = BRIDGE_BATCH.replace("_ completed_count: UInt, _ failed_count: UInt)", "_ failed_count: UInt, _ extra: UInt = 0)")
+        head = BRIDGE_BATCH.replace(
+            "_ completed_count: UInt, _ failed_count: UInt)", "_ failed_count: UInt, _ extra: UInt = 0)"
+        )
         found = bridge_errors(BRIDGE_BATCH, head)
-        self.assert_fails(found, "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `failed_count`")
+        self.assert_fails(
+            found,
+            "BatchCrawlResults.completed_count: the Swift argument name changed from `completed_count` to `failed_count`",
+        )
 
     def test_the_maintainer_control_of_a_narrowed_generic_constraint_fails(self) -> None:
-        found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace(": IntoRustString>", ": IntoRustString & Equatable>"))
-        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        found = bridge_errors(
+            BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace(": IntoRustString>", ": IntoRustString & Equatable>")
+        )
+        self.assert_fails(
+            found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`"
+        )
         self.assert_fails(found, "the head is `init<GenericIntoRustString: IntoRustString & Equatable>`")
 
     def test_the_maintainer_control_of_an_implicitly_unwrapped_initializer_fails(self) -> None:
         found = bridge_errors(BRIDGE_LINK_INFO, BRIDGE_LINK_INFO.replace("convenience init<", "convenience init!<"))
-        self.assert_fails(found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`")
+        self.assert_fails(
+            found, "LinkInfo: the Swift initializer of v1.0.0 is `init<GenericIntoRustString: IntoRustString>`"
+        )
         self.assert_fails(found, "the head is `init!<GenericIntoRustString: IntoRustString>`")
 
     def test_an_unknown_node_kind_under_the_initializer_fails_with_the_kind(self) -> None:
-        with mock.patch.object(CHECK, "INITIALIZER_HEAD", CHECK.INITIALIZER_HEAD - {"type_parameters"}):
-            with self.assertRaises(SyntaxError) as raised:
-                CHECK.parse_swift(BRIDGE_TEXT)
-        assert raised.exception.msg == "a `type_parameters` node of the initializer that the reader does not classify"
-        assert raised.exception.lineno == 7
+        with (
+            mock.patch.object(CHECK, "INITIALIZER_HEAD", CHECK.INITIALIZER_HEAD - {"type_parameters"}),
+            expected_error(SyntaxError) as raised,
+        ):
+            CHECK.parse_swift(BRIDGE_TEXT)
+        assert raised[0].msg == "a `type_parameters` node of the initializer that the reader does not classify"
+        assert raised[0].lineno == 7
 
     def test_an_unknown_node_kind_around_the_initializer_fails_with_the_kind(self) -> None:
         # ~keep A type inside a function is internal, so the reader never reaches its parent: the
         # arm is reached with a body kind that the reader does not know.
-        with mock.patch.object(CHECK, "BODIES", CHECK.BODIES - {"enum_class_body"}):
-            with self.assertRaises(SyntaxError) as raised:
-                CHECK.parse_swift("public enum Link {\n    public init(url: String) {}\n}\n")
-        assert raised.exception.msg == "a `enum_class_body` node around the initializer that the reader does not classify"
-        assert raised.exception.lineno == 1
+        with (
+            mock.patch.object(CHECK, "BODIES", CHECK.BODIES - {"enum_class_body"}),
+            expected_error(SyntaxError) as raised,
+        ):
+            CHECK.parse_swift("public enum Link {\n    public init(url: String) {}\n}\n")
+        assert raised[0].msg == "a `enum_class_body` node around the initializer that the reader does not classify"
+        assert raised[0].lineno == 1
 
     def test_a_type_inside_a_function_is_not_public(self) -> None:
         local = "func make() {\n    struct Link {\n        public init(url: String) {}\n    }\n}\n"
@@ -389,7 +452,9 @@ class WholeDeclarationTests(unittest.TestCase):
     def test_an_added_argument_with_a_default_before_a_positional_argument_fails(self) -> None:
         head = BRIDGE_TEXT.replace("(_ url: G, _ depth: UInt)", "(_ url: G, limit: UInt = 0, _ depth: UInt)")
         found = swift_errors(head, BRIDGE_TEXT)
-        assert found == ["Box.limit: the new Swift initializer argument comes before the positional argument `depth` of v1.0.0: a positional call of v1.0.0 binds another value"]
+        assert found == [
+            "Box.limit: the new Swift initializer argument comes before the positional argument `depth` of v1.0.0: a positional call of v1.0.0 binds another value"
+        ]
 
     def test_an_added_argument_with_a_default_before_a_labelled_argument_passes(self) -> None:
         # ~keep Swift skips a defaulted parameter whose label the call does not write (N21).
@@ -426,16 +491,27 @@ class SixRowTests(unittest.TestCase):
 
     def test_m1_an_initializer_of_a_public_extension_is_public_and_its_removal_fails(self) -> None:
         read = CHECK.parse_swift(M1_RELEASED)
-        assert [(i.owner, i.modifiers, i.chain) for i in read.values()] == [("Box", "public", ("public struct Box",)), ("Box", "", ("public extension Box",))]
+        assert [(i.owner, i.modifiers, i.chain) for i in read.values()] == [
+            ("Box", "public", ("public struct Box",)),
+            ("Box", "", ("public extension Box",)),
+        ]
         head = "public struct Box {\n    public init(a: Int) {}\n}\n"
         found = swift_errors(head, M1_RELEASED)
-        assert found[0] == "Box: around the Swift initializer v1.0.0 has `public extension Box`, the head has `public struct Box`"
+        assert (
+            found[0]
+            == "Box: around the Swift initializer v1.0.0 has `public extension Box`, the head has `public struct Box`"
+        )
         assert "Box.b: the Swift initializer argument of v1.0.0 is removed or renamed" in found
         status, output = gate((CHECK.SWIFT_FACADE, M1_RELEASED, head))
         assert status == 1, output
-        assert f"{CHECK.SWIFT_FACADE}: v1.0.0 has 2 constructors, the head (head/{CHECK.SWIFT_FACADE}) has 1, 1 kept" in output
+        assert (
+            f"{CHECK.SWIFT_FACADE}: v1.0.0 has 2 constructors, the head (head/{CHECK.SWIFT_FACADE}) has 1, 1 kept"
+            in output
+        )
 
-    def test_m1_the_effective_visibility_is_the_initializer_then_the_extension_under_every_enclosing_declaration(self) -> None:
+    def test_m1_the_effective_visibility_is_the_initializer_then_the_extension_under_every_enclosing_declaration(
+        self,
+    ) -> None:
         hidden = (
             "private extension Box {\n    public init(b: String) {}\n}\n",
             "public extension Box {\n    internal init(b: String) {}\n}\n",
@@ -461,23 +537,29 @@ class SixRowTests(unittest.TestCase):
     def test_m2_two_overloads_with_equal_parameters_are_both_read_and_the_removal_of_either_fails(self) -> None:
         assert [i.form for i in CHECK.parse_swift(M2_PAIR).values()] == ["init<G>", "init<G: Equatable>"]
         head = M2_PAIR.replace("    public init<G>(_ value: G) {}\n", "")
-        assert swift_errors(head, M2_PAIR) == ["Box: the Swift initializer of v1.0.0 is `init<G>`, the head is `init<G: Equatable>`"]
+        assert swift_errors(head, M2_PAIR) == [
+            "Box: the Swift initializer of v1.0.0 is `init<G>`, the head is `init<G: Equatable>`"
+        ]
         head = M2_PAIR.replace("    public init<G: Equatable>(_ value: G) {}\n", "")
-        assert swift_errors(head, M2_PAIR) == ["Box: the Swift initializer of v1.0.0 is `init<G: Equatable>`, the head is `init<G>`"]
+        assert swift_errors(head, M2_PAIR) == [
+            "Box: the Swift initializer of v1.0.0 is `init<G: Equatable>`, the head is `init<G>`"
+        ]
 
     def test_m2_an_async_twin_and_two_constrained_extensions_are_kept_apart(self) -> None:
         assert len(CHECK.parse_swift(M2_TWINS)) == 4
         head = M2_TWINS.replace("    public init(_ value: Int) async {}\n", "")
-        assert swift_errors(head, M2_TWINS) == ["Box: the Swift initializer of v1.0.0 is `init async`, the head is `init`"]
+        assert swift_errors(head, M2_TWINS) == [
+            "Box: the Swift initializer of v1.0.0 is `init async`, the head is `init`"
+        ]
         head = M2_TWINS.replace("extension Box where T: Hashable {\n    public init(_ v: T) {}\n}\n", "")
         expected = "Box: around the Swift initializer v1.0.0 has `extension Box where T: Hashable`, the head has `extension Box where T: Equatable`"
         assert swift_errors(head, M2_TWINS) == [expected]
 
     def test_m2_one_declaration_twice_fails_the_parse(self) -> None:
-        with self.assertRaises(SyntaxError) as raised:
+        with expected_error(SyntaxError) as raised:
             CHECK.parse_swift("public struct Box {\n    public init(a: Int) {}\n    public init(a: Int) {}\n}\n")
-        assert raised.exception.msg == "a second declaration of `Box(a: Int) init public public struct Box`"
-        assert raised.exception.lineno == 3
+        assert raised[0].msg == "a second declaration of `Box(a: Int) init public public struct Box`"
+        assert raised[0].lineno == 3
 
     def test_m2_a_removed_initializer_passes_only_when_a_kept_one_takes_each_of_its_calls(self) -> None:
         # ~keep `Box(a: 1)` compiles against `init(a: Int, b: Int = 0)`: the rule of the comparison.
@@ -490,19 +572,26 @@ class SixRowTests(unittest.TestCase):
         released = swift_text(SWIFT_RELEASED + ", onDone: (() -> Void)? = nil")
         head = swift_text(SWIFT_RELEASED + ", onStart: (() -> Void)? = nil, onDone: (() -> Void)? = nil")
         assert swift_errors(head, released) == [
-            "Link.onStart: the new Swift initializer argument comes before the argument `onDone` of v1.0.0, "
-            "which has a function type: a trailing closure of v1.0.0 binds another parameter"
+            (
+                "Link.onStart: the new Swift initializer argument comes before the argument `onDone` of v1.0.0, "
+                "which has a function type: a trailing closure of v1.0.0 binds another parameter"
+            )
         ]
 
     def test_a22_an_added_defaulted_closure_at_the_end_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED + ", onDone: (() -> Void)? = nil"))
-        assert found == ["Link.onDone: the new Swift initializer argument has a function type: a trailing closure of v1.0.0 binds it"]
+        assert found == [
+            "Link.onDone: the new Swift initializer argument has a function type: a trailing closure of v1.0.0 binds it"
+        ]
 
     def test_a22_an_added_defaulted_argument_before_a_released_closure_fails_and_after_it_passes(self) -> None:
         released = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool")
         head = swift_text(SWIFT_RELEASED + ", extra: Int = 0, accept: (String) -> Bool")
-        self.assertEqual(len(swift_errors(head, released)), 1)
-        assert "Link.extra: the new Swift initializer argument comes before the argument `accept` of v1.0.0" in swift_errors(head, released)[0]
+        assert len(swift_errors(head, released)) == 1
+        assert (
+            "Link.extra: the new Swift initializer argument comes before the argument `accept` of v1.0.0"
+            in swift_errors(head, released)[0]
+        )
         head = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool, extra: Int = 0")
         assert swift_errors(head, released) == []
 
@@ -511,19 +600,32 @@ class SixRowTests(unittest.TestCase):
         head = swift_text(SWIFT_RELEASED.replace("rel: String? = nil", 'rel: String? = "_"'))
         assert swift_errors(head, released) == ['Link.rel: the Swift argument default changed from `"$"` to `"_"`']
         read = CHECK.parse_swift("public class CbWrapper$crawl {\n    public init(cb: Wrapper$Result) {}\n}\n")
-        assert [(i.owner, i.parameters[0].type, i.chain) for i in read.values()] == [("CbWrapper$crawl", "Wrapper$Result", ("public class CbWrapper$crawl",))]
+        assert [(i.owner, i.parameters[0].type, i.chain) for i in read.values()] == [
+            ("CbWrapper$crawl", "Wrapper$Result", ("public class CbWrapper$crawl",))
+        ]
 
     def test_a25_a_platform_unavailable_initializer_stays_a_released_call(self) -> None:
         declaration = "@available(macOS, unavailable) public init"
         released = swift_text(SWIFT_RELEASED, declaration=declaration)
-        assert [i.modifiers for i in CHECK.parse_swift(released).values()] == ["@available(macOS, unavailable) public", "public"]
+        assert [i.modifiers for i in CHECK.parse_swift(released).values()] == [
+            "@available(macOS, unavailable) public",
+            "public",
+        ]
         head = swift_text(SWIFT_RELEASED + ", originalUrl: String", declaration=declaration)
-        assert swift_errors(head, released) == ["Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"]
+        assert swift_errors(head, released) == [
+            "Link.originalUrl: the new Swift initializer argument is required: no call of v1.0.0 compiles"
+        ]
         head = swift_text(SWIFT_RELEASED, declaration="@available(iOS, unavailable) public init")
-        self.assert_fails(swift_errors(head, released), "has the modifiers `@available(macOS, unavailable) public`", "`@available(iOS, unavailable) public`")
+        self.assert_fails(
+            swift_errors(head, released),
+            "has the modifiers `@available(macOS, unavailable) public`",
+            "`@available(iOS, unavailable) public`",
+        )
 
     def test_a25_an_initializer_unavailable_everywhere_is_not_a_constructor(self) -> None:
-        read = CHECK.parse_swift(swift_text(SWIFT_RELEASED, declaration='@available(*, unavailable, renamed: "x") public init'))
+        read = CHECK.parse_swift(
+            swift_text(SWIFT_RELEASED, declaration='@available(*, unavailable, renamed: "x") public init')
+        )
         assert [i.form for i in read.values()] == ["init throws"]
 
     def assert_fails(self, found: list[str], *parts: str) -> None:
@@ -534,9 +636,9 @@ class FailClosedBranchTests(unittest.TestCase):
     """Each arm that fails the parse is reached by an input, or by a kind set made smaller."""
 
     def assert_parse_fails(self, text: str, message: str, line: int) -> None:
-        with self.assertRaises(SyntaxError) as raised:
+        with expected_error(SyntaxError) as raised:
             CHECK.parse_swift(text)
-        assert (raised.exception.msg, raised.exception.lineno) == (message, line)
+        assert (raised[0].msg, raised[0].lineno) == (message, line)
 
     def test_a_child_of_an_enclosing_declaration_of_another_kind_fails_with_the_kind(self) -> None:
         text = "public indirect enum E {\n    public init(x: Int) {}\n}\n"
@@ -548,7 +650,9 @@ class FailClosedBranchTests(unittest.TestCase):
 
     def test_a_modifiers_child_of_another_kind_fails_with_the_kind(self) -> None:
         with mock.patch.object(CHECK, "MODIFIERS", CHECK.MODIFIERS - {"member_modifier"}):
-            self.assert_parse_fails(BRIDGE_TEXT, "a `member_modifier` node of the modifiers that the reader does not classify", 2)
+            self.assert_parse_fails(
+                BRIDGE_TEXT, "a `member_modifier` node of the modifiers that the reader does not classify", 2
+            )
 
     def test_a_parameter_child_of_another_kind_fails_with_the_kind(self) -> None:
         text = swift_text(SWIFT_RELEASED.replace("nofollow: Bool", "nofollow: @escaping @Sendable () -> Bool"))
@@ -567,11 +671,16 @@ class FailClosedBranchTests(unittest.TestCase):
     def test_two_initializers_under_different_directives_are_both_read(self) -> None:
         # ~keep The chain is part of the key: the `#if` and the `#else` arm hold one declaration each.
         text = "public struct L {\n#if os(Linux)\n    public init(x: Int) {}\n#else\n    public init(x: Int) {}\n#endif\n}\n"
-        assert [i.chain for i in CHECK.parse_swift(text).values()] == [("public struct L", "#if os(Linux)"), ("public struct L", "#if os(Linux) #else")]
+        assert [i.chain for i in CHECK.parse_swift(text).values()] == [
+            ("public struct L", "#if os(Linux)"),
+            ("public struct L", "#if os(Linux) #else"),
+        ]
 
     def test_a_comment_inside_a_default_and_a_type_is_not_compared(self) -> None:
         released = swift_text(SWIFT_RELEASED + ', x: [String] = [",", "("], y: Dictionary<String, Int> = [:]')
-        head = swift_text(SWIFT_RELEASED + ', x: [String] = [",", /* c */ "("], y: Dictionary<String, /* c */ Int> = [:]')
+        head = swift_text(
+            SWIFT_RELEASED + ', x: [String] = [",", /* c */ "("], y: Dictionary<String, /* c */ Int> = [:]'
+        )
         assert swift_errors(head, released) == []
 
 
@@ -687,6 +796,123 @@ class FailClosedTests(unittest.TestCase):
         assert f"::error::head/{CHECK.STUB}:6: parse error" in output
 
 
+class SwiftFactoryTests(unittest.TestCase):
+    @staticmethod
+    def source(signature: str, owner: str = "public class Box") -> str:
+        return f"{owner} {{ public init() {{}}; {signature} {{ fatalError() }} }}"
+
+    def test_the_exception_assertion_rejects_a_nonfailing_parse(self) -> None:
+        with expected_error(AssertionError) as raised, expected_error(SyntaxError):
+            CHECK.parse_swift(self.source("public static func make() -> Self"))
+        assert str(raised[0]) == "expected SyntaxError"
+
+    def test_a_required_factory_argument_fails_the_gate(self) -> None:
+        released = self.source("public static func make(_ value: Int) -> Self")
+        head = self.source("public static func make(_ value: Int, _ required: Int) -> Self")
+        status, output = gate((CHECK.SWIFT_FACADE, released, head))
+        assert status == 1, output
+        assert "factory" in output and "required" in output, output
+
+    def test_factory_declarations_and_overloads_are_kept(self) -> None:
+        for modifier in ("static", "class"):
+            for result in ("Self", "Box"):
+                with self.subTest(modifier=modifier, result=result):
+                    source = self.source(f"public {modifier} func make(_ value: Int) -> {result}")
+                    factories = CHECK.parse_swift_factories(source)
+                    assert len(factories) == 1, factories
+                    assert CHECK.compare_swift(factories, factories, TAG) == []
+        source = self.source(
+            "public static func make(_ value: Int) -> Self {}; public static func make(_ value: String) -> Self"
+        )
+        assert len(CHECK.parse_swift_factories(source)) == 2
+
+    def test_factory_breaking_changes_fail(self) -> None:
+        released = self.source("public static func make<T>(_ value: T, extra: Int = 1) -> Self")
+        changes = (
+            "public static func make<T: Equatable>(_ value: T, extra: Int = 1) -> Self",
+            "public static func make<T>(_ value: T, extra: Int = 1) -> Self where T: Equatable",
+            "public static func make<T>(_ value: T, extra: Int = 1) async -> Self",
+            "public static func make<T>(_ value: T, extra: Int = 1) throws -> Self",
+            "public class func make<T>(_ value: T, extra: Int = 1) -> Self",
+            "public static func make<T>(_ value: T, extra: Int = 2) -> Self",
+            "public static func make<T>(_ value: T, extra: Int) -> Self",
+            "public static func make<T>(_ value: String, extra: Int = 1) -> Self",
+            "public static func renamed<T>(_ value: T, extra: Int = 1) -> Self",
+            "private static func make<T>(_ value: T, extra: Int = 1) -> Self",
+            "public static func make<T>(_ value: T, extra: Int = 1) -> String",
+        )
+        for changed in changes:
+            with self.subTest(changed=changed):
+                found = CHECK.compare_swift(
+                    CHECK.parse_swift_factories(released), CHECK.parse_swift_factories(self.source(changed)), TAG
+                )
+                assert found, changed
+
+    def test_factory_owner_visibility_and_extension_are_checked(self) -> None:
+        source = "public class Box { public init() {} }; public extension Box { static func make() -> Self { fatalError() } }"
+        assert len(CHECK.parse_swift_factories(source)) == 1
+        assert (
+            CHECK.parse_swift_factories(
+                source.replace("public class Box", "internal class Box").replace(
+                    "public extension", "private extension"
+                )
+            )
+            == {}
+        )
+        assert CHECK.parse_swift_factories(self.source("public static func make() -> Self", "internal class Box")) == {}
+        assert CHECK.parse_swift_factories(self.source("public func make() -> Self")) == {}
+        assert (
+            CHECK.parse_swift_factories(self.source("@available(*, unavailable) public static func make() -> Self"))
+            == {}
+        )
+
+    def test_factory_whole_owner_declarations_are_checked(self) -> None:
+        released = (
+            "public struct Outer { public struct Box { public static func make() -> Outer.Box { fatalError() } } }"
+        )
+        factories = CHECK.parse_swift_factories(released)
+        assert len(factories) == 1
+        assert next(iter(factories.values())).owner == "Outer.Box"
+        for head in (
+            released.replace("public struct Outer", "public struct Outer: Equatable"),
+            released.replace("static func", "@MainActor static func"),
+            "#if FLAG\n" + released + "\n#endif",
+            released.replace("struct Box", "struct Box<T>"),
+        ):
+            with self.subTest(head=head):
+                assert CHECK.compare_swift(factories, CHECK.parse_swift_factories(head), TAG)
+
+    def test_factory_generic_owner_and_duplicate_declarations_are_read(self) -> None:
+        source = self.source("public static func make<T>(_ value: T) -> Box<T>", "public class Box<T>")
+        assert len(CHECK.parse_swift_factories(source)) == 1
+        duplicate = self.source("public static func make() -> Self {}; public static func make() -> Self")
+        with expected_error(SyntaxError) as raised:
+            CHECK.parse_swift_factories(duplicate)
+        assert "second declaration" in str(raised[0]), raised[0]
+
+    def test_an_added_default_factory_parameter_passes(self) -> None:
+        released = self.source("public static func make(_ value: Int) -> Self")
+        head = self.source("public static func make(_ value: Int, extra: Int = 1) -> Self")
+        assert CHECK.compare_swift(CHECK.parse_swift_factories(released), CHECK.parse_swift_factories(head), TAG) == []
+
+    def test_a_removed_factory_overload_fails(self) -> None:
+        released = self.source(
+            "public static func make(_ value: Int) -> Self {}; public static func make(_ value: String) -> Self"
+        )
+        head = self.source("public static func make(_ value: Int) -> Self")
+        assert CHECK.compare_swift(CHECK.parse_swift_factories(released), CHECK.parse_swift_factories(head), TAG)
+
+    def test_zero_released_factories_pass_without_relaxing_constructor_counts(self) -> None:
+        released = self.source("public func ordinary() -> Int")
+        head = self.source("public static func make() -> Self")
+        status, output = gate((CHECK.SWIFT_FACADE, released, head))
+        assert status == 0, output
+        assert "0 factories" in output and "has 1, 0 kept" in output, output
+        status, output = gate((CHECK.SWIFT_FACADE, "public class Box {}", head))
+        assert status == 1, output
+        assert "0 constructors" in output, output
+
+
 class ReleaseTagTests(unittest.TestCase):
     def test_the_highest_version_is_chosen_in_any_list_order(self) -> None:
         # ~keep The list has no ancestry: `v1.10.3` on a release branch is chosen like any other.
@@ -710,8 +936,9 @@ class ReleaseTagTests(unittest.TestCase):
         assert CHECK.released_stub("4b825dc642cb6eb9a060e54bf8d69288fbee4904") is None
 
     def test_a_tag_that_git_does_not_know_is_an_error_not_an_absent_file(self) -> None:
-        with self.assertRaises(subprocess.CalledProcessError):
+        with expected_error(subprocess.CalledProcessError) as raised:
             CHECK.released_stub("no-such-tag-of-this-repository")
+        assert raised[0].returncode != 0
 
 
 if __name__ == "__main__":
