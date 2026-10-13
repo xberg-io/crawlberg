@@ -11046,9 +11046,14 @@ mod race_tests {
         let mut after = with_page;
         let mut disposed_after = None;
         for _ in 0..200 {
-            page_open = target_is_open(&browser, &target)
-                .await
-                .expect("the browser must answer while the page closes");
+            page_open = target_is_open(&browser, &target).await.unwrap_or_else(|error| {
+                panic!(
+                    "the browser must answer while the page closes: {error:?}; \
+                         firewall failed={}, stopping={}",
+                    firewall.has_failed(),
+                    firewall.handle.shared.stopping.load(Ordering::Acquire),
+                )
+            });
             after = context_count(&browser).await;
             if after == before + 1 && !page_open {
                 disposed_after = Some(closed_at.elapsed());

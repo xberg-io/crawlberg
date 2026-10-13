@@ -41,6 +41,10 @@ All notable changes to crawlberg are documented here.
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
+- `Frontier::pop_batch_excluding_hosts` selects entries whose hosts are not waiting for a
+  rate-limiter turn, without removing or reordering retained entries. Return `Some(entries)`
+  to support this selection, or `None` to retain the existing bounded-window fallback. The
+  built-in FIFO and LIFO frontiers support it. (#684)
 - **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
   that matches the error exhaustively with no default case must add a case for it. Rust callers
   are not affected. The error is for a page that was fetched but could not be converted to
@@ -184,14 +188,21 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- Detached, unowned browser UI sessions retire their pending interception arm without canceling the controller.
-  Newly watched targets, retired contexts and unrelated live sessions retain fail-closed handling. (#701)
+- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
+  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
+  This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
+  longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
+  explicitly wait for its own children; exited, unwaited children remain zombies. Existing
+  callable signal handlers remain chained. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
 - Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
 - Refused Unix browser launchers stop their descendants, and parent signal termination stops the
   owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
   parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
+- Batch crawls with more seeds than `max_concurrent` complete after host waits by sharing
+  each seed's permit acquisition. Ready batch scrape operations run on parallel runtime tasks
+  while retaining the configured concurrency bound. (#684)
 - Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
   Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
 
@@ -389,6 +400,8 @@ All notable changes to crawlberg are documented here.
 - With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
   Chrome 155 opens targets of its own in each new browser context and does not close them on
   request; the engine waited for them to close before it kept the page. (#694)
+- Detached, unowned browser UI sessions retire their pending interception arm without canceling the controller.
+  Newly watched targets, retired contexts and unrelated live sessions retain fail-closed handling. (#701)
 
 ## [1.10.3] - 2026-10-09
 
