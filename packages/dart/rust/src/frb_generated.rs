@@ -1946,6 +1946,7 @@ const _: fn() = || {
         let _: String = ContentConfig.strong_em_symbol;
         let _: bool = ContentConfig.compact_tables;
         let _: Vec<String> = ContentConfig.keep_inline_images_in;
+        let _: bool = ContentConfig.keep_hidden;
     }
     {
         let CookieInfo = None::<crate::CookieInfo>.unwrap();
@@ -2768,6 +2769,7 @@ impl SseDecode for crate::ContentConfig {
         let mut var_strongEmSymbol = <String>::sse_decode(deserializer);
         let mut var_compactTables = <bool>::sse_decode(deserializer);
         let mut var_keepInlineImagesIn = <Vec<String>>::sse_decode(deserializer);
+        let mut var_keepHidden = <bool>::sse_decode(deserializer);
         return crate::ContentConfig {
             output_format: var_outputFormat,
             preprocessing_preset: var_preprocessingPreset,
@@ -2788,6 +2790,7 @@ impl SseDecode for crate::ContentConfig {
             strong_em_symbol: var_strongEmSymbol,
             compact_tables: var_compactTables,
             keep_inline_images_in: var_keepInlineImagesIn,
+            keep_hidden: var_keepHidden,
         };
     }
 }
@@ -4797,6 +4800,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.strong_em_symbol.into_into_dart().into_dart(),
             self.0.compact_tables.into_into_dart().into_dart(),
             self.0.keep_inline_images_in.into_into_dart().into_dart(),
+            self.0.keep_hidden.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5985,6 +5989,7 @@ impl SseEncode for crate::ContentConfig {
         <String>::sse_encode(self.strong_em_symbol, serializer);
         <bool>::sse_encode(self.compact_tables, serializer);
         <Vec<String>>::sse_encode(self.keep_inline_images_in, serializer);
+        <bool>::sse_encode(self.keep_hidden, serializer);
     }
 }
 

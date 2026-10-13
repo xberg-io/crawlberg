@@ -934,6 +934,10 @@ class ContentConfig {
   /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
   final List<String> keepInlineImagesIn;
 
+  /// Keep text hidden by HTML attributes or inline styles, including body templates.
+  /// Default: `false`. Scripts and styles remain excluded; explicit exclusions still apply.
+  final bool keepHidden;
+
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -954,6 +958,7 @@ class ContentConfig {
     this.strongEmSymbol = "*",
     this.compactTables = false,
     this.keepInlineImagesIn = const [],
+    this.keepHidden = false,
   });
 
   @override
@@ -976,7 +981,8 @@ class ContentConfig {
       listIndentWidth.hashCode ^
       strongEmSymbol.hashCode ^
       compactTables.hashCode ^
-      keepInlineImagesIn.hashCode;
+      keepInlineImagesIn.hashCode ^
+      keepHidden.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1001,7 +1007,8 @@ class ContentConfig {
           listIndentWidth == other.listIndentWidth &&
           strongEmSymbol == other.strongEmSymbol &&
           compactTables == other.compactTables &&
-          keepInlineImagesIn == other.keepInlineImagesIn;
+          keepInlineImagesIn == other.keepInlineImagesIn &&
+          keepHidden == other.keepHidden;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.

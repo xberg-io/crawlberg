@@ -1238,13 +1238,6 @@ char *cberg_content_config_preserve_tags(CBERGAlefHandle handle);
 char *cberg_content_config_exclude_selectors(CBERGAlefHandle handle);
 
 /**
- * Get the `keep_hidden` field from a `ContentConfig`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-int32_t cberg_content_config_keep_hidden(CBERGAlefHandle handle);
-
-/**
  * Get the `skip_images` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1346,6 +1339,13 @@ int32_t cberg_content_config_compact_tables(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_content_config_keep_inline_images_in(CBERGAlefHandle handle);
+
+/**
+ * Get the `keep_hidden` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_keep_hidden(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be

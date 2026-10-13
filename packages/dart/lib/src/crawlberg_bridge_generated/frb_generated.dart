@@ -2893,8 +2893,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 19)
-      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
+    if (arr.length != 20)
+      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2915,6 +2915,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       strongEmSymbol: dco_decode_String(arr[16]),
       compactTables: dco_decode_bool(arr[17]),
       keepInlineImagesIn: dco_decode_list_String(arr[18]),
+      keepHidden: dco_decode_bool(arr[19]),
     );
   }
 
@@ -4374,6 +4375,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_strongEmSymbol = sse_decode_String(deserializer);
     var var_compactTables = sse_decode_bool(deserializer);
     var var_keepInlineImagesIn = sse_decode_list_String(deserializer);
+    var var_keepHidden = sse_decode_bool(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4394,6 +4396,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       strongEmSymbol: var_strongEmSymbol,
       compactTables: var_compactTables,
       keepInlineImagesIn: var_keepInlineImagesIn,
+      keepHidden: var_keepHidden,
     );
   }
 
@@ -6350,6 +6353,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.strongEmSymbol, serializer);
     sse_encode_bool(self.compactTables, serializer);
     sse_encode_list_String(self.keepInlineImagesIn, serializer);
+    sse_encode_bool(self.keepHidden, serializer);
   }
 
   @protected

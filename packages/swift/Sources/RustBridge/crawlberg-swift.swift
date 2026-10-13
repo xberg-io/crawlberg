@@ -1657,8 +1657,8 @@ extension ContentConfig {
     }
 }
 extension ContentConfig {
-    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool, _ strip_newlines: Bool, _ bullets: GenericIntoRustString, _ list_indent_width: UInt, _ strong_em_symbol: GenericIntoRustString, _ compact_tables: Bool, _ keep_inline_images_in: RustVec<GenericIntoRustString>) -> ContentConfig {
-        ContentConfig(ptr: __swift_bridge__$ContentConfig$new_with_fields({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata, strip_newlines, { let rustString = bullets.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), list_indent_width, { let rustString = strong_em_symbol.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), compact_tables, { let val = keep_inline_images_in; val.isOwned = false; return val.ptr }()))
+    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool, _ strip_newlines: Bool, _ bullets: GenericIntoRustString, _ list_indent_width: UInt, _ strong_em_symbol: GenericIntoRustString, _ compact_tables: Bool, _ keep_inline_images_in: RustVec<GenericIntoRustString>, _ keep_hidden: Bool) -> ContentConfig {
+        ContentConfig(ptr: __swift_bridge__$ContentConfig$new_with_fields({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata, strip_newlines, { let rustString = bullets.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), list_indent_width, { let rustString = strong_em_symbol.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), compact_tables, { let val = keep_inline_images_in; val.isOwned = false; return val.ptr }(), keep_hidden))
     }
 }
 public class ContentConfigRefMut: ContentConfigRef {
@@ -1748,6 +1748,10 @@ extension ContentConfigRef {
 
     public func keepInlineImagesIn() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ContentConfig$keep_inline_images_in(ptr))
+    }
+
+    public func keepHidden() -> Bool {
+        __swift_bridge__$ContentConfig$keep_hidden(ptr)
     }
 }
 extension ContentConfig: Vectorizable {
