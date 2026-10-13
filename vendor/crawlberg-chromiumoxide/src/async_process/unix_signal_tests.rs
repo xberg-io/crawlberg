@@ -36,9 +36,49 @@ fn should_reap_guardian_and_child_with_default_sigchld() {
     run_isolated("should_reap_guardian_and_child_with_default_sigchld", "default");
 }
 
+#[test]
+fn managed_children_reap_with_default_sigchld() {
+    run_isolated("managed_children_reap_with_default_sigchld", "managed_default");
+}
+
+#[test]
+fn managed_children_reap_with_ignored_sigchld() {
+    run_isolated("managed_children_reap_with_ignored_sigchld", "managed_ignored");
+}
+
+#[test]
+fn managed_children_reap_with_no_child_wait() {
+    run_isolated("managed_children_reap_with_no_child_wait", "managed_no_child_wait");
+}
+
+#[test]
+fn managed_children_preserve_altstack_handler_and_mask_through_wait_and_drop() {
+    run_isolated(
+        "managed_children_preserve_altstack_handler_and_mask_through_wait_and_drop",
+        "managed_custom_altstack",
+    );
+}
+
+#[test]
+fn managed_children_clear_only_no_child_wait_from_custom_altstack_action() {
+    run_isolated(
+        "managed_children_clear_only_no_child_wait_from_custom_altstack_action",
+        "managed_custom_altstack_no_child_wait",
+    );
+}
+
+#[test]
+fn managed_drop_preserves_altstack_handler_and_mask() {
+    run_isolated("managed_drop_preserves_altstack_handler_and_mask", "managed_drop");
+}
+
 fn run_isolated(test: &str, mode: &str) {
     if std::env::var(CHILD_MODE).as_deref() == Ok(mode) {
-        exercise_launch(mode);
+        if let Some(mode) = mode.strip_prefix("managed_") {
+            exercise_managed_launch(mode);
+        } else {
+            exercise_launch(mode);
+        }
         return;
     }
     let mut child = std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -116,6 +156,74 @@ fn exercise_launch(mode: &str) {
     }
 }
 
+fn exercise_managed_launch(mode: &str) {
+    let disposition = if mode == "drop" { "custom_altstack" } else { mode };
+    let _stack = install_disposition(disposition);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("child runtime");
+    let _entered = runtime.enter();
+    for _ in 0..LAUNCH_COUNT {
+        let mut command = super::Command::new("/bin/sleep");
+        command.arg("30");
+        let mut child = command.spawn_managed().expect("managed guardian and child must start");
+        assert_custom_disposition(disposition);
+        let pid = child.id().expect("unreaped managed child");
+        if mode == "drop" {
+            drop(child);
+            wait_until_reaped(pid);
+        } else {
+            assert!(child.tree().expect("owned tree").stop(Duration::from_secs(2)));
+            runtime
+                .block_on(tokio::time::timeout(Duration::from_secs(2), child.wait()))
+                .expect("bounded wait")
+                .expect("managed exit status");
+            assert_eq!(child.id(), None);
+            assert!(
+                child.start_kill_group().is_err(),
+                "completed leader must not supply a recycled PID"
+            );
+            drop(child);
+        }
+        assert_custom_disposition(disposition);
+    }
+    if disposition.starts_with("custom") {
+        assert!(SIGNAL_EVENTS.load(Ordering::Relaxed) > 0, "inherited handler must run");
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            STACK_EVENTS.load(Ordering::Relaxed),
+            SIGNAL_EVENTS.load(Ordering::Relaxed)
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_owned_altstack_delivery();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(unsafe_code)]
+fn assert_owned_altstack_delivery() {
+    // ~keep Process-directed SIGCHLD may use another thread's stack; target the thread holding this allocation.
+    let before = STACK_EVENTS.load(Ordering::Relaxed);
+    // SAFETY: the current pthread is live and holds the alternate stack and installed test handler. ~keep
+    assert_eq!(unsafe { libc::pthread_kill(libc::pthread_self(), libc::SIGCHLD) }, 0);
+    assert_eq!(STACK_EVENTS.load(Ordering::Relaxed), before + 1);
+}
+
+#[allow(unsafe_code)]
+fn wait_until_reaped(pid: u32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        // SAFETY: signal zero only queries existence of this test's own previously retained PID. ~keep
+        if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            return;
+        }
+        assert!(Instant::now() < deadline, "managed drop must reap its child");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 extern "C" fn existing_handler(_: libc::c_int) {
     let stack_byte = 0_u8;
     let address = std::ptr::addr_of!(stack_byte) as usize;
@@ -127,8 +235,8 @@ extern "C" fn existing_handler(_: libc::c_int) {
 
 #[allow(unsafe_code)]
 fn install_disposition(mode: &str) -> Vec<u8> {
-    if mode == "custom_altstack" {
-        return install_altstack_disposition();
+    if mode.starts_with("custom_altstack") {
+        return install_altstack_disposition(mode.ends_with("no_child_wait"));
     }
     if mode == "no_child_wait" {
         // SAFETY: the isolated test initializes and installs only its own automatic-reaping action. ~keep
@@ -153,7 +261,7 @@ fn install_disposition(mode: &str) -> Vec<u8> {
 }
 
 #[allow(unsafe_code)]
-fn install_altstack_disposition() -> Vec<u8> {
+fn install_altstack_disposition(no_child_wait: bool) -> Vec<u8> {
     let mut bytes = vec![0_u8; ALT_STACK_BYTES];
     STACK_START.store(bytes.as_ptr() as usize, Ordering::Relaxed);
     STACK_END.store(bytes.as_ptr() as usize + bytes.len(), Ordering::Relaxed);
@@ -168,6 +276,9 @@ fn install_altstack_disposition() -> Vec<u8> {
     let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
     action.sa_sigaction = existing_handler as *const () as libc::sighandler_t;
     action.sa_flags = libc::SA_ONSTACK | libc::SA_RESTART;
+    if no_child_wait {
+        action.sa_flags |= libc::SA_NOCLDWAIT;
+    }
     // SAFETY: the mask and action are live, and only this subprocess's disposition is changed. ~keep
     unsafe {
         assert_eq!(libc::sigemptyset(&mut action.sa_mask), 0);
@@ -179,7 +290,7 @@ fn install_altstack_disposition() -> Vec<u8> {
 
 #[allow(unsafe_code)]
 fn assert_custom_disposition(mode: &str) {
-    if mode != "custom_altstack" {
+    if !mode.starts_with("custom_altstack") {
         return;
     }
     // SAFETY: the platform fills a writable action without installing a new disposition. ~keep

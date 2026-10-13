@@ -224,7 +224,7 @@ pub(super) async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, 
                 .launch(browser_config)
                 .await
                 .map(|(browser, handler, dir)| (browser, handler, UserDataDir::Scratch(dir))),
-            UserDataDir::Persistent(path) => Browser::launch(browser_config)
+            UserDataDir::Persistent(path) => Browser::launch_managed(browser_config)
                 .await
                 .map(|(browser, handler)| (browser, handler, UserDataDir::Persistent(path))),
         };
