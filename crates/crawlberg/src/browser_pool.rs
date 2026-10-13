@@ -547,7 +547,7 @@ fn list_live_profile(dir: &std::path::Path, turn: &ProfileTurn) -> bool {
 fn start_listed_chrome(
     dir: &std::path::Path,
     config: &BrowserConfig,
-) -> std::io::Result<(chromiumoxide::async_process::Child, Option<LaunchedProcess>)> {
+) -> std::io::Result<(chromiumoxide::async_process::ManagedChild, Option<LaunchedProcess>)> {
     start_listed_chrome_reading(dir, config, LaunchedProcess::of)
 }
 
@@ -564,15 +564,15 @@ fn start_listed_chrome_reading(
     dir: &std::path::Path,
     config: &BrowserConfig,
     read: impl FnOnce(u32) -> Option<LaunchedProcess>,
-) -> std::io::Result<(chromiumoxide::async_process::Child, Option<LaunchedProcess>)> {
+) -> std::io::Result<(chromiumoxide::async_process::ManagedChild, Option<LaunchedProcess>)> {
     let mut profiles = live_profiles();
     if EXITING.load(Ordering::Acquire) {
         return Err(std::io::Error::other("the process is exiting"));
     }
     // ~keep Not killed when its handle drops: the directory's teardown stops it, and finds its
     // ~keep helpers through it, which a main process that is already dead no longer leads to.
-    let mut child = config.command().kill_on_drop(false).spawn()?;
-    let launched = child.inner.id().and_then(read);
+    let mut child = config.command().kill_on_drop(false).spawn_managed()?;
+    let launched = child.id().and_then(read);
     // ~keep Unix still requires its process record; a guardian does not validate /proc access.
     let missing_record = launched.is_none() && (cfg!(unix) || child.tree().is_none());
     if missing_record {
@@ -581,7 +581,7 @@ fn start_listed_chrome_reading(
         #[cfg(unix)]
         let stopped = child.start_kill_group();
         #[cfg(not(unix))]
-        let stopped = child.inner.start_kill();
+        let stopped = child.start_kill();
         let outcome = match stopped {
             Ok(()) => "it was stopped right after its start".to_owned(),
             Err(error) => format!("it can still run, because the attempt to stop it failed: {error}"),
@@ -714,7 +714,7 @@ impl ScratchProfileDir {
         // ~keep Boxed: the launch future is large, and each caller's future holds it inline, which
         // ~keep pushed the generated dart binding's async dispatch past rustc's query depth limit.
         let teardown = self.0.as_mut().expect("the teardown is taken only once");
-        let (browser, handler) = Box::pin(Browser::launch_with(config, |config| {
+        let (browser, handler) = Box::pin(Browser::launch_managed_with(config, |config| {
             let (child, launched) = start_listed_chrome(&teardown.dir, config)?;
             teardown.launched = launched;
             teardown.tree = child.tree().cloned();
@@ -1701,7 +1701,7 @@ pub(crate) async fn release_browser(
     cleanup: ExternalTabCleanup,
     shutdown_timeout: Duration,
 ) {
-    if browser.get_mut_child().is_none() {
+    if !browser.has_owned_process() {
         if let Some(pending) = cleanup.pending_closes {
             await_pending_closes(&pending, shutdown_timeout).await;
         }
@@ -1807,7 +1807,7 @@ pub(crate) async fn kill_browser(
         release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
         return;
     }
-    let main = browser.get_mut_child().and_then(|child| child.as_mut_inner().id());
+    let main = browser.process_id();
     let family = match main {
         Some(main) => tokio::task::spawn_blocking(move || {
             let family = ChromeFamily::freeze(main);

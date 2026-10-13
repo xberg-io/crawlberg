@@ -194,12 +194,17 @@ title: "Changelog"
   the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
   Python, Dart, Kotlin and Swift, optional trailing arguments in PHP and WebAssembly, a second
   constructor or the builder in Java, and optional struct fields in Zig and Go.
-- Unix browser launch initializes Tokio's `SIGCHLD` listener before starting the process
-  guardian, allowing launch when an embedding host ignores `SIGCHLD` or sets `SA_NOCLDWAIT`.
-  This permanently replaces the process-wide signal action: `SIG_IGN` and `SA_NOCLDWAIT` no
-  longer provide kernel reaping, even after the Crawlberg runtime is dropped. The host must
-  explicitly wait for its own children; exited, unwaited children remain zombies. Existing
-  callable signal handlers remain chained. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
+- Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
+  native child exits. Linux Dart applications that start their own child processes remain affected.
+- Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,
+  preserving waitable host `SIGCHLD` handlers, masks and flags and avoiding Go's fatal signal-stack error.
+  Managed launches reserve one waiter thread before spawning; failed launches and completed children release it.
+  The vendored driver exposes additive managed launch APIs; its legacy Tokio launch and raw child APIs retain
+  their existing signal-registry behavior.
+- Managed Unix launches normalize `SIG_IGN` and clear `SA_NOCLDWAIT` before starting the guardian,
+  preserving callable handlers, signal masks and other flags. These dispositions no longer provide
+  kernel reaping, even after the Crawlberg runtime is dropped: the host must explicitly wait for its
+  own children, or exited children remain zombies. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
 - Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
   terminal document responses finish without waiting for HTML readiness when downloads are disabled.
   Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
