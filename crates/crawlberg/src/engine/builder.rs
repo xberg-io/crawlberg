@@ -759,12 +759,14 @@ mod owned_browser_pool_tests {
             )
             .mount(&site)
             .await;
+        // ~keep Lower precedence than the index mock, so "/" gets the links, not this page.
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .respond_with(
                 wiremock::ResponseTemplate::new(200)
                     .set_body_string("<html><body><p>a page</p></body></html>")
                     .append_header("content-type", "text/html"),
             )
+            .with_priority(10)
             .mount(&site)
             .await;
         site
