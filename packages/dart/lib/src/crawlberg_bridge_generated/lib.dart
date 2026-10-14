@@ -1010,7 +1010,10 @@ enum ContentFilterKind {
   bm25,
 }
 
-/// Information about an HTTP cookie received from a response.
+/// Information about a cookie that a crawled page set.
+///
+/// A crawl result gives `domain` and `path` as the browser stores the cookie, so a cookie has
+/// the same fields whether an HTTP fetch or the browser received it.
 class CookieInfo {
   /// The cookie name.
   final String name;
@@ -1018,10 +1021,14 @@ class CookieInfo {
   /// The cookie value.
   final String value;
 
-  /// The cookie domain, if specified.
+  /// The hosts that get the cookie back. A host-only cookie (no `Domain` attribute) has the
+  /// host that set it, such as `example.com`. A domain cookie has its domain with a leading
+  /// dot, such as `.example.com`. A `Domain` equal to an IP address or a one-label host gives
+  /// a host-only cookie.
   final String? domain;
 
-  /// The cookie path, if specified.
+  /// The path that gets the cookie back: the `Path` attribute when it starts with `/`,
+  /// otherwise the directory of the page that set the cookie (RFC 6265 default path).
   final String? path;
 
   const CookieInfo({
