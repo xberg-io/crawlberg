@@ -125,10 +125,7 @@ async fn browser_mode_stops_a_chain_longer_than_max_redirects_where_http_mode_do
     let http_outcome = chain_failure(&http, &http_site.uri());
     assert_eq!(
         http_outcome,
-        (
-            Some("ssrf_policy_violation: /r3 - redirect limit exceeded".to_owned()),
-            0
-        ),
+        (Some("too_many_redirects: /r3 - redirect limit exceeded".to_owned()), 0),
         "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
@@ -440,10 +437,7 @@ async fn a_later_browser_hop_gets_only_the_redirects_the_chain_has_left() {
     let http_outcome = chain_failure(&http, &http_site.uri());
     assert_eq!(
         http_outcome,
-        (
-            Some("ssrf_policy_violation: /n1 - redirect limit exceeded".to_owned()),
-            0
-        ),
+        (Some("too_many_redirects: /n1 - redirect limit exceeded".to_owned()), 0),
         "HTTP mode fails on the 3xx at the limit (#613)"
     );
 
@@ -488,7 +482,7 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
             Err(error) => error,
         };
         assert!(
-            matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == "redirect limit exceeded"),
+            matches!(&error, CrawlError::TooManyRedirects { message, .. } if *message == format!("{}/r3 - redirect limit exceeded", site.uri())),
             "capture_screenshot={capture_screenshot}: the error must name the redirect limit: {error:?}"
         );
         let requested = requested_paths(&site).await;

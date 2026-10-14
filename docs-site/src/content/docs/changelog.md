@@ -56,6 +56,9 @@ title: "Changelog"
 
 ### Added
 
+- Per-domain rate limiting emits TRACE events at `crawlberg::rate_limiter` with `domain` and
+  numeric `wait_ms` fields for each selected pacing delay.
+
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
@@ -215,6 +218,14 @@ title: "Changelog"
   longer kills a browser whose page creation takes more than two seconds: the page's own fetch
   timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
   (#705)
+- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
+- macOS runtime tests retry when framework workqueue counts change during thread sampling,
+  and exit subprocesses use the same sampler (#751).
+- Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
+- Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
+  including checks that Chrome stored and sent the excluded cookies (#754).
+
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
@@ -230,7 +241,10 @@ title: "Changelog"
   and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
   sitemap-index child takes its own configured host delay. (#681)
 - Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
-  the API reports status 502 with `TOO_MANY_REDIRECTS`. (#676)
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. The message names the address that ended
+  the chain, with credentials hidden:
+  `too_many_redirects: http://example.com/r3 - redirect limit exceeded` or
+  `too_many_redirects: http://example.com/a - redirect loop`. (#676)
 - Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
   fragments use the normal conversion path, preserving conversion failures. (#677, #682)
 - Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
