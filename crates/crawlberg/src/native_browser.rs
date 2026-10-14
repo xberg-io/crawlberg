@@ -30,7 +30,9 @@ pub(crate) async fn native_browser_fetch(
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
     let mut state = NativeRenderState::new(&to_native_cookies(prior_cookies));
-    native_browser_render(url, config, &mut state, native_executor).await
+    let (response, refused, redirects, charset, _) =
+        native_browser_render(url, config, &mut state, native_executor).await?;
+    Ok((response, refused, redirects, charset))
 }
 
 /// Render `url` with the native backend, retaining the cookie jar and previous document site in
@@ -40,7 +42,7 @@ pub(crate) async fn native_browser_render(
     config: &CrawlConfig,
     state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>, Vec<CookieInfo>), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -70,7 +72,7 @@ async fn native_browser_fetch_inner(
     config: &CrawlConfig,
     state: &mut NativeRenderState,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>, usize, Option<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize, Option<String>, Vec<CookieInfo>), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -130,6 +132,12 @@ async fn native_browser_fetch_inner(
     let body = if no_document { String::new() } else { rendered.html };
     let body_bytes = body.as_bytes().to_vec();
 
+    let cookie_url = if rendered.final_url.is_empty() {
+        url
+    } else {
+        &rendered.final_url
+    };
+    let result_cookies = native_result_cookies(&rendered.cookies, url, cookie_url, &rendered.headers);
     let extras = BrowserExtras {
         eval_result: rendered.eval_result,
         network_events: rendered
@@ -157,7 +165,7 @@ async fn native_browser_fetch_inner(
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
     };
-    Ok((response, refused, rendered.redirects, charset))
+    Ok((response, refused, rendered.redirects, charset, result_cookies))
 }
 
 /// Content type assumed when the render reports none.
@@ -274,6 +282,96 @@ fn cookie_info_from_native(cookie: NBCookie) -> CookieInfo {
     }
 }
 
+/// ~keep Crawl navigation states start with an empty jar and retain it only across their own
+/// redirect chain. Filter while host-only metadata still exists; public scrape extras stay intact.
+fn native_result_cookies(
+    cookies: &[NBCookie],
+    requested: &str,
+    final_url: &str,
+    headers: &std::collections::HashMap<String, String>,
+) -> Vec<CookieInfo> {
+    let hosts: Vec<_> = [requested, final_url]
+        .into_iter()
+        .filter_map(|raw| url::Url::parse(raw).ok())
+        .filter_map(|url| url.host_str().map(str::to_owned))
+        .collect();
+    let header_cookies = native_header_cookies(final_url, headers);
+    cookies
+        .iter()
+        .filter(|cookie| {
+            !header_cookies
+                .iter()
+                .any(|header| native_header_matches(cookie, header, final_url))
+        })
+        .filter(|cookie| {
+            cookie.domain.as_deref().is_some_and(|domain| {
+                let domain = domain.trim_start_matches('.').to_ascii_lowercase();
+                hosts.iter().any(|host| {
+                    host == &domain
+                        || (!cookie.host_only && host.strip_suffix(&domain).is_some_and(|prefix| prefix.ends_with('.')))
+                })
+            })
+        })
+        .cloned()
+        .map(|cookie| {
+            let host_only = cookie.host_only;
+            let mut result = cookie_info_from_native(cookie);
+            if host_only {
+                result.domain = None;
+            }
+            result
+        })
+        .collect()
+}
+
+fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<String, String>) -> Vec<CookieInfo> {
+    let Some(host) = url::Url::parse(final_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    else {
+        return Vec::new();
+    };
+    let path = headers.get("set-cookie").and_then(|raw| {
+        raw.split(';')
+            .skip(1)
+            .filter_map(|attribute| {
+                let (name, value) = attribute.trim().split_once('=')?;
+                let value = value.trim();
+                (name.trim().eq_ignore_ascii_case("path") && value.starts_with('/')).then(|| value.to_owned())
+            })
+            .last()
+    });
+    let headers = headers
+        .iter()
+        .map(|(name, value)| (name.clone(), vec![value.clone()]))
+        .collect();
+    let mut cookies = crate::http::extract_cookies_from_hashmap(&host, &headers);
+    for cookie in &mut cookies {
+        cookie.path = path.clone();
+    }
+    cookies
+}
+
+/// ~keep Existing header collection owns equivalent server cookies, including omitted Path
+/// attributes. A rewrite stays the first observed header value, as the existing result dedup does.
+fn native_header_matches(cookie: &NBCookie, header: &CookieInfo, final_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(final_url) else {
+        return false;
+    };
+    let default_path = url
+        .path()
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .filter(|path| !path.is_empty())
+        .unwrap_or("/");
+    let header_domain = header.domain.as_deref().or_else(|| url.host_str());
+    cookie.name == header.name
+        && cookie.host_only == header.domain.is_none()
+        && cookie.domain.as_deref().map(|domain| domain.trim_start_matches('.'))
+            == header_domain.map(|domain| domain.trim_start_matches('.'))
+        && cookie.path.as_deref().unwrap_or("/") == header.path.as_deref().unwrap_or(default_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +402,96 @@ mod tests {
 
     fn test_validator(config: &CrawlConfig) -> std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator> {
         crate::net::browser_policy::recording_validator_for(&config.ssrf).0
+    }
+
+    #[test]
+    fn should_not_claim_domain_cookie_as_equivalent_to_host_only_header_cookie() {
+        let cookie = |host_only| NBCookie {
+            name: "result".into(),
+            value: "1".into(),
+            domain: Some("example.com".into()),
+            path: Some("/".into()),
+            secure: false,
+            http_only: false,
+            host_only,
+        };
+        let headers = std::collections::HashMap::from([("set-cookie".into(), "result=1; Path=/".into())]);
+        let result = native_result_cookies(
+            &[cookie(true), cookie(false)],
+            "https://example.com/",
+            "https://example.com/",
+            &headers,
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "result");
+        assert_eq!(result[0].domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn should_preserve_case_sensitive_path_for_native_header_ownership() {
+        let headers = std::collections::HashMap::from([(
+            "set-cookie".into(),
+            "result=1; Expires=Thu, 01 Jan 2037 00:00:00 GMT; pAtH=/Folder".into(),
+        )]);
+        let cookies = native_header_cookies("https://example.com/", &headers);
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].path.as_deref(), Some("/Folder"));
+    }
+
+    #[test]
+    fn should_leave_header_equivalent_native_cookies_to_header_collection() {
+        let cookie = |name: &str, value: &str| NBCookie {
+            name: name.into(),
+            value: value.into(),
+            domain: Some("example.com".into()),
+            path: Some("/folder".into()),
+            secure: false,
+            http_only: false,
+            host_only: true,
+        };
+        let headers = std::collections::HashMap::from([("set-cookie".into(), "result=1".into())]);
+        let cookies = vec![cookie("result", "rewritten"), cookie("script", "2")];
+        let result = native_result_cookies(
+            &cookies,
+            "https://example.com/folder/page",
+            "https://example.com/folder/page",
+            &headers,
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            (&result[0].name, &result[0].value),
+            (&"script".to_owned(), &"2".to_owned())
+        );
+        assert_eq!(result[0].domain, None);
+    }
+
+    #[test]
+    fn should_filter_native_cookie_domains_before_losing_host_only_metadata() {
+        let cookie = |name: &str, domain: Option<&str>, host_only| NBCookie {
+            name: name.into(),
+            value: "value".into(),
+            domain: domain.map(str::to_owned),
+            path: Some("/".into()),
+            secure: false,
+            http_only: false,
+            host_only,
+        };
+        let cookies = vec![
+            cookie("parent", Some("example.com"), false),
+            cookie("host_only", Some("example.com"), true),
+            cookie("suffix", Some("ample.com"), false),
+            cookie("foreign", Some("other.test"), false),
+            cookie("unspecified", None, false),
+            cookie("final", Some("final.test"), true),
+        ];
+        let delta = native_result_cookies(
+            &cookies,
+            "https://sub.example.com/",
+            "https://final.test/",
+            &Default::default(),
+        );
+        let names: Vec<_> = delta.iter().map(|cookie| cookie.name.as_str()).collect();
+        assert_eq!(names, vec!["parent", "final"]);
     }
 
     #[test]

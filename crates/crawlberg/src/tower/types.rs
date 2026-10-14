@@ -293,4 +293,6 @@ pub struct Landing {
     pub extras: Option<crate::http::BrowserExtras>,
     /// Cookies retained only long enough to seed the next Chromiumoxide redirect hop. ~keep
     pub(crate) cookies: Vec<crate::types::BrowserCookie>,
+    /// Cookies this browser fetch contributes to its crawl; separate from scrape jar extras. ~keep
+    pub(crate) result_cookies: Vec<crate::types::CookieInfo>,
 }

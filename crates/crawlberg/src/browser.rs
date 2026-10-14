@@ -126,6 +126,8 @@ pub(crate) struct BrowserPage {
     pub(crate) refused: Vec<String>,
     /// Cookies in Chromium's jar after this page finished rendering. ~keep
     pub(crate) cookies: Vec<BrowserCookie>,
+    /// New or changed cookies scoped to this navigation, excluding its initial store. ~keep
+    pub(crate) result_cookies: Vec<crate::types::CookieInfo>,
     /// Whether the body of `response` is text the backend decoded, or the bytes of a response
     /// the navigation stopped on.
     pub(crate) text: crate::tower::BodyText,
@@ -278,6 +280,7 @@ async fn browser_fetch_once(
                 refused,
                 redirects,
                 cookies: Vec::new(),
+                result_cookies: Vec::new(),
                 // ~keep The native backend decoded the document, with the character set it reports.
                 text: crate::tower::BodyText::Decoded { charset },
             }
@@ -289,6 +292,7 @@ async fn browser_fetch_once(
         redirected: page.redirected,
         refused: page.refused,
         cookies: page.cookies,
+        result_cookies: page.result_cookies,
         text: page.text,
     })
 }

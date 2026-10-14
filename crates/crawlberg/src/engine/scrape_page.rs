@@ -247,7 +247,7 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let (response, refused, redirects, charset) =
+        let (response, refused, redirects, charset, result_cookies) =
             crate::native_browser::native_browser_render(url, &self.config, state, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
         // ~keep The native backend decoded the document, with the character set it reports. It
@@ -263,6 +263,7 @@ impl CrawlEngine {
                     redirects,
                     refused,
                     extras: response.browser_extras,
+                    result_cookies,
                     cookies: Vec::new(),
                 })));
         Ok((crawl_resp, true))

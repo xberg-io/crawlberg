@@ -211,6 +211,15 @@ title: "Changelog"
 
 ### Fixed
 
+- Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
+  `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
+  and before navigation with the final store; unchanged profile or external-browser cookies are
+  excluded. Both backends restrict reported browser cookies to the requested and final hosts.
+  Same-value rewrites, deleted cookies and cookies scoped only to an intermediate redirect host
+  are not recoverable from this store comparison; concurrent changes in the same context are not
+  attributed to a specific cookie-setting event. Results preserve the existing first-observed
+  cookie identity: Native headers can retain the first value after JavaScript rewrites that cookie,
+  so this list is not a final browser-store snapshot.
 - MCP classifies redirect exhaustion as an internal execution failure and returns its
   `too_many_redirects:` message through the tool-result error channel. (#676)
 - Maps keep zero-delay defaults while configured and custom limiters pace robots, sitemap children
