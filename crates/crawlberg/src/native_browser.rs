@@ -426,7 +426,7 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "result");
-        assert_eq!(result[0].domain.as_deref(), Some("example.com"));
+        assert_eq!(result[0].domain.as_deref(), Some(".example.com"));
     }
 
     #[test]

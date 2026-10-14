@@ -256,6 +256,14 @@ mod tests {
         let cookies = result_cookies_from_hashmap("https://api.example.com/", &headers);
         assert_eq!(cookies[0].domain.as_deref(), Some(".example.com"));
         assert_eq!(cookies[0].path.as_deref(), Some("/"));
+
+        for (raw, domain) in [
+            ("s=1; Domain=.example.com", ".example.com"),
+            ("s=1; Domain=", "api.example.com"),
+        ] {
+            let cookies = result_cookies_from_hashmap("https://api.example.com/", &set_cookie_headers(raw));
+            assert_eq!(cookies[0].domain.as_deref(), Some(domain), "{raw}");
+        }
     }
 
     #[test]

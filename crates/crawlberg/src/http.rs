@@ -24,9 +24,11 @@ pub(crate) use body::{effective_max_body_size, read_body_bounded, truncate_body_
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::{build_client, request_client, send_with_cookies};
 pub(crate) use headers::build_headers_map;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use headers::{extract_cookies_from_hashmap, result_cookies_from_hashmap};
+#[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
+pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use headers::result_cookies_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]

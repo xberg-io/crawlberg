@@ -215,8 +215,12 @@ All notable changes to crawlberg are documented here.
   crawl that uses both lists it once (#753). The fields give the scope that the browser stores:
   `domain` is the host for a host-only cookie and the domain with a leading dot for a domain
   cookie; `path` is the default path of the page when `Set-Cookie` has no valid `Path`. A
-  `Path` keeps its case. Over HTTP this changes the values: a cookie with no `Domain` or no
-  `Path` had `None`, and a `Domain` had no leading dot.
+  `Path` keeps its case. Over HTTP this changes the values: `domain` was `None` with no `Domain`
+  and `path` was `None` with no `Path`; `Domain=example.com` gave `example.com`, now
+  `.example.com`; a dotted IP or one-label `Domain` such as `.127.0.0.1` kept its dot, now the
+  bare host; an empty `Domain` gave `""`, now the host; a relative `Path` was kept, now the
+  default path; `Path=/X/` gave `/x/`, now `/X/`; and `Domain = x` with spaces around `=` was
+  ignored, now it is read and checked against the host.
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are

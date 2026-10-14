@@ -27,7 +27,11 @@ fn html(body: &str) -> ResponseTemplate {
 }
 
 async fn route(site: &MockServer, at: &str, page: ResponseTemplate) {
-    Mock::given(method("GET")).and(path(at)).respond_with(page).mount(site).await;
+    Mock::given(method("GET"))
+        .and(path(at))
+        .respond_with(page)
+        .mount(site)
+        .await;
 }
 
 async fn crawl_fields(site: &MockServer, mode: BrowserMode) -> Vec<(String, Option<String>, Option<String>)> {
@@ -69,46 +73,61 @@ async fn should_give_one_cookie_the_same_domain_and_path_in_http_and_browser_mod
         field("plain", "127.0.0.1", "/"),
         field("scoped", "127.0.0.1", "/x/"),
     ];
-    assert_eq!(crawl_fields(&site, BrowserMode::Never).await, header_cookies, "HTTP mode");
+    assert_eq!(
+        crawl_fields(&site, BrowserMode::Never).await,
+        header_cookies,
+        "HTTP mode"
+    );
 
     let mut browser_cookies = header_cookies;
     browser_cookies.push(field("js", "127.0.0.1", "/"));
     browser_cookies.sort();
-    assert_eq!(crawl_fields(&site, BrowserMode::Always).await, browser_cookies, "browser mode");
+    assert_eq!(
+        crawl_fields(&site, BrowserMode::Always).await,
+        browser_cookies,
+        "browser mode"
+    );
 }
 
-/// ~keep The browser page sets another value: Chrome omits a cookie that a page writes again with
-/// the value the crawl already gave it, so only a changed value reaches the result from both modes.
+fn from_the_browser(request: &Request) -> bool {
+    request.headers.contains_key("upgrade-insecure-requests")
+}
+
+/// ~keep The HTTP fetch of the start page gets a 403, so automatic mode fetches it in Chrome;
+/// the linked page then comes over HTTP. Each page sets another value of `a`.
 #[tokio::test]
-async fn should_list_a_cookie_once_when_auto_mode_fetches_one_page_over_http_and_one_in_chrome() {
+async fn should_list_a_cookie_once_when_auto_mode_fetches_one_page_in_chrome_and_one_over_http() {
     let site = MockServer::start().await;
-    route(
-        &site,
-        "/",
-        html("<a href='/next'>next</a>").append_header("set-cookie", "a=1"),
-    )
-    .await;
     Mock::given(method("GET"))
-        .and(path("/next"))
+        .and(path("/"))
         .respond_with(|request: &Request| {
-            if request.headers.contains_key("upgrade-insecure-requests") {
-                html("next").append_header("set-cookie", "a=2")
+            if from_the_browser(request) {
+                html("<a href='/next'>next</a>").append_header("set-cookie", "a=2")
             } else {
                 ResponseTemplate::new(403)
             }
         })
         .mount(&site)
         .await;
+    route(&site, "/next", html("next").append_header("set-cookie", "a=1")).await;
 
     let fields = crawl_fields(&site, BrowserMode::Auto).await;
 
-    let browser_fetches = site
+    let fetches: Vec<_> = site
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.url.path() == "/next" && r.headers.contains_key("upgrade-insecure-requests"))
-        .count();
-    assert_eq!(browser_fetches, 1, "Chrome must fetch the second page");
+        .map(|r| (r.url.path().to_owned(), from_the_browser(r)))
+        .collect();
+    assert!(
+        fetches.contains(&("/".to_owned(), true)),
+        "Chrome must fetch the start page: {fetches:?}"
+    );
+    assert_eq!(
+        fetches.iter().filter(|(at, _)| at == "/next").collect::<Vec<_>>(),
+        [&("/next".to_owned(), false)],
+        "the linked page must come over HTTP only"
+    );
     assert_eq!(fields, vec![field("a", "127.0.0.1", "/")]);
 }
