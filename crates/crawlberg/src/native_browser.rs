@@ -296,6 +296,7 @@ fn native_result_cookies(
         .filter_map(|url| url.host_str().map(str::to_owned))
         .collect();
     let header_cookies = native_header_cookies(final_url, headers);
+    let final_path = url::Url::parse(final_url).map_or_else(|_| "/".to_owned(), |url| url.path().to_owned());
     cookies
         .iter()
         .filter(|cookie| {
@@ -316,10 +317,11 @@ fn native_result_cookies(
         .map(|cookie| {
             let host_only = cookie.host_only;
             let mut result = cookie_info_from_native(cookie);
+            let host = result.domain.clone().unwrap_or_default();
             if host_only {
                 result.domain = None;
             }
-            result
+            result.with_stored_scope(host.trim_start_matches('.'), &final_path)
         })
         .collect()
 }
@@ -462,7 +464,7 @@ mod tests {
             (&result[0].name, &result[0].value),
             (&"script".to_owned(), &"2".to_owned())
         );
-        assert_eq!(result[0].domain, None);
+        assert_eq!(result[0].domain.as_deref(), Some("example.com"));
     }
 
     #[test]

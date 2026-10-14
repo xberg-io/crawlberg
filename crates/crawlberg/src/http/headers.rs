@@ -33,6 +33,22 @@ pub(crate) fn extract_cookies_from_hashmap(
     values.iter().filter_map(|raw| parse_set_cookie(host, raw)).collect()
 }
 
+/// The crawl-result cookies of the response for `url`: [`extract_cookies_from_hashmap`] with
+/// `domain` and `path` as [`CookieInfo`] documents them.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn result_cookies_from_hashmap(
+    url: &str,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<CookieInfo> {
+    let url = url::Url::parse(url).ok();
+    let host = url.as_ref().and_then(url::Url::host_str).unwrap_or_default();
+    let page_path = url.as_ref().map_or("/", url::Url::path);
+    extract_cookies_from_hashmap(host, headers)
+        .into_iter()
+        .map(|cookie| cookie.with_stored_scope(host, page_path))
+        .collect()
+}
+
 /// Parse one `Set-Cookie` header value into a [`CookieInfo`].
 ///
 /// Returns `None` when the value carries no `name=value` pair, or when its `Domain=`
@@ -51,8 +67,13 @@ fn parse_set_cookie(host: &str, raw: &str) -> Option<CookieInfo> {
     };
 
     for attr in &parts[1..] {
-        let attr = attr.trim().to_lowercase();
-        if let Some(d) = attr.strip_prefix("domain=") {
+        let Some((key, value)) = attr.trim().split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim().to_lowercase(), value.trim());
+        if key == "domain" {
+            let d = value.to_lowercase();
+            let d = d.as_str();
             if let Err(e) = validate_cookie_domain(host, d) {
                 tracing::warn!(
                     host = %host,
@@ -63,8 +84,8 @@ fn parse_set_cookie(host: &str, raw: &str) -> Option<CookieInfo> {
                 return None;
             }
             cookie.domain = Some(d.to_owned());
-        } else if let Some(p) = attr.strip_prefix("path=") {
-            cookie.path = Some(p.to_owned());
+        } else if key == "path" {
+            cookie.path = Some(value.to_owned());
         }
     }
 
@@ -201,6 +222,40 @@ mod tests {
         assert_eq!(cookies[0].name, "session");
         assert_eq!(cookies[0].value, "abc123");
         assert_eq!(cookies[0].domain, None);
+    }
+
+    #[test]
+    fn result_cookies_have_the_domain_and_path_the_browser_stores() {
+        let headers = std::collections::HashMap::from([(
+            "set-cookie".to_owned(),
+            [
+                "a=1",
+                "b=2; Domain=127.0.0.1",
+                "c=3; Path=/X/",
+                "d=4; Domain=.127.0.0.1",
+                "e=5; Path=relative",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )]);
+        let fields: Vec<_> = result_cookies_from_hashmap("http://127.0.0.1:8080/a/b/c", &headers)
+            .into_iter()
+            .map(|c| (c.name, c.domain.unwrap_or_default(), c.path.unwrap_or_default()))
+            .collect();
+        let expected = [
+            ("a", "127.0.0.1", "/a/b"),
+            ("b", "127.0.0.1", "/a/b"),
+            ("c", "127.0.0.1", "/X/"),
+            ("d", "127.0.0.1", "/a/b"),
+            ("e", "127.0.0.1", "/a/b"),
+        ]
+        .map(|(n, d, p)| (n.to_owned(), d.to_owned(), p.to_owned()));
+        assert_eq!(fields, expected);
+
+        let headers = set_cookie_headers("s=1; domain=Example.COM");
+        let cookies = result_cookies_from_hashmap("https://api.example.com/", &headers);
+        assert_eq!(cookies[0].domain.as_deref(), Some(".example.com"));
+        assert_eq!(cookies[0].path.as_deref(), Some("/"));
     }
 
     #[test]

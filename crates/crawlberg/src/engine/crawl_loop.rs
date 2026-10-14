@@ -17,7 +17,7 @@ use opentelemetry::KeyValue;
 use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, compile_regexes};
 use crate::html::{is_binary_url, is_pdf_url};
-use crate::http::{build_client, extract_cookies_from_hashmap};
+use crate::http::{build_client, result_cookies_from_hashmap};
 use crate::normalize::normalize_url_for_dedup;
 use crate::telemetry::attributes::{
     CRAWL_ALLOWED, CRAWL_BROWSER_MODE, CRAWL_DEPTH, CRAWL_FRONTIER_SIZE, CRAWL_HOST, CRAWL_MAX_DEPTH, CRAWL_MAX_PAGES,
@@ -405,8 +405,8 @@ impl CrawlEngine {
                 // ~keep A refusal still happened after real hops: keep what they produced so
                 // ~keep the reported result matches what the crawl actually did.
                 if self.config.cookies_enabled {
-                    for (host, headers) in &intermediate_headers {
-                        state.all_cookies.extend(extract_cookies_from_hashmap(host, headers));
+                    for (hop, headers) in &intermediate_headers {
+                        state.all_cookies.extend(result_cookies_from_hashmap(hop, headers));
                     }
                 }
                 state.redirect_count = redirect_count;
@@ -418,12 +418,11 @@ impl CrawlEngine {
         Ok(match resolution {
             Ok(outcome) => {
                 if self.config.cookies_enabled {
-                    for (host, headers) in &outcome.intermediate_headers {
-                        state.all_cookies.extend(extract_cookies_from_hashmap(host, headers));
+                    for (hop, headers) in &outcome.intermediate_headers {
+                        state.all_cookies.extend(result_cookies_from_hashmap(hop, headers));
                     }
-                    let final_host = url_host(&outcome.final_url);
-                    state.all_cookies.extend(extract_cookies_from_hashmap(
-                        &final_host,
+                    state.all_cookies.extend(result_cookies_from_hashmap(
+                        &outcome.final_url,
                         &outcome.final_response.headers,
                     ));
                 }

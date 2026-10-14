@@ -25,7 +25,7 @@ pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::{build_client, request_client, send_with_cookies};
 pub(crate) use headers::build_headers_map;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use headers::extract_cookies_from_hashmap;
+pub(crate) use headers::{extract_cookies_from_hashmap, result_cookies_from_hashmap};
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;

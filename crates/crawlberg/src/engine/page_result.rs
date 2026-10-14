@@ -4,9 +4,8 @@ use url::Url;
 
 use super::CrawlEngine;
 use super::crawl_state::{CrawlState, FALLBACK_URL, FetchResult, LoopContext, ParentPage};
-use super::redirect::url_host;
 use crate::error::CrawlError;
-use crate::http::extract_cookies_from_hashmap;
+use crate::http::result_cookies_from_hashmap;
 use crate::normalize::normalize_url;
 use crate::traits::*;
 use crate::types::*;
@@ -118,11 +117,10 @@ impl CrawlEngine {
         if !self.config.cookies_enabled {
             return;
         }
-        let fetch_host = url_host(page_url);
         state.all_cookies.extend(fetch.browser_result_cookies.iter().cloned());
         state
             .all_cookies
-            .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
+            .extend(result_cookies_from_hashmap(page_url, &fetch.headers));
     }
 
     /// Enqueue the page's outbound links, unless its depth, its document context or its own

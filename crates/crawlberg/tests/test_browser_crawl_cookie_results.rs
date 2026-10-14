@@ -221,6 +221,5 @@ async fn should_report_native_cookie_with_case_sensitive_path_once() {
     options.browser.chrome_path = None;
     let result = run(&site, options).await;
     assert_eq!(pairs(&result), vec![("result".into(), "1".into())]);
-    // ~keep Existing header metadata lowercases Path; this regression only guards duplicate reporting.
-    assert_eq!(result.cookies[0].path.as_deref(), Some("/folder"));
+    assert_eq!(result.cookies[0].path.as_deref(), Some("/Folder"));
 }

@@ -382,11 +382,14 @@ pub(super) fn result_cookie_delta(
                     host == &domain
                 }
             });
-            matches.then(|| crate::types::CookieInfo {
-                name: cookie.params.name.clone(),
-                value: cookie.params.value.clone(),
-                domain: cookie.params.domain.clone(),
-                path: cookie.params.path.clone(),
+            matches.then(|| {
+                crate::types::CookieInfo {
+                    name: cookie.params.name.clone(),
+                    value: cookie.params.value.clone(),
+                    domain: cookie.params.domain.clone(),
+                    path: cookie.params.path.clone(),
+                }
+                .with_stored_scope(&domain, "/")
             })
         })
         .collect()
@@ -436,6 +439,14 @@ mod tests {
         );
         assert_eq!(delta.len(), 1);
         assert_eq!(delta[0].domain.as_deref(), Some(".example.com"));
+    }
+
+    #[test]
+    fn a_host_only_result_cookie_has_its_host_as_domain() {
+        let host_only = browser_cookie(cookie("example.com", true, -1.0, None), 100.0).expect("host cookie");
+        let delta = result_cookie_delta(&[], &[host_only], "https://example.com/", "https://example.com/");
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta[0].domain.as_deref(), Some("example.com"));
     }
 
     #[test]
