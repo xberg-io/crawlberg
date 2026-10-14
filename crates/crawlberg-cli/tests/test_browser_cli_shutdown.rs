@@ -1,0 +1,473 @@
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+struct Site {
+    url: String,
+    hits: Arc<Mutex<Vec<String>>>,
+    stopping: Arc<AtomicBool>,
+    errors: Arc<Mutex<Vec<String>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Site {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture listener");
+        listener.set_nonblocking(true).expect("nonblocking fixture");
+        let url = format!("http://{}/", listener.local_addr().expect("fixture address"));
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let thread_errors = Arc::clone(&errors);
+        let thread_hits = Arc::clone(&hits);
+        let thread_stop = Arc::clone(&stopping);
+        let thread = std::thread::spawn(move || {
+            let mut connections = Vec::new();
+            while !thread_stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let hits = Arc::clone(&thread_hits);
+                        let errors = Arc::clone(&thread_errors);
+                        connections.push(std::thread::spawn(move || {
+                            if let Err(error) = serve_connection(stream, &hits) {
+                                errors.lock().expect("fixture errors").push(error.to_string());
+                            }
+                        }));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("fixture accept: {error}"),
+                }
+            }
+            for connection in connections {
+                connection.join().expect("fixture connection thread");
+            }
+        });
+        Self {
+            url,
+            hits,
+            stopping,
+            errors,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Site {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+        let ended = self.thread.take().expect("fixture thread").join();
+        if !std::thread::panicking() {
+            ended.expect("fixture thread ends");
+            assert_eq!(*self.errors.lock().expect("fixture errors"), Vec::<String>::new());
+        }
+    }
+}
+
+const FIXTURE_REQUEST_LIMIT: Duration = Duration::from_secs(5);
+const FIXTURE_HEADER_LIMIT: usize = 16_384;
+
+fn request_headers(stream: &mut std::net::TcpStream) -> std::io::Result<Option<Vec<u8>>> {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        match stream.read(&mut chunk) {
+            Ok(0) if request.is_empty() => return Ok(None),
+            Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)),
+            Ok(size) => request.extend_from_slice(&chunk[..size]),
+            Err(error)
+                if request.is_empty()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                    ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        }
+        if request.len() > FIXTURE_HEADER_LIMIT {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "fixture headers exceed limit",
+            ));
+        }
+    }
+    Ok(Some(request))
+}
+
+fn serve_connection(mut stream: std::net::TcpStream, hits: &Mutex<Vec<String>>) -> std::io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(FIXTURE_REQUEST_LIMIT))?;
+    stream.set_write_timeout(Some(FIXTURE_REQUEST_LIMIT))?;
+    let Some(request) = request_headers(&mut stream)? else {
+        return Ok(());
+    };
+    let path = String::from_utf8_lossy(&request)
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing fixture request path"))?
+        .to_owned();
+    hits.lock().expect("hits").push(path.clone());
+    let known = matches!(path.as_str(), "/" | "/one" | "/two");
+    let body = if known { fixture_body(&path) } else { String::new() };
+    let status = if known { "200 OK" } else { "404 Not Found" };
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|error| std::io::Error::new(error.kind(), format!("fixture response {path}: {error}")))
+}
+
+fn fixture_body(path: &str) -> String {
+    let links = if path == "/" {
+        r#"<a href="/one">one</a><a href="/two">two</a>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<html><body>{links}<script>const p=document.createElement("p");p.id="rendered";p.textContent="executed"+"-"+location.pathname;document.body.appendChild(p)</script></body></html>"#
+    )
+}
+
+fn command(url: &str, config: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crawlberg"));
+    command.env_remove("RUST_LOG").env_remove("CRAWLBERG_LOG").args([
+        "--log-level",
+        "warn",
+        "--log-format",
+        "json",
+        "crawl",
+        url,
+        "--browser-mode",
+        "always",
+        "--depth",
+        "1",
+        "--concurrent",
+        "1",
+        "--rate-limit",
+        "0",
+        "--format",
+        "json",
+        "--config",
+        config,
+    ]);
+    command
+}
+
+fn run(mut command: Command) -> Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("CLI process");
+    let mut stdout = child.stdout.take().expect("stdout pipe");
+    let mut stderr = child.stderr.take().expect("stderr pipe");
+    let stdout = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).expect("stdout");
+        bytes
+    });
+    let stderr = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).expect("stderr");
+        bytes
+    });
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("CLI wait") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill timed out CLI");
+            child.wait().expect("reap timed out CLI");
+            panic!("CLI exceeded 180 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    Output {
+        status,
+        stdout: stdout.join().expect("stdout reader"),
+        stderr: stderr.join().expect("stderr reader"),
+    }
+}
+
+fn diagnostics(stderr: &[u8]) -> Vec<serde_json::Value> {
+    String::from_utf8(stderr.to_vec())
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("every diagnostic must be captured JSON"))
+        .collect()
+}
+
+fn assert_rendered_pages(stdout: &[u8], url: &str) {
+    let result: serde_json::Value = serde_json::from_slice(stdout).expect("crawl JSON");
+    assert_eq!(result["error"], serde_json::Value::Null);
+    let pages = result["pages"].as_array().expect("crawl pages");
+    assert_eq!(pages.len(), 3);
+    let mut paths = Vec::new();
+    for page in pages {
+        let path = page["url"]
+            .as_str()
+            .expect("page URL")
+            .strip_prefix(url.trim_end_matches('/'))
+            .expect("fixture origin");
+        paths.push(path);
+        assert_eq!(page["status_code"], 200);
+        assert!(
+            page["html"]
+                .as_str()
+                .expect("HTML")
+                .contains(&format!(r#"<p id="rendered">executed-{path}</p>"#)),
+            "actual JavaScript must render {path}"
+        );
+    }
+    paths.sort_unstable();
+    assert_eq!(paths, ["/", "/one", "/two"]);
+}
+
+#[test]
+fn should_capture_invalid_cli_configuration_as_an_error() {
+    let output = run(command(
+        "http://127.0.0.1:1/",
+        r#"{"cli_exit_capture_probe_unknown_field":true}"#,
+    ));
+    assert_eq!(output.status.code(), Some(1));
+    let events = diagnostics(&output.stderr);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["level"], "ERROR");
+    assert_eq!(
+        events[0]["fields"]["message"],
+        "invalid config: cli_exit_capture_probe_unknown_field: unknown key"
+    );
+}
+
+fn assert_cli_job(site: &Site, config: &str, job: usize) -> Vec<serde_json::Value> {
+    let first_hit = site.hits.lock().expect("hits").len();
+    let output = run(command(&site.url, config));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "job {job}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let url = &site.url;
+    let stdout = &output.stdout;
+    let rendered = std::panic::catch_unwind(|| assert_rendered_pages(stdout, url));
+    assert!(
+        rendered.is_ok(),
+        "job {job}: stdout={} stderr={} hits={:?} fixture_errors={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        *site.hits.lock().expect("hits"),
+        *site.errors.lock().expect("fixture errors")
+    );
+    let hits = site.hits.lock().expect("hits");
+    let mut routes: Vec<_> = hits[first_hit..]
+        .iter()
+        .filter(|path| matches!(path.as_str(), "/" | "/one" | "/two"))
+        .cloned()
+        .collect();
+    routes.sort_unstable();
+    assert_eq!(routes, ["/", "/one", "/two"], "job {job}");
+    diagnostics(&output.stderr)
+        .into_iter()
+        .filter(|event| matches!(event["level"].as_str(), Some("WARN" | "ERROR")))
+        .collect()
+}
+
+#[test]
+fn should_finish_five_browser_cli_crawls_without_failure_diagnostics() {
+    let chrome = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH")
+        .or_else(|| std::env::var_os("CRAWLBERG_TEST_CHROME"))
+        .expect("real Chrome path must be configured");
+    assert!(
+        std::path::Path::new(&chrome).is_file(),
+        "configured real Chrome must exist"
+    );
+    let config = serde_json::json!({
+        "ssrf":{"deny_private":false,"denylist":[]}, "ssrf_deny_private_explicit":false,
+        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy()}
+    })
+    .to_string();
+    let site = Site::start();
+    let mut failures = Vec::new();
+    let mut completed = 0;
+    for job in 0..5 {
+        failures.extend(
+            assert_cli_job(&site, &config, job)
+                .into_iter()
+                .map(|event| (job, event)),
+        );
+        completed += 1;
+    }
+    assert_eq!(completed, 5);
+    assert_eq!(
+        failures.len(),
+        0,
+        "normal browser CLI exit must not report failures: {failures:?}"
+    );
+}
+
+struct ExternalChrome {
+    child: std::process::Child,
+    profile: std::path::PathBuf,
+    endpoint: String,
+}
+
+impl ExternalChrome {
+    fn launch() -> Self {
+        let chrome = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH")
+            .or_else(|| std::env::var_os("CRAWLBERG_TEST_CHROME"))
+            .expect("real Chrome path must be configured");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let profile = std::env::temp_dir().join(format!("crawlberg-cli-borrowed-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&profile).expect("external Chrome profile");
+        let child = Command::new(chrome)
+            .args([
+                "--headless=new",
+                "--no-sandbox",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--remote-debugging-port=0",
+                "--remote-allow-origins=*",
+            ])
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("externally owned Chrome");
+        let mut browser = Self {
+            child,
+            profile,
+            endpoint: String::new(),
+        };
+        browser.wait_until_ready();
+        browser
+    }
+
+    fn wait_until_ready(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            assert_eq!(
+                self.child.try_wait().expect("Chrome state"),
+                None,
+                "owner Chrome must be alive"
+            );
+            if let Ok(text) = std::fs::read_to_string(self.profile.join("DevToolsActivePort")) {
+                let mut lines = text.lines();
+                let port = lines
+                    .next()
+                    .expect("DevTools port")
+                    .parse::<u16>()
+                    .expect("port number");
+                let path = lines.next().expect("browser endpoint path");
+                self.endpoint = format!("ws://127.0.0.1:{port}{path}");
+                return;
+            }
+            assert!(Instant::now() < deadline, "external Chrome must publish endpoint");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+const PROFILE_REMOVAL_LIMIT: Duration = Duration::from_secs(15);
+const PROFILE_REMOVAL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+fn remove_external_profile(profile: &std::path::Path) -> std::io::Result<()> {
+    let deadline = Instant::now() + PROFILE_REMOVAL_LIMIT;
+    loop {
+        match std::fs::remove_dir_all(profile) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => std::thread::sleep(PROFILE_REMOVAL_POLL_INTERVAL),
+        }
+    }
+}
+
+impl Drop for ExternalChrome {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let removed = remove_external_profile(&self.profile);
+        if !std::thread::panicking() {
+            removed.expect("remove owned external profile before deadline");
+        }
+    }
+}
+
+#[test]
+fn should_leave_borrowed_chrome_usable_after_cli_shutdown() {
+    let mut browser = ExternalChrome::launch();
+    let site = Site::start();
+    let config = serde_json::json!({
+        "ssrf":{"deny_private":false,"denylist":[]}, "ssrf_deny_private_explicit":false,
+        "respect_robots_txt":false,"retry_count":0,"browser":{"endpoint":browser.endpoint}
+    })
+    .to_string();
+    for job in 0..2 {
+        let events = assert_cli_job(&site, &config, job);
+        assert_eq!(events.len(), 0, "borrowed CLI job {job}: {events:?}");
+        assert_eq!(browser.child.try_wait().expect("external Chrome state"), None);
+    }
+}
+
+#[test]
+fn should_serve_a_fixture_request_while_an_idle_preconnection_stays_open() {
+    let site = Site::start();
+    let address = site.url.trim_start_matches("http://").trim_end_matches('/');
+    let _idle = std::net::TcpStream::connect(address).expect("idle Chrome-like preconnection");
+    let mut request = std::net::TcpStream::connect(address).expect("fixture request connection");
+    request
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("response bound");
+    request
+        .write_all(b"GET /one HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("complete request");
+    let mut response = String::new();
+    request
+        .read_to_string(&mut response)
+        .expect("an idle connection must not prevent the fixture response");
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.ends_with(&fixture_body("/one")));
+    assert_eq!(*site.hits.lock().expect("hits"), ["/one"]);
+}
+
+#[test]
+fn should_keep_an_accepted_connection_open_until_the_complete_request_arrives() {
+    let site = Site::start();
+    let address = site.url.trim_start_matches("http://").trim_end_matches('/');
+    let mut request = std::net::TcpStream::connect(address).expect("new Chrome-like connection");
+    request
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .expect("idle observation bound");
+    let mut byte = [0_u8; 1];
+    let idle = request.read(&mut byte);
+    assert!(
+        matches!(idle, Err(ref error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+        "the fixture must await the request rather than close an accepted connection: {idle:?}"
+    );
+    request
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("response bound");
+    request
+        .write_all(b"GET /one HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("complete request");
+    let mut response = String::new();
+    request.read_to_string(&mut response).expect("complete response");
+    assert!(response.ends_with(&fixture_body("/one")));
+    assert_eq!(*site.hits.lock().expect("hits"), ["/one"]);
+}

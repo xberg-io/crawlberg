@@ -1113,7 +1113,13 @@ impl BrowserFirewall {
         let child_shared = Arc::clone(&shared);
         let child_browser = Arc::clone(&browser);
         let child_controller = tokio::spawn(async move {
-            let expected = controller_completed(serve_child_targets(child_socket, child_receiver, &child_shared)).await;
+            let expected = controller_completed(serve_child_targets(
+                child_socket,
+                child_receiver,
+                &child_shared,
+                &child_browser,
+            ))
+            .await;
             if !expected && !child_shared.stopping.load(Ordering::Acquire) {
                 fail_controller(&child_browser, &child_shared, "child-target controller").await;
             }
@@ -2178,71 +2184,8 @@ fn take_ready_structural(
     }
 }
 
-/// The socket of the child-target controller: the three calls that the controller makes on it.
-///
-/// ~keep For a browser with a debugging port the socket is the WebSocket, and each method is
-/// ~keep the call of the same name on it. Only a browser that was launched on a private
-/// ~keep debugging pipe has the other socket.
-trait ChildSocket {
-    type Error: std::fmt::Display;
-
-    fn send(
-        &mut self,
-        message: async_tungstenite::tungstenite::Message,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
-    /// Close the socket. The pipe has no close frame and ignores `frame`.
-    fn close(
-        &mut self,
-        frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
-    fn next(
-        &mut self,
-    ) -> impl Future<Output = Option<Result<async_tungstenite::tungstenite::Message, Self::Error>>> + Send;
-}
-
-impl<S> ChildSocket for async_tungstenite::WebSocketStream<S>
-where
-    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin + Send,
-{
-    type Error = async_tungstenite::tungstenite::Error;
-
-    async fn send(&mut self, message: async_tungstenite::tungstenite::Message) -> Result<(), Self::Error> {
-        async_tungstenite::WebSocketStream::send(self, message).await
-    }
-
-    async fn close(
-        &mut self,
-        frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
-    ) -> Result<(), Self::Error> {
-        async_tungstenite::WebSocketStream::close(self, frame).await
-    }
-
-    async fn next(&mut self) -> Option<Result<async_tungstenite::tungstenite::Message, Self::Error>> {
-        futures::StreamExt::next(self).await
-    }
-}
-
-#[cfg(unix)]
-impl ChildSocket for chromiumoxide::pipe::PipeClient {
-    type Error = chromiumoxide::error::CdpError;
-
-    async fn send(&mut self, message: async_tungstenite::tungstenite::Message) -> Result<(), Self::Error> {
-        futures::SinkExt::send(self, message).await
-    }
-
-    async fn close(
-        &mut self,
-        _frame: Option<async_tungstenite::tungstenite::protocol::CloseFrame>,
-    ) -> Result<(), Self::Error> {
-        futures::SinkExt::close(self).await
-    }
-
-    async fn next(&mut self) -> Option<Result<async_tungstenite::tungstenite::Message, Self::Error>> {
-        futures::StreamExt::next(self).await
-    }
-}
+mod child_transport;
+use child_transport::ChildSocket;
 
 /// The socket that the child-target controller starts on. It is matched one time, when the
 /// controller starts; the controller then runs on the socket of its transport.
@@ -2356,14 +2299,15 @@ async fn serve_child_targets(
     socket: ControllerSocket,
     mut commands: mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
+    browser: &Browser,
 ) -> bool {
     match socket {
         ControllerSocket::WebSocket(socket) => {
-            serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+            serve_child_targets_for_browser(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT, Some(browser)).await
         }
         #[cfg(unix)]
         ControllerSocket::Pipe(socket) => {
-            serve_child_targets_with_timeout(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT).await
+            serve_child_targets_for_browser(socket, &mut commands, shared, CHILD_COMMAND_TIMEOUT, Some(browser)).await
         }
     }
 }
@@ -2371,11 +2315,25 @@ async fn serve_child_targets(
 mod failure;
 use failure::child_fail;
 
+#[cfg(test)]
 async fn serve_child_targets_with_timeout<S>(
+    socket: S,
+    commands: &mut mpsc::Receiver<ChildCommand>,
+    shared: &Arc<Shared>,
+    command_timeout: Duration,
+) -> bool
+where
+    S: ChildSocket,
+{
+    serve_child_targets_for_browser(socket, commands, shared, command_timeout, None).await
+}
+
+async fn serve_child_targets_for_browser<S>(
     mut socket: S,
     commands: &mut mpsc::Receiver<ChildCommand>,
     shared: &Arc<Shared>,
     command_timeout: Duration,
+    browser: Option<&Browser>,
 ) -> bool
 where
     S: ChildSocket,
@@ -2566,7 +2524,12 @@ where
                 }
             }
             message = socket.next() => {
-                let Some(Ok(message)) = message else { return child_fail(shared, "socket_read_or_end") };
+                let message = match message {
+                    Some(Ok(message)) => message,
+                    Some(Err(error)) => return failure::child_transport_end(
+                        browser, shared, Some(&S::into_cdp_error(error)), "socket_read_or_end"),
+                    None => return failure::child_transport_end(browser, shared, None, "socket_read_or_end"),
+                };
                 let text = match message {
                     async_tungstenite::tungstenite::Message::Text(text) => text,
                     async_tungstenite::tungstenite::Message::Ping(payload) => {
@@ -2579,7 +2542,8 @@ where
                         }
                         continue;
                     }
-                    async_tungstenite::tungstenite::Message::Close(_) => return child_fail(shared, "socket_close_frame"),
+                    async_tungstenite::tungstenite::Message::Close(_) =>
+                        return failure::child_transport_end(browser, shared, None, "socket_close_frame"),
                     _ => continue,
                 };
                 // ~keep The driver's reader: a Page event of a popup can hold half of a surrogate

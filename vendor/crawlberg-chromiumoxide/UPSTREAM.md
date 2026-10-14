@@ -48,6 +48,6 @@ the whole reply or event. `conn::parse_message` replaces each unpaired half with
 
 Current Chrome network-policy events accept `ipAddressSpace` and `isSecureContext` aliases
 without changing the legacy typed event API or accepting duplicate keys. Owned browser
-termination is tracked per connection and launching process; only terminal closure after that
-intent is observed is treated as expected. Borrowed connections and nonterminal failures retain
+termination is tracked per browser generation and launching process; only terminal closure after that
+intent is observed on its primary or child connection is treated as expected. Borrowed connections and nonterminal failures retain
 their diagnostics.

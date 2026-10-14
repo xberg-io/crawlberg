@@ -61,3 +61,15 @@ pub(super) async fn disable_finished(browser: &chromiumoxide::Browser) -> bool {
         Err(_) => false,
     }
 }
+
+pub(super) fn child_transport_end(
+    browser: Option<&chromiumoxide::Browser>,
+    shared: &Shared,
+    error: Option<&chromiumoxide::error::CdpError>,
+    reason: &'static str,
+) -> bool {
+    if browser.is_some_and(|browser| browser.observe_owned_transport_end(error)) {
+        return true;
+    }
+    child_fail(shared, reason)
+}

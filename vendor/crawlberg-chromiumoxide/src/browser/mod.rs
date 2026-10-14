@@ -92,8 +92,15 @@ impl Browser {
         true
     }
 
+    /// Whether a terminal transport close was observed after this process requested owned teardown. ~keep
     pub fn observed_owned_termination(&self) -> bool {
         self.owned_termination.observed()
+    }
+
+    /// Classify a matching connection's EOF/Close (`None`) or typed terminal error after owned intent. ~keep
+    /// A borrowed browser, a forked copy, and a nonterminal error never establish expected teardown. ~keep
+    pub fn observe_owned_transport_end(&self, error: Option<&crate::error::CdpError>) -> bool {
+        self.owned_termination.observe(error)
     }
 
     /// Connect to an already running chromium instance via the given URL.

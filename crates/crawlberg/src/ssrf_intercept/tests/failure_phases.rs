@@ -364,3 +364,6 @@ async fn a_structural_deadline_during_requested_stop_reports_no_failure() {
 }
 
 mod teardown_controls;
+
+#[cfg(unix)]
+mod owned_teardown;

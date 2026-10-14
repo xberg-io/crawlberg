@@ -214,8 +214,10 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- Owned Chrome teardown recognizes its expected WebSocket or pipe closure without logging a
-  controller failure, and successful profile retirement avoids a second process-family kill (#734).
+- Owned Chrome teardown recognizes expected closure of its primary and child connections.
+  Active and borrowed transport failures remain errors; successful profile retirement avoids
+  a second process-family kill. Successful CLI commands await owned browser cleanup before the
+  async runtime exits (#734).
 - Foreign-tab browser tests finish readable response bodies before reloading and report bounded
   rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
 - Browser protocol parsing accepts current Chrome network policy field names while preserving
