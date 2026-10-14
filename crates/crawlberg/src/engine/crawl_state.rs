@@ -173,6 +173,16 @@ impl CrawlState {
     /// `pages`, so `pages.len()` is permanently 0 there. Reading that field directly is what
     /// made the `crawl.pages_completed` span report 0 for every iteration of every streaming
     /// crawl; the three budget/stats callers already branched correctly and the span did not.
+    /// Count a page whose fetch failed. A page lost because its browser's CDP connection closed
+    /// is the crawl's error too, the first one kept: the browser failed, not the page, so a
+    /// result with no error and fewer pages would hide it (xberg-io/crawlberg#705). ~keep
+    pub(super) fn record_failed_fetch(&mut self, error: &crate::error::CrawlError) {
+        self.pages_failed += 1;
+        if error.browser_connection_closed() && self.error.is_none() {
+            self.error = Some(error.to_string());
+        }
+    }
+
     pub(super) fn pages_processed(&self) -> usize {
         if self.is_streaming {
             self.pages_count
@@ -276,5 +286,34 @@ pub(super) fn blocking_extract_page(
         is_pdf,
         detected_charset,
         page_scan,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CrawlState;
+    use crate::error::{BrowserConnectionClosed, CrawlError};
+
+    /// A page lost because its browser's CDP connection closed is the crawl's error, the first
+    /// one kept; a page a browser error of its own failed is not (xberg-io/crawlberg#705).
+    #[test]
+    fn a_lost_browser_connection_is_the_crawls_error() {
+        let mut state = CrawlState::new(0, false);
+        state.record_failed_fetch(&CrawlError::browser_error("navigation failed"));
+        assert_eq!(state.pages_failed, 1);
+        assert!(state.error.is_none(), "a page's own browser error is not the crawl's");
+
+        let lost = |page: &str| {
+            CrawlError::browser_error_with_source(
+                format!("the browser's CDP connection closed: failed to create page {page}: oneshot canceled"),
+                BrowserConnectionClosed { source: None },
+            )
+        };
+        state.record_failed_fetch(&lost("first"));
+        state.record_failed_fetch(&lost("second"));
+        assert_eq!(state.pages_failed, 3);
+        let result = state.into_result("http://a.localhost/".to_owned());
+        let error = result.error.expect("a lost browser connection is the crawl's error");
+        assert!(error.contains("failed to create page first"), "the first loss is kept, got: {error}");
     }
 }

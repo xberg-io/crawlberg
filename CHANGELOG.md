@@ -211,6 +211,10 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
+  longer kills a browser whose page creation takes more than two seconds: the page's own fetch
+  timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
+  (#705)
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
