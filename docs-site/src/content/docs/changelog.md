@@ -56,6 +56,9 @@ title: "Changelog"
 
 ### Added
 
+- Per-domain rate limiting emits TRACE events at `crawlberg::rate_limiter` with `domain` and
+  numeric `wait_ms` fields for each selected pacing delay.
+
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
@@ -211,12 +214,13 @@ title: "Changelog"
 
 ### Fixed
 
-- Released constructor checks preserve Swift initializer and factory function references, getter
-  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
-  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
-  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
-- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
-  pull requests, independently of the full E2E workflow (#737).
+- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
+- macOS runtime tests retry when framework workqueue counts change during thread sampling,
+  and exit subprocesses use the same sampler (#751).
+- Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
+- Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
+  including checks that Chrome stored and sent the excluded cookies (#754).
 
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
@@ -233,7 +237,10 @@ title: "Changelog"
   and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
   sitemap-index child takes its own configured host delay. (#681)
 - Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
-  the API reports status 502 with `TOO_MANY_REDIRECTS`. (#676)
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. The message names the address that ended
+  the chain, with credentials hidden:
+  `too_many_redirects: http://example.com/r3 - redirect limit exceeded` or
+  `too_many_redirects: http://example.com/a - redirect loop`. (#676)
 - Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
   fragments use the normal conversion path, preserving conversion failures. (#677, #682)
 - Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
@@ -466,6 +473,13 @@ title: "Changelog"
   request; the engine waited for them to close before it kept the page. (#694)
 - Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
   Foreign-retirement census validation and retirement use one registry lock. (#701)
+
+- Released constructor checks preserve Swift initializer and factory function references, getter
+  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
+  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
+  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
 
 ## [1.10.2] - 2026-10-06
 
