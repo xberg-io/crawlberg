@@ -930,7 +930,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{BrowserPage, browser_fetch};
+    use super::{BrowserHandles, BrowserPage, browser_fetch};
     use crate::error::CrawlError;
     use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
 
