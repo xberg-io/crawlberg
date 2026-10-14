@@ -214,6 +214,8 @@ title: "Changelog"
 
 ### Fixed
 
+- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
 - macOS runtime tests retry when framework workqueue counts change during thread sampling,
   and exit subprocesses use the same sampler (#751).
 - Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
