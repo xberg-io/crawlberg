@@ -125,7 +125,8 @@ All notable changes to crawlberg are documented here.
 
 - An engine built with `CrawlEngine::builder()` in browser mode reuses one Chrome for all its
   pages, as the language bindings already did, instead of launching a Chrome for each page: for
-  30 pages about half the Chrome memory (peak PSS). Pages open on it `max_concurrent` at a time
+  30 pages the peak Chrome memory (PSS) is about 0.47 of what it was (590 MB against 1240 MB,
+  medians of 15 runs). Pages open on it `max_concurrent` at a time
   (8 by default), each in a browser context of its own with its own cookies. The Chrome stops
   and its profile directory is removed when the last clone of the engine is dropped. A
   `browser_profile` keeps a Chrome for each page, and a pool given with `with_browser_pool`
