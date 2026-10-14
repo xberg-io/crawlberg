@@ -496,6 +496,57 @@ mod tests {
         assert_eq!(admitted.load(Ordering::SeqCst), 3);
     }
 
+    /// While every slot holds a running operation, the runner pulls at most `concurrency + 1`
+    /// jobs from the iterator: one job per slot, plus the one job that the look-ahead of the
+    /// pull holds before a slot is free for it.
+    #[tokio::test]
+    async fn should_pull_at_most_one_job_ahead_of_the_slots_from_the_iterator() {
+        const CONCURRENCY: usize = 2;
+        const JOBS: usize = 50;
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let count = pulled.clone();
+        let jobs = (0..JOBS)
+            .map(|id| super::super::host_turn::HostJob {
+                host: format!("host{id}"),
+                data: id,
+            })
+            .inspect(move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+            });
+        let gate = release.clone();
+        let running = tokio::spawn(run_resumable_jobs(
+            jobs,
+            CONCURRENCY,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            |id| format!("job {id}"),
+            move |id, _| {
+                let started = started.clone();
+                let gate = gate.clone();
+                async move {
+                    started.send(id).expect("the test waits for the starts");
+                    gate.acquire().await.expect("the gate stays open").forget();
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        ));
+        for _ in 0..CONCURRENCY {
+            starts.recv().await.expect("an operation starts");
+        }
+        let pulled_while_full = pulled.load(Ordering::SeqCst);
+        assert!(
+            pulled_while_full <= CONCURRENCY + 1,
+            "{pulled_while_full} of {JOBS} jobs pulled while {CONCURRENCY} slots run, at most {} allowed",
+            CONCURRENCY + 1
+        );
+        release.add_permits(JOBS);
+        let results = running.await.expect("the batch joins");
+        assert_eq!(results.len(), JOBS);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(pulled.load(Ordering::SeqCst), JOBS);
+    }
+
     struct FailingSecondAdmission(AtomicUsize);
 
     #[async_trait::async_trait]
