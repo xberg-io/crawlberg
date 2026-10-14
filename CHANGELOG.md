@@ -213,7 +213,8 @@ All notable changes to crawlberg are documented here.
 
 - Released constructor checks preserve Swift initializer and factory function references, getter
   effects and alias visibility. Python and Swift call fixtures assert constructed values, and
-  Python CI executes the released calls after type checking (#738, #739).
+  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
+  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
 - Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
   pull requests, independently of the full E2E workflow (#737).
 
