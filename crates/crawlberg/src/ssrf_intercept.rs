@@ -3147,12 +3147,7 @@ async fn serve(
             // ~keep otherwise releases requests from a watched page that has not died yet.
             if shared.context != PageContext::Shared
                 && shared.origin != BrowserOrigin::Killed
-                && !tokio::time::timeout(
-                    CONTROLLER_TEARDOWN_TIMEOUT,
-                    browser.execute(FetchDisableParams::default()),
-                )
-                .await
-                .is_ok_and(|disabled| disabled.is_ok())
+                && !failure::disable_finished(browser).await
             {
                 return false;
             }
@@ -3298,14 +3293,14 @@ async fn serve(
                         Done::Answered
                     }));
                 }
-                None => return false,
+                None => return failure::owned_transport_end(browser),
             },
             event = events.created.next(), if stopping.is_none() => {
-                let Some(event) = event else { return false };
+                let Some(event) = event else { return failure::owned_transport_end(browser) };
                 lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Created(event)));
             }
             event = events.destroyed.next(), if stopping.is_none() => {
-                let Some(event) = event else { return false };
+                let Some(event) = event else { return failure::owned_transport_end(browser) };
                 lifecycles.push_back(reconcile_lifecycle(browser, shared, Lifecycle::Destroyed(event)));
             }
             Some(event) = lifecycles.next(), if !lifecycles.is_empty() && stopping.is_none() => {
@@ -3330,11 +3325,13 @@ async fn owned_targets_absent(browser: &Browser, shared: &Shared) -> bool {
     if shared.opening.load(Ordering::Acquire) != 0 {
         return false;
     }
-    let Ok(contexts) = browser.execute(GetBrowserContextsParams::default()).await else {
-        return false;
+    let contexts = match browser.execute(GetBrowserContextsParams::default()).await {
+        Ok(value) => value,
+        Err(error) => return failure::owned_command_cancelled(browser, &error),
     };
-    let Ok(targets) = browser.execute(GetTargetsParams::default()).await else {
-        return false;
+    let targets = match browser.execute(GetTargetsParams::default()).await {
+        Ok(value) => value,
+        Err(error) => return failure::owned_command_cancelled(browser, &error),
     };
     let owned_contexts: HashSet<_> = lock(&shared.registry).contexts.keys().cloned().collect();
     if contexts

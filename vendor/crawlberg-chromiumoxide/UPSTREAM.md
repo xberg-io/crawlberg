@@ -45,3 +45,9 @@ More changes against upstream:
 The fork also reads a protocol message that holds one half of a surrogate pair. Chrome
 writes that half as a lone `\ud83d` escape, which `serde_json` refuses, so upstream loses
 the whole reply or event. `conn::parse_message` replaces each unpaired half with U+FFFD.
+
+Current Chrome network-policy events accept `ipAddressSpace` and `isSecureContext` aliases
+without changing the legacy typed event API or accepting duplicate keys. Owned browser
+termination is tracked per connection and launching process; only terminal closure after that
+intent is observed is treated as expected. Borrowed connections and nonterminal failures retain
+their diagnostics.

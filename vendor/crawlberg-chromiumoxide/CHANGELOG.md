@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accept current Chrome network-policy field names while preserving the legacy typed event API
+- Recognize terminal WebSocket and pipe closure after owned-process termination; preserve
+  diagnostics for active, borrowed and nonterminal failures
+
 - Browser-level events are passed to their listeners when the browser has no target left
 
 ## [0.9.1] 2026-02-25

@@ -33,3 +33,31 @@ pub(super) fn structural_fail(shared: &Shared, target: &StructuralTarget) -> boo
     }
     false
 }
+
+pub(super) fn owned_transport_end(browser: &chromiumoxide::Browser) -> bool {
+    browser.observed_owned_termination()
+}
+
+pub(super) fn owned_command_cancelled(
+    browser: &chromiumoxide::Browser,
+    error: &chromiumoxide::error::CdpError,
+) -> bool {
+    owned_transport_end(browser)
+        && matches!(
+            error,
+            chromiumoxide::error::CdpError::ChannelSendError(_) | chromiumoxide::error::CdpError::NoResponse
+        )
+}
+
+pub(super) async fn disable_finished(browser: &chromiumoxide::Browser) -> bool {
+    match tokio::time::timeout(
+        super::CONTROLLER_TEARDOWN_TIMEOUT,
+        browser.execute(super::FetchDisableParams::default()),
+    )
+    .await
+    {
+        Ok(Ok(_)) => true,
+        Ok(Err(error)) => owned_command_cancelled(browser, &error),
+        Err(_) => false,
+    }
+}

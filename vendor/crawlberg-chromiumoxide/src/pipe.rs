@@ -618,19 +618,40 @@ impl Router {
 
 /// Why the private debugging pipe of a browser failed or closed. Only the connection of the
 /// pipe makes one, so [`CdpError::Pipe`] is never the error of a browser with a debugging port.
-#[derive(Debug)]
-pub struct PipeError(String);
+pub struct PipeError {
+    message: String,
+    kind: Option<std::io::ErrorKind>,
+}
+
+impl PipeError {
+    pub fn kind(&self) -> Option<std::io::ErrorKind> {
+        self.kind
+    }
+}
+
+impl std::fmt::Debug for PipeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PipeError").field(&self.message).finish()
+    }
+}
 
 impl std::fmt::Display for PipeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
 impl std::error::Error for PipeError {}
 
 fn pipe_error(error: CdpError) -> CdpError {
-    CdpError::Pipe(PipeError(error.to_string()))
+    let kind = match &error {
+        CdpError::Io(error) => Some(error.kind()),
+        _ => None,
+    };
+    CdpError::Pipe(PipeError {
+        message: error.to_string(),
+        kind,
+    })
 }
 
 /// The connection of the handler to a browser on a private debugging pipe: the queue of

@@ -362,3 +362,5 @@ async fn a_structural_deadline_during_requested_stop_reports_no_failure() {
         "a requested stop suppresses structural failure events"
     );
 }
+
+mod teardown_controls;

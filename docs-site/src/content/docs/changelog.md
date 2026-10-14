@@ -214,6 +214,10 @@ title: "Changelog"
 
 ### Fixed
 
+- Owned Chrome teardown recognizes its expected WebSocket or pipe closure without logging a
+  controller failure, and successful profile retirement avoids a second process-family kill (#734).
+- Foreign-tab browser tests finish readable response bodies before reloading and report bounded
+  rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
 - Browser protocol parsing accepts Chrome 155 network policy field names while preserving
   the reported policy and the legacy typed event API (#750).
 - macOS runtime tests retry when framework workqueue counts change during thread sampling,

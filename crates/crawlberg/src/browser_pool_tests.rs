@@ -196,6 +196,7 @@ async fn test_acquire_after_shutdown_fails() {
 }
 
 thread_local! {
+    pub(crate) static KILL_BROWSER_CALLS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// ~keep How many [`ScratchProfileDir`] teardowns this thread handed to a worker.
     pub(crate) static PROFILE_HAND_OFFS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many profile teardowns ran on this thread. An executor thread must see none.
@@ -5398,3 +5399,6 @@ async fn a_page_parked_on_a_crashed_browser_is_not_used_for_the_next_fetch() {
         "the fetch after the crash must use a page of the new Chrome, got {status:?}"
     );
 }
+
+#[path = "browser_pool_tests/teardown_reliability.rs"]
+mod teardown_reliability;
