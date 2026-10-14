@@ -836,7 +836,8 @@ mod owned_browser_pool_tests {
     /// for each request: two Chromes, and each stops with its own engine.
     #[tokio::test(flavor = "multi_thread")]
     async fn two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine() {
-        const TEST_NAME: &str = "two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine";
+        const TEST_NAME: &str =
+            "two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine";
         if !chrome_launches(TEST_NAME).await {
             return;
         }

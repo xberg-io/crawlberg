@@ -130,7 +130,10 @@ impl CrawlEngine {
     /// else the engine's own. `None` for an engine that launches a Chrome for each page.
     #[cfg(feature = "browser")]
     pub(crate) fn browser_pool(&self) -> Option<&crate::browser_pool::BrowserPool> {
-        self.config.browser_pool.as_deref().or(self.owned_browser_pool.as_deref())
+        self.config
+            .browser_pool
+            .as_deref()
+            .or(self.owned_browser_pool.as_deref())
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -89,13 +89,15 @@ impl CrawlEngine {
             Box::pin(crate::browser::browser_fetch(
                 url,
                 &self.config,
-                self.browser_pool(),
+                crate::browser::BrowserHandles {
+                    pool: self.browser_pool(),
+                    #[cfg(feature = "browser-native")]
+                    native_executor: self.native_browser_executor.as_deref(),
+                },
                 prior_cookies,
                 self.crawl_cookies.as_deref(),
                 want_screenshot,
                 self.browser_rate_limiter.as_ref(),
-                #[cfg(feature = "browser-native")]
-                self.native_browser_executor.as_deref(),
             ));
         fetch.await
     }
