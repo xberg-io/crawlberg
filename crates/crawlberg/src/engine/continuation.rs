@@ -226,61 +226,60 @@ enum ResumableState<J, T> {
     Waiting(Waiting<Result<super::host_turn::HostStep<J, T>, CrawlError>>),
 }
 
+/// Run `jobs` with at most `concurrency` operations in flight, one host turn each.
+///
+/// `jobs` is pulled lazily: a job is admitted into the host backlog only when a slot is free
+/// and no admitted host is ready, so the first operation starts after the first job, not
+/// after the last one, and the admission of a large batch overlaps with its operations.
+/// A job whose host waits parks in the backlog without a slot, and the pull goes on past it,
+/// so a late ready host still starts before the second turn of a delayed host.
+///
+/// `context(&job)` names a job in its error messages and keys its result. The results are
+/// in completion order.
 pub(super) async fn run_resumable_jobs<J, T, F, Fut, C>(
-    jobs: Vec<super::host_turn::HostJob<J>>,
+    jobs: impl IntoIterator<Item = super::host_turn::HostJob<J>>,
     concurrency: usize,
     limiter: Arc<dyn RateLimiter>,
     context: C,
     operation: F,
-) -> Vec<(usize, Result<T, CrawlError>)>
+) -> Vec<(String, Result<T, CrawlError>)>
 where
     J: Send + 'static,
     T: Send + 'static,
     F: Fn(J, LimiterRouting) -> Fut + Send + Sync + 'static,
-    C: Fn(usize) -> String + Send,
+    C: Fn(&J) -> String + Send,
     Fut: Future<Output = Result<super::host_turn::HostStep<J, T>, CrawlError>> + Send + 'static,
 {
     use super::host_turn::{HostJob, HostStep, HostTurns};
     use futures::FutureExt;
     use tracing::{Instrument, instrument::WithSubscriber};
-    let mut turns = HostTurns::new(limiter);
-    for (id, job) in jobs.into_iter().enumerate() {
-        turns.push(
-            id,
-            HostJob {
-                host: job.host.clone(),
-                data: ResumableJob {
-                    context: context(id),
-                    state: ResumableState::Queued {
-                        host: job.host,
-                        data: job.data,
-                    },
-                },
-            },
-        );
-    }
+    let mut jobs = jobs.into_iter().enumerate().peekable();
+    let mut turns: HostTurns<ResumableJob<J, T>> = HostTurns::new(limiter);
     let operation = Arc::new(operation);
     let mut active = tokio::task::JoinSet::new();
     let mut task_inputs = std::collections::HashMap::new();
-    let mut results = Vec::new();
-    while !active.is_empty() || !turns.is_empty() {
+    // ~keep Sized once: a result is about 2 KB, and a growing list copies every result again.
+    let mut results = Vec::with_capacity(jobs.size_hint().1.unwrap_or(0));
+    while !active.is_empty() || !turns.is_empty() || jobs.peek().is_some() {
         tokio::select! {
+            biased;
             turn = turns.next(), if active.len() < concurrency && !turns.is_empty() => {
                 let (id, job, grant) = turn.expect("a pending continuation host turn");
                 let operation = Arc::clone(&operation);
+                let context = job.context.clone();
                 let task = active.spawn(async move {
                     let context = job.context.clone();
                     let result = std::panic::AssertUnwindSafe(advance_job(job, grant, operation)).catch_unwind().await;
                     result.unwrap_or_else(|_| Err(TurnError::Panicked.into_error(&context)))
                 }.in_current_span().with_current_subscriber());
-                task_inputs.insert(task.id(), id);
+                task_inputs.insert(task.id(), (id, context));
             }
             completed = active.join_next_with_id(), if !active.is_empty() => {
                 let completed = completed.expect("an active continuation task");
                 let task_id = match &completed { Ok((task_id, _)) => *task_id, Err(error) => error.id() };
-                let id = task_inputs.remove(&task_id).expect("each spawned continuation retains its input");
+                let (id, context) = task_inputs.remove(&task_id).expect("each spawned continuation retains its input");
                 let result = completed.map(|(_, result)| result).unwrap_or_else(|error| {
-                    Err(CrawlError::other_with_source(format!("batch task failed while processing {}", context(id)), error))
+                    Err(CrawlError::other_with_source(format!("batch task failed while processing {context}"), error))
                 });
                 match result {
                     Ok(HostStep::Continue(job)) => {
@@ -294,9 +293,28 @@ where
                             turns.push(id, job);
                         }
                     }
-                    Ok(HostStep::Done(result)) => results.push((id, Ok(result))),
-                    Err(error) => results.push((id, Err(error))),
+                    Ok(HostStep::Done(result)) => results.push((context, Ok(result))),
+                    Err(error) => results.push((context, Err(error))),
                 }
+            }
+            // ~keep Last in the biased order: a job is admitted only when no admitted host is
+            // ready and no operation has completed, so the backlog grows past parked hosts
+            // and no further, and the pull never delays a ready turn.
+            () = std::future::ready(()), if active.len() < concurrency && jobs.peek().is_some() => {
+                let (id, job) = jobs.next().expect("a peeked job");
+                turns.push(
+                    id,
+                    HostJob {
+                        host: job.host.clone(),
+                        data: ResumableJob {
+                            context: context(&job.data),
+                            state: ResumableState::Queued {
+                                host: job.host,
+                                data: job.data,
+                            },
+                        },
+                    },
+                );
             }
         }
     }
@@ -405,7 +423,7 @@ mod tests {
                 },
                 data: id,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let running = tokio::spawn(run_resumable_jobs(
             jobs,
             1,

@@ -126,26 +126,26 @@ impl CrawlEngine {
         use super::continuation::run_resumable_jobs;
         use super::host_turn::{HostJob, HostStep};
         use futures::FutureExt;
-        let mut jobs = Vec::with_capacity(urls.len());
-        let mut keys = Vec::with_capacity(urls.len());
-        let mut results = Vec::with_capacity(urls.len());
-        for url in urls {
-            match self.admit(url) {
-                Ok((engine, seed)) => {
-                    keys.push(seed.as_str().to_owned());
-                    jobs.push(HostJob {
-                        host: super::redirect::url_host(seed.as_str()),
-                        data: (engine, seed),
-                    });
-                }
-                Err(error) => results.push((admission_key(url, None), Err(error))),
+        let mut refused = Vec::new();
+        // ~keep Admission is pulled by the scheduler, one URL when a slot is free: the first
+        // operation starts after the first admission, not after the last one. The closure
+        // takes an index, not `&&str`: a closure over a reference inside a spawned future
+        // trips "implementation of `FnOnce` is not general enough".
+        let jobs = (0..urls.len()).filter_map(|index| match self.admit(urls[index]) {
+            Ok((engine, seed)) => Some(HostJob {
+                host: super::redirect::url_host(seed.as_str()),
+                data: (engine, seed),
+            }),
+            Err(error) => {
+                refused.push((admission_key(urls[index], None), Err(error)));
+                None
             }
-        }
+        });
         let completed = run_resumable_jobs(
             jobs,
             self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT),
             self.scheduling_limiter(),
-            |id| keys[id].clone(),
+            |(_, seed)| seed.as_str().to_owned(),
             move |(engine, seed), routing| {
                 let engine = routing.bind_engine(engine);
                 let url = seed.as_str().to_owned();
@@ -159,8 +159,7 @@ impl CrawlEngine {
             },
         )
         .await;
-        results.extend(completed.into_iter().map(|(id, result)| (keys[id].clone(), result)));
-        results
+        refused_first(refused, completed)
     }
 
     /// Scrape multiple URLs concurrently.
@@ -180,35 +179,36 @@ impl CrawlEngine {
         use super::continuation::run_resumable_jobs;
         use super::host_turn::{HostJob, HostStep};
         use super::redirect::{Hop, RedirectCursor, RedirectResolution, RedirectStep, url_host};
-        let mut results = Vec::with_capacity(urls.len());
-        let mut jobs = Vec::with_capacity(urls.len());
-        let mut keys = Vec::with_capacity(urls.len());
-        for url in urls {
-            match self.admit(url) {
-                Ok((engine, seed)) => {
-                    let span = tracing::info_span!("crawl.engine.scrape", { URL_FULL } = %seed);
-                    if let Err(error) = span.in_scope(|| engine.scrape_preflight()) {
-                        results.push((seed.as_str().to_owned(), Err(error)));
-                        continue;
-                    }
-                    keys.push(seed.as_str().to_owned());
-                    jobs.push(HostJob {
-                        host: url_host(seed.as_str()),
-                        data: (
-                            engine,
-                            RedirectCursor::new(seed.as_str(), self.config.max_redirects),
-                            span,
-                        ),
-                    });
+        let mut refused = Vec::new();
+        // ~keep Admission is pulled by the scheduler, one URL when a slot is free: the first
+        // fetch starts after the first admission, not after the last one. The closure takes
+        // an index, not `&&str`: see `run_batch`.
+        let jobs = (0..urls.len()).filter_map(|index| match self.admit(urls[index]) {
+            Ok((engine, seed)) => {
+                let span = tracing::info_span!("crawl.engine.scrape", { URL_FULL } = %seed);
+                if let Err(error) = span.in_scope(|| engine.scrape_preflight()) {
+                    refused.push((seed.as_str().to_owned(), Err(error)));
+                    return None;
                 }
-                Err(error) => results.push((admission_key(url, None), Err(error))),
+                Some(HostJob {
+                    host: url_host(seed.as_str()),
+                    data: (
+                        engine,
+                        RedirectCursor::new(seed.as_str(), self.config.max_redirects),
+                        span,
+                    ),
+                })
             }
-        }
+            Err(error) => {
+                refused.push((admission_key(urls[index], None), Err(error)));
+                None
+            }
+        });
         let completed = run_resumable_jobs(
             jobs,
             self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT),
             self.scheduling_limiter(),
-            |id| keys[id].clone(),
+            |(_, cursor, _)| cursor.url().to_owned(),
             |(engine, cursor, span), routing| {
                 let owned_span = span.clone();
                 let hop_engine = routing.bind_engine(engine.clone());
@@ -238,8 +238,7 @@ impl CrawlEngine {
             },
         )
         .await;
-        results.extend(completed.into_iter().map(|(id, result)| (keys[id].clone(), result)));
-        results
+        refused_first(refused, completed)
     }
 
     /// Crawl multiple seed URLs, each following links to configured depth.
@@ -277,6 +276,20 @@ impl CrawlEngine {
 
         ReceiverStream::new(rx)
     }
+}
+
+/// The results of a batch: the URLs that admission refused first, then the completed
+/// operations in completion order. Without a refusal the completed list is returned as is:
+/// a result is about 2 KB, and a batch of thousands should not copy its results once more.
+fn refused_first<T>(
+    mut refused: Vec<(String, Result<T, CrawlError>)>,
+    completed: Vec<(String, Result<T, CrawlError>)>,
+) -> Vec<(String, Result<T, CrawlError>)> {
+    if refused.is_empty() {
+        return completed;
+    }
+    refused.extend(completed);
+    refused
 }
 
 #[cfg(test)]
@@ -682,6 +695,73 @@ mod tests {
             other < second,
             "other host waited behind the delayed host: {requested:?}"
         );
+    }
+
+    #[derive(Clone, Default)]
+    struct AdmissionCount(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl crate::traits::RateLimiter for AdmissionCount {
+        async fn acquire(&self, _: &str) -> Result<(), CrawlError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn record_response(&self, _: &str, _: u16) -> Result<(), CrawlError> {
+            Ok(())
+        }
+
+        async fn set_crawl_delay(&self, _: &str, _: std::time::Duration) -> Result<(), CrawlError> {
+            Ok(())
+        }
+    }
+
+    /// The scheduler admits a URL when a slot is free, not every URL before the first
+    /// operation: a batch of 2,000 hosts started its first fetch after 2,000 admissions.
+    #[tokio::test]
+    async fn should_admit_batch_urls_as_slots_free_not_all_before_the_first_operation() {
+        let admissions = AdmissionCount::default();
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig {
+                max_concurrent: Some(1),
+                ..CrawlConfig::default()
+            })
+            .rate_limiter(admissions.clone())
+            .build()
+            .expect("engine");
+        let first_started = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+        let started = first_started.clone();
+        let release = release_first.clone();
+        let running = tokio::spawn(async move {
+            engine
+                .run_batch(
+                    &["https://a.example/", "https://b.example/", "https://c.example/"],
+                    move |_, seed| {
+                        let started = started.clone();
+                        let release = release.clone();
+                        async move {
+                            if seed.as_str() == "https://a.example/" {
+                                started.notify_one();
+                                release.notified().await;
+                            }
+                            Ok(())
+                        }
+                    },
+                )
+                .await
+        });
+        first_started.notified().await;
+        assert_eq!(
+            admissions.0.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the other URLs must wait for a free slot before their host is admitted"
+        );
+        release_first.notify_one();
+        let results = running.await.expect("batch joins");
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(admissions.0.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[tokio::test(start_paused = true)]

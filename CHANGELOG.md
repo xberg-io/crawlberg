@@ -120,6 +120,9 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- A batch admits its URLs as slots free up: the first fetch of a large batch starts after the
+  first admission, not after every URL is admitted and queued. The scheduling of host waits
+  from #711 is unchanged. (#716)
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
