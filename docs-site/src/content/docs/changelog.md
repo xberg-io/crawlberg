@@ -211,6 +211,12 @@ title: "Changelog"
 
 ### Fixed
 
+- Released constructor checks preserve Swift initializer and factory function references, getter
+  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
+  Python CI executes the released calls after type checking (#738, #739).
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
+
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
