@@ -352,11 +352,91 @@ fn host_only_cookie_url(cookie: &Cookie) -> Option<String> {
     Some(url.into())
 }
 
+/// ~keep A store snapshot cannot identify same-value rewrites or deleted cookies. Comparing
+/// after replay excludes profile/external cookies and copies inherited from earlier crawl pages.
+pub(super) fn result_cookie_delta(
+    before: &[BrowserCookie],
+    after: &[BrowserCookie],
+    requested: &str,
+    final_url: &str,
+) -> Vec<crate::types::CookieInfo> {
+    let before: HashMap<_, _> = before.iter().map(|cookie| (Slot::of(cookie), &cookie.params)).collect();
+    let hosts: Vec<_> = [requested, final_url]
+        .into_iter()
+        .filter_map(|raw| url::Url::parse(raw).ok())
+        .filter_map(|url| url.host_str().map(str::to_owned))
+        .collect();
+    after
+        .iter()
+        .filter_map(|cookie| {
+            let slot = Slot::of(cookie);
+            if before.get(&slot).is_some_and(|params| **params == cookie.params) {
+                return None;
+            }
+            let domain = slot.site?;
+            let matches = hosts.iter().any(|host| {
+                if domain.starts_with('.') {
+                    let domain = domain.trim_start_matches('.');
+                    host == domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))
+                } else {
+                    host == &domain
+                }
+            });
+            matches.then(|| crate::types::CookieInfo {
+                name: cookie.params.name.clone(),
+                value: cookie.params.value.clone(),
+                domain: cookie.params.domain.clone(),
+                path: cookie.params.path.clone(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use chromiumoxide::cdp::browser_protocol::network::{CookiePartitionKey, CookiePriority, CookieSameSite};
 
     use super::*;
+
+    #[test]
+    fn should_exclude_unchanged_and_foreign_cookie_slots_from_result_delta() {
+        let unchanged = left("old", "1");
+        let changed = left("changed", "after");
+        let before = vec![unchanged.clone(), left("changed", "before")];
+        let foreign = browser_cookie(cookie("other.example", true, -1.0, None), 100.0).expect("cookie");
+        let suffix = browser_cookie(cookie(".ample.com", true, -1.0, None), 100.0).expect("cookie");
+        let after = vec![unchanged, changed, foreign, suffix];
+        let delta = result_cookie_delta(&before, &after, "https://example.com/", "https://example.com/next");
+        assert_eq!(delta.len(), 1);
+        assert_eq!(
+            (&delta[0].name, &delta[0].value),
+            (&"changed".to_owned(), &"after".to_owned())
+        );
+    }
+
+    #[test]
+    fn should_omit_same_value_rewrites_and_deleted_cookie_slots() {
+        let before = vec![left("same", "1"), left("deleted", "1")];
+        let after = vec![left("same", "1")];
+        assert_eq!(
+            result_cookie_delta(&before, &after, "https://example.com/", "https://example.com/").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn should_match_domain_cookie_boundaries_but_not_host_only_subdomains() {
+        let domain = browser_cookie(cookie(".example.com", true, -1.0, None), 100.0).expect("domain cookie");
+        let host_only = browser_cookie(cookie("example.com", true, -1.0, None), 100.0).expect("host cookie");
+        let delta = result_cookie_delta(
+            &[],
+            &[domain, host_only],
+            "https://sub.example.com/",
+            "https://sub.example.com/",
+        );
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta[0].domain.as_deref(), Some(".example.com"));
+    }
 
     #[test]
     fn a_carried_cookie_keeps_all_replayable_cdp_metadata() {

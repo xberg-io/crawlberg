@@ -206,6 +206,7 @@ impl CrawlEngine {
         page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
         let cookies = page.cookies;
+        let result_cookies = page.result_cookies;
         let text = page.text;
         let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
@@ -239,6 +240,7 @@ impl CrawlEngine {
                 redirects: page.redirects,
                 refused: page.refused,
                 extras: None,
+                result_cookies,
                 cookies,
             }),
         ));
@@ -467,6 +469,7 @@ mod tests {
             redirected: false,
             refused: vec!["http://127.0.0.1/secret".to_owned()],
             cookies: Vec::new(),
+            result_cookies: Vec::new(),
             text: crate::tower::BodyText::Decoded {
                 charset: Some("windows-1252".to_owned()),
             },

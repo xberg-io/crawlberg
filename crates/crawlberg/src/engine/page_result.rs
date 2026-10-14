@@ -113,12 +113,13 @@ impl CrawlEngine {
         Ok(self.deliver_page(page, state, context).await)
     }
 
-    /// Fold this response's `Set-Cookie` headers into the crawl-wide cookie jar.
+    /// Collect browser-store changes and this response's `Set-Cookie` headers.
     fn collect_page_cookies(&self, page_url: &str, fetch: &FetchResult, state: &mut CrawlState) {
         if !self.config.cookies_enabled {
             return;
         }
         let fetch_host = url_host(page_url);
+        state.all_cookies.extend(fetch.browser_result_cookies.iter().cloned());
         state
             .all_cookies
             .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
