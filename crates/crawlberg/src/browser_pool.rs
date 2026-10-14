@@ -1418,7 +1418,10 @@ struct OwnedHandler(Option<JoinHandle<()>>);
 
 impl OwnedHandler {
     fn abort_handle(&self) -> tokio::task::AbortHandle {
-        self.0.as_ref().expect("the handler task is taken only once").abort_handle()
+        self.0
+            .as_ref()
+            .expect("the handler task is taken only once")
+            .abort_handle()
     }
 
     /// The task, for a teardown that waits for the handler to end on its own before it aborts it.
@@ -1488,7 +1491,9 @@ impl BrowserState {
         };
         // ~keep The stopped firewall held the only other reference, so this is the browser itself.
         match Arc::into_inner(self.browser) {
-            Some(browser) => release_browser(browser, self.handler_handle.take(), cleanup, HANDLER_SHUTDOWN_TIMEOUT).await,
+            Some(browser) => {
+                release_browser(browser, self.handler_handle.take(), cleanup, HANDLER_SHUTDOWN_TIMEOUT).await
+            }
             None => drop(self.handler_handle),
         }
         if let Some(user_data_dir) = self.user_data_dir {

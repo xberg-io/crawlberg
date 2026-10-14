@@ -9365,7 +9365,8 @@ mod race_tests {
         )
         .await;
         let pool = pool_through(relay);
-        let dropped = tokio::time::timeout(Duration::from_secs(2), pool.acquire_page_with_config(&pooled_config())).await;
+        let dropped =
+            tokio::time::timeout(Duration::from_secs(2), pool.acquire_page_with_config(&pooled_config())).await;
         assert!(
             dropped.is_err(),
             "the browser-wide arm is held, so the launch does not finish within 2 s"
