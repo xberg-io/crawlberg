@@ -9112,11 +9112,16 @@ mod race_tests {
         }
     }
 
-    /// A WebSocket relay between a client and `upstream` (a Chrome) that, once `holding` is set,
+    /// A WebSocket relay between a client and `upstream` (a Chrome) that, while `holding` is set,
     /// keeps every answer to a `Target.setAutoAttach` sent on a session: the arm of a new tab or
-    /// of its page by the child-target controller. Chrome still gets the commands. Every other
-    /// message passes both ways.
-    async fn arm_holding_relay(upstream: String, holding: Arc<std::sync::atomic::AtomicBool>) -> String {
+    /// of its page by the child-target controller. While `holding_browser_wide` is set, it keeps
+    /// the answer to the browser-wide arm, the one the controller starts with. Chrome still gets
+    /// the commands. Every other message passes both ways.
+    async fn arm_holding_relay(
+        upstream: String,
+        holding: Arc<std::sync::atomic::AtomicBool>,
+        holding_browser_wide: Arc<std::sync::atomic::AtomicBool>,
+    ) -> String {
         use async_tungstenite::tungstenite::Message;
         use futures::SinkExt as _;
 
@@ -9128,6 +9133,7 @@ mod race_tests {
             while let Ok((stream, _)) = listener.accept().await {
                 let upstream = upstream.clone();
                 let holding = Arc::clone(&holding);
+                let holding_browser_wide = Arc::clone(&holding_browser_wide);
                 tokio::spawn(async move {
                     let Ok(client) = async_tungstenite::tokio::accept_async(stream).await else {
                         return;
@@ -9142,11 +9148,15 @@ mod race_tests {
                     let upward = tokio::spawn(async move {
                         while let Some(Ok(message)) = from_client.next().await {
                             if let Message::Text(text) = &message
-                                && holding.load(Ordering::SeqCst)
                                 && let Ok(value) = serde_json::from_str::<serde_json::Value>(text)
                                 && value["method"] == "Target.setAutoAttach"
                                 && value["params"]["autoAttach"] == true
-                                && value.get("sessionId").is_some()
+                                && (if value.get("sessionId").is_some() {
+                                    &holding
+                                } else {
+                                    &holding_browser_wide
+                                })
+                                .load(Ordering::SeqCst)
                                 && let Some(id) = value["id"].as_u64()
                             {
                                 super::lock(&marking).insert(id);
@@ -9186,7 +9196,12 @@ mod race_tests {
             return;
         };
         let holding = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let relay = arm_holding_relay(owner.websocket_address().to_string(), Arc::clone(&holding)).await;
+        let relay = arm_holding_relay(
+            owner.websocket_address().to_string(),
+            Arc::clone(&holding),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
         let (browser, handler) = crate::browser_pool::connect_endpoint(&relay)
             .await
             .expect("the check must connect through the relay");
@@ -9263,6 +9278,113 @@ mod race_tests {
             .into_iter()
             .find(|info| info.opener_id.as_ref() == Some(root))
             .map(|info| info.target_id)
+    }
+
+    /// A pool on an external browser, reached through a relay of the test.
+    fn pool_through(relay: String) -> Arc<crate::browser_pool::BrowserPool> {
+        crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig {
+            browser_endpoint: Some(relay),
+            ..crate::browser_pool::BrowserPoolConfig::default()
+        })
+    }
+
+    /// The configuration of a pooled page of these tests: the socket policy of an external
+    /// browser is not what they measure.
+    fn pooled_config() -> crate::types::CrawlConfig {
+        crate::types::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .build()
+    }
+
+    /// While a pooled page waits for Chrome's answer to the arm of its tab, the pool's shutdown
+    /// returns within its bound and the page's fetch ends with the pool's error: the pool holds
+    /// no lock across a wait on Chrome, and its shutdown ends every launch and watch in progress
+    /// (xberg-io/crawlberg#705).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pool_shutdown_ends_a_page_that_waits_on_chrome() {
+        let test_name = "a_pool_shutdown_ends_a_page_that_waits_on_chrome";
+        let Some(mut owner) = launch(test_name).await else {
+            return;
+        };
+        let holding = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let relay = arm_holding_relay(
+            owner.websocket_address().to_string(),
+            Arc::clone(&holding),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+        let pool = pool_through(relay);
+        let fetching = {
+            let pool = Arc::clone(&pool);
+            tokio::spawn(async move { pool.acquire_page_with_config(&pooled_config()).await.map(drop) })
+        };
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(
+            !fetching.is_finished(),
+            "the page waits for Chrome's answer to the arm of its tab"
+        );
+
+        let started = Instant::now();
+        let shut = tokio::time::timeout(Duration::from_secs(5), pool.shutdown()).await;
+        assert!(
+            shut.is_ok(),
+            "the shutdown must return within its bound while a page waits on Chrome; it ran {:?}",
+            started.elapsed()
+        );
+        let outcome = tokio::time::timeout(Duration::from_secs(5), fetching)
+            .await
+            .expect("the fetch must end with the shutdown")
+            .expect("the fetch task must not panic");
+        let error = outcome
+            .err()
+            .map(|error| error.to_string())
+            .expect("a fetch the shutdown ended has no page");
+        assert!(
+            error.contains("pool is shut down"),
+            "the fetch ends with the pool's error, got: {error}"
+        );
+        let chrome = Arc::get_mut(&mut owner).expect("the test holds the only reference to its browser");
+        let _ = chrome.kill().await;
+    }
+
+    /// A launch that a fetch deadline drops while the firewall waits for Chrome's answer to the
+    /// browser-wide arm leaves nothing on the external browser: the launch owns its CDP handler,
+    /// so dropping it closes the connection and the interception it turned on. The next fetch
+    /// on the same browser opens a page and loads it (xberg-io/crawlberg#705).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_launch_dropped_at_its_deadline_leaves_no_handler_on_an_external_browser() {
+        let test_name = "a_launch_dropped_at_its_deadline_leaves_no_handler_on_an_external_browser";
+        let Some(mut owner) = launch(test_name).await else {
+            return;
+        };
+        let holding_browser_wide = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let relay = arm_holding_relay(
+            owner.websocket_address().to_string(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::clone(&holding_browser_wide),
+        )
+        .await;
+        let pool = pool_through(relay);
+        let dropped = tokio::time::timeout(Duration::from_secs(2), pool.acquire_page_with_config(&pooled_config())).await;
+        assert!(
+            dropped.is_err(),
+            "the browser-wide arm is held, so the launch does not finish within 2 s"
+        );
+        holding_browser_wide.store(false, Ordering::SeqCst);
+
+        let pooled = tokio::time::timeout(Duration::from_secs(15), pool.acquire_page_with_config(&pooled_config()))
+            .await
+            .expect("the next fetch must open a page within 15 s")
+            .expect("the next fetch must open a page");
+        let loaded = tokio::time::timeout(Duration::from_secs(10), open_blank_site(pooled.page())).await;
+        assert!(
+            loaded.is_ok(),
+            "the page loads within 10 s: no handler of the dropped launch holds its requests"
+        );
+        pooled.close().await;
+        pool.shutdown().await;
+        let chrome = Arc::get_mut(&mut owner).expect("the test holds the only reference to its browser");
+        let _ = chrome.kill().await;
     }
 
     /// On an external browser, a stop that arrives while a page is being parked returns once the

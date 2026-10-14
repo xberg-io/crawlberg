@@ -217,7 +217,8 @@ title: "Changelog"
 - A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
   longer kills a browser whose page creation takes more than two seconds: the page's own fetch
   timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
-  (#705)
+  The browser pool shuts down at once while a page waits on Chrome, and a page request that its
+  timeout ends during the pool's connection leaves no connection on an external browser. (#705)
 - Browser protocol parsing accepts Chrome 155 network policy field names while preserving
   the reported policy and the legacy typed event API (#750).
 - macOS runtime tests retry when framework workqueue counts change during thread sampling,
