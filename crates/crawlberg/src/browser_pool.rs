@@ -2110,8 +2110,8 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 /// attempt to relaunch on the next [`acquire_page`](Self::acquire_page) call.
 ///
 /// Rust-only: excluded from alef-generated polyglot bindings. Crawlberg constructs one
-/// internally for each compatible binding engine, so downstream language clients do not
-/// manage a pool themselves.
+/// internally for each Chrome-backed engine that is given none, so downstream language clients
+/// do not manage a pool themselves.
 pub struct BrowserPool {
     owner: u32,
     config: BrowserPoolConfig,
@@ -2234,6 +2234,12 @@ impl BrowserPool {
         };
         pooled._permit = Some(permit);
         Ok(pooled)
+    }
+
+    /// How many browsers this pool has launched or connected to so far.
+    #[cfg(test)]
+    pub(crate) fn launches(&self) -> u64 {
+        self.next_generation.load(Ordering::Relaxed) - 1
     }
 
     /// Non-blocking health check. Returns `true` when Chrome is running.

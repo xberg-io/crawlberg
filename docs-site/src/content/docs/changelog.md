@@ -120,6 +120,13 @@ title: "Changelog"
 
 ### Changed
 
+- An engine built with `CrawlEngine::builder()` in browser mode reuses one Chrome for all its
+  pages, as the language bindings already did, instead of launching a Chrome for each page: for
+  30 pages about a quarter of the Chrome memory and half the Chrome CPU. Pages open on it
+  `max_concurrent` at a time (8 by default), each in a browser context of its own with its own
+  cookies. The Chrome stops and its profile directory is removed when the last clone of the
+  engine is dropped. A `browser_profile` keeps a Chrome for each page, and a pool given with
+  `with_browser_pool` stays the caller's. (#749)
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and

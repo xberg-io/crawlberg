@@ -99,6 +99,12 @@ pub struct CrawlEngine {
     /// `None` outside a crawl: each crawl call gets its own, so no two crawls share a cookie.
     #[cfg(feature = "browser")]
     crawl_cookies: Option<Arc<crate::browser::CrawlCookies>>,
+    /// The browser pool the builder made for this engine, when the caller gave none: one Chrome
+    /// for every page of the engine, launched at the first browser fetch. Its Chrome stops and
+    /// its profile directory goes with the last clone of the engine, or with `shutdown_engine`.
+    /// A pool the caller gave is the caller's and is not here.
+    #[cfg(feature = "browser")]
+    pub(crate) owned_browser_pool: Option<Arc<crate::browser_pool::BrowserPool>>,
 }
 
 /// The parts of an engine that keep the politeness toward a host: the rate limiter with its

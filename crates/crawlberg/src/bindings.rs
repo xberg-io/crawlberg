@@ -35,8 +35,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone)]
 pub struct CrawlEngineHandle {
     inner: CrawlEngine,
-    #[cfg(feature = "browser")]
-    owned_browser_pool: Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
 }
 
 impl CrawlEngineHandle {
@@ -52,11 +50,7 @@ impl CrawlEngineHandle {
     /// clients construct handles via [`create_engine`] alone.
     #[cfg_attr(alef, alef(skip))]
     pub fn from_engine(engine: CrawlEngine) -> Self {
-        Self {
-            inner: engine,
-            #[cfg(feature = "browser")]
-            owned_browser_pool: None,
-        }
+        Self { inner: engine }
     }
 }
 
@@ -193,75 +187,19 @@ impl From<Vec<BatchCrawlResult>> for BatchCrawlResults {
 pub fn create_engine(config: Option<CrawlConfig>) -> Result<CrawlEngineHandle, CrawlError> {
     let config = config.unwrap_or_default();
     config.validate()?;
-
-    #[cfg(feature = "browser")]
-    let (config, browser_pool, owned_browser_pool) = {
-        let mut config = config;
-        let (browser_pool, owned_browser_pool) = binding_browser_pool(&mut config);
-        (config, browser_pool, owned_browser_pool)
-    };
-
-    let builder = CrawlEngine::builder().config(config);
-    #[cfg(feature = "browser")]
-    let builder = match browser_pool {
-        Some(pool) => builder.with_browser_pool(pool),
-        None => builder,
-    };
-    let engine = builder.build()?;
-    Ok(CrawlEngineHandle {
-        inner: engine,
-        #[cfg(feature = "browser")]
-        owned_browser_pool,
-    })
-}
-
-#[cfg(feature = "browser")]
-fn binding_browser_pool(
-    config: &mut CrawlConfig,
-) -> (
-    Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
-    Option<std::sync::Arc<crate::browser_pool::BrowserPool>>,
-) {
-    // ~keep A named browser profile determines Chrome's user-data directory at launch, while
-    // ~keep a shared pool launches before any crawl can claim that profile.
-    if config.browser.backend != crate::types::BrowserBackend::Chromiumoxide || config.browser_profile.is_some() {
-        return (None, None);
-    }
-
-    if let Some(pool) = config.browser_pool.clone() {
-        return (Some(pool), None);
-    }
-
-    // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
-    // ~keep a pool permit. Binding-created pools therefore reuse Chrome, but close each page as
-    // ~keep the pre-pool binding path did, until parked pages have safe lifecycle ownership.
-    config.browser.session_affinity = false;
-    let pool = crate::browser_pool::BrowserPool::new(binding_browser_pool_config(config));
-    (Some(std::sync::Arc::clone(&pool)), Some(pool))
-}
-
-#[cfg(feature = "browser")]
-fn binding_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::BrowserPoolConfig {
-    let defaults = crate::browser_pool::BrowserPoolConfig::default();
-    crate::browser_pool::BrowserPoolConfig {
-        max_pages: config.max_concurrent.unwrap_or(defaults.max_pages),
-        browser_endpoint: config.browser.endpoint.clone(),
-        chrome_path: config.browser.chrome_path.clone(),
-        chrome_args: config.browser.chrome_args.clone(),
-        private_pipe: config.browser.private_pipe,
-        ..defaults
-    }
+    let engine = CrawlEngine::builder().config(config).build()?;
+    Ok(CrawlEngineHandle { inner: engine })
 }
 
 /// Shut down browser resources created by [`create_engine`].
 ///
 /// The handle is consumed so it cannot be used after shutdown. A browser pool supplied by a
 /// Rust caller through [`CrawlConfig::browser_pool`] remains caller-owned and is not shut down.
-/// Shutting down one clone also disables the binding-created pool shared by its sibling clones.
+/// Shutting down one clone also disables the engine-made pool shared by its sibling clones.
 #[cfg_attr(alef, alef(skip))]
 pub async fn shutdown_engine(engine: CrawlEngineHandle) {
     #[cfg(feature = "browser")]
-    if let Some(pool) = engine.owned_browser_pool.as_ref() {
+    if let Some(pool) = engine.inner.owned_browser_pool.as_ref() {
         pool.shutdown().await;
     }
 
@@ -517,6 +455,7 @@ mod tests {
     fn owned_pool(handle: &CrawlEngineHandle) -> Arc<crate::browser_pool::BrowserPool> {
         Arc::clone(
             handle
+                .inner
                 .owned_browser_pool
                 .as_ref()
                 .expect("binding engine must own a browser pool"),
@@ -982,36 +921,6 @@ mod tests {
     }
 
     #[test]
-    fn binding_browser_pool_config_carries_engine_launch_options() {
-        let config = CrawlConfig {
-            max_concurrent: Some(3),
-            browser: BrowserConfig {
-                endpoint: Some("ws://browser.example:9222/devtools/browser/test".to_owned()),
-                chrome_path: Some("/opt/chrome".into()),
-                chrome_args: vec!["--lang=de".to_owned()],
-                private_pipe: true,
-                ..BrowserConfig::default()
-            },
-            ..CrawlConfig::default()
-        };
-
-        let pool_config = binding_browser_pool_config(&config);
-
-        assert_eq!(pool_config.max_pages, 3);
-        assert_eq!(pool_config.browser_endpoint, config.browser.endpoint);
-        assert_eq!(pool_config.chrome_path, config.browser.chrome_path);
-        assert_eq!(pool_config.chrome_args, config.browser.chrome_args);
-        assert!(
-            pool_config.private_pipe,
-            "the key must reach the pool that a binding creates"
-        );
-        assert!(
-            !binding_browser_pool_config(&CrawlConfig::default()).private_pipe,
-            "the pool of a default config must launch on the debugging port"
-        );
-    }
-
-    #[test]
     fn create_engine_preserves_a_rust_callers_browser_pools() {
         let browser_pool = crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig::default());
         let session_pool = Arc::new(crate::browser_session_pool::BrowserSessionPool::new());
@@ -1041,8 +950,8 @@ mod tests {
             &session_pool
         ));
         assert!(
-            handle.owned_browser_pool.is_none(),
-            "an externally injected pool must not become owned by the handle"
+            handle.inner.owned_browser_pool.is_none(),
+            "an externally injected pool must not become owned by the engine"
         );
         assert!(handle.inner.config.browser.session_affinity);
     }

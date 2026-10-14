@@ -216,9 +216,10 @@ impl CrawlEngineBuilder {
 
     /// Inject a pre-built [`BrowserPool`] for chromiumoxide-backed browser fetches.
     ///
-    /// When set, the engine reuses this pool across all crawl operations rather than
-    /// constructing a new pool per engine or per request. Intended for long-lived
-    /// worker processes that need to amortise Chrome startup cost.
+    /// When set, the engine uses this pool for all its crawl operations and does not make one
+    /// of its own; the pool stays the caller's and outlives the engine. Intended for engines
+    /// that share one Chrome, such as the engines of a long-lived worker process. Without it,
+    /// the engine makes a pool of its own at build and stops its Chrome with its last clone.
     ///
     /// The injected pool takes precedence over any pool stored in `CrawlConfig.browser_pool`.
     ///
@@ -270,6 +271,8 @@ impl CrawlEngineBuilder {
         if let Some(pool) = self.browser_pool {
             config.browser_pool = Some(pool);
         }
+        #[cfg(feature = "browser")]
+        let owned_browser_pool = owned_browser_pool(&mut config);
 
         if let Some(provider) = self.proxy_provider {
             config.proxy_provider = Some(provider);
@@ -354,7 +357,48 @@ impl CrawlEngineBuilder {
             native_browser_executor,
             #[cfg(feature = "browser")]
             crawl_cookies: None,
+            #[cfg(feature = "browser")]
+            owned_browser_pool,
         })
+    }
+}
+
+/// The browser pool of an engine whose caller gave none: one Chrome for every page of the
+/// engine, made from the engine's launch options and installed in `config.browser_pool`. Chrome
+/// launches at the first browser fetch, so an engine that never renders a page never starts one.
+///
+/// `None`, and so a Chrome for each page, when the caller gave a pool (it stays the caller's),
+/// when the backend is not Chrome, or with a named `browser_profile`: a pool launches Chrome
+/// before any crawl can claim that profile, and the profile's storage is the page's, which a
+/// pool's context of its own is not.
+#[cfg(feature = "browser")]
+fn owned_browser_pool(config: &mut CrawlConfig) -> Option<Arc<crate::browser_pool::BrowserPool>> {
+    if config.browser_pool.is_some()
+        || config.browser.backend != crate::types::BrowserBackend::Chromiumoxide
+        || config.browser_profile.is_some()
+    {
+        return None;
+    }
+
+    // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
+    // ~keep a pool permit. Engine-made pools therefore reuse Chrome, but close each page as
+    // ~keep the one-shot path did, until parked pages have safe lifecycle ownership.
+    config.browser.session_affinity = false;
+    let pool = crate::browser_pool::BrowserPool::new(owned_browser_pool_config(config));
+    config.browser_pool = Some(Arc::clone(&pool));
+    Some(pool)
+}
+
+#[cfg(feature = "browser")]
+fn owned_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::BrowserPoolConfig {
+    let defaults = crate::browser_pool::BrowserPoolConfig::default();
+    crate::browser_pool::BrowserPoolConfig {
+        max_pages: config.max_concurrent.unwrap_or(defaults.max_pages),
+        browser_endpoint: config.browser.endpoint.clone(),
+        chrome_path: config.browser.chrome_path.clone(),
+        chrome_args: config.browser.chrome_args.clone(),
+        private_pipe: config.browser.private_pipe,
+        ..defaults
     }
 }
 
@@ -564,6 +608,206 @@ mod cookie_store_tests {
     #[test]
     fn an_engine_with_default_configuration_has_no_store() {
         assert!(engine_with(CrawlConfig::default()).config.cookie_store.is_none());
+    }
+}
+
+#[cfg(all(test, feature = "browser"))]
+mod owned_browser_pool_tests {
+    use std::sync::Arc;
+
+    use crate::browser_pool::tests::{
+        assert_profile_directory_is_gone_for_good, chrome_process_count_for_profile, expect_chrome_or_skip,
+        pool_profile_dir,
+    };
+    use crate::browser_pool::{BrowserPool, BrowserPoolConfig};
+    use crate::engine::CrawlEngine;
+    use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
+
+    /// A browser-mode configuration that reaches a loopback site and follows its links one
+    /// level down.
+    fn browser_config(max_concurrent: Option<usize>) -> CrawlConfig {
+        CrawlConfig {
+            max_concurrent,
+            max_depth: Some(1),
+            respect_robots_txt: false,
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                mode: BrowserMode::Always,
+                chrome_path: std::env::var_os("CHROME").map(Into::into),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        }
+    }
+
+    fn browser_engine(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("the engine builds")
+    }
+
+    fn owned_pool(engine: &CrawlEngine) -> Arc<BrowserPool> {
+        Arc::clone(
+            engine
+                .owned_browser_pool
+                .as_ref()
+                .expect("a builder engine in browser mode owns a browser pool"),
+        )
+    }
+
+    #[test]
+    fn a_builder_engine_owns_one_pool_that_its_clones_and_its_configuration_share() {
+        let engine = browser_engine(browser_config(Some(3)));
+        let pool = owned_pool(&engine);
+        let in_config = engine
+            .config
+            .browser_pool
+            .as_ref()
+            .expect("the engine's fetches must find its pool in the configuration");
+        assert!(Arc::ptr_eq(&pool, in_config));
+        assert!(Arc::ptr_eq(&pool, &owned_pool(&engine.clone())));
+        assert!(!engine.config.browser.session_affinity);
+    }
+
+    #[test]
+    fn owned_browser_pool_config_carries_engine_launch_options() {
+        let config = CrawlConfig {
+            max_concurrent: Some(3),
+            browser: BrowserConfig {
+                endpoint: Some("ws://browser.example:9222/devtools/browser/test".to_owned()),
+                chrome_path: Some("/opt/chrome".into()),
+                chrome_args: vec!["--lang=de".to_owned()],
+                private_pipe: true,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+
+        let pool_config = super::owned_browser_pool_config(&config);
+
+        assert_eq!(pool_config.max_pages, 3);
+        assert_eq!(pool_config.browser_endpoint, config.browser.endpoint);
+        assert_eq!(pool_config.chrome_path, config.browser.chrome_path);
+        assert_eq!(pool_config.chrome_args, config.browser.chrome_args);
+        assert!(
+            pool_config.private_pipe,
+            "the key must reach the pool that the engine makes"
+        );
+        assert!(
+            !super::owned_browser_pool_config(&CrawlConfig::default()).private_pipe,
+            "the pool of a default config must launch on the debugging port"
+        );
+    }
+
+    #[test]
+    fn a_pool_the_caller_gives_stays_the_callers() {
+        let given = BrowserPool::new(BrowserPoolConfig::default());
+        let engine = CrawlEngine::builder()
+            .config(browser_config(None))
+            .with_browser_pool(Arc::clone(&given))
+            .build()
+            .expect("the engine builds");
+        assert!(engine.owned_browser_pool.is_none());
+        assert!(Arc::ptr_eq(
+            &given,
+            engine.config.browser_pool.as_ref().expect("the given pool")
+        ));
+    }
+
+    #[test]
+    fn a_named_profile_and_the_native_backend_get_no_pool() {
+        let profile = browser_engine(CrawlConfig {
+            browser_profile: Some("owned-pool-test-profile".to_owned()),
+            ..browser_config(None)
+        });
+        assert!(profile.owned_browser_pool.is_none());
+        assert!(profile.config.browser_pool.is_none());
+
+        let native = browser_engine(CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                ..browser_config(None).browser
+            },
+            ..browser_config(None)
+        });
+        assert!(native.owned_browser_pool.is_none());
+        assert!(native.config.browser_pool.is_none());
+    }
+
+    /// Whether a Chrome can be launched here. Announces the skip when none can.
+    async fn chrome_launches(test_name: &str) -> bool {
+        let pool = BrowserPool::new(BrowserPoolConfig {
+            chrome_path: std::env::var_os("CHROME").map(Into::into),
+            ..BrowserPoolConfig::default()
+        });
+        let launched = expect_chrome_or_skip(test_name, pool.warm().await).is_some();
+        pool.shutdown().await;
+        launched
+    }
+
+    /// A site whose index links to six pages: seven pages at depth 1.
+    async fn seven_page_site() -> wiremock::MockServer {
+        let site = wiremock::MockServer::start().await;
+        let links: String = (0..6).map(|i| format!("<a href=\"/p{i}\">p{i}</a>")).collect();
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(format!("<html><body>{links}</body></html>"))
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("<html><body><p>a page</p></body></html>")
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        site
+    }
+
+    /// A builder engine crawls seven pages through one Chrome, and the Chrome stops and its
+    /// profile directory goes when the engine is dropped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_builder_crawl_of_seven_pages_launches_one_chrome_that_stops_with_the_engine() {
+        const TEST_NAME: &str = "a_builder_crawl_of_seven_pages_launches_one_chrome_that_stops_with_the_engine";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = seven_page_site().await;
+        let engine = browser_engine(browser_config(None));
+
+        let result = engine.crawl(&site.uri()).await.expect("the browser crawl must succeed");
+
+        let seen: Vec<_> = result
+            .pages
+            .iter()
+            .map(|page| (page.url.as_str(), page.status_code, page.links.len(), page.html.len()))
+            .collect();
+        assert_eq!(
+            result.pages.len(),
+            7,
+            "every page of the site is crawled; error: {:?}; pages: {seen:?}",
+            result.error
+        );
+        let pool = owned_pool(&engine);
+        assert_eq!(pool.launches(), 1, "one Chrome serves every page of the crawl");
+        let profile = pool_profile_dir(&pool).await;
+        assert!(chrome_process_count_for_profile(&profile) > 0);
+        drop(pool);
+
+        drop(engine);
+
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&profile);
+            assert_eq!(chrome_process_count_for_profile(&profile), 0);
+        })
+        .await
+        .expect("dropping the engine must stop its Chrome and remove the profile directory");
     }
 }
 
