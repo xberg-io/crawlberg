@@ -72,7 +72,10 @@ async fn a_missing_child_acknowledgement_reports_nothing_while_it_waits() {
         let resume = next_child_message(&mut socket).await;
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "an unanswered resume is waited for, not timed");
+        assert!(
+            !controller.is_finished(),
+            "an unanswered resume is waited for, not timed"
+        );
         commands.send(super::super::ChildCommand::Stop).await.expect("stop");
         controller.await.expect("controller task")
     })
@@ -205,9 +208,14 @@ async fn incomplete_structural_chain_is_held(tab_ack: bool, child_present: bool,
             attach_structural_page(&mut socket, &context, child_ack).await;
         }
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "an incomplete chain is waited for, not timed");
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), socket.next()).await.is_err(),
+            !controller.is_finished(),
+            "an incomplete chain is waited for, not timed"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), socket.next())
+                .await
+                .is_err(),
             "a tab with an incomplete chain must not be resumed"
         );
         commands.send(super::super::ChildCommand::Stop).await.expect("stop");
@@ -348,5 +356,9 @@ async fn a_requested_stop_ends_an_incomplete_structural_chain() {
     })
     .await;
     assert!(ended, "a stop ends an incomplete chain with a healthy controller");
-    assert_eq!(events, Vec::<serde_json::Value>::new(), "a requested stop is not a failure");
+    assert_eq!(
+        events,
+        Vec::<serde_json::Value>::new(),
+        "a requested stop is not a failure"
+    );
 }

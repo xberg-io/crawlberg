@@ -314,6 +314,9 @@ mod tests {
         assert_eq!(state.pages_failed, 3);
         let result = state.into_result("http://a.localhost/".to_owned());
         let error = result.error.expect("a lost browser connection is the crawl's error");
-        assert!(error.contains("failed to create page first"), "the first loss is kept, got: {error}");
+        assert!(
+            error.contains("failed to create page first"),
+            "the first loss is kept, got: {error}"
+        );
     }
 }

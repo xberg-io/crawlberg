@@ -5341,7 +5341,10 @@ mod tests {
         let census = next_child_message(&mut socket).await;
         assert_eq!(census["method"], "Target.getTargets");
         tokio::time::sleep(Duration::from_millis(160)).await;
-        assert!(!controller.is_finished(), "an unanswered census is waited for, not timed");
+        assert!(
+            !controller.is_finished(),
+            "an unanswered census is waited for, not timed"
+        );
         socket
             .send(async_tungstenite::tungstenite::Message::Text(
                 serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
@@ -5680,7 +5683,10 @@ mod tests {
             let census = next_child_message(&mut socket).await;
             assert_eq!(census["method"], "Target.getTargets");
             let_time_pass(Duration::from_secs(5)).await;
-            assert!(!controller.is_finished(), "a missing session's census is waited for, not timed");
+            assert!(
+                !controller.is_finished(),
+                "a missing session's census is waited for, not timed"
+            );
             let present = serde_json::json!({
                 "id": census["id"], "result": { "targetInfos": [
                     target_created_in_context(target, None, &context).target_info
@@ -5779,7 +5785,10 @@ mod tests {
         let census = next_child_message(&mut socket).await;
         assert_eq!(census["method"], "Target.getTargets");
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "the live session's census is waited for, not timed");
+        assert!(
+            !controller.is_finished(),
+            "the live session's census is waited for, not timed"
+        );
         let present = serde_json::json!({
             "id": census["id"], "result": { "targetInfos": [
                 target_created_in_context("LIVE", None, &BrowserContextId::new("FOREIGN")).target_info
@@ -6072,8 +6081,14 @@ mod tests {
             .await
             .expect("confirm empty census while later work remains pending");
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "pending work of the context is waited for, not timed");
-        assert!(drained.try_recv().is_err(), "a drain is not acknowledged while work of its context is pending");
+        assert!(
+            !controller.is_finished(),
+            "pending work of the context is waited for, not timed"
+        );
+        assert!(
+            drained.try_recv().is_err(),
+            "a drain is not acknowledged while work of its context is pending"
+        );
         commands
             .send(super::ChildCommand::Stop)
             .await
@@ -6228,7 +6243,9 @@ mod tests {
             "the retired context census leaves another live context's resume waited for, not timed"
         );
         assert!(
-            tokio::time::timeout(Duration::from_millis(250), socket.next()).await.is_err(),
+            tokio::time::timeout(Duration::from_millis(250), socket.next())
+                .await
+                .is_err(),
             "the other live context gets no further command while its resume is unanswered"
         );
         commands.send(super::ChildCommand::Stop).await.expect("stop");
@@ -6417,7 +6434,10 @@ mod tests {
             }
             if case == "unanswered" {
                 let_time_pass(Duration::from_secs(5)).await;
-                assert!(!controller.is_finished(), "an unanswered drain census is waited for, not timed");
+                assert!(
+                    !controller.is_finished(),
+                    "an unanswered drain census is waited for, not timed"
+                );
                 commands.send(super::ChildCommand::Stop).await.expect("stop");
                 assert!(
                     tokio::time::timeout(Duration::from_secs(5), controller)
@@ -6599,7 +6619,9 @@ mod tests {
         let_time_pass(Duration::from_secs(5)).await;
         assert!(!controller.is_finished(), "a held tab is waited for, not timed");
         assert!(
-            tokio::time::timeout(Duration::from_millis(250), socket.next()).await.is_err(),
+            tokio::time::timeout(Duration::from_millis(250), socket.next())
+                .await
+                .is_err(),
             "a tab without an authoritative child boundary must not be resumed"
         );
         commands.send(super::ChildCommand::Stop).await.expect("stop");
@@ -6622,15 +6644,30 @@ mod tests {
         let tab_arm = next_child_message(&mut socket).await;
         assert_eq!(tab_arm["method"], "Target.setAutoAttach");
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "a slow tab arm acknowledgement is waited for");
+        assert!(
+            !controller.is_finished(),
+            "a slow tab arm acknowledgement is waited for"
+        );
         answer_child_command(&mut socket, &tab_arm).await;
-        send_attached_target_from_parent(&mut socket, "S-PAGE", "ROOT", "page", None, &context, false, Some("S-TAB"))
-            .await;
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-PAGE",
+            "ROOT",
+            "page",
+            None,
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
         let page_arm = next_child_message(&mut socket).await;
         assert_eq!(page_arm["method"], "Target.setAutoAttach");
         assert_eq!(page_arm["sessionId"], "S-PAGE");
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "a slow page arm acknowledgement is waited for");
+        assert!(
+            !controller.is_finished(),
+            "a slow page arm acknowledgement is waited for"
+        );
         answer_child_command(&mut socket, &page_arm).await;
         let page_resume = next_child_message(&mut socket).await;
         assert_eq!(page_resume["method"], "Runtime.runIfWaitingForDebugger");
@@ -6641,7 +6678,10 @@ mod tests {
         answer_child_command(&mut socket, &page_resume).await;
         answer_child_command(&mut socket, &tab_resume).await;
         commands.send(super::ChildCommand::Stop).await.expect("stop");
-        assert!(controller.await.expect("child controller task"), "the controller is healthy");
+        assert!(
+            controller.await.expect("child controller task"),
+            "the controller is healthy"
+        );
     }
 
     /// A tab is refused by the record of targets: nothing is stored for it, in a context of a
@@ -7090,8 +7130,14 @@ mod tests {
         let arm = begin_root_arm(&mut socket, &context).await;
 
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "a slow root arm acknowledgement is waited for");
-        assert!(armed.try_recv().is_err(), "the arm has no result before its acknowledgement");
+        assert!(
+            !controller.is_finished(),
+            "a slow root arm acknowledgement is waited for"
+        );
+        assert!(
+            armed.try_recv().is_err(),
+            "the arm has no result before its acknowledgement"
+        );
         finish_root_arm(&mut socket, &arm, armed).await;
         commands.send(super::ChildCommand::Stop).await.expect("stop");
         assert!(controller.await.expect("child controller task"));
@@ -7175,7 +7221,10 @@ mod tests {
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
 
         let_time_pass(Duration::from_secs(5)).await;
-        assert!(!controller.is_finished(), "an unanswered resume is waited for, not timed");
+        assert!(
+            !controller.is_finished(),
+            "an unanswered resume is waited for, not timed"
+        );
         commands.send(super::ChildCommand::Stop).await.expect("stop");
         assert!(controller.await.expect("child controller task"), "a stop ends the wait");
     }
@@ -9071,14 +9120,18 @@ mod race_tests {
         use async_tungstenite::tungstenite::Message;
         use futures::SinkExt as _;
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind the relay");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind the relay");
         let address = format!("ws://{}", listener.local_addr().expect("relay address"));
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let upstream = upstream.clone();
                 let holding = Arc::clone(&holding);
                 tokio::spawn(async move {
-                    let Ok(client) = async_tungstenite::tokio::accept_async(stream).await else { return };
+                    let Ok(client) = async_tungstenite::tokio::accept_async(stream).await else {
+                        return;
+                    };
                     let Ok((chrome, _)) = async_tungstenite::tokio::connect_async(upstream.as_str()).await else {
                         return;
                     };
@@ -9168,12 +9221,19 @@ mod race_tests {
             popup_of(&owner, &root).await.is_some(),
             "Chrome must have created the popup's target"
         );
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0, "a held popup makes no connection");
+        assert_eq!(
+            denied_hits.load(Ordering::SeqCst),
+            0,
+            "a held popup makes no connection"
+        );
         assert!(
             super::lock(&watch.page.refusals).is_empty(),
             "a held popup sends no request for the check to refuse"
         );
-        assert!(!firewall.has_failed(), "the controller waits for Chrome's answer; it does not fail");
+        assert!(
+            !firewall.has_failed(),
+            "the controller waits for Chrome's answer; it does not fail"
+        );
 
         drop(watch);
         let gone = tokio::time::timeout(Duration::from_secs(5), async {
