@@ -218,7 +218,7 @@ title: "Changelog"
   controller failure, and successful profile retirement avoids a second process-family kill (#734).
 - Foreign-tab browser tests finish readable response bodies before reloading and report bounded
   rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
-- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+- Browser protocol parsing accepts current Chrome network policy field names while preserving
   the reported policy and the legacy typed event API (#750).
 - macOS runtime tests retry when framework workqueue counts change during thread sampling,
   and exit subprocesses use the same sampler (#751).
