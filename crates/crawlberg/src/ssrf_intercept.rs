@@ -5674,9 +5674,26 @@ mod tests {
                 .await
                 .expect("stop the controller");
         }
-        tokio::time::timeout(Duration::from_secs(1), controller)
+        if !detached && matches!(owner, ArmOwner::Other) {
+            // No detach retired the session: the error asks Chrome for proof, and the census is
+            // waited for. A census that still lists the target is the evidence that fails closed.
+            let census = next_child_message(&mut socket).await;
+            assert_eq!(census["method"], "Target.getTargets");
+            let_time_pass(Duration::from_secs(5)).await;
+            assert!(!controller.is_finished(), "a missing session's census is waited for, not timed");
+            let present = serde_json::json!({
+                "id": census["id"], "result": { "targetInfos": [
+                    target_created_in_context(target, None, &context).target_info
+                ] }
+            });
+            socket
+                .send(Message::Text(present.to_string().into()))
+                .await
+                .expect("census with the live target present");
+        }
+        tokio::time::timeout(Duration::from_secs(5), controller)
             .await
-            .expect("a detached session must complete its stop or fail closed within the test bound")
+            .expect("the controller must complete its stop or fail closed within the 5 s test bound")
             .expect("join the child controller")
     }
 
@@ -5757,11 +5774,27 @@ mod tests {
                 .await
                 .expect("late arm error");
         }
+        // The detach retired the detached session's arm. The live session's error asks Chrome for
+        // proof instead: a census that still lists its target fails the controller closed.
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        let_time_pass(Duration::from_secs(5)).await;
+        assert!(!controller.is_finished(), "the live session's census is waited for, not timed");
+        let present = serde_json::json!({
+            "id": census["id"], "result": { "targetInfos": [
+                target_created_in_context("LIVE", None, &BrowserContextId::new("FOREIGN")).target_info
+            ] }
+        });
+        socket
+            .send(Message::Text(present.to_string().into()))
+            .await
+            .expect("census with the live target present");
         assert!(
-            !tokio::time::timeout(Duration::from_secs(1), controller)
+            !tokio::time::timeout(Duration::from_secs(5), controller)
                 .await
-                .expect("the live session's arm must still fail closed")
-                .expect("child controller")
+                .expect("a census that lists the live target must fail the controller within the 5 s test bound")
+                .expect("child controller"),
+            "the live session's arm must still fail closed on a census that lists its target"
         );
     }
 
@@ -6110,8 +6143,10 @@ mod tests {
         assert!(controller.await.expect("controller task"));
     }
 
+    /// The resume of a root in a live (not retired) context is waited for, not timed: nothing but
+    /// its context's retirement proof or a stop ends the wait.
     #[tokio::test]
-    async fn a_live_context_missing_resume_acknowledgement_still_fails_closed() {
+    async fn a_live_context_missing_resume_acknowledgement_is_waited_for() {
         let page = watched("ROOT");
         let shared = Arc::new(shared_with(&page, "OTHER"));
         let context = register_owned_context(&shared, &page);
@@ -6131,17 +6166,26 @@ mod tests {
         armed.await.expect("root sender").expect("root armed");
         let resume = next_child_message(&mut socket).await;
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
+
+        let_time_pass(Duration::from_secs(5)).await;
         assert!(
-            !tokio::time::timeout(Duration::from_millis(250), controller)
+            !controller.is_finished(),
+            "a live context's missing resume acknowledgement is waited for, not timed"
+        );
+        commands.send(super::ChildCommand::Stop).await.expect("stop");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), controller)
                 .await
-                .expect("live boundary expires")
-                .expect("controller task"),
-            "a live context still requires every resume acknowledgement"
+                .expect("a stop must end the controller within the 5 s test bound")
+                .expect("child controller task"),
+            "a stop ends the wait"
         );
     }
 
+    /// The census of a retired context retires only that context's missing resume: another live
+    /// context's resume stays pending, waited for and not timed, until a stop ends the controller.
     #[tokio::test]
-    async fn a_retired_context_census_keeps_another_contexts_resume_acknowledgement_required() {
+    async fn a_retired_context_census_leaves_another_contexts_resume_pending() {
         let page = watched("ROOT");
         let shared = Arc::new(shared_with(&page, "OTHER"));
         let context = register_owned_context(&shared, &page);
@@ -6177,12 +6221,23 @@ mod tests {
             .await
             .expect("unrelated live work does not delay retirement")
             .expect("retired drain");
+
+        let_time_pass(Duration::from_secs(5)).await;
         assert!(
-            !tokio::time::timeout(Duration::from_millis(250), controller)
+            !controller.is_finished(),
+            "the retired context census leaves another live context's resume waited for, not timed"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), socket.next()).await.is_err(),
+            "the other live context gets no further command while its resume is unanswered"
+        );
+        commands.send(super::ChildCommand::Stop).await.expect("stop");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), controller)
                 .await
-                .expect("other live boundary expires")
-                .expect("controller task"),
-            "the retired context census cannot retire another live context's resume"
+                .expect("a stop must end the controller within the 5 s test bound")
+                .expect("child controller task"),
+            "a stop ends the wait"
         );
     }
 
@@ -6308,6 +6363,9 @@ mod tests {
         assert!(controller.await.expect("late obsolete events keep controller healthy"));
     }
 
+    /// A drain is acknowledged only on a census that proves the context gone. An invalid request
+    /// or an invalid census answer fails the controller closed; an unanswered census is waited
+    /// for, not timed, and a stop ends the controller with the drain never acknowledged.
     #[tokio::test]
     async fn a_context_drain_rejects_unproved_retirement_and_invalid_census_replies() {
         for case in [
@@ -6316,7 +6374,7 @@ mod tests {
             "malformed",
             "error",
             "live-context",
-            "timeout",
+            "unanswered",
             "disconnect",
         ] {
             let page = watched("ROOT");
@@ -6357,7 +6415,30 @@ mod tests {
                     socket.close(None).await.expect("drop controller socket");
                 }
             }
-            assert!(!controller.await.expect("unproved drain must fail closed"), "{case}");
+            if case == "unanswered" {
+                let_time_pass(Duration::from_secs(5)).await;
+                assert!(!controller.is_finished(), "an unanswered drain census is waited for, not timed");
+                commands.send(super::ChildCommand::Stop).await.expect("stop");
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(5), controller)
+                        .await
+                        .expect("a stop must end the controller within the 5 s test bound")
+                        .expect("child controller task"),
+                    "a stop ends the wait"
+                );
+                assert!(
+                    drained.await.is_err(),
+                    "{case}: a stop must never acknowledge the drain"
+                );
+                continue;
+            }
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(5), controller)
+                    .await
+                    .expect("an invalid drain must fail closed within the 5 s test bound")
+                    .expect("unproved drain must fail closed"),
+                "{case}"
+            );
             assert!(
                 drained.await.is_err(),
                 "{case}: failure must never acknowledge the drain"
