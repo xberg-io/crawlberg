@@ -123,6 +123,9 @@ title: "Changelog"
 
 ### Changed
 
+- Child-target acknowledgement failures report the pending command kind and numeric CDP error
+  code, without recording the error text or target/session identifiers. (#734)
+
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and

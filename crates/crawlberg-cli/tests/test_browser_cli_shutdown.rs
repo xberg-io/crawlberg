@@ -164,26 +164,28 @@ fn command(url: &str, config: &str) -> Command {
     command
 }
 
-fn run(mut command: Command) -> Output {
+fn run(command: Command) -> Output {
+    run_tracking_owned_browser(command, false).0
+}
+
+fn run_tracking_owned_browser(mut command: Command, track: bool) -> (Output, Vec<u32>) {
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("CLI process");
-    let mut stdout = child.stdout.take().expect("stdout pipe");
-    let mut stderr = child.stderr.take().expect("stderr pipe");
-    let stdout = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).expect("stdout");
-        bytes
-    });
-    let stderr = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).expect("stderr");
-        bytes
-    });
+    let stdout = read_pipe(child.stdout.take().expect("stdout pipe"));
+    let stderr = read_pipe(child.stderr.take().expect("stderr pipe"));
     let deadline = Instant::now() + Duration::from_secs(180);
+    let mut owned = Vec::new();
     let status = loop {
+        if track {
+            for (pid, parent, executable) in processes() {
+                if parent == child.id() && is_chrome(&executable) && !owned.contains(&pid) {
+                    owned.push(pid);
+                }
+            }
+        }
         if let Some(status) = child.try_wait().expect("CLI wait") {
             break status;
         }
@@ -194,11 +196,22 @@ fn run(mut command: Command) -> Output {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    Output {
-        status,
-        stdout: stdout.join().expect("stdout reader"),
-        stderr: stderr.join().expect("stderr reader"),
-    }
+    (
+        Output {
+            status,
+            stdout: stdout.join().expect("stdout reader"),
+            stderr: stderr.join().expect("stderr reader"),
+        },
+        owned,
+    )
+}
+
+fn read_pipe(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes).expect("CLI output pipe");
+        bytes
+    })
 }
 
 fn diagnostics(stderr: &[u8]) -> Vec<serde_json::Value> {
@@ -470,4 +483,137 @@ fn should_keep_an_accepted_connection_open_until_the_complete_request_arrives() 
     request.read_to_string(&mut response).expect("complete response");
     assert!(response.ends_with(&fixture_body("/one")));
     assert_eq!(*site.hits.lock().expect("hits"), ["/one"]);
+}
+
+fn is_chrome(executable: &str) -> bool {
+    let name = executable.to_ascii_lowercase();
+    name.contains("chrome") || name.contains("chromium")
+}
+
+fn processes() -> Vec<(u32, u32, String)> {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .expect("process inventory");
+    assert_eq!(output.status.code(), Some(0));
+    String::from_utf8(output.stdout)
+        .expect("process inventory UTF-8")
+        .lines()
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next().expect("process id").parse().expect("numeric process id");
+            let parent = fields.next().expect("parent id").parse().expect("numeric parent id");
+            (pid, parent, fields.collect::<Vec<_>>().join(" "))
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn non_crawl_command(operation: &str, url: &str, config: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crawlberg"));
+    command.env_remove("RUST_LOG").env_remove("CRAWLBERG_LOG").args([
+        "--log-level",
+        "warn",
+        "--log-format",
+        "json",
+        operation,
+        url,
+        "--browser-mode",
+        "always",
+        "--config",
+        config,
+    ]);
+    if operation == "interact" {
+        command.args(["--actions", "[]"]);
+    }
+    command
+}
+
+#[cfg(unix)]
+fn assert_non_crawl_result(operation: &str, stdout: &[u8]) {
+    let result: serde_json::Value = serde_json::from_slice(stdout).expect("command JSON");
+    let html = match operation {
+        "scrape" => {
+            assert_eq!(result["status_code"], 200);
+            &result["html"]
+        }
+        "interact" => &result["interaction"]["final_html"],
+        "batch-scrape" | "batch-crawl" => {
+            assert_eq!(result["completed_count"], 1);
+            assert_eq!(result["failed_count"], 0);
+            assert_eq!(result["results"].as_array().expect("batch results").len(), 1);
+            let entry = &result["results"][0]["result"];
+            if operation == "batch-crawl" {
+                &entry["pages"][0]["html"]
+            } else {
+                &entry["html"]
+            }
+        }
+        "download" => {
+            assert_eq!(result["status_code"], 200);
+            assert_eq!(result["content_type"], "text/html");
+            assert_eq!(result["note"], "URL returned HTML content, not a downloadable document");
+            return;
+        }
+        _ => unreachable!(),
+    };
+    assert!(
+        html.as_str()
+            .expect("rendered HTML")
+            .contains(r#"<p id="rendered">executed-/</p>"#),
+        "{operation} must return the executed JavaScript result"
+    );
+}
+
+#[cfg(unix)]
+fn assert_no_owned_root_or_diagnostics(operation: &str, owned: &[u32], stderr: &[u8]) {
+    assert_eq!(owned.len(), 1, "{operation} must actually launch one owned Chrome");
+    let remaining: Vec<_> = processes()
+        .into_iter()
+        .filter(|(pid, _, _)| owned.contains(pid))
+        .collect();
+    assert_eq!(
+        remaining,
+        Vec::<(u32, u32, String)>::new(),
+        "{operation} returned with owned Chrome alive"
+    );
+    assert_eq!(
+        diagnostics(stderr),
+        Vec::<serde_json::Value>::new(),
+        "{operation} diagnostics"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn should_finish_non_crawl_browser_commands_without_diagnostics_or_owned_chrome_roots() {
+    let chrome = std::env::var_os("CRAWLBERG_TEST_CHROME_PATH")
+        .or_else(|| std::env::var_os("CRAWLBERG_TEST_CHROME"))
+        .expect("real Chrome path must be configured");
+    assert!(std::path::Path::new(&chrome).is_file());
+    let config = serde_json::json!({
+        "ssrf":{"deny_private":false,"denylist":[]}, "ssrf_deny_private_explicit":false,
+        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy()},
+        "max_depth":0,"max_concurrent":1,"rate_limit_ms":0
+    })
+    .to_string();
+    let mut completed = Vec::new();
+    for operation in ["scrape", "interact", "batch-scrape", "batch-crawl", "download"] {
+        let site = Site::start();
+        let (output, owned) = run_tracking_owned_browser(non_crawl_command(operation, &site.url, &config), true);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{operation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_non_crawl_result(operation, &output.stdout);
+        assert!(site.hits.lock().expect("fixture hits").iter().any(|path| path == "/"));
+        assert_no_owned_root_or_diagnostics(operation, &owned, &output.stderr);
+        completed.push(operation);
+    }
+    assert_eq!(
+        completed,
+        ["scrape", "interact", "batch-scrape", "batch-crawl", "download"]
+    );
 }

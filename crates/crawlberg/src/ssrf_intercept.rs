@@ -2711,7 +2711,10 @@ where
                                 pending.insert(id, child_pending_in(ChildPendingKind::Boundary { session: target.session.clone() }, command_timeout, command_context.clone()));
                             }
                         }
-                        ChildPendingKind::Boundary { .. } | ChildPendingKind::Close if !acknowledged => return child_fail(shared, "boundary_or_close_ack"),
+                        kind @ (ChildPendingKind::Boundary { .. } | ChildPendingKind::Close) if !acknowledged => {
+                            let pending_command = if matches!(kind, ChildPendingKind::Close) { "close" } else { "boundary" };
+                            return failure::child_ack_fail(shared, pending_command, value["error"]["code"].as_i64());
+                        }
                         ChildPendingKind::Boundary { .. } | ChildPendingKind::Close => {}
                         ChildPendingKind::ForeignRetirementCensus { target, session } => {
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())

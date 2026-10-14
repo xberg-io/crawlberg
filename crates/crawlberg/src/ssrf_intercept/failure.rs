@@ -73,3 +73,18 @@ pub(super) fn child_transport_end(
     }
     child_fail(shared, reason)
 }
+
+pub(super) fn child_ack_fail(shared: &Shared, pending_command: &'static str, cdp_error_code: Option<i64>) -> bool {
+    if !shared.stopping.load(Ordering::Acquire) {
+        tracing::error!(
+            target: "crawlberg::ssrf_intercept",
+            phase = "child_target_controller",
+            reason = "boundary_or_close_ack",
+            browser_handler_task_id = ?shared.handler_abort.as_ref().map(tokio::task::AbortHandle::id),
+            pending_command,
+            cdp_error_code,
+            "browser child-target controller failed closed"
+        );
+    }
+    false
+}
