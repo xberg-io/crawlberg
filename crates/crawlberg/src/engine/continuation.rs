@@ -449,6 +449,53 @@ mod tests {
         assert_eq!(limiter.active.load(Ordering::SeqCst), 0);
     }
 
+    /// A job is pulled into the backlog when a slot is free, not every job before the first
+    /// operation: a batch of 2,000 hosts started its first fetch after 2,000 admissions.
+    #[tokio::test]
+    async fn should_pull_a_job_only_when_a_slot_is_free() {
+        let admitted = Arc::new(AtomicUsize::new(0));
+        let first_started = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+        let count = admitted.clone();
+        let started = first_started.clone();
+        let release = release_first.clone();
+        let jobs = (0..3).map(|id| super::super::host_turn::HostJob {
+            host: format!("host{id}"),
+            data: id,
+        });
+        let running = tokio::spawn(run_resumable_jobs(
+            jobs,
+            1,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            move |id| {
+                count.fetch_add(1, Ordering::SeqCst);
+                format!("job {id}")
+            },
+            move |id, _| {
+                let started = started.clone();
+                let release = release.clone();
+                async move {
+                    if id == 0 {
+                        started.notify_one();
+                        release.notified().await;
+                    }
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        ));
+        first_started.notified().await;
+        assert_eq!(
+            admitted.load(Ordering::SeqCst),
+            1,
+            "the other jobs must wait for a free slot before they are admitted"
+        );
+        release_first.notify_one();
+        let results = running.await.expect("the batch joins");
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(admitted.load(Ordering::SeqCst), 3);
+    }
+
     struct FailingSecondAdmission(AtomicUsize);
 
     #[async_trait::async_trait]
