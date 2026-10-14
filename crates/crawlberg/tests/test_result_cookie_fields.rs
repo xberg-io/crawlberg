@@ -89,6 +89,29 @@ async fn should_give_one_cookie_the_same_domain_and_path_in_http_and_browser_mod
     );
 }
 
+/// ~keep RFC 6265 5.3: a `Max-Age` of zero or a past `Expires` deletes the cookie, an IP host
+/// accepts only its own address as `Domain`, and the last `Domain` attribute decides. The browser
+/// lists what its store holds; HTTP mode lists the same.
+#[tokio::test]
+async fn should_list_the_cookies_a_browser_stores_for_deleted_and_mis_scoped_set_cookie_headers() {
+    let site = MockServer::start().await;
+    route(
+        &site,
+        "/",
+        html("plain")
+            .append_header("set-cookie", "plain=1")
+            .append_header("set-cookie", "gone=0; Max-Age=0")
+            .append_header("set-cookie", "expired=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+            .append_header("set-cookie", "ipsuffix=15; Domain=0.0.1")
+            .append_header("set-cookie", "lastwins=16; Domain=other.test; Domain=127.0.0.1"),
+    )
+    .await;
+
+    let stored = vec![field("lastwins", "127.0.0.1", "/"), field("plain", "127.0.0.1", "/")];
+    assert_eq!(crawl_fields(&site, BrowserMode::Never).await, stored, "HTTP mode");
+    assert_eq!(crawl_fields(&site, BrowserMode::Always).await, stored, "browser mode");
+}
+
 fn from_the_browser(request: &Request) -> bool {
     request.headers.contains_key("upgrade-insecure-requests")
 }

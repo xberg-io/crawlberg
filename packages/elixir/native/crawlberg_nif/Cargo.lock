@@ -536,6 +536,7 @@ dependencies = [
  "bytes",
  "chardetng",
  "chrono",
+ "cookie_store",
  "crawlberg-chromiumoxide",
  "crawlberg-robots",
  "dashmap",

@@ -327,10 +327,7 @@ fn native_result_cookies(
 }
 
 fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<String, String>) -> Vec<CookieInfo> {
-    let Some(host) = url::Url::parse(final_url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_owned))
-    else {
+    let Ok(url) = url::Url::parse(final_url) else {
         return Vec::new();
     };
     let path = headers.get("set-cookie").and_then(|raw| {
@@ -347,7 +344,7 @@ fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<St
         .iter()
         .map(|(name, value)| (name.clone(), vec![value.clone()]))
         .collect();
-    let mut cookies = crate::http::extract_cookies_from_hashmap(&host, &headers);
+    let mut cookies = crate::http::extract_cookies_from_hashmap(&url, &headers);
     for cookie in &mut cookies {
         cookie.path = path.clone();
     }

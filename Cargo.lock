@@ -1222,6 +1222,7 @@ dependencies = [
  "bytes",
  "chardetng",
  "chrono",
+ "cookie_store",
  "crawlberg-browser",
  "crawlberg-chromiumoxide",
  "crawlberg-robots",

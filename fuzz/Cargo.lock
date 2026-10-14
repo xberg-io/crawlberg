@@ -455,6 +455,7 @@ dependencies = [
  "blake3",
  "chardetng",
  "chrono",
+ "cookie_store",
  "crawlberg-robots",
  "dashmap",
  "encoding_rs",
