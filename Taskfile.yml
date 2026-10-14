@@ -5,6 +5,9 @@ includes:
     taskfile: .task/config/vars.yml
     internal: true
 
+  binding-compatibility:
+    taskfile: .task/ci-binding-compatibility.yml
+
   rust:
     taskfile: .task/languages/rust.yml
   python:

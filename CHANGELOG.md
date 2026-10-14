@@ -214,7 +214,8 @@ All notable changes to crawlberg are documented here.
 - Released constructor checks preserve Swift initializer and factory function references, getter
   effects and alias visibility. Python and Swift call fixtures assert constructed values, and
   Python CI executes the released calls after type checking (#738, #739).
-- E2E CI path filters include task definitions and CI helpers (#737).
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
 
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
