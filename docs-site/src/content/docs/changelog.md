@@ -4,6 +4,13 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Security
+
+- Update Rustls to 0.23.46 across Rust lockfiles to address RUSTSEC-2026-0346,
+  RUSTSEC-2026-0347, RUSTSEC-2026-0348, and RUSTSEC-2026-0349. Update the Rust consumer
+  app to Quinn Proto 0.11.18 to address RUSTSEC-2026-0338, RUSTSEC-2026-0340, and
+  RUSTSEC-2026-0343.
+
 ### Fixed
 
 - A browser command no longer waits for its full timeout after Chrome closes the DevTools

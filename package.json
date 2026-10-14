@@ -23,10 +23,7 @@
   },
   "packageManager": "pnpm@12.11.2",
   "pi": {
-    "prompts": [
-      "./plugin/.pi/prompts/crawlberg-crawl.md",
-      "./plugin/.pi/prompts/crawlberg-scrape.md"
-    ],
+    "prompts": ["./plugin/.pi/prompts/crawlberg-crawl.md", "./plugin/.pi/prompts/crawlberg-scrape.md"],
     "skills": [
       "./plugin/.pi/skills/automating-the-browser",
       "./plugin/.pi/skills/crawlberg",

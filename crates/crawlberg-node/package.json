@@ -26,11 +26,7 @@
       "default": "./index.js"
     }
   },
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "*.node"
-  ],
+  "files": ["index.js", "index.d.ts", "*.node"],
   "optionalDependencies": {
     "@xberg-io/crawlberg-darwin-arm64": "1.10.3",
     "@xberg-io/crawlberg-darwin-x64": "1.10.3",
