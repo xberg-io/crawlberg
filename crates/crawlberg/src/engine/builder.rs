@@ -750,23 +750,21 @@ mod owned_browser_pool_tests {
     async fn seven_page_site() -> wiremock::MockServer {
         let site = wiremock::MockServer::start().await;
         let links: String = (0..6).map(|i| format!("<a href=\"/p{i}\">p{i}</a>")).collect();
+        // ~keep `set_body_raw`, not `set_body_string`: the latter serves `text/plain`, which
+        // Chrome shows as text, so the index would have no links.
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/"))
             .respond_with(
                 wiremock::ResponseTemplate::new(200)
-                    .set_body_string(format!("<html><body>{links}</body></html>"))
-                    .append_header("content-type", "text/html"),
+                    .set_body_raw(format!("<html><body>{links}</body></html>"), "text/html"),
             )
             .mount(&site)
             .await;
-        // ~keep Lower precedence than the index mock, so "/" gets the links, not this page.
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .respond_with(
                 wiremock::ResponseTemplate::new(200)
-                    .set_body_string("<html><body><p>a page</p></body></html>")
-                    .append_header("content-type", "text/html"),
+                    .set_body_raw("<html><body><p>a page</p></body></html>", "text/html"),
             )
-            .with_priority(10)
             .mount(&site)
             .await;
         site

@@ -2237,7 +2237,7 @@ impl BrowserPool {
     }
 
     /// How many browsers this pool has launched or connected to so far.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "browser"))]
     pub(crate) fn launches(&self) -> u64 {
         self.next_generation.load(Ordering::Relaxed) - 1
     }
