@@ -135,9 +135,9 @@ pub(crate) struct BrowserPage {
 
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
-/// When `config.browser_pool` is set, acquires a page from the pool, uses it, and returns
-/// it on completion. Otherwise launches a one-shot browser instance and tears it down
-/// afterwards.
+/// With a `pool` (the engine's: the pool the caller gave, else the one the engine owns),
+/// acquires a page from it, uses it, and returns it on completion. Otherwise launches a
+/// one-shot browser instance and tears it down afterwards.
 ///
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
 /// the redirects the browser followed to reach it. The page's status is handled the way
@@ -148,6 +148,7 @@ pub(crate) struct BrowserPage {
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
+    pool: Option<&BrowserPool>,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
     want_screenshot: bool,
@@ -158,6 +159,7 @@ pub(crate) async fn browser_fetch(
         Box::pin(browser_fetch_once(
             url,
             config,
+            pool,
             prior_cookies,
             crawl_cookies,
             want_screenshot,
@@ -236,13 +238,13 @@ fn browser_error_is_retryable(error: &CrawlError, config: &CrawlConfig) -> bool 
 async fn browser_fetch_once(
     url: &str,
     config: &CrawlConfig,
+    pool: Option<&BrowserPool>,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
     want_screenshot: bool,
     deadline: tokio::time::Instant,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
-    let pool = config.browser_pool.as_deref();
     let page = match config.browser.backend {
         BrowserBackend::Chromiumoxide => {
             let given = crawl_cookies.map(CrawlCookies::given);
@@ -943,6 +945,7 @@ mod tests {
             &config,
             None,
             None,
+            None,
             false,
             &crate::defaults::NoopRateLimiter,
             Some(executor),
@@ -1009,6 +1012,7 @@ mod tests {
             &config,
             None,
             None,
+            None,
             false,
             &crate::defaults::NoopRateLimiter,
             Some(&executor),
@@ -1070,6 +1074,7 @@ mod tests {
         browser_fetch(
             &format!("{}/page", site.uri()),
             &config,
+            None,
             None,
             None,
             false,

@@ -89,6 +89,7 @@ impl CrawlEngine {
             Box::pin(crate::browser::browser_fetch(
                 url,
                 &self.config,
+                self.browser_pool(),
                 prior_cookies,
                 self.crawl_cookies.as_deref(),
                 want_screenshot,

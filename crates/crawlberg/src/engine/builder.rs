@@ -364,13 +364,19 @@ impl CrawlEngineBuilder {
 }
 
 /// The browser pool of an engine whose caller gave none: one Chrome for every page of the
-/// engine, made from the engine's launch options and installed in `config.browser_pool`. Chrome
-/// launches at the first browser fetch, so an engine that never renders a page never starts one.
+/// engine, made from the engine's launch options. Chrome launches at the first browser fetch,
+/// so an engine that never renders a page never starts one.
 ///
 /// `None`, and so a Chrome for each page, when the caller gave a pool (it stays the caller's),
 /// when the backend is not Chrome, or with a named `browser_profile`: a pool launches Chrome
 /// before any crawl can claim that profile, and the profile's storage is the page's, which a
 /// pool's context of its own is not.
+///
+/// ~keep The pool is the engine's, never written to `config.browser_pool`: the API server, its
+/// ~keep MCP endpoint and the standalone MCP server build an engine for each request from a
+/// ~keep clone of their engine's configuration, and a pool in that clone would serve the pages
+/// ~keep of every request from one Chrome with one budget of page permits. A configuration
+/// ~keep carries only a pool the caller gave; each engine built from it makes its own.
 #[cfg(feature = "browser")]
 fn owned_browser_pool(config: &mut CrawlConfig) -> Option<Arc<crate::browser_pool::BrowserPool>> {
     if config.browser_pool.is_some()
@@ -384,9 +390,7 @@ fn owned_browser_pool(config: &mut CrawlConfig) -> Option<Arc<crate::browser_poo
     // ~keep a pool permit. Engine-made pools therefore reuse Chrome, but close each page as
     // ~keep the one-shot path did, until parked pages have safe lifecycle ownership.
     config.browser.session_affinity = false;
-    let pool = crate::browser_pool::BrowserPool::new(owned_browser_pool_config(config));
-    config.browser_pool = Some(Arc::clone(&pool));
-    Some(pool)
+    Some(crate::browser_pool::BrowserPool::new(owned_browser_pool_config(config)))
 }
 
 #[cfg(feature = "browser")]
@@ -657,17 +661,35 @@ mod owned_browser_pool_tests {
     }
 
     #[test]
-    fn a_builder_engine_owns_one_pool_that_its_clones_and_its_configuration_share() {
+    fn a_builder_engine_owns_one_pool_that_its_clones_share_and_its_configuration_does_not_carry() {
         let engine = browser_engine(browser_config(Some(3)));
         let pool = owned_pool(&engine);
-        let in_config = engine
-            .config
-            .browser_pool
-            .as_ref()
-            .expect("the engine's fetches must find its pool in the configuration");
-        assert!(Arc::ptr_eq(&pool, in_config));
         assert!(Arc::ptr_eq(&pool, &owned_pool(&engine.clone())));
+        assert!(std::ptr::eq(
+            &*pool,
+            engine.browser_pool().expect("the engine's fetches use its own pool")
+        ));
+        assert!(
+            engine.config.browser_pool.is_none(),
+            "the engine's pool is engine state; a clone of its configuration must carry no pool"
+        );
         assert!(!engine.config.browser.session_affinity);
+    }
+
+    /// The shape of the API server and the MCP endpoint: an engine for each request, built from
+    /// a clone of the startup engine's configuration. Each owns a pool of its own.
+    #[test]
+    fn engines_built_from_a_configuration_clone_each_own_a_pool_of_their_own() {
+        let startup = browser_engine(browser_config(Some(3)));
+        let first = browser_engine(startup.config.clone());
+        let second = browser_engine(startup.config.clone());
+
+        let pools = [owned_pool(&startup), owned_pool(&first), owned_pool(&second)];
+        for (i, a) in pools.iter().enumerate() {
+            for b in &pools[i + 1..] {
+                assert!(!Arc::ptr_eq(a, b), "engine {i} must not share its pool");
+            }
+        }
     }
 
     #[test]
@@ -808,6 +830,58 @@ mod owned_browser_pool_tests {
         })
         .await
         .expect("dropping the engine must stop its Chrome and remove the profile directory");
+    }
+
+    /// Two engines built from one engine's configuration clone, as the API server builds one
+    /// for each request: two Chromes, and each stops with its own engine.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine() {
+        const TEST_NAME: &str = "two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = seven_page_site().await;
+        let startup = browser_engine(browser_config(None));
+        let first = browser_engine(startup.config.clone());
+        let second = browser_engine(startup.config.clone());
+
+        for engine in [&first, &second] {
+            let result = engine.crawl(&site.uri()).await.expect("the browser crawl must succeed");
+            assert_eq!(result.pages.len(), 7, "error: {:?}", result.error);
+        }
+
+        let (first_pool, second_pool) = (owned_pool(&first), owned_pool(&second));
+        assert!(!Arc::ptr_eq(&first_pool, &second_pool));
+        assert_eq!(owned_pool(&startup).launches(), 0, "the startup engine never rendered");
+        assert_eq!(first_pool.launches(), 1);
+        assert_eq!(second_pool.launches(), 1);
+        let first_profile = pool_profile_dir(&first_pool).await;
+        let second_profile = pool_profile_dir(&second_pool).await;
+        assert_ne!(first_profile, second_profile, "each engine has a Chrome of its own");
+        assert!(chrome_process_count_for_profile(&first_profile) > 0);
+        assert!(chrome_process_count_for_profile(&second_profile) > 0);
+        drop((first_pool, second_pool));
+
+        drop(first);
+        let second_profile_after_first_drop = second_profile.clone();
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&first_profile);
+            assert_eq!(chrome_process_count_for_profile(&first_profile), 0);
+            assert!(
+                chrome_process_count_for_profile(&second_profile_after_first_drop) > 0,
+                "dropping one engine must leave the other's Chrome alive"
+            );
+        })
+        .await
+        .expect("dropping the first engine must stop only its own Chrome");
+
+        drop(second);
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&second_profile);
+            assert_eq!(chrome_process_count_for_profile(&second_profile), 0);
+        })
+        .await
+        .expect("dropping the second engine must stop its Chrome and remove the profile directory");
     }
 }
 

@@ -339,19 +339,21 @@ mod tests {
 
         let pool = handle
             .inner
-            .config
-            .browser_pool
+            .owned_browser_pool
             .as_ref()
             .expect("binding engine must own a browser pool");
         let cloned_pool = cloned
             .inner
-            .config
-            .browser_pool
+            .owned_browser_pool
             .as_ref()
             .expect("cloned handle must retain the browser pool");
         assert!(
             Arc::ptr_eq(pool, cloned_pool),
             "handle clones must share one browser pool"
+        );
+        assert!(
+            handle.inner.config.browser_pool.is_none(),
+            "the engine's own pool is not in its configuration"
         );
 
         assert!(!handle.inner.config.browser.session_affinity);
@@ -368,14 +370,7 @@ mod tests {
             ..CrawlConfig::default()
         }))
         .expect("binding engine must build");
-        let pool = Arc::clone(
-            handle
-                .inner
-                .config
-                .browser_pool
-                .as_ref()
-                .expect("binding engine must own a browser pool"),
-        );
+        let pool = owned_pool(&handle);
 
         shutdown_engine(handle).await;
 
@@ -398,14 +393,7 @@ mod tests {
             ..CrawlConfig::default()
         }))
         .expect("binding engine must build");
-        let pool = Arc::clone(
-            handle
-                .inner
-                .config
-                .browser_pool
-                .as_ref()
-                .expect("binding engine must own a browser pool"),
-        );
+        let pool = owned_pool(&handle);
         if crate::browser_pool::tests::expect_chrome_or_skip(TEST_NAME, pool.warm().await).is_none() {
             return;
         }
