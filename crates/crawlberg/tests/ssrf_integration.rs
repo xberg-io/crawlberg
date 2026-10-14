@@ -621,7 +621,11 @@ async fn too_many_redirects_refused() {
 
     match result {
         Err(CrawlError::TooManyRedirects { ref message, .. }) => {
-            assert_eq!(message, "redirect loop", "the error must name the redirect loop");
+            assert_eq!(
+                *message,
+                format!("{}/r1 - redirect loop", mock.uri()),
+                "the error must name the redirect loop"
+            );
         }
         other => {
             panic!("expected TooManyRedirects(redirect loop), got: {other:?}");

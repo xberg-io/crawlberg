@@ -49,6 +49,8 @@ async fn should_fail_self_redirect_two_page_loop_and_overlong_chain() {
                 panic!("the redirect error must carry its source: {error:?}");
             };
             assert!(message.contains("redirect"), "{error}");
+            assert!(message.starts_with(&server.uri()), "{error}");
+            assert!(error.to_string().contains(&server.uri()), "{error}");
             assert!(format!("{source:?}").contains(&server.uri()), "{error:?}");
         }
     }
