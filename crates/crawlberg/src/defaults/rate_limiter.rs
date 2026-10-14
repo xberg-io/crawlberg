@@ -243,6 +243,12 @@ impl RateLimiter for PerDomainThrottle {
             let domain_state = state.domain(domain, now, self.default_delay);
             self.wait_for(domain_state, domain, now)
         };
+        tracing::trace!(
+            target: "crawlberg::rate_limiter",
+            domain,
+            wait_ms = wait.as_secs_f64() * 1000.0,
+            "selected host pacing delay"
+        );
         if !wait.is_zero() {
             tokio::time::sleep(wait).await;
         }
