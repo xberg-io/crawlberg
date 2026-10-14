@@ -173,8 +173,9 @@ fn invalidated_cookie(url: &url::Url, raw: &str) -> Option<BrowserCookie> {
         };
         let value = value.trim();
         if key.eq_ignore_ascii_case("domain") && !value.trim_start_matches('.').is_empty() {
-            crate::net::cookie::validate_cookie_domain(host, value).ok()?;
-            params.domain = Some(format!(".{}", value.trim_start_matches('.').to_ascii_lowercase()));
+            params.domain = crate::net::cookie::validate_cookie_domain(host, value)
+                .ok()?
+                .map(|domain| format!(".{domain}"));
         } else if key.eq_ignore_ascii_case("path") && value.starts_with('/') {
             params.path = Some(value.to_owned());
         }

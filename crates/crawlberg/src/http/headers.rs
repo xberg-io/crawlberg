@@ -19,9 +19,10 @@ use crate::types::ResponseMeta;
 /// A cookie the jar would not store is left out: one with no `name=value` pair, one that is
 /// deleted (`Max-Age` of zero or less, or an `Expires` in the past), or one whose last
 /// `Domain=` attribute does not domain-match `url`'s host (an IP host matches only its own
-/// address). A `Domain=` that names a known public suffix fails [`validate_cookie_domain`] and
-/// drops the cookie whole as well, matching [`crate::net::cookie::PolicyCookieStore`]'s policy
-/// for the same headers on the plain-HTTP path. These cookies feed `browser::page_fetch`'s
+/// address). A `Domain=` that names a public suffix fails [`validate_cookie_domain`] and drops
+/// the cookie whole as well, matching [`crate::net::cookie::PolicyCookieStore`]'s policy for
+/// the same headers on the plain-HTTP path; a `Domain=` that is the host's own public suffix
+/// gives a host-only cookie. These cookies feed `browser::page_fetch`'s
 /// `prior_cookies`, which are replayed into a page's CDP session, so an unvalidated `Domain=`
 /// here would let one crawled origin plant a cookie for another.
 ///
@@ -74,16 +75,18 @@ fn parse_set_cookie(url: &url::Url, raw: &str) -> Option<CookieInfo> {
     }
     let domain = match &cookie.domain {
         cookie_store::CookieDomain::Suffix(domain) => {
-            if let Err(error) = validate_cookie_domain(url.host_str().unwrap_or_default(), domain) {
-                tracing::warn!(
-                    url = %url,
-                    cookie.name = %cookie.name(),
-                    error = %error,
-                    "dropping cookie with invalid Set-Cookie domain"
-                );
-                return None;
+            match validate_cookie_domain(url.host_str().unwrap_or_default(), domain) {
+                Ok(domain) => domain,
+                Err(error) => {
+                    tracing::warn!(
+                        url = %url,
+                        cookie.name = %cookie.name(),
+                        error = %error,
+                        "dropping cookie with invalid Set-Cookie domain"
+                    );
+                    return None;
+                }
             }
-            Some(domain.clone())
         }
         _ => None,
     };
@@ -329,5 +332,41 @@ mod tests {
             "only the spoofed cookie must be dropped, got {cookies:?}"
         );
         assert_eq!(cookies[0].name, "good");
+    }
+
+    #[test]
+    fn result_cookies_drop_a_domain_the_public_suffix_list_knows() {
+        // ~keep The rows of #762: a hosting suffix and a country suffix are public suffixes
+        // ~keep whatever any fixed list says; a registrable domain under a suffix is kept.
+        for (host, raw) in [
+            ("a.onrender.com", "psl=1; Domain=onrender.com"),
+            ("a.co.il", "psl=2; Domain=co.il"),
+            ("a.github.io", "listed=3; Domain=github.io"),
+        ] {
+            let cookies = extract_cookies_from_hashmap(&from(host), &set_cookie_headers(raw));
+            assert!(
+                cookies.is_empty(),
+                "{raw} from {host} names a public suffix and must be dropped, got {cookies:?}"
+            );
+        }
+        let headers = set_cookie_headers("control=4; Domain=example.org");
+        let cookies = extract_cookies_from_hashmap(&from("a.example.org"), &headers);
+        assert_eq!(cookies.len(), 1, "a registrable domain must be kept, got {cookies:?}");
+        assert_eq!(cookies[0].domain, Some("example.org".to_owned()));
+    }
+
+    #[test]
+    fn result_cookies_list_the_suffix_hosts_own_cookie_as_host_only() {
+        // ~keep RFC 6265 5.3 step 5: a Domain that is the request host's own public suffix
+        // ~keep gives a host-only cookie, so the result lists no domain for it.
+        let headers = set_cookie_headers("own=1; Domain=onrender.com");
+        let cookies = extract_cookies_from_hashmap(&from("onrender.com"), &headers);
+        assert_eq!(
+            cookies.len(),
+            1,
+            "the suffix host keeps its own cookie, got {cookies:?}"
+        );
+        assert_eq!(cookies[0].name, "own");
+        assert_eq!(cookies[0].domain, None, "the cookie is host-only, got {cookies:?}");
     }
 }

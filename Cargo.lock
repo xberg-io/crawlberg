@@ -1256,6 +1256,7 @@ dependencies = [
  "opentelemetry_sdk",
  "percent-encoding",
  "proptest",
+ "psl",
  "quick-xml 0.42.0",
  "regex",
  "regex-syntax",

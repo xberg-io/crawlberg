@@ -231,6 +231,10 @@ All notable changes to crawlberg are documented here.
   browser, now the host; in the native browser a domain cookie gave `example.com`, now
   `.example.com`, `Path=/A/b` gave `/a/b`, now `/A/b`, and an empty `Domain=` gave two rows
   (`""` and `None`), now one with the host.
+- Over HTTP a cookie whose `Domain` is a public suffix of the Public Suffix List (`onrender.com`,
+  `co.il`) is not stored, not listed and not sent to another site under that suffix, as the
+  browser does; before, a fixed list of a few suffixes decided (#762). A `Domain` that is the
+  host's own public suffix gives a host-only cookie.
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
