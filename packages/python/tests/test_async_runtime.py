@@ -1,6 +1,7 @@
 import asyncio
 import ctypes
 import errno
+import inspect
 import os
 import socket
 import subprocess
@@ -132,10 +133,78 @@ def _workqueue_threads() -> int:
 def _threads() -> int:
     if sys.platform == "linux":
         return len(list(Path("/proc/self/task").iterdir()))
-    workqueues = _workqueue_threads()
-    total = len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
-    # ~keep SystemConfiguration workqueues outlive Tokio, including after Python-only proxy queries.
-    return total - workqueues
+    for _ in range(10):
+        before = _workqueue_threads()
+        total = len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
+        after = _workqueue_threads()
+        # ~keep SystemConfiguration queues outlive Tokio and can exit while ps samples the total.
+        if before == after:
+            return total - after
+    raise RuntimeError("could not obtain a stable application thread count after 10 attempts")
+
+
+@pytest.mark.parametrize("child", [False, True], ids=["parent", "exit-child"])
+@pytest.mark.parametrize(
+    "workqueues",
+    [(2, 1, 1, 1), (1, 2, 2, 2), (0, 0), (2, 2)],
+    ids=["decreasing", "increasing", "no-workqueue", "stable-workqueue"],
+)
+def test_should_retry_until_thread_count_has_a_stable_bracket(
+    monkeypatch: pytest.MonkeyPatch, child: bool, workqueues: tuple[int, ...]
+) -> None:
+    namespace: dict[str, object] = globals()
+    if child:
+        namespace = {"os": os}
+        exec(_EXIT.split("def settled_threads():")[0], namespace)  # noqa: S102 ~keep Evaluate our own child sampler.
+    queue_reads = iter(workqueues)
+    totals = iter((workqueues[0] + 2,) if len(workqueues) == 2 else (3, workqueues[-1] + 2))
+    reads: list[str] = []
+
+    def queue_count() -> int:
+        reads.append("workqueue")
+        return next(queue_reads)
+
+    def total_count(command: list[str]) -> bytes:
+        assert command == ["/bin/ps", "-M", "-p", str(os.getpid())]
+        reads.append("total")
+        return b"thread\n" * (next(totals) + 1)
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setitem(namespace, "_workqueue_threads", queue_count)
+    monkeypatch.setattr(subprocess, "check_output", total_count)
+    counter = namespace["threads" if child else "_threads"]
+    assert callable(counter)
+    assert counter() == 2
+    assert reads == ["workqueue", "total", "workqueue"] * (len(workqueues) // 2)
+
+
+@pytest.mark.parametrize("child", [False, True], ids=["parent", "exit-child"])
+def test_should_fail_visibly_when_workqueue_count_never_stabilizes(
+    monkeypatch: pytest.MonkeyPatch, child: bool
+) -> None:
+    namespace: dict[str, object] = globals()
+    if child:
+        namespace = {"os": os}
+        exec(_EXIT.split("def settled_threads():")[0], namespace)  # noqa: S102 ~keep Evaluate our own child sampler.
+    reads: list[str] = []
+
+    def queue_count() -> int:
+        reads.append("workqueue")
+        return len(reads) % 3
+
+    def total_count(command: list[str]) -> bytes:
+        assert command == ["/bin/ps", "-M", "-p", str(os.getpid())]
+        reads.append("total")
+        return b"thread\n" * 4
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setitem(namespace, "_workqueue_threads", queue_count)
+    monkeypatch.setattr(subprocess, "check_output", total_count)
+    counter = namespace["threads" if child else "_threads"]
+    assert callable(counter)
+    with pytest.raises(RuntimeError, match=r"stable.*thread count"):
+        counter()
+    assert reads == ["workqueue", "total", "workqueue"] * 10
 
 
 def _settled_threads(expected: int) -> int:
@@ -281,24 +350,16 @@ _EXIT = (
     """
 import atexit
 import ctypes
+import errno
 import subprocess
 import sys
 import time
 from pathlib import Path
-
-def threads():
-    if sys.platform == "linux":
-        return len(list(Path("/proc/self/task").iterdir()))
-    total = len(subprocess.check_output(["/bin/ps", "-M", "-p", str(os.getpid())]).splitlines()) - 1
-    # ~keep: macOS framework workqueues outlive Tokio; exclude only the OS-reported workqueue threads.
-    proc_pidworkqueueinfo = 12
-    workqueue_info = (ctypes.c_uint32 * 4)()
-    libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-    libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
-    libproc.proc_pidinfo.restype = ctypes.c_int
-    size = ctypes.sizeof(workqueue_info)
-    assert libproc.proc_pidinfo(os.getpid(), proc_pidworkqueueinfo, 0, ctypes.byref(workqueue_info), size) == size
-    return total - workqueue_info[0]
+"""
+    + inspect.getsource(_workqueue_threads)
+    + inspect.getsource(_threads)
+    + """
+threads = _threads
 
 def settled_threads():
     # ~keep: a joined thread can stay in the task list of the OS for a moment.

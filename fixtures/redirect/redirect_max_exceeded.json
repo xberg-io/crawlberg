@@ -59,7 +59,12 @@
 		{
 			"type": "contains",
 			"field": "error",
-			"value": "too_many_redirects: redirect limit exceeded"
+			"value": "too_many_redirects: "
+		},
+		{
+			"type": "contains",
+			"field": "error",
+			"value": "/r3 - redirect limit exceeded"
 		},
 		{
 			"type": "equals",
