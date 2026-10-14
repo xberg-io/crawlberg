@@ -56,6 +56,9 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- Per-domain rate limiting emits TRACE events at `crawlberg::rate_limiter` with `domain` and
+  numeric `wait_ms` fields for each selected pacing delay.
+
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
@@ -213,6 +216,11 @@ All notable changes to crawlberg are documented here.
 
 - Browser protocol parsing accepts Chrome 155 network policy field names while preserving
   the reported policy and the legacy typed event API (#750).
+- macOS runtime tests retry when framework workqueue counts change during thread sampling,
+  and exit subprocesses use the same sampler (#751).
+- Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
+- Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
+  including checks that Chrome stored and sent the excluded cookies (#754).
 
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
