@@ -85,6 +85,10 @@ pub fn map_crawl_error(error: CrawlError) -> McpError {
 
         CrawlError::BadGateway { message: msg, .. } => McpError::internal_error(format!("Bad gateway: {msg}"), None),
 
+        CrawlError::TooManyRedirects { message: msg, .. } => {
+            McpError::internal_error(format!("Too many redirects: {msg}"), None)
+        }
+
         CrawlError::Gone { message: msg, .. } => McpError::resource_not_found(format!("Resource gone: {msg}"), None),
 
         CrawlError::Connection { message: msg, .. } => {
@@ -249,6 +253,30 @@ mod tests {
             mcp_error.message,
             "Conversion to Markdown failed: could not convert https://example.com/ to Markdown: refused"
         );
+    }
+
+    #[test]
+    fn should_classify_redirect_exhaustion_as_an_internal_protocol_error() {
+        for message in ["redirect loop", "redirect limit exceeded"] {
+            let error = map_crawl_error(CrawlError::too_many_redirects(message));
+
+            assert_eq!(error.code.0, -32603);
+            assert_eq!(error.message, format!("Too many redirects: {message}"));
+            assert_eq!(error.data, None);
+        }
+    }
+
+    #[test]
+    fn should_preserve_redirect_exhaustion_on_the_tool_result_channel() {
+        for message in ["redirect loop", "redirect limit exceeded"] {
+            let result = crawl_error_to_tool_result(CrawlError::too_many_redirects(message))
+                .expect("redirect exhaustion is an execution failure");
+
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(result.content.len(), 1);
+            let content = result.content[0].as_text().expect("redirect error text");
+            assert_eq!(content.text, format!("too_many_redirects: {message}"));
+        }
     }
 
     #[test]

@@ -324,6 +324,18 @@ pub enum CrawlError {
         #[source]
         source: Option<ErrorSource>,
     },
+    /// The HTTP redirect chain exceeded the configured redirect limit.
+    #[error("too_many_redirects: {message}")]
+    // ~keep Stable ABI code 100 distinguishes this error from SsrfError's same-named variant; never renumber.
+    #[cfg_attr(alef, alef(error_code = 100))]
+    TooManyRedirects {
+        /// Human-readable description of the exhausted redirect chain.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
     #[error("ssrf_policy_violation: {url} - {reason}")]
     SsrfPolicyViolation {
@@ -349,6 +361,7 @@ pub enum CrawlError {
 }
 
 message_constructors! {
+    TooManyRedirects => (too_many_redirects, too_many_redirects_with_source),
     NotFound => (not_found, not_found_with_source),
     Unauthorized => (unauthorized, unauthorized_with_source),
     Forbidden => (forbidden, forbidden_with_source),

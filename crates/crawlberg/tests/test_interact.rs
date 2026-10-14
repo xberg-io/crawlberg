@@ -1347,8 +1347,8 @@ async fn native_interact_stops_a_chain_longer_than_max_redirects() {
         .await
         .expect_err("an unfinished redirect chain is not an interaction page");
     assert!(
-        matches!(error, CrawlError::SsrfPolicyViolation { ref url, ref reason, ref source }
-        if reason == "redirect limit exceeded" && url == &format!("{}/r3", mock.uri()) && source.is_some()),
+        matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+        if message == "redirect limit exceeded" && format!("{source:?}").contains(&format!("{}/r3", mock.uri()))),
         "{error:?}"
     );
     let requested: Vec<String> = mock
@@ -1432,8 +1432,8 @@ async fn native_interact_reports_a_redirect_loop_as_scrape_does() {
         .expect_err("scrape rejects the loop");
     for error in [interact_error, scrape_error] {
         assert!(
-            matches!(error, CrawlError::SsrfPolicyViolation { ref url, ref reason, ref source }
-            if reason == "redirect loop" && url == &format!("{}/b", mock.uri()) && source.is_some()),
+            matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+            if message == "redirect loop" && format!("{source:?}").contains(&format!("{}/b", mock.uri()))),
             "{error:?}"
         );
     }
@@ -1484,8 +1484,8 @@ async fn native_interact_redacts_credentials_when_reporting_a_redirect_loop() {
         .await
         .expect_err("redirect loop");
     assert!(
-        matches!(error, CrawlError::SsrfPolicyViolation { ref url, ref reason, ref source }
-        if reason == "redirect loop" && url == &format!("{}/b", mock.uri()) && source.is_some()),
+        matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+        if message == "redirect loop" && format!("{source:?}").contains(&format!("{}/b", mock.uri()))),
         "{error:?}"
     );
     assert!(!error.to_string().contains("user:pass"));

@@ -243,15 +243,14 @@ pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<Stri
 /// Returns `None` when the value is no refresh (see [`parse_refresh`]), names no target, or names an
 /// absolute address whose scheme is not `http` or `https` (`mailto:`, `javascript:`, `data:` and so
 /// on), which the crawl cannot follow. A target that names the page itself is returned as written.
-#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn refresh_target(value: &str) -> Option<Cow<'_, str>> {
     parse_refresh(value)?.target
 }
 
 /// A refresh directive read with the HTML "shared declarative refresh steps".
-#[cfg(not(target_arch = "wasm32"))]
 struct Refresh<'a> {
     /// Whole seconds before the refresh comes due; a fraction is ignored.
+    #[cfg(not(target_arch = "wasm32"))]
     delay: u64,
     /// The address to load, cleaned by [`clean_url`](super::clean_url), or `None` to stay on the page:
     /// the refresh names no target, or an absolute address whose scheme is not `http` or `https`. An
@@ -262,13 +261,13 @@ struct Refresh<'a> {
 /// `value` read as a refresh directive, or `None` when it does not start with a delay, the delay
 /// has no digit anywhere in it, or its target is a `javascript:` address, which the refresh
 /// steps ignore.
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
     let rest = value.trim_ascii_start();
     if !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
         return None;
     }
     let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    #[cfg(not(target_arch = "wasm32"))]
     let delay = rest[..digits_end].bytes().fold(0_u64, |delay, digit| {
         delay.saturating_mul(10).saturating_add(u64::from(digit - b'0'))
     });
@@ -299,12 +298,15 @@ fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
         Ok(absolute) => super::is_fetchable_scheme(&absolute),
         Err(_) => true,
     });
-    Some(Refresh { delay, target })
+    Some(Refresh {
+        #[cfg(not(target_arch = "wasm32"))]
+        delay,
+        target,
+    })
 }
 
 /// The address in what follows a refresh delay: after an optional `url=` label in any case, and
 /// without a pair of matching quotes around it.
-#[cfg(not(target_arch = "wasm32"))]
 fn refresh_url(rest: &str) -> &str {
     let labelled = rest
         .get(..3)
@@ -317,7 +319,6 @@ fn refresh_url(rest: &str) -> &str {
 }
 
 /// `value` without a leading `'` or `"`, cut at the next matching quote when there is one.
-#[cfg(not(target_arch = "wasm32"))]
 fn unquote_refresh_url(value: &str) -> &str {
     let Some(quote) = value.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
         return value;

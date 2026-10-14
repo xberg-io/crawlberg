@@ -38,6 +38,8 @@ user_owned = [
   "e2e/ruby/Gemfile",
   "e2e/wasm/package.json",
   "e2e/zig/build.zig.zon",
+  "packages/go/error_compat.go",
+  "packages/go/error_compat_test.go",
   "test_apps/dart/pubspec.yaml",
   "test_apps/elixir/mix.exs",
   "test_apps/go/go.mod",

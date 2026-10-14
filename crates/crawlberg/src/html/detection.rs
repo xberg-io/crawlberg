@@ -98,7 +98,9 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 /// the whole (potentially multi-megabyte) `body` via `str::to_lowercase` for a handful of short
 /// prefix/substring checks was wasted work on large pages.
 pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
-    is_html_type(&media_type_essence(content_type)) || is_html_body(body)
+    is_html_type(&media_type_essence(content_type))
+        || is_html_body(body)
+        || (content_type.trim().is_empty() && starts_with_tag(body))
 }
 
 /// Whether `essence`, the essence of a media type, names HTML: `text/html`, `application/xhtml+xml`.
@@ -120,6 +122,20 @@ fn is_html_body(body: &str) -> bool {
         .any(|prefix| starts_with_ignore_ascii_case(trimmed, prefix))
 }
 
+/// A headerless fragment starts with a tag, rather than plain text or an XML declaration.
+fn starts_with_tag(body: &str) -> bool {
+    let Some(tag) = body.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let Some(first) = tag.as_bytes().first() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && tag
+            .find(|c: char| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
+            .is_some()
+}
+
 /// Check whether a response is a page: HTML, or a type that says it is text.
 ///
 /// ~keep A page is what a caller reads as Markdown, so a page that cannot be converted is an
@@ -134,7 +150,10 @@ fn is_html_body(body: &str) -> bool {
 /// ~keep not say what the content is.
 pub(crate) fn is_page_content(content_type: &str, body: &str) -> bool {
     let essence = media_type_essence(content_type);
-    is_html_type(&essence) || essence.starts_with("text/") || is_html_body(body)
+    is_html_type(&essence)
+        || essence.starts_with("text/")
+        || is_html_body(body)
+        || (essence.is_empty() && starts_with_tag(body))
 }
 
 /// Check whether a Content-Type header indicates binary content.
@@ -216,7 +235,7 @@ mod tests {
             ("", "<?xml version=\"1.0\"?><rss><channel/></rss>", false),
             ("", "<?XML version=\"1.0\"?><feed></feed>", false),
             ("", "not starting with a tag at all", false),
-            ("", "<unknown-tag>x</unknown-tag>", false),
+            ("", "<unknown-tag>x</unknown-tag>", true),
             ("", "", false),
             ("", "   ", false),
         ]

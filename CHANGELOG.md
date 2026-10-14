@@ -6,6 +6,20 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- Swift `RustBridge` wrappers for `AuthConfig`, `CrawlEvent`, `HostMatcher` and `PageAction` now
+  return tagged JSON with their payloads from `to_string()`, including authentication credential
+  fields. The facade `toString()` still returns the variant tag.
+- **`CrawlError` gained `TooManyRedirects`.** Exhaustive Rust error matches need the new case.
+  Redirect exhaustion uses its own error family; the underlying network error remains its source. (#676)
+- **SSRF exceptions now inherit the crawl-error family.** Python's `SsrfError` base changes
+  from `Exception` to `CrawlError`. The C# `SsrfErrorException` base changes from
+  `CrawlbergException` to `CrawlErrorException`; Java changes from `CrawlbergRsException` to
+  `CrawlErrorException`. Place specific SSRF handlers before handlers for the new parent.
+  Existing catches of the older general base still work. (#676)
+- The generated Node Rust shim's `SSRF_ERROR_ERROR_TOO_MANY_REDIRECTS_CODE` changes from
+  v1.10.3's `2` to `101`; `CRAWL_ERROR_ERROR_TOO_MANY_REDIRECTS_CODE` is `100`. These values
+  describe the Rust shim; JavaScript errors retain NAPI's `GenericFailure` status and the
+  error's display text. (#676)
 - **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
   it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
   for the new variant. (#695)
@@ -206,6 +220,18 @@ All notable changes to crawlberg are documented here.
   attributed to a specific cookie-setting event. Results preserve the existing first-observed
   cookie identity: Native headers can retain the first value after JavaScript rewrites that cookie,
   so this list is not a final browser-store snapshot.
+- MCP classifies redirect exhaustion as an internal execution failure and returns its
+  `too_many_redirects:` message through the tool-result error channel. (#676)
+- Maps keep zero-delay defaults while configured and custom limiters pace robots, sitemap children
+  and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
+  sitemap-index child takes its own configured host delay. (#681)
+- Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. (#676)
+- Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
+  fragments use the normal conversion path, preserving conversion failures. (#677, #682)
+- Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
+- CLI configuration errors report nested paths and JSON types; unknown content and SSRF keys fail
+  validation. (#679)
 - The v1.10.3 constructors of `ContentConfig`, `LinkInfo` and `CrawlPageResult` work again in
   the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
   Python, Dart and Kotlin, and in Swift for `ContentConfig` and `LinkInfo`; in Swift,

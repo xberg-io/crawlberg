@@ -129,6 +129,37 @@ pub(crate) fn extract_links(page: &MaskedHtml<'_>, document_url: &Url) -> Vec<Li
     links
 }
 
+/// Include the response's declarative refresh target in link discovery.
+/// ~keep HTTP Refresh resolves against the response URL, independently of an HTML base element.
+pub(crate) fn append_refresh_header_link(
+    links: &mut Vec<LinkInfo>,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+    document_url: &Url,
+) {
+    let Some(original) = headers
+        .get("refresh")
+        .and_then(|values| values.first())
+        .and_then(|value| super::refresh_target(value))
+    else {
+        return;
+    };
+    let Some(target) = fetchable_address(&original, document_url) else {
+        return;
+    };
+    if links.iter().any(|link| link.url == target.as_str()) {
+        return;
+    }
+    let link_type = classify_link(target.as_str(), &target, document_url);
+    links.push(LinkInfo {
+        original_url: resolve_original_url(&original, document_url, &target),
+        url: target.into(),
+        text: String::new(),
+        link_type,
+        rel: None,
+        nofollow: false,
+    });
+}
+
 // ~keep Url::join normalizes the source spelling that this provenance field must preserve.
 fn resolve_original_url(href: &str, base: &Url, resolved: &Url) -> String {
     use url::Position;

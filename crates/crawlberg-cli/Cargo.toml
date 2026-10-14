@@ -44,7 +44,10 @@ crawlberg = { path = "../crawlberg", version = "1.10.3", features = ["native-run
 opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
+serde = { workspace = true }
+serde-value = { workspace = true }
 serde_json = { workspace = true }
+serde_path_to_error = { workspace = true }
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
