@@ -211,6 +211,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
+
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
