@@ -253,14 +253,15 @@ where
     use super::host_turn::{HostJob, HostStep, HostTurns};
     use futures::FutureExt;
     use tracing::{Instrument, instrument::WithSubscriber};
-    let mut jobs = jobs.into_iter().enumerate().peekable();
+    let mut jobs = jobs.into_iter().enumerate();
+    let mut exhausted = false;
     let mut turns: HostTurns<ResumableJob<J, T>> = HostTurns::new(limiter);
     let operation = Arc::new(operation);
     let mut active = tokio::task::JoinSet::new();
     let mut task_inputs = std::collections::HashMap::new();
     // ~keep Sized once: a result is about 2 KB, and a growing list copies every result again.
     let mut results = Vec::with_capacity(jobs.size_hint().1.unwrap_or(0));
-    while !active.is_empty() || !turns.is_empty() || jobs.peek().is_some() {
+    while !active.is_empty() || !turns.is_empty() || !exhausted {
         tokio::select! {
             biased;
             turn = turns.next(), if active.len() < concurrency && !turns.is_empty() => {
@@ -299,9 +300,14 @@ where
             }
             // ~keep Last in the biased order: a job is admitted only when no admitted host is
             // ready and no operation has completed, so the backlog grows past parked hosts
-            // and no further, and the pull never delays a ready turn.
-            () = std::future::ready(()), if active.len() < concurrency && jobs.peek().is_some() => {
-                let (id, job) = jobs.next().expect("a peeked job");
+            // and no further, and the pull never delays a ready turn. The iterator is pulled
+            // here, not in the condition: `select!` evaluates every condition before polling
+            // any branch, so a look-ahead there would run the batch filter ahead of a ready turn.
+            () = std::future::ready(()), if active.len() < concurrency && !exhausted => {
+                let Some((id, job)) = jobs.next() else {
+                    exhausted = true;
+                    continue;
+                };
                 turns.push(
                     id,
                     HostJob {
@@ -545,6 +551,46 @@ mod tests {
         assert_eq!(results.len(), JOBS);
         assert!(results.iter().all(|(_, result)| result.is_ok()));
         assert_eq!(pulled.load(Ordering::SeqCst), JOBS);
+    }
+
+    /// The first operation starts before the iterator is asked for the job after it: with one
+    /// valid job and a rejected tail, a look-ahead that pulls in a `select!` condition scans the
+    /// whole tail first. The iterator blocks on its second pull until the first operation has
+    /// started, so a look-ahead shows as a missed start rather than a timing difference.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn should_start_the_first_operation_before_pulling_the_job_after_it() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let started_before_second_pull = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = started_before_second_pull.clone();
+        let jobs = (0..5usize).filter_map(move |id| {
+            if id == 1 {
+                let seen = started_rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+                observed.store(seen, Ordering::SeqCst);
+            }
+            (id == 0).then(|| super::super::host_turn::HostJob {
+                host: "host".to_string(),
+                data: id,
+            })
+        });
+        let results = run_resumable_jobs(
+            jobs,
+            1,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            |id| format!("job {id}"),
+            move |id, _| {
+                let started = started_tx.clone();
+                async move {
+                    let _ = started.send(());
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert!(
+            started_before_second_pull.load(Ordering::SeqCst),
+            "the second job was pulled before the first operation started"
+        );
     }
 
     struct FailingSecondAdmission(AtomicUsize);
