@@ -1,48 +1,20 @@
 #!/usr/bin/env python3
-"""Check that every constructor of the last release still works at the head.
+"""Check released Python constructors and Swift initializer/factory declarations.
 
-The generated Python stub lists, for each bound type, the bound fields in struct order and the
-native constructor. The check compares the stub of the newest release tag with the stub of the
-working tree. Public static/class Swift factories returning `Self` or their owner are checked
-separately, with the same declaration rules and owner plus function name matching; overloads
-are retained. Zero factories at the release is valid and never relaxes constructor counts.
-The Swift sources are compared the same way: every public initializer of every
-type, read with the Swift grammar of tree-sitter (`tree-sitter-swift`, pinned in
-`scripts/ci/requirements-released-constructors.txt`). Run it from the repository root. It needs
-git and the tags, and no Rust or Swift toolchain.
+The Python stub records field order and native signatures. Every released type and argument
+must remain compatible. Swift declarations are read with the pinned tree-sitter grammar,
+including enclosing declarations, modifiers, generics, conditions, defaults and overloads.
+Initializer and function references require exact arity: adding a defaulted argument needs
+an exact released compatibility overload. Public static/class owner-returning factories,
+optional/array wrappers and static owner-valued properties are compared by owner and name.
+Same-file aliases and owner visibility are resolved; imported declarations are not available
+to this reader. Known Vectorizable pointer operations in SwiftBridgeCore are not DTO factories.
 
-The Swift comparison is by exclusion, in `compare_initializer`: for each released initializer,
-the head must hold an initializer of the same owner whose whole declaration is equal. The whole
-declaration is the chain of enclosing declarations (each one's attributes, modifiers, kind, name,
-generic clause, inheritance and `where` clause, and each `#if` open around the initializer), the
-initializer's attributes and modifiers, `init` with `?` or `!`, its generic clause, and everything
-between `)` and the body, as text from the parse tree with comments and whitespace out. The one
-permitted difference: the head may add parameters, each with a default, none that a released call
-can pass without its label (`compare_initializer` states the rule). Every released parameter is
-present in the released order with an equal label, internal name, type text (with `inout`,
-`@escaping` and `...`) and default text. An initializer counts when a caller outside the module
-can call it: `public` decides that, once, from the initializer's own modifier, the enclosing
-extension's, and every enclosing declaration. A source holds every initializer it declares: the
-whole declaration is the key, and two equal declarations fail the parse. A node of a declaration
-that the reader does not classify fails the parse with the kind of the node, so a new grammar
-form fails closed. Each rule can give a false failure, never a false pass.
-
-The check fails closed. `check_source` applies one rule to every source in `SOURCES`:
-
-- A source that exists at the release tag must give at least one constructor at the release and
-  at the head, and every released type must be found at the head. If not, the check fails and
-  names the source, the two counts and the first missing type.
-- A source that exists at the release tag and is absent at the head fails.
-- The Python stub is the primary source. If it is absent at the release tag, the check fails.
-- A Swift source is a secondary source: a release can be older than the Swift package. If it
-  is absent at the release tag, it is not compared, and the output says so in a line
-  `not compared: <path> absent at <tag>`.
-- If the number of sources that are compared is zero, the check fails.
-- A source that a reader cannot parse fails with the file and the line. No reader returns an
-  empty result for text that it does not understand.
-
-The output has one line for each source: the path, the tag, the count at the release, the count
-at the head and the count kept.
+A present source must contain constructors at both revisions. Missing released types,
+unread grammar nodes, duplicate declarations and unresolved recursive aliases fail closed.
+The Python stub is mandatory at the newest release tag. Swift sources predating the package
+are reported as absent instead of compared. Every source prints released, current and kept
+counts; comparing zero sources fails. Run from the repository root with fetched release tags.
 """
 
 from __future__ import annotations
@@ -52,6 +24,7 @@ import ast
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from itertools import zip_longest
 from pathlib import Path
@@ -112,10 +85,7 @@ def parse_signature(init: ast.FunctionDef) -> dict[str, Parameter]:
 
 
 def parse_stub(source: str, where: str = STUB) -> dict[str, BoundType]:
-    """Return the types of the stub that have a constructor, by name.
-
-    Text that is not Python raises `SyntaxError` with `where` and the line.
-    """
+    """Read stub constructors, raising SyntaxError with the path and line for invalid Python."""
     types: dict[str, BoundType] = {}
     for node in ast.parse(source, filename=where).body:
         if not isinstance(node, ast.ClassDef):
@@ -155,11 +125,9 @@ def compare_fields(name: str, released: BoundType, head: BoundType, tag: str) ->
 
 
 def compare_constructor(name: str, released: BoundType, head: BoundType, tag: str) -> list[str]:
-    """Return why a call that is valid against the released constructor is not valid at the head.
+    """Keep released names, types, positional slots, keyword access and defaults.
 
-    The rule: every call that the released signature accepts, the head signature accepts, and it
-    binds the same parameters. So a released parameter keeps its name, its type, its positional
-    slot, its keyword and its default, and a new parameter takes nothing from an old call.
+    New arguments must leave every released call binding the same values.
     """
     errors = []
     for parameter in released.signature.values():
@@ -221,6 +189,7 @@ class SwiftParameter:
     # ~keep True when the type holds a function type anywhere (`() -> Void`, `(() -> Void)?`):
     # a released call may pass the parameter as a trailing closure, with no label.
     closure: bool
+    resolved_type: str = ""
 
     @property
     def declaration(self) -> str:
@@ -250,12 +219,7 @@ class SwiftInitializer:
 
     @property
     def key(self) -> str:
-        """The whole declaration as one text, the signature `Owner(label: Type = default, ...)` first.
-
-        Two initializers of one source have one key only when they are one declaration twice, so a
-        dictionary by key holds every overload: `init<G>(_ value: G)` and its twin with
-        `<G: Equatable>` differ in `form`, an `async` twin too, and two extensions differ in `chain`.
-        """
+        """Key the full signature and enclosing chain, retaining generic/async/extension overloads."""
         signature = f"{self.owner}({', '.join(parameter.declaration for parameter in self.parameters)})"
         return " ".join((signature, self.form, self.modifiers, *self.chain))
 
@@ -303,7 +267,7 @@ def nodes(node: Node) -> Iterator[Node]:
 
 
 def text(source: bytes, node: Node) -> str:
-    """The text of `node` in `source`, the bytes the file has: never the text the tree was parsed from."""
+    """Read the original bytes, including bridge dollar identifiers."""
     return source[node.start_byte : node.end_byte].decode()
 
 
@@ -476,7 +440,101 @@ def unavailable(source: bytes, modifiers: Node | None) -> bool:
     return False
 
 
-def swift_parameter(source: bytes, node: Node) -> SwiftParameter:
+def swift_scope(source: bytes, node: Node | None) -> str:
+    names = []
+    while node is not None:
+        if node.type == "class_declaration":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                names.insert(0, text(source, name))
+        node = node.parent
+    return ".".join(names)
+
+
+def owner_result(result: str, owner: str) -> bool:
+    while result.endswith(("?", "!")) or result.startswith(("Optional<", "[")):
+        if result.endswith(("?", "!")):
+            result = result[:-1]
+        elif result.startswith("Optional<") and result.endswith(">"):
+            result = result[len("Optional<") : -1]
+        elif result.startswith("[") and result.endswith("]"):
+            result = result[1:-1]
+        else:
+            break
+    return result.partition("<")[0] in {"Self", owner, owner.rsplit(".", 1)[-1]}
+
+
+@dataclass
+class SwiftContext:
+    aliases: dict[str, str]
+    owners: dict[str, Node]
+    source: bytes
+    where: str
+
+    def resolve(self, value: str, node: Node) -> str:
+        shadowed = set()
+        parent: Node | None = node
+        while parent is not None:
+            for clause in parent.children:
+                if clause.type == "type_parameters":
+                    shadowed.update(
+                        text(self.source, child.children[0]) for child in clause.named_children if child.children
+                    )
+            parent = parent.parent
+        seen = set()
+        while value not in seen and len(seen) <= len(self.aliases):
+            seen.add(value)
+            scope = swift_scope(self.source, node.parent)
+            prefixes = [".".join(scope.split(".")[:index]) for index in range(len(scope.split(".")), 0, -1)]
+            prefixes.append("")
+
+            def expand(match: re.Match[str]) -> str:
+                name = match[0]
+                if name in shadowed:
+                    return name
+                for prefix in prefixes:
+                    candidate = f"{prefix}.{name}" if prefix else name
+                    if candidate in self.aliases:
+                        return self.aliases[candidate]
+                return name
+
+            changed = re.sub(r"\b[A-Za-z_][A-Za-z_0-9.]*\b", expand, value)
+            if changed == value:
+                return value
+            value = changed
+        raise UnreadNodeError(node, "a cyclic typealias that the reader cannot resolve")
+
+
+def swift_context(source: bytes, root: Node, where: str) -> SwiftContext:
+    aliases = {}
+    owners = {}
+    for node in nodes(root):
+        name = node.child_by_field_name("name")
+        if node.type == "typealias_declaration" and name is not None:
+            parts = [child for child in node.children if child.start_byte > name.end_byte and child.type != "="]
+            scope = swift_scope(source, node.parent)
+            key = f"{scope}.{text(source, name)}" if scope else text(source, name)
+            aliases[key] = normal(source, *parts)
+        elif node.type == "class_declaration" and name is not None and not extension(node):
+            owners[swift_scope(source, node)] = node
+    return SwiftContext(aliases, owners, source, where)
+
+
+def owner_is_public(source: bytes, node: Node, context: SwiftContext | None) -> bool:
+    if context is None:
+        return True
+    parent = node.parent
+    while parent is not None:
+        if parent.type == "class_declaration" and extension(parent):
+            name = parent.child_by_field_name("name")
+            owner = context.owners.get(text(source, name)) if name else None
+            if owner is not None and not public(source, owner):
+                return False
+        parent = parent.parent
+    return True
+
+
+def swift_parameter(source: bytes, node: Node, context: SwiftContext | None = None) -> SwiftParameter:
     label = name = None
     declared: list[Node] = []
     for index, child in enumerate(node.children):
@@ -495,19 +553,16 @@ def swift_parameter(source: bytes, node: Node) -> SwiftParameter:
     # parse errors, which `parse_swift` raises before it reads any initializer.
     assert name is not None and declared, node
     closure = any(item.type == "function_type" for item in declared for item in nodes(item))
-    return SwiftParameter(label or name, name, normal(source, *declared), None, closure)
+    written = normal(source, *declared)
+    resolved = context.resolve(written, node) if context else written
+    closure = closure or "->" in resolved
+    return SwiftParameter(label or name, name, written, None, closure, resolved)
 
 
-def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
-    """Return the public initializer that `node` declares, or `None` when a caller cannot call it.
-
-    A caller cannot call an initializer that `public` refuses, or that `@available(*, unavailable)`
-    marks. Every other initializer is read whole. A child of the initializer, of a parameter, of
-    the modifiers or of an enclosing declaration that the reader does not classify raises
-    `UnreadNodeError`.
-    """
+def swift_initializer(source: bytes, node: Node, context: SwiftContext | None = None) -> SwiftInitializer | None:
+    """Read a callable public initializer, failing on unclassified declaration nodes."""
     modifiers = next((child for child in node.children if child.type == "modifiers"), None)
-    if not public(source, node) or unavailable(source, modifiers):
+    if not public(source, node) or not owner_is_public(source, node, context) or unavailable(source, modifiers):
         return None
     if modifiers:
         classified(modifiers, MODIFIERS, "of the modifiers")
@@ -516,7 +571,7 @@ def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
     form: list[Node] = []
     for index, child in enumerate(node.children):
         if child.type == "parameter":
-            parameters.append(swift_parameter(source, child))
+            parameters.append(swift_parameter(source, child, context))
         elif node.field_name_for_child(index) == "default_value" and parameters:
             parameters[-1] = replace(parameters[-1], default=normal(source, child))
         elif child.type in INITIALIZER_HEAD or child.type in INITIALIZER_TAIL:
@@ -527,22 +582,47 @@ def swift_initializer(source: bytes, node: Node) -> SwiftInitializer | None:
     return SwiftInitializer(owner, chain, written, normal(source, *form), tuple(parameters))
 
 
-def swift_factory(source: bytes, node: Node) -> SwiftFactory | None:
+VECTOR_OPERATIONS = frozenset(
+    {
+        "vecOfSelfNew",
+        "vecOfSelfFree",
+        "vecOfSelfPush",
+        "vecOfSelfPop",
+        "vecOfSelfGet",
+        "vecOfSelfGetMut",
+        "vecOfSelfAsPtr",
+        "vecOfSelfLen",
+    }
+)
+
+
+def swift_factory(source: bytes, node: Node, context: SwiftContext | None = None) -> SwiftFactory | None:
     """Read a public static/class function returning Self or its enclosing type."""
     modifiers = next((child for child in node.children if child.type == "modifiers"), None)
-    if not modifiers or not public(source, node) or unavailable(source, modifiers):
+    if (
+        not modifiers
+        or not public(source, node)
+        or not owner_is_public(source, node, context)
+        or unavailable(source, modifiers)
+    ):
         return None
     kinds = {normal(source, child) for child in modifiers.children}
     if not kinds.intersection({"static", "class"}):
         return None
     owner, chain = enclosing(source, node)
+    name_node = node.child_by_field_name("name")
+    factory_name = text(source, name_node) if name_node else ""
+    # ~keep Vectorizable's pointer operations read/free a vector; numeric return types do not construct DTOs.
+    if context and context.where.endswith(SWIFT_BRIDGE_CORE) and factory_name in VECTOR_OPERATIONS:
+        return None
     returned = next(
         (child for index, child in enumerate(node.children) if index and node.children[index - 1].type == "->"), None
     )
     if returned is None:
         return None
-    result = normal(source, returned).partition("<")[0]
-    if result not in {"Self", owner, owner.rsplit(".", 1)[-1]}:
+    written_result = normal(source, returned)
+    result = context.resolve(written_result, node) if context else written_result
+    if not owner_result(result, owner):
         return None
     classified(modifiers, MODIFIERS, "of the factory modifiers")
     parameters: list[SwiftParameter] = []
@@ -551,37 +631,72 @@ def swift_factory(source: bytes, node: Node) -> SwiftFactory | None:
     allowed = INITIALIZER_HEAD | INITIALIZER_TAIL | {"func", "simple_identifier", "->", returned.type}
     for index, child in enumerate(node.children):
         if child.type == "parameter":
-            parameters.append(swift_parameter(source, child))
+            parameters.append(swift_parameter(source, child, context))
         elif node.field_name_for_child(index) == "default_value" and parameters:
             parameters[-1] = replace(parameters[-1], default=normal(source, child))
         elif child.type in allowed:
-            form.append(child)
             if child.type == "simple_identifier" and node.field_name_for_child(index) == "name":
                 name = text(source, child)
+            else:
+                form.append(child)
         elif child.type not in PARAMETER_LIST | COMMENTS | {"modifiers", "function_body"}:
             raise UnreadNodeError(child, f"a `{child.type}` node of the factory that the reader does not classify")
-    return SwiftFactory(owner, chain, normal(source, modifiers), normal(source, *form), tuple(parameters), name)
+    resolved = context.resolve(written_result, node) if context else written_result
+    declaration = normal(source, *form)
+    if resolved != written_result:
+        declaration += f" resolved result {resolved}"
+    return SwiftFactory(owner, chain, normal(source, modifiers), declaration, tuple(parameters), name)
+
+
+def property_getter(source: bytes, node: Node) -> str:
+    computed = node.child_by_field_name("computed_value")
+    if computed is None:
+        return "get"
+    children = classified(
+        computed, COMMENTS | {"{", "}", "computed_getter", "computed_setter", "statements"}, "of a computed property"
+    )
+    getter = next((child for child in children if child.type == "computed_getter"), None)
+    if getter is None:
+        return "get"
+    head = classified(
+        getter, COMMENTS | {"getter_specifier", "modifiers", "statements", "{", "}"}, "of a property getter"
+    )
+    return normal(source, *(child for child in head if child.type not in {"statements", "{", "}"}))
+
+
+def swift_property(source: bytes, node: Node, context: SwiftContext | None = None) -> SwiftFactory | None:
+    modifiers = next((child for child in node.children if child.type == "modifiers"), None)
+    annotation = next((child for child in node.children if child.type == "type_annotation"), None)
+    if not modifiers or annotation is None or not public(source, node) or not owner_is_public(source, node, context):
+        return None
+    if unavailable(source, modifiers) or not any(normal(source, child) == "static" for child in modifiers.children):
+        return None
+    owner, chain = enclosing(source, node)
+    result = normal(source, annotation).removeprefix(":").strip()
+    result = context.resolve(result, node) if context else result
+    if not owner_result(result, owner):
+        return None
+    name = node.child_by_field_name("name")
+    assert name is not None
+    heads = [child for child in node.children if child.type in {"value_binding_pattern", "type_annotation"}]
+    form = normal(source, *heads) + " " + property_getter(source, node)
+    written = normal(source, annotation).removeprefix(":").strip()
+    if result != written:
+        form += f" resolved result {result}"
+    return SwiftFactory(owner, chain, normal(source, modifiers), form, (), normal(source, name))
 
 
 def parse_swift_factories(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftFactory]:
-    """Return every public type factory without treating factory absence as unread constructors."""
+    """Read factories; a release with zero factories remains valid."""
     return _parse_swift(source, where, "function_declaration", swift_factory)
 
 
 def parse_swift(source: str, where: str = SWIFT_FACADE) -> dict[str, SwiftInitializer]:
-    """Return every public initializer of the file by its whole declaration (`SwiftInitializer.key`).
+    """Read public initializers by their whole declarations, preserving overloads.
 
-    The Swift grammar of tree-sitter reads the file: a `struct`, `class`, `enum`, `actor` or
-    `extension` owns each initializer, and the reader keeps the whole declaration. Text that the
-    grammar does not read raises `SyntaxError` with `where` and the line: an error anywhere in the
-    file fails before any initializer is read. A node of a declaration that the reader does not
-    classify raises `SyntaxError` with the kind of the node. Two initializers with one whole
-    declaration raise `SyntaxError` too: no declaration overwrites another.
-
-    The grammar does not know `$` in an identifier (swift-bridge writes `CbWrapper$crawl` and
-    `__swift_bridge__$Vec_String$len`), so the tree is parsed from a copy with `_` for each `$`.
-    The copy has the byte length of the file (one byte for one byte), so every node range is a
-    range of the file, and every text that the reader keeps or compares is read from the file.
+    Unread grammar nodes and duplicate declarations fail with a source line. The grammar
+    rejects swift-bridge's dollar identifiers: parse a same-byte-length underscore copy,
+    then read every declaration from the original bytes so comparisons preserve the dollars.
     """
     return _parse_swift(source, where, "init_declaration", swift_initializer)
 
@@ -593,7 +708,7 @@ def _parse_swift(
     source: str,
     where: str,
     kind: str,
-    reader: Callable[[bytes, Node], SwiftDeclaration | None],
+    reader: Callable[[bytes, Node, SwiftContext | None], SwiftDeclaration | None],
 ) -> dict[str, SwiftDeclaration]:
     data = source.encode()
     tree = Parser(SWIFT).parse(data.replace(b"$", b"_"))
@@ -611,11 +726,13 @@ def _parse_swift(
             if node.has_error and not any(child.has_error for child in node.children)
         )
         raise error(broken, "text that the Swift grammar does not read")
+    context = swift_context(data, tree.root_node, where)
     for node in nodes(tree.root_node):
-        if node.type != kind:
+        property_factory = kind == "function_declaration" and node.type == "property_declaration"
+        if node.type != kind and not property_factory:
             continue
         try:
-            initializer = reader(data, node)
+            initializer = swift_property(data, node, context) if property_factory else reader(data, node, context)
         except UnreadNodeError as unread:
             raise error(unread.node, str(unread)) from None
         if initializer and initializer.key in initializers:
@@ -626,18 +743,10 @@ def _parse_swift(
 
 
 def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) -> list[str]:
-    """Return why the declaration of `now` is not the declaration of `was` with defaulted parameters added.
+    """Compare declarations, preserving defaults, argument binding and reference arity.
 
-    The rule is by exclusion: the whole declaration is equal, text by text, but for one permitted
-    difference. The head may add parameters, each with a default. Swift skips a defaulted
-    parameter whose label the call does not write, so an added parameter is refused only where a
-    released call passes an argument with no label: before a released positional (`_`)
-    parameter, which a positional call binds to the added one; before a released parameter of
-    function type, which a trailing closure of the release may bind, and the added one then takes
-    the closure when it has a function type itself; and anywhere when the added parameter has a
-    function type, since a trailing closure of the release may bind it. A type that holds a
-    function type anywhere (`(() -> Void)?`, `[() -> Void]`) counts as a function type: a false
-    failure at worst. Every rule can give a false failure, never a false pass.
+    The detailed positional/trailing-closure checks explain incompatible call changes. A
+    remaining arity difference still fails: defaults cannot adapt a function reference.
     """
     errors = []
     for before, after in zip_longest(was.chain, now.chain, fillvalue="no declaration"):
@@ -651,7 +760,9 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
     if now.form != was.form:
         errors.append(f"{was.owner}: the Swift initializer of {tag} is `{was.form}`, the head is `{now.form}`")
     labels, head_labels = [p.label for p in was.parameters], [p.label for p in now.parameters]
-    if [x for x in head_labels if x in labels] != [x for x in labels if x in head_labels]:
+    common_head = [x for x in head_labels if x in labels]
+    common_released = [x for x in labels if x in head_labels]
+    if Counter(common_head) == Counter(common_released) and common_head != common_released:
         errors.append(f"{was.owner}: the Swift initializer labels of {tag} are in another order")
     remaining = list(was.parameters)
     for parameter in now.parameters:
@@ -660,7 +771,7 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
             where = f"{was.owner}.{before.where}"
             if parameter.name != before.name:
                 errors.append(f"{where}: the Swift argument name changed from `{before.name}` to `{parameter.name}`")
-            if parameter.type != before.type:
+            if parameter.type != before.type or parameter.resolved_type != before.resolved_type:
                 errors.append(f"{where}: the Swift argument type changed from `{before.type}` to `{parameter.type}`")
             if before.default is not None and parameter.default is None:
                 errors.append(f"{where}: the Swift argument has a default in {tag} and is required now")
@@ -689,19 +800,17 @@ def compare_initializer(was: SwiftInitializer, now: SwiftInitializer, tag: str) 
             )
     removed = f"the Swift initializer argument of {tag} is removed or renamed"
     errors.extend(f"{was.owner}.{parameter.where}: {removed}" for parameter in remaining)
+    if not errors and len(now.parameters) != len(was.parameters):
+        errors.append(
+            f"{was.owner}: the Swift initializer function reference of {tag} changes arity; keep its overload"
+        )
     return errors
 
 
 def compare_swift(released: dict[str, SwiftInitializer], head: dict[str, SwiftInitializer], tag: str) -> list[str]:
-    """Return why a Swift call written against a released initializer does not compile at the head.
+    """Match each released declaration to the same owner/name, retaining its exact overload.
 
-    A released initializer is compared with the head initializer of its owner that differs least,
-    and it passes only with no difference. One head initializer may satisfy several released
-    ones: each satisfaction is the rule of `compare_initializer`, so every call of each satisfied
-    released initializer compiles against it. A removed initializer therefore passes only when a
-    kept one of the same owner is its declaration with defaulted parameters added, and that is a
-    removal no released call sees. A removed overload whose twin differs anywhere else (the
-    generic clause, `async`, the extension) has no head initializer with no difference and fails.
+    The closest candidate supplies diagnostics; only a candidate with no difference passes.
     """
     errors: list[str] = []
     lost: set[tuple[str, str | None]] = set()
@@ -835,7 +944,6 @@ def check_factories(tag: str, item: Input) -> tuple[str, list[str]]:
 
 
 def run(tag: str, inputs: list[Input]) -> int:
-    """Print one line for each source and each error. Return the exit status."""
     results = [check_source(tag, item) for item in inputs]
     for result in results:
         print(result.line)
@@ -853,7 +961,6 @@ def run(tag: str, inputs: list[Input]) -> int:
 
 
 def read_head(path: str) -> str | None:
-    """Return the file of the working tree, or `None` when there is no such file."""
     file = Path(path)
     return file.read_text(encoding="utf-8") if file.is_file() else None
 
@@ -881,6 +988,7 @@ _HELP = (
     '     `#[cfg_attr(alef, alef(legacy_constructor_fields = ["..."]))]`. The pinned alef must accept the type of the field.\n'
     "  3. Restore the field list of {tag}: the same names, types, order and defaults.\n"
     "Then run `task alef:generate`.\n"
+    "A Swift arity change requires the exact released compatibility overload, including defaults.\n"
     "A Swift line above with a recorded constructor on the struct: the pinned alef writes the new\n"
     "field as a required argument of the public Swift initializer. The fix is in alef, not here."
 )
