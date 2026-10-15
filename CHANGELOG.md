@@ -123,6 +123,9 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Child-target acknowledgement failures report the pending command kind and numeric CDP error
+  code, without recording the error text or target/session identifiers. (#734)
+
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
@@ -219,7 +222,13 @@ All notable changes to crawlberg are documented here.
   timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
   The browser pool shuts down at once while a page waits on Chrome, and a page request that its
   timeout ends during the pool's connection leaves no connection on an external browser. (#705)
-- Browser protocol parsing accepts Chrome 155 network policy field names while preserving
+- Owned Chrome teardown recognizes expected closure of its primary and child connections.
+  Active and borrowed transport failures remain errors; successful profile retirement avoids
+  a second process-family kill. Successful CLI commands await owned browser cleanup before the
+  async runtime exits (#734).
+- Foreign-tab browser tests finish readable response bodies before reloading and report bounded
+  rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
+- Browser protocol parsing accepts current Chrome network policy field names while preserving
   the reported policy and the legacy typed event API (#750).
 - macOS runtime tests retry when framework workqueue counts change during thread sampling,
   and exit subprocesses use the same sampler (#751).
@@ -478,6 +487,13 @@ All notable changes to crawlberg are documented here.
   request; the engine waited for them to close before it kept the page. (#694)
 - Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
   Foreign-retirement census validation and retirement use one registry lock. (#701)
+
+- Released constructor checks preserve Swift initializer and factory function references, getter
+  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
+  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
+  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
 
 ## [1.10.3] - 2026-10-09
 

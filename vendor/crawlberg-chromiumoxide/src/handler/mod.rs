@@ -46,6 +46,7 @@ mod page;
 mod session;
 pub mod target;
 pub mod target_message_future;
+pub(crate) mod termination;
 pub mod viewport;
 
 /// The handler that monitors the state of the chromium browser and drives all
@@ -53,6 +54,7 @@ pub mod viewport;
 #[must_use = "streams do nothing unless polled"]
 #[derive(Debug)]
 pub struct Handler {
+    pub(crate) owned_termination: std::sync::Arc<termination::OwnedTermination>,
     /// Commands that are being processed and awaiting a response from the
     /// chromium instance together with the timestamp when the request
     /// started.
@@ -86,6 +88,10 @@ pub struct Handler {
 }
 
 impl Handler {
+    pub fn observed_owned_termination(&self) -> bool {
+        self.owned_termination.observed()
+    }
+
     /// Create a new `Handler` that drives the connection and listens for
     /// messages on the receiver `rx`.
     pub(crate) fn new(conn: Connection<CdpEventMessage>, rx: Receiver<HandlerMessage>, config: HandlerConfig) -> Self {
@@ -122,6 +128,7 @@ impl Handler {
             config,
             event_listeners: Default::default(),
             closing: false,
+            owned_termination: std::sync::Arc::default(),
         }
     }
 
@@ -582,7 +589,10 @@ impl Stream for Handler {
             loop {
                 let ev = match Pin::new(&mut pin.conn).poll_next(cx) {
                     Poll::Ready(Some(ev)) => ev,
-                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Ready(None) => {
+                        pin.owned_termination.observe(None);
+                        return Poll::Ready(None);
+                    }
                     Poll::Pending => break,
                 };
                 match ev {
@@ -604,7 +614,9 @@ impl Stream for Handler {
                         }
                     }
                     Err(err) => {
-                        tracing::error!("WS Connection error: {:?}", err);
+                        if !pin.owned_termination.observe(Some(&err)) {
+                            tracing::error!("WS Connection error: {:?}", err);
+                        }
                         return Poll::Ready(Some(Err(err)));
                     }
                 }

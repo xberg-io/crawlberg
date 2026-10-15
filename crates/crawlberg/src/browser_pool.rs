@@ -747,25 +747,24 @@ impl ScratchProfileDir {
     }
 
     /// Run the profile teardown on the blocking pool and wait until it has finished.
-    async fn teardown_and_wait(mut self) {
-        let Some(teardown) = self.0.take() else {
-            return;
-        };
+    async fn teardown_and_wait(mut self) -> bool {
+        let Some(teardown) = self.0.take() else { return false };
         #[cfg(test)]
         tests::PROFILE_HAND_OFFS_HERE.with(|count| count.set(count.get() + 1));
         let pending = Arc::new(std::sync::Mutex::new(Some(teardown)));
         let worker_pending = Arc::clone(&pending);
-        let joined = tokio::task::spawn_blocking(move || {
-            drop(take_profile_teardown(&worker_pending));
-        })
-        .await;
-        if let Err(error) = joined {
-            // ~keep A blocking task cancelled before it starts leaves the teardown in `pending`;
-            // run it here so explicit shutdown cannot return with Chrome still alive.
-            tracing::warn!(%error, "Chrome profile teardown task failed; running it synchronously");
-            drop(take_profile_teardown(&pending));
+        match tokio::task::spawn_blocking(move || complete_profile_teardown(&worker_pending)).await {
+            Ok(completed) => completed,
+            Err(error) => {
+                tracing::warn!(%error, "Chrome profile teardown task failed; running it synchronously");
+                complete_profile_teardown(&pending)
+            }
         }
     }
+}
+
+fn complete_profile_teardown(pending: &std::sync::Mutex<Option<ProfileTeardown>>) -> bool {
+    take_profile_teardown(pending).is_some_and(|mut teardown| teardown.complete())
 }
 
 fn take_profile_teardown(pending: &std::sync::Mutex<Option<ProfileTeardown>>) -> Option<ProfileTeardown> {
@@ -848,12 +847,10 @@ fn lock_within<T>(mutex: &std::sync::Mutex<T>, limit: Duration) -> Option<std::s
     }
 }
 
-impl Drop for ProfileTeardown {
-    fn drop(&mut self) {
-        #[cfg(test)]
-        tests::PROFILE_TEARDOWNS_HERE.with(|count| count.set(count.get() + 1));
+impl ProfileTeardown {
+    fn complete(&mut self) -> bool {
         if self.owner != std::process::id() {
-            return;
+            return false;
         }
         // ~keep With a tree the system knows every process of the launch, and stopping them
         // ~keep starts no process and searches for none. The other arms find them by the
@@ -870,21 +867,32 @@ impl Drop for ProfileTeardown {
         } else {
             None
         };
+        let stopped = self.stop_processes();
+        let removed = self.remove_directory();
+        self.owner = 0;
+        live_profiles().remove(&self.dir);
+        stopped && removed
+    }
+
+    fn stop_processes(&self) -> bool {
         if let Some(tree) = &self.tree {
-            if !tree.stop(PROFILE_USERS_EXIT_TIMEOUT) {
+            let stopped = tree.stop(PROFILE_USERS_EXIT_TIMEOUT);
+            if !stopped {
                 tracing::warn!(dir = %self.dir.display(), "Chrome processes still run after their process tree was stopped");
             }
-        } else {
-            // ~keep First the launched process and every process below it, while it runs. Then
-            // ~keep what still names the directory: the helpers of a Chrome whose main process
-            // ~keep was gone before this teardown, after a crash or an explicit kill.
-            if let Some(launched) = self.launched {
-                stop_launched_family(&self.dir, launched);
-            }
-            if let Some(chrome) = &self.chrome {
-                stop_chrome_processes_using(&self.dir, chrome);
-            }
+            return stopped;
         }
+        let family = self
+            .launched
+            .is_none_or(|launched| stop_launched_family(&self.dir, launched));
+        let users = self
+            .chrome
+            .as_ref()
+            .is_none_or(|chrome| stop_chrome_processes_using(&self.dir, chrome));
+        family && users
+    }
+
+    fn remove_directory(&self) -> bool {
         // ~keep The removal is tried again for a short time. On Windows a file stays undeletable
         // ~keep until the system has closed it for the process that held it, and a helper that
         // ~keep ended by itself when its browser was killed is in no process tree to wait on: the
@@ -894,15 +902,23 @@ impl Drop for ProfileTeardown {
         let deadline = std::time::Instant::now() + PROFILE_REMOVAL_TIMEOUT;
         while let Err(error) = std::fs::remove_dir_all(&self.dir) {
             if error.kind() == std::io::ErrorKind::NotFound {
-                break;
+                return true;
             }
             if std::time::Instant::now() >= deadline {
                 tracing::warn!(dir = %self.dir.display(), %error, "failed to remove the Chrome profile directory");
-                break;
+                return false;
             }
             std::thread::sleep(PROFILE_USERS_POLL_INTERVAL);
         }
-        live_profiles().remove(&self.dir);
+        true
+    }
+}
+
+impl Drop for ProfileTeardown {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        tests::PROFILE_TEARDOWNS_HERE.with(|count| count.set(count.get() + 1));
+        let _ = self.complete();
     }
 }
 
@@ -1023,7 +1039,7 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
 /// ~keep name. A shell, `strace` or `grep` that names the flag runs another executable and is left
 /// ~keep alone. A saved profile the caller named is never a `ScratchProfileDir`, so its Chrome is
 /// ~keep never killed here and it is never removed.
-fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) {
+fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) -> bool {
     let flag = user_data_dir_flag(dir);
     let mut system = sysinfo::System::new();
     let mut killed = Vec::new();
@@ -1039,9 +1055,11 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
         }
         !users.is_empty()
     });
-    if !(stopped && wait_until_ended(&killed, deadline)) {
+    let completed = stopped && wait_until_ended(&killed, deadline);
+    if !completed {
         tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
     }
+    completed
 }
 
 /// The process a launch started: its process id with its start mark ([`start_mark`]).
@@ -1138,8 +1156,8 @@ fn start_ticks(stat: &[u8]) -> Option<u64> {
 /// ~keep The process id counts only while its process is the launched one ([`LaunchedProcess`]),
 /// ~keep and a live child of this process: once it is reaped, the number can belong to another
 /// ~keep process, also to another child of this one.
-fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) {
-    stop_launched_family_reading(dir, launched, start_mark);
+fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) -> bool {
+    stop_launched_family_reading(dir, launched, start_mark)
 }
 
 /// [`stop_launched_family`], with the start mark of the process read through `start`.
@@ -1147,7 +1165,7 @@ fn stop_launched_family_reading(
     dir: &std::path::Path,
     launched: LaunchedProcess,
     start: impl FnOnce(u32) -> Option<u64>,
-) {
+) -> bool {
     let pid = Pid::from_u32(launched.pid);
     let mut system = System::new();
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
@@ -1157,13 +1175,15 @@ fn stop_launched_family_reading(
             .process(pid)
             .is_some_and(|process| process.parent() == Some(this_process) && ChromeFamily::is_running(&system, pid)))
     {
-        return;
+        return !ChromeFamily::is_running(&system, pid);
     }
     let family = ChromeFamily::freeze(launched.pid);
     family.kill();
-    if !family.wait(PROFILE_USERS_EXIT_TIMEOUT) {
+    let completed = family.wait(PROFILE_USERS_EXIT_TIMEOUT);
+    if !completed {
         tracing::warn!(dir = %dir.display(), "Chrome processes still run after their process family was killed");
     }
+    completed
 }
 
 /// Whether `process` runs `chrome`, as [`chrome_started_by`] names it.
@@ -1424,6 +1444,10 @@ impl OwnedHandler {
             .abort_handle()
     }
 
+    fn detach(&mut self) {
+        self.0.take();
+    }
+
     /// The task, for a teardown that waits for the handler to end on its own before it aborts it.
     fn take(mut self) -> JoinHandle<()> {
         self.0.take().expect("the handler task is taken only once")
@@ -1504,17 +1528,31 @@ impl BrowserState {
     /// Terminate a browser whose security controller disappeared. A launched Chrome is killed
     /// rather than given a graceful CDP close, because the failed handler cannot acknowledge it. ~keep
     async fn fail_closed(self) {
+        if !self.firewall.has_failed() && !self.handler_end.has_ended() {
+            self.browser.begin_owned_termination();
+        }
         let profile = self.user_data_dir.as_ref().map(|dir| dir.path().to_path_buf());
         // ~keep Start owned-process teardown before awaiting the security controller: a host can
         // ~keep stop driving its runtime after the supervisor took this state from the pool.
-        if let Some(user_data_dir) = self.user_data_dir {
-            user_data_dir.teardown_and_wait().await;
-        }
+        let completed = match self.user_data_dir {
+            Some(user_data_dir) => user_data_dir.teardown_and_wait().await,
+            None => false,
+        };
         self.firewall.stop().await;
-        let Some(browser) = Arc::into_inner(self.browser) else {
+        let Some(mut browser) = Arc::into_inner(self.browser) else {
             drop(self.handler_handle);
             return;
         };
+        if completed
+            && matches!(
+                tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, browser.wait()).await,
+                Ok(Ok(_))
+            )
+        {
+            drop(browser);
+            stop_handler_after_close(self.handler_handle.take(), BrowserCloseOutcome::Killed).await;
+            return;
+        }
         match profile {
             Some(profile) => {
                 kill_browser(browser, self.handler_handle.take(), profile, HANDLER_SHUTDOWN_TIMEOUT).await;
@@ -1584,11 +1622,10 @@ fn spawn_handler_then(
             };
             if let Err(chromiumoxide::error::CdpError::Ws(error)) = &event {
                 let cause = websocket_error_text(error);
-                tracing::warn!(
-                    browser_handler_task_id = ?tokio::task::try_id(),
-                    error = %cause,
-                    "the browser's CDP websocket failed; its CDP handler ends"
-                );
+                if !watched.handler.observed_owned_termination() {
+                    tracing::warn!(browser_handler_task_id = ?tokio::task::try_id(), error = %cause,
+                        "the browser's CDP websocket failed; its CDP handler ends");
+                }
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }
@@ -1597,11 +1634,10 @@ fn spawn_handler_then(
             #[cfg(unix)]
             if let Err(chromiumoxide::error::CdpError::Pipe(error)) = &event {
                 let cause = format!("the browser's CDP pipe connection closed: {error}");
-                tracing::warn!(
-                    browser_handler_task_id = ?tokio::task::try_id(),
-                    error = %cause,
-                    "the browser's CDP pipe failed; its CDP handler ends"
-                );
+                if !watched.handler.observed_owned_termination() {
+                    tracing::warn!(browser_handler_task_id = ?tokio::task::try_id(), error = %cause,
+                        "the browser's CDP pipe failed; its CDP handler ends");
+                }
                 let _ = watched.end.0.cause.set(cause);
                 break;
             }
@@ -1874,6 +1910,9 @@ pub(crate) async fn kill_browser(
     profile: std::path::PathBuf,
     shutdown_timeout: Duration,
 ) {
+    #[cfg(test)]
+    tests::KILL_BROWSER_CALLS_HERE.with(|count| count.set(count.get() + 1));
+    browser.begin_owned_termination();
     let deadline = tokio::time::Instant::now() + shutdown_timeout;
     // ~keep A process forked from the one that launched the Chrome holds a copy of the browser:
     // ~keep it lets go of the copy and leaves the Chrome and the profile to its parent. A
@@ -2541,6 +2580,18 @@ fn pool_shut_down() -> CrawlError {
 
 impl Drop for BrowserPool {
     fn drop(&mut self) {
+        if self.owner == std::process::id()
+            && let Ok(mut state) = self.state.try_lock()
+            && let Some(state) = state.as_mut()
+        {
+            if !state.firewall.has_failed() && !state.handler_end.has_ended() {
+                state.browser.begin_owned_termination();
+            }
+            // ~keep The handler outlives the pool's state: the stopping firewall's listener still
+            // ~keep needs it to observe the owned browser's end. Aborting it here would turn that
+            // ~keep expected end into a controller failure.
+            state.handler_handle.detach();
+        }
         if self.owner != std::process::id() {
             // ~keep A fork inherits Tokio wakers, not its running reactor. Retain the copied
             // ~keep resources so field drops cannot wake invalid I/O handles or tear down the

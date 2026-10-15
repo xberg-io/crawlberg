@@ -227,8 +227,8 @@ class SwiftComparisonTests(unittest.TestCase):
     def assert_fails(self, found: list[str], *parts: str) -> None:
         assert any(all(part in error for part in parts) for error in found), found
 
-    def test_a_new_argument_with_a_default_passes(self) -> None:
-        assert swift_errors(swift_text(SWIFT_RELEASED + ', originalUrl: String = ""')) == []
+    def test_a_new_defaulted_argument_without_a_compatibility_overload_fails(self) -> None:
+        assert "function reference" in swift_errors(swift_text(SWIFT_RELEASED + ', originalUrl: String = ""'))[0]
 
     def test_a_new_required_argument_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED + ", originalUrl: String"))
@@ -456,9 +456,8 @@ class WholeDeclarationTests(unittest.TestCase):
             "Box.limit: the new Swift initializer argument comes before the positional argument `depth` of v1.0.0: a positional call of v1.0.0 binds another value"
         ]
 
-    def test_an_added_argument_with_a_default_before_a_labelled_argument_passes(self) -> None:
-        # ~keep Swift skips a defaulted parameter whose label the call does not write (N21).
-        assert swift_errors(swift_text("extra: Int = 0, " + SWIFT_RELEASED)) == []
+    def test_an_added_defaulted_labelled_argument_changes_the_function_reference(self) -> None:
+        assert "function reference" in swift_errors(swift_text("extra: Int = 0, " + SWIFT_RELEASED))[0]
 
     def test_a_renamed_internal_name_fails(self) -> None:
         found = swift_errors(swift_text(SWIFT_RELEASED.replace("url: String", "url u: String")))
@@ -561,10 +560,9 @@ class SixRowTests(unittest.TestCase):
         assert raised[0].msg == "a second declaration of `Box(a: Int) init public public struct Box`"
         assert raised[0].lineno == 3
 
-    def test_m2_a_removed_initializer_passes_only_when_a_kept_one_takes_each_of_its_calls(self) -> None:
-        # ~keep `Box(a: 1)` compiles against `init(a: Int, b: Int = 0)`: the rule of the comparison.
+    def test_m2_a_removed_initializer_reference_requires_the_exact_arity(self) -> None:
         two = "public struct Box {\n    public init(a: Int) {}\n    public init(a: Int, b: Int = 0) {}\n}\n"
-        assert swift_errors(two.replace("    public init(a: Int) {}\n", ""), two) == []
+        assert "function reference" in swift_errors(two.replace("    public init(a: Int) {}\n", ""), two)[0]
         head = two.replace("    public init(a: Int, b: Int = 0) {}\n", "")
         assert swift_errors(head, two) == ["Box.b: the Swift initializer argument of v1.0.0 is removed or renamed"]
 
@@ -593,7 +591,7 @@ class SixRowTests(unittest.TestCase):
             in swift_errors(head, released)[0]
         )
         head = swift_text(SWIFT_RELEASED + ", accept: (String) -> Bool, extra: Int = 0")
-        assert swift_errors(head, released) == []
+        assert "function reference" in swift_errors(head, released)[0]
 
     def test_a24_a_dollar_is_compared_as_the_file_writes_it(self) -> None:
         released = swift_text(SWIFT_RELEASED.replace("rel: String? = nil", 'rel: String? = "$"'))
@@ -890,10 +888,13 @@ class SwiftFactoryTests(unittest.TestCase):
             CHECK.parse_swift_factories(duplicate)
         assert "second declaration" in str(raised[0]), raised[0]
 
-    def test_an_added_default_factory_parameter_passes(self) -> None:
+    def test_an_added_default_factory_parameter_changes_the_function_reference(self) -> None:
         released = self.source("public static func make(_ value: Int) -> Self")
         head = self.source("public static func make(_ value: Int, extra: Int = 1) -> Self")
-        assert CHECK.compare_swift(CHECK.parse_swift_factories(released), CHECK.parse_swift_factories(head), TAG) == []
+        assert (
+            "function reference"
+            in CHECK.compare_swift(CHECK.parse_swift_factories(released), CHECK.parse_swift_factories(head), TAG)[0]
+        )
 
     def test_a_removed_factory_overload_fails(self) -> None:
         released = self.source(
@@ -939,6 +940,25 @@ class ReleaseTagTests(unittest.TestCase):
         with expected_error(subprocess.CalledProcessError) as raised:
             CHECK.released_stub("no-such-tag-of-this-repository")
         assert raised[0].returncode != 0
+
+
+def load_tests(loader: unittest.TestLoader, suite: unittest.TestSuite, _pattern: str | None) -> unittest.TestSuite:
+    # ~keep CI executes this file directly, so the split shape cases must join its canonical suite.
+    from test_released_constructor_shapes import (
+        SwiftAliasScopeTests,
+        SwiftFactoryShapeTests,
+        SwiftPropertyEffectTests,
+        SwiftReferenceCompatibilityTests,
+    )
+
+    for cases in (
+        SwiftAliasScopeTests,
+        SwiftFactoryShapeTests,
+        SwiftPropertyEffectTests,
+        SwiftReferenceCompatibilityTests,
+    ):
+        suite.addTests(loader.loadTestsFromTestCase(cases))
+    return suite
 
 
 if __name__ == "__main__":
