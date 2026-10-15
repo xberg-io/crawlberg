@@ -41,9 +41,17 @@ async fn should_fail_self_redirect_two_page_loop_and_overlong_chain() {
         for route in ["/loop", "/a", "/0"] {
             let url = format!("{}{route}", server.uri());
             let error = scrape(&engine, &url).await.expect_err("invalid redirect chain");
-            assert!(matches!(error, CrawlError::SsrfPolicyViolation { .. }), "{error}");
-            assert!(error.to_string().contains("redirect"), "{error}");
+            let CrawlError::TooManyRedirects {
+                message,
+                source: Some(source),
+            } = &error
+            else {
+                panic!("the redirect error must carry its source: {error:?}");
+            };
+            assert!(message.contains("redirect"), "{error}");
+            assert!(message.starts_with(&server.uri()), "{error}");
             assert!(error.to_string().contains(&server.uri()), "{error}");
+            assert!(format!("{source:?}").contains(&server.uri()), "{error:?}");
         }
     }
 }

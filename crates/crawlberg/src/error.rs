@@ -657,6 +657,23 @@ fn is_body_data_loss(e: &reqwest::Error, chain: &str) -> bool {
     chain.contains("content-length") || chain.contains("truncate") || chain.contains("incomplete")
 }
 
+/// Why a browser fetch failed when the browser's CDP connection closed under it. A crawl reports
+/// a page lost this way as its own error: the loss is the browser's, not the page's. ~keep
+#[derive(Debug, Error)]
+#[error("the browser's CDP connection closed")]
+pub(crate) struct BrowserConnectionClosed {
+    #[source]
+    pub(crate) source: Option<ErrorSource>,
+}
+
+impl CrawlError {
+    /// Whether this is a browser error whose cause is [`BrowserConnectionClosed`].
+    pub(crate) fn browser_connection_closed(&self) -> bool {
+        matches!(self, Self::BrowserError { source: Some(source), .. }
+            if std::error::Error::source(source).is_some_and(|cause| cause.is::<BrowserConnectionClosed>()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

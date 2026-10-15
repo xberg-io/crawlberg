@@ -205,6 +205,38 @@ mod tests {
         assert_eq!(env_usize("CRAWLBERG_TEST_UNSET_VAR_XYZ", 42), 42);
     }
 
+    /// Each request engine owns a browser pool of its own: one Chrome for each request, not the
+    /// startup engine's Chrome for all of them.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn request_engines_own_a_browser_pool_each() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                backend: crate::types::BrowserBackend::Chromiumoxide,
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let startup = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let state = ApiState::with_security(Arc::clone(&startup), ApiSecurityConfig::default());
+
+        let first = state.request_engine(|_| Ok(())).expect("request engine");
+        let second = state.request_engine(|_| Ok(())).expect("request engine");
+
+        let pools = [&*startup, &first, &second].map(|engine| {
+            Arc::clone(
+                engine
+                    .owned_browser_pool
+                    .as_ref()
+                    .expect("an engine in browser mode owns a pool"),
+            )
+        });
+        assert!(!Arc::ptr_eq(&pools[0], &pools[1]));
+        assert!(!Arc::ptr_eq(&pools[0], &pools[2]));
+        assert!(!Arc::ptr_eq(&pools[1], &pools[2]));
+        assert!(state.config.browser_pool.is_none());
+    }
+
     #[test]
     fn default_security_config_has_no_auth_token() {
         let config = ApiSecurityConfig::default();

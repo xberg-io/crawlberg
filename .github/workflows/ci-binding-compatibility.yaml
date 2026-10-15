@@ -1,0 +1,109 @@
+name: CI Binding Compatibility
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "packages/python/**"
+      - "packages/swift/**"
+      - "alef.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Taskfile.yml"
+      - ".task/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci-binding-compatibility.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "packages/python/**"
+      - "packages/swift/**"
+      - "alef.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Taskfile.yml"
+      - ".task/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci-binding-compatibility.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # ~keep Each main push keeps its run; changed PR heads cancel only their previous compatibility run.
+  group: binding-compatibility-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
+  cancel-in-progress: true
+
+env:
+  BUILD_PROFILE: "ci"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  RUST_BACKTRACE: short
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  declarations:
+    name: Binding declarations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - uses: xberg-io/actions/install-task@v1
+      - name: Check released declarations
+        run: task binding-compatibility:declarations
+
+  python:
+    name: Binding calls (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: xberg-io/actions/install-task@v1
+      - uses: xberg-io/actions/setup-rust@v1
+        with:
+          cache-key-prefix: binding-compatibility-python
+      - uses: xberg-io/actions/setup-python-env@v1
+        with:
+          python-version: "3.13"
+          cache-prefix: binding-compatibility-python
+      - name: Build current Python extension
+        run: task binding-compatibility:python-build
+      - name: Check released Python calls
+        run: task binding-compatibility:python
+
+  swift:
+    name: Binding calls (Swift)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: xberg-io/actions/install-task@v1
+      - uses: xberg-io/actions/setup-rust@v1
+        with:
+          cache-key-prefix: binding-compatibility-swift
+      - uses: xberg-io/actions/setup-swift@v1
+        with:
+          swift-version: "6.0"
+      - name: Build current Swift native archives
+        run: task binding-compatibility:swift-build
+      - name: Check committed released Swift calls
+        run: task binding-compatibility:swift

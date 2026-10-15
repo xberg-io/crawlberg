@@ -56,6 +56,9 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- Per-domain rate limiting emits TRACE events at `crawlberg::rate_limiter` with `domain` and
+  numeric `wait_ms` fields for each selected pacing delay.
+
 - The vendored browser process `Command::get_args()` exposes a read-only iterator over the
   configured arguments. It does not change their order or launch behavior.
   ([#702](https://github.com/xberg-io/crawlberg/pull/702))
@@ -123,6 +126,18 @@ All notable changes to crawlberg are documented here.
 - A batch admits its URLs as slots free up: the first fetch of a large batch starts after the
   first admission, not after every URL is admitted and queued. The scheduling of host waits
   from #711 is unchanged. (#716)
+- An engine built with `CrawlEngine::builder()` in browser mode reuses one Chrome for all its
+  pages, as the language bindings already did, instead of launching a Chrome for each page: for
+  30 pages the peak Chrome memory (PSS) is about 0.47 of what it was (590 MB against 1240 MB,
+  medians of 15 runs). Pages open on it `max_concurrent` at a time
+  (8 by default), each in a browser context of its own with its own cookies. The Chrome stops
+  and its profile directory is removed when the last clone of the engine is dropped. A
+  `browser_profile` keeps a Chrome for each page, and a pool given with `with_browser_pool`
+  stays the caller's. The pool is the engine's, not part of its configuration: the API server
+  and the MCP endpoint build an engine for each request, and each request keeps a Chrome of its
+  own, as before. (#749)
+- Child-target acknowledgement failures report the pending command kind and numeric CDP error
+  code, without recording the error text or target/session identifiers. (#734)
 - Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
   Per-host admission order, pacing and cancellation are unchanged. (#716)
 - Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
@@ -214,6 +229,25 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
+  longer kills a browser whose page creation takes more than two seconds: the page's own fetch
+  timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
+  The browser pool shuts down at once while a page waits on Chrome, and a page request that its
+  timeout ends during the pool's connection leaves no connection on an external browser. (#705)
+- Owned Chrome teardown recognizes expected closure of its primary and child connections.
+  Active and borrowed transport failures remain errors; successful profile retirement avoids
+  a second process-family kill. Successful CLI commands await owned browser cleanup before the
+  async runtime exits (#734).
+- Foreign-tab browser tests finish readable response bodies before reloading and report bounded
+  rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
+- Browser protocol parsing accepts current Chrome network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
+- macOS runtime tests retry when framework workqueue counts change during thread sampling,
+  and exit subprocesses use the same sampler (#751).
+- Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
+- Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
+  including checks that Chrome stored and sent the excluded cookies (#754).
+
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are
@@ -229,7 +263,10 @@ All notable changes to crawlberg are documented here.
   and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
   sitemap-index child takes its own configured host delay. (#681)
 - Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
-  the API reports status 502 with `TOO_MANY_REDIRECTS`. (#676)
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. The message names the address that ended
+  the chain, with credentials hidden:
+  `too_many_redirects: http://example.com/r3 - redirect limit exceeded` or
+  `too_many_redirects: http://example.com/a - redirect loop`. (#676)
 - Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
   fragments use the normal conversion path, preserving conversion failures. (#677, #682)
 - Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
@@ -462,6 +499,13 @@ All notable changes to crawlberg are documented here.
   request; the engine waited for them to close before it kept the page. (#694)
 - Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
   Foreign-retirement census validation and retirement use one registry lock. (#701)
+
+- Released constructor checks preserve Swift initializer and factory function references, getter
+  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
+  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
+  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
 
 ## [1.10.3] - 2026-10-09
 
