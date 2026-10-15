@@ -36,6 +36,7 @@ mod pipe;
 /// A [`Browser`] is created when chromiumoxide connects to a Chromium instance.
 #[derive(Debug)]
 pub struct Browser {
+    owned_termination: std::sync::Arc<crate::handler::termination::OwnedTermination>,
     /// The `Sender` to send messages to the connection handler that drives the
     /// websocket
     sender: Sender<HandlerMessage>,
@@ -82,6 +83,26 @@ pub struct BrowserConnection {
 }
 
 impl Browser {
+    /// Declare termination only for a process owned by this browser in this process. ~keep
+    pub fn begin_owned_termination(&self) -> bool {
+        if !self.has_owned_process() || self.spawned_elsewhere() {
+            return false;
+        }
+        self.owned_termination.request();
+        true
+    }
+
+    /// Whether a terminal transport close was observed after this process requested owned teardown. ~keep
+    pub fn observed_owned_termination(&self) -> bool {
+        self.owned_termination.observed()
+    }
+
+    /// Classify a matching connection's EOF/Close (`None`) or typed terminal error after owned intent. ~keep
+    /// A borrowed browser, a forked copy, and a nonterminal error never establish expected teardown. ~keep
+    pub fn observe_owned_transport_end(&self, error: Option<&crate::error::CdpError>) -> bool {
+        self.owned_termination.observe(error)
+    }
+
     /// Connect to an already running chromium instance via the given URL.
     ///
     /// If the URL is a http(s) URL, it will first attempt to retrieve the Websocket URL from the `json/version` endpoint.
@@ -136,6 +157,7 @@ impl Browser {
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
+            owned_termination: std::sync::Arc::clone(&fut.owned_termination),
             sender: tx,
             config: None,
             child: None,
@@ -278,6 +300,7 @@ impl Browser {
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
+            owned_termination: std::sync::Arc::clone(&fut.owned_termination),
             sender: tx,
             config: Some(config),
             child: Some(child),
@@ -314,6 +337,7 @@ impl Browser {
     /// [`Browser::wait_sync`], [`Browser::try_wait`]).
     /// [`Browser::drop`] waits automatically if needed.
     pub async fn close(&mut self) -> Result<CloseReturns> {
+        self.begin_owned_termination();
         let (tx, rx) = oneshot_channel();
 
         self.sender.clone().send(HandlerMessage::CloseBrowser(tx)).await?;
@@ -415,6 +439,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub async fn kill(&mut self) -> Option<io::Result<()>> {
+        self.begin_owned_termination();
         match self.own_child() {
             Some(child) => Some(child.kill().await),
             None => None,
@@ -692,6 +717,7 @@ mod tests {
     fn browser_with_an_instance_of(command: &mut Command) -> Browser {
         let child = command.spawn().expect("cat must start");
         Browser {
+            owned_termination: std::sync::Arc::default(),
             sender: channel(1).0,
             config: None,
             child: Some(SpawnedChild::Runtime(child)),
@@ -735,6 +761,7 @@ mod tests {
         const WAIT: Duration = Duration::from_secs(60);
 
         let browser = Browser {
+            owned_termination: std::sync::Arc::default(),
             sender: channel(1).0,
             config: None,
             child: None,

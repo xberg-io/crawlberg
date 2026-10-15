@@ -50,7 +50,7 @@ async fn a_closed_child_socket_reports_one_failure_phase_without_payloads() {
 }
 
 #[tokio::test]
-async fn a_missing_child_acknowledgement_reports_the_deadline_phase() {
+async fn a_missing_child_acknowledgement_reports_nothing_while_it_waits() {
     let (ended, events) = captured_child_events(async {
         let page = watched("ROOT");
         let shared = Arc::new(shared_with(&page, "OTHER"));
@@ -71,16 +71,17 @@ async fn a_missing_child_acknowledgement_reports_the_deadline_phase() {
         answer_child_command(&mut socket, &recursive_arm).await;
         let resume = next_child_message(&mut socket).await;
         assert_eq!(resume["method"], "Runtime.runIfWaitingForDebugger");
-        tokio::time::timeout(Duration::from_secs(2), controller)
-            .await
-            .expect("acknowledgement deadline")
-            .expect("controller task")
+        let_time_pass(Duration::from_secs(5)).await;
+        assert!(
+            !controller.is_finished(),
+            "an unanswered resume is waited for, not timed"
+        );
+        commands.send(super::super::ChildCommand::Stop).await.expect("stop");
+        controller.await.expect("controller task")
     })
     .await;
-    assert!(!ended, "an unanswered boundary must still fail closed");
-    assert_eq!(events.len(), 1, "one first controller failure must be reported");
-    assert_eq!(events[0]["fields"]["phase"], "child_target_controller");
-    assert_eq!(events[0]["fields"]["reason"], "pending_command_deadline");
+    assert!(ended, "a stop ends the wait with a healthy controller");
+    assert_eq!(events, Vec::<serde_json::Value>::new(), "waiting is not a failure");
 }
 
 #[tokio::test]
@@ -181,17 +182,14 @@ async fn attach_structural_page(socket: &mut TestChildSocket, context: &BrowserC
     answer_child_command(socket, &page_resume).await;
 }
 
-async fn structural_deadline_events(
-    tab_ack: bool,
-    child_present: bool,
-    child_ack: bool,
-    waiting: bool,
-) -> Vec<serde_json::Value> {
+/// A tab whose chain is incomplete in the way the flags say: the tab is not resumed, the
+/// controller reports nothing and keeps running, and a stop ends it healthy.
+async fn incomplete_structural_chain_is_held(tab_ack: bool, child_present: bool, child_ack: bool, waiting: bool) {
     let (ended, events) = captured_child_events(async {
         let page = watched("ROOT-SENSITIVE-PAYLOAD");
         let shared = Arc::new(shared_with(&page, "OTHER-SENSITIVE-PAYLOAD"));
         let context = register_owned_context(&shared, &page);
-        let (mut socket, _commands, controller) = test_child_controller(shared, Duration::from_millis(250)).await;
+        let (mut socket, commands, controller) = test_child_controller(shared, Duration::from_millis(250)).await;
         send_attached_target_with_waiting(
             &mut socket,
             "S-TAB-SENSITIVE-PAYLOAD",
@@ -209,33 +207,34 @@ async fn structural_deadline_events(
         if child_present {
             attach_structural_page(&mut socket, &context, child_ack).await;
         }
-        tokio::time::timeout(Duration::from_secs(2), controller)
-            .await
-            .expect("structural deadline")
-            .expect("controller task")
+        let_time_pass(Duration::from_secs(5)).await;
+        assert!(
+            !controller.is_finished(),
+            "an incomplete chain is waited for, not timed"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), socket.next())
+                .await
+                .is_err(),
+            "a tab with an incomplete chain must not be resumed"
+        );
+        commands.send(super::super::ChildCommand::Stop).await.expect("stop");
+        controller.await.expect("controller task")
     })
     .await;
-    assert!(!ended, "an unproved structural boundary must still fail closed");
-    assert_eq!(events.len(), 1, "only the first failure is reported");
-    events
+    assert!(ended, "a stop ends the wait with a healthy controller");
+    assert_eq!(events, Vec::<serde_json::Value>::new(), "waiting is not a failure");
 }
 
 #[tokio::test]
-async fn a_structural_deadline_identifies_which_boundary_acknowledgement_is_missing() {
+async fn an_incomplete_structural_chain_is_held_with_no_event() {
     for (tab_ack, child_present, child_ack, waiting) in [
         (false, false, false, true),
         (true, false, false, false),
         (false, true, true, true),
         (true, true, false, true),
     ] {
-        let events = structural_deadline_events(tab_ack, child_present, child_ack, waiting).await;
-        let fields = &events[0]["fields"];
-        assert_eq!(fields["reason"], "structural_attachment_deadline");
-        assert_eq!(fields["structural_arm_acknowledged"], tab_ack);
-        assert_eq!(fields["structural_child_boundary_acknowledged"], child_ack);
-        assert_eq!(fields["structural_waiting_for_debugger"], waiting);
-        assert_eq!(fields["structural_authorized"], child_present);
-        assert_eq!(fields["structural_context_present"], true);
+        incomplete_structural_chain_is_held(tab_ack, child_present, child_ack, waiting).await;
     }
 }
 
@@ -329,12 +328,12 @@ async fn a_primary_transport_failure_and_child_failure_share_the_supervised_hand
 }
 
 #[tokio::test]
-async fn a_structural_deadline_during_requested_stop_reports_no_failure() {
+async fn a_requested_stop_ends_an_incomplete_structural_chain() {
     let (ended, events) = captured_child_events(async {
         let page = watched("ROOT-SENSITIVE-PAYLOAD");
         let shared = Arc::new(shared_with(&page, "OTHER-SENSITIVE-PAYLOAD"));
         let context = register_owned_context(&shared, &page);
-        let (mut socket, _commands, controller) =
+        let (mut socket, commands, controller) =
             test_child_controller(Arc::clone(&shared), Duration::from_millis(250)).await;
         shared.stopping.store(true, Ordering::Release);
         send_attached_target_with_waiting(
@@ -349,16 +348,107 @@ async fn a_structural_deadline_during_requested_stop_reports_no_failure() {
         .await;
         let tab_arm = next_child_message(&mut socket).await;
         answer_child_command(&mut socket, &tab_arm).await;
+        commands.send(super::super::ChildCommand::Stop).await.expect("stop");
         tokio::time::timeout(Duration::from_secs(2), controller)
             .await
-            .expect("structural deadline during stop")
+            .expect("the stop must end the wait")
             .expect("controller task")
     })
     .await;
-    assert!(!ended, "stopping must not change the deadline return value");
+    assert!(ended, "a stop ends an incomplete chain with a healthy controller");
     assert_eq!(
         events,
         Vec::<serde_json::Value>::new(),
-        "a requested stop suppresses structural failure events"
+        "a requested stop is not a failure"
     );
+}
+
+mod teardown_controls;
+
+#[cfg(unix)]
+mod owned_teardown;
+
+async fn reject_child_acknowledgement(close: bool) -> (bool, Vec<serde_json::Value>) {
+    captured_child_events(async {
+        let page = watched("ROOT-SENSITIVE-PAYLOAD");
+        let shared = Arc::new(shared_with(&page, "OTHER-SENSITIVE-PAYLOAD"));
+        let context = register_owned_context(&shared, &page);
+        if close {
+            begin_ending(&page);
+        }
+        let (mut socket, _commands, controller) = test_child_controller(shared, Duration::from_secs(2)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let tab_arm = next_child_message(&mut socket).await;
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-CHILD-SENSITIVE-PAYLOAD",
+            "CHILD-SENSITIVE-PAYLOAD",
+            if close { "page" } else { "worker" },
+            Some("ROOT-SENSITIVE-PAYLOAD"),
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
+        let command = if close {
+            next_child_message(&mut socket).await
+        } else {
+            let recursive = next_child_message(&mut socket).await;
+            answer_child_command(&mut socket, &recursive).await;
+            next_child_message(&mut socket).await
+        };
+        assert_eq!(
+            command["method"],
+            if close {
+                "Target.closeTarget"
+            } else {
+                "Runtime.runIfWaitingForDebugger"
+            }
+        );
+        answer_child_command(&mut socket, &tab_arm).await;
+        reject_child_response(&mut socket, &command, controller).await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_rejected_child_acknowledgement_reports_only_kind_and_code() {
+    for close in [false, true] {
+        let (ended, events) = reject_child_acknowledgement(close).await;
+        assert!(!ended, "rejected acknowledgements must still fail closed");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["level"], "ERROR");
+        assert_eq!(
+            events[0]["fields"],
+            serde_json::json!({
+                "message": "browser child-target controller failed closed",
+                "phase": "child_target_controller",
+                "reason": "boundary_or_close_ack",
+                "browser_handler_task_id": "None",
+                "pending_command": if close { "close" } else { "boundary" },
+                "cdp_error_code": -32001,
+            })
+        );
+    }
+}
+
+async fn reject_child_response(
+    socket: &mut TestChildSocket,
+    command: &serde_json::Value,
+    controller: tokio::task::JoinHandle<bool>,
+) -> bool {
+    socket
+        .send(async_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({"id": command["id"], "error": {
+                "code": -32001, "message": "SENSITIVE-PAYLOAD session gone"
+            }})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("send rejected acknowledgement");
+    tokio::time::timeout(Duration::from_secs(2), controller)
+        .await
+        .expect("rejected acknowledgement must end controller")
+        .expect("controller task")
 }

@@ -228,17 +228,10 @@ where
     Err(CrawlError::other("browser retry exhausted"))
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("the browser's CDP connection closed")]
-struct BrowserConnectionClosed {
-    #[source]
-    source: Option<crate::error::ErrorSource>,
-}
+use crate::error::BrowserConnectionClosed;
 
 fn browser_error_is_retryable(error: &CrawlError, config: &CrawlConfig) -> bool {
-    crate::http::should_retry_error(error, &config.retry_codes)
-        || matches!(error, CrawlError::BrowserError { source: Some(source), .. }
-            if std::error::Error::source(source).is_some_and(|cause| cause.is::<BrowserConnectionClosed>()))
+    crate::http::should_retry_error(error, &config.retry_codes) || error.browser_connection_closed()
 }
 
 async fn browser_fetch_once(

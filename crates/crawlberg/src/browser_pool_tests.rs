@@ -112,7 +112,7 @@ fn test_config_defaults() {
 #[test]
 fn test_pool_creation() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    assert!(!pool.shutdown.load(Ordering::Relaxed));
+    assert!(!pool.is_shut_down());
 }
 
 #[tokio::test]
@@ -196,6 +196,7 @@ async fn test_acquire_after_shutdown_fails() {
 }
 
 thread_local! {
+    pub(crate) static KILL_BROWSER_CALLS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// ~keep How many [`ScratchProfileDir`] teardowns this thread handed to a worker.
     pub(crate) static PROFILE_HAND_OFFS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many profile teardowns ran on this thread. An executor thread must see none.
@@ -1880,7 +1881,7 @@ fn a_failed_browser_releases_its_profile_before_cleanup_waits_on_a_paused_runtim
             .expect("an owned profile")
             .path()
             .to_path_buf();
-        state.handler_handle.abort();
+        state.handler_handle.abort_handle().abort();
         let mut pending = Box::pin(state.fail_closed());
         assert!(
             futures::poll!(pending.as_mut()).is_pending(),
@@ -2327,7 +2328,7 @@ async fn a_relaunch_replaces_a_dead_chrome_before_its_handler_task_finishes() {
     let Some((pool, old)) = pool_whose_handler_ended_with_its_task_held(test_name).await else {
         return;
     };
-    let relaunched = match tokio::time::timeout(Duration::from_secs(60), pool.relaunch_browser()).await {
+    let relaunched = match tokio::time::timeout(Duration::from_secs(60), pool.warm()).await {
         Ok(Ok(())) => Ok(pool_profile_path(&pool).await),
         Ok(Err(error)) => Err(error.to_string()),
         Err(_) => Err("no answer within 60 s".to_string()),
@@ -2412,7 +2413,7 @@ async fn relaunching_an_external_pool_connection_leaves_the_callers_chrome_runni
         .await
         .map_err(|_| "the aborted pool connection's handler must end".to_owned())?;
 
-        tokio::time::timeout(operation_timeout, pool.relaunch_browser())
+        tokio::time::timeout(operation_timeout, pool.warm())
             .await
             .map_err(|_| "the pool relaunch timed out".to_owned())?
             .map_err(|error| format!("the pool must reconnect after its handler ends: {error}"))?;
@@ -2560,7 +2561,7 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let relaunched = pool.relaunch_browser().await;
+    let relaunched = pool.warm().await;
     assert_eq!(
         profile_drops_here().1,
         before.1,
@@ -5398,3 +5399,6 @@ async fn a_page_parked_on_a_crashed_browser_is_not_used_for_the_next_fetch() {
         "the fetch after the crash must use a page of the new Chrome, got {status:?}"
     );
 }
+
+#[path = "browser_pool_tests/teardown_reliability.rs"]
+mod teardown_reliability;
