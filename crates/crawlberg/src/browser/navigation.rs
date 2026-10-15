@@ -10,14 +10,15 @@ use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
-use super::cookies::{apply_prior_cookies, page_cookies};
+use super::cookies::{apply_prior_cookies, page_cookies, result_cookie_delta};
 use super::launch::resolve_default_user_agent;
 use crate::chrome_frame::{
-    committed_document, error_page_error, page_content, read_one_document_within, wait_for_selector,
+    committed_document, document_charset, error_page_error, page_content, read_one_document_within, wait_for_selector,
 };
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
+use crate::tower::BodyText;
 use crate::types::{BrowserCookie, BrowserWait, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -33,6 +34,51 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
+// ~keep The generated CDP schema exposes newer URLPattern syntax only; the browser config
+// ~keep promises the legacy '*' glob syntax, which Chrome's deprecated `urls` field accepts.
+#[derive(serde::Serialize)]
+struct BlockedUrls {
+    urls: Vec<String>,
+}
+
+impl chromiumoxide::Method for BlockedUrls {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Network.setBlockedURLs".into()
+    }
+}
+
+impl chromiumoxide::Command for BlockedUrls {
+    type Response = chromiumoxide::cdp::browser_protocol::network::SetBlockedUrLsReturns;
+}
+
+/// The command that sets the blocked URL patterns of a page, or `None` when the list is empty.
+///
+/// ~keep A page starts with no blocked pattern, and a page kept for another fetch gets its
+/// ~keep patterns cleared first (`clear_blocked_urls`). So an empty list needs no command, and a
+/// ~keep command that is not sent cannot fail the fetch.
+fn blocked_urls_command(patterns: &[String]) -> Option<BlockedUrls> {
+    (!patterns.is_empty()).then(|| BlockedUrls {
+        urls: patterns.to_vec(),
+    })
+}
+
+/// Clear the blocked URL patterns that the fetch with `config` set on `page`, before the page is
+/// kept for another fetch. Returns `false` when the page still has them: such a page is not kept.
+///
+/// ~keep The next fetch on the page can have other patterns, or none. A fetch with no pattern
+/// ~keep sends no command, so the patterns must not outlive the fetch that set them.
+pub(super) async fn clear_blocked_urls(page: &chromiumoxide::Page, config: &CrawlConfig) -> bool {
+    if config.browser.block_url_patterns.is_empty() {
+        return true;
+    }
+    let cleared = tokio::time::timeout(
+        config.browser.shutdown_timeout,
+        page.execute(BlockedUrls { urls: Vec::new() }),
+    )
+    .await;
+    matches!(cleared, Ok(Ok(_)))
+}
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -46,7 +92,28 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// than that ends on the redirect response at the limit, the way the HTTP fetch path ends. A
 /// navigation the page starts past the limit is dropped, and the page keeps its document. A
 /// response Chrome does not commit (204, 205, 304) ends the fetch on that response.
+///
+/// Setup, navigation and rendering use the deadline shared by every attempt of this fetch.
+/// The caller waits for the domain turn before acquiring the page.
 pub(super) async fn page_fetch(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    prior_cookies: Option<&[BrowserCookie]>,
+    want_screenshot: bool,
+    deadline: tokio::time::Instant,
+) -> Result<BrowserPage, CrawlError> {
+    tokio::time::timeout_at(
+        deadline,
+        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot),
+    )
+    .await
+    .unwrap_or_else(|_| Err(super::overall_deadline_error(config.browser.overall_timeout)))
+}
+
+/// Set `page` up and read `url` from it, in the turn of its domain.
+async fn fetch_in_turn(
     url: &str,
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
@@ -61,12 +128,22 @@ pub(super) async fn page_fetch(
     }
 
     apply_user_agent(page, config, stealth).await?;
+    if let Some(command) = blocked_urls_command(&config.browser.block_url_patterns) {
+        page.execute(command)
+            .await
+            .map_err(|error| CrawlError::browser_error(format!("failed to set blocked URL patterns: {error}")))?;
+    }
 
     if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
     }
 
     apply_prior_cookies(watch, prior_cookies).await?;
+    let baseline = if config.cookies_enabled {
+        page_cookies(watch).await?
+    } else {
+        Vec::new()
+    };
 
     let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
@@ -82,6 +159,9 @@ pub(super) async fn page_fetch(
     }
     let mut rendered = rendered?;
     rendered.cookies = page_cookies(watch).await?;
+    if config.cookies_enabled {
+        rendered.result_cookies = result_cookie_delta(&baseline, &rendered.cookies, url, &rendered.response.final_url);
+    }
     rendered.refused = refused;
     Ok(rendered)
 }
@@ -109,6 +189,9 @@ async fn render(
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 
+        if watch.has_intentional_terminal_response() {
+            return Ok(());
+        }
         wait_for_ready(page, config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
@@ -161,12 +244,15 @@ async fn render(
 
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
-    let ((html, screenshot), document) = read_one_document_within(
+    // ~keep The character set is read inside the read too: it is the one Chrome decoded this
+    // ~keep document with, and the HTML is that decoded text (crawlberg#606).
+    let ((html, charset, screenshot), document) = read_one_document_within(
         timeout,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
-            Ok((html, capture_screenshot(page, config, want_screenshot).await))
+            let charset = document_charset(page).await;
+            Ok((html, charset, capture_screenshot(page, config, want_screenshot).await))
         },
     )
     .await?;
@@ -203,17 +289,27 @@ async fn render(
         redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        result_cookies: Vec::new(),
+        text: BodyText::Decoded { charset },
     })
 }
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
     let redirects = watch.redirects_followed();
+    undecoded_page(stop, redirects, redirects > 0)
+}
+
+/// The page for a response the navigation did not show as a document. Its body, if it has
+/// one, is the bytes the server sent, so its character set is still to be decided.
+fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> BrowserPage {
     BrowserPage {
         response: stopped_response(stop),
         redirects,
-        redirected: redirects > 0,
+        redirected,
         refused: Vec::new(),
         cookies: Vec::new(),
+        result_cookies: Vec::new(),
+        text: BodyText::Undecoded,
     }
 }
 
@@ -276,22 +372,18 @@ fn error_page_outcome(
             crate::net::redact_url_credentials(&failed_url)
         )));
     }
-    Ok(BrowserPage {
-        response: stopped_response(StoppedResponse {
-            url: failed_url,
-            status: recorded.status,
-            headers: recorded.headers,
-            body: String::new(),
-            body_bytes: Vec::new(),
-            request_id: None,
-            terminal_intercepted: false,
-            ready: true,
-        }),
-        redirects,
-        redirected: recorded.redirects > 0,
-        refused: Vec::new(),
-        cookies: Vec::new(),
-    })
+    let redirected = recorded.redirects > 0;
+    let response = StoppedResponse {
+        url: failed_url,
+        status: recorded.status,
+        headers: recorded.headers,
+        body: String::new(),
+        body_bytes: Vec::new(),
+        request_id: None,
+        terminal_intercepted: false,
+        ready: true,
+    };
+    Ok(undecoded_page(response, redirects, redirected))
 }
 
 /// The response a navigation stopped on, as the HTTP fetch path reports it.
@@ -327,7 +419,9 @@ async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stea
     if resolved_ua.is_empty() {
         return Ok(());
     }
-    page.set_user_agent(&resolved_ua)
+    let mut params = chromiumoxide::cdp::browser_protocol::emulation::SetUserAgentOverrideParams::new(&resolved_ua);
+    params.user_agent_metadata = super::user_agent::metadata(&resolved_ua);
+    page.execute(params)
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     Ok(())
@@ -465,6 +559,20 @@ mod tests {
             "https://user:secret@10.0.0.1/".to_owned(),
             "denied by SSRF policy: private_network".to_owned(),
         ))
+    }
+
+    #[test]
+    fn an_empty_blocked_url_list_sends_no_command() {
+        assert!(blocked_urls_command(&[]).is_none());
+        let patterns = ["*.png".to_owned(), "*://ads.example/*".to_owned()];
+        let command = blocked_urls_command(&patterns).expect("a list with patterns sends the command");
+        assert_eq!(command.urls, patterns);
+    }
+
+    #[test]
+    fn the_command_that_clears_the_patterns_of_a_kept_page_carries_an_empty_list() {
+        let empty = serde_json::to_value(BlockedUrls { urls: Vec::new() }).expect("serialize empty patterns");
+        assert_eq!(empty, serde_json::json!({"urls": []}));
     }
 
     #[test]

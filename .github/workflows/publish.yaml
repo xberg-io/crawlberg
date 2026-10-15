@@ -3162,7 +3162,7 @@ jobs:
         uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
         with:
           ai-rulez-version: "5.3.0"
-          source-revision: "1dd46d774f156f3d170ecd1b702598b12d1eaf5b"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
       - name: Verify generated plugin bundles before publishing
         run: |
           ai-rulez verify --plugin
@@ -3258,7 +3258,7 @@ jobs:
         uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
         with:
           ai-rulez-version: "5.3.0"
-          source-revision: "1dd46d774f156f3d170ecd1b702598b12d1eaf5b"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
       - name: Verify plugin source and generated artifacts
         uses: xberg-io/actions/verify-ai-rulez-plugin@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
         with:
@@ -3518,12 +3518,13 @@ jobs:
         uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
         with:
           ai-rulez-version: "5.3.0"
-          source-revision: "1dd46d774f156f3d170ecd1b702598b12d1eaf5b"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
       - name: Verify public skill exports
         run: python3 scripts/sync_public_skills.py --check
       - name: Package all supported plugin runtimes
-        uses: xberg-io/actions/package-ai-rulez-plugin@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+        uses: xberg-io/actions/package-ai-rulez-plugin@66e9a172c28ae7e57496fe92de1ab74f2a604194
         with:
+          cursor-marketplace: "true"
           tag: ${{ needs.prepare.outputs.tag }}
           config-directory: .ai-rulez
           version-sync-script: scripts/sync_plugin_version.py
@@ -3546,3 +3547,29 @@ jobs:
           assets: |
             dist/*-plugins-*.tar.gz
             dist/*-plugins-*.tar.gz.sha256
+
+  plugin-release-report:
+    name: Verify all plugin distribution jobs succeeded
+    needs: [prepare, publish-plugin-artifacts, publish-plugin-opencode, publish-plugin-hermes]
+    if: always() && needs.prepare.outputs.dry_run != 'true' && startsWith(needs.prepare.outputs.tag, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject failed or skipped plugin distribution
+        env:
+          RESULTS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+
+          results = json.loads(os.environ['RESULTS_JSON'])
+          expected = {'prepare', 'publish-plugin-artifacts', 'publish-plugin-opencode', 'publish-plugin-hermes'}
+          if set(results) != expected:
+              raise SystemExit('Expected preparation and exactly three plugin distribution jobs')
+          failed = [name for name, job in results.items() if job['result'] != 'success']
+          if failed:
+              raise SystemExit(f"Incomplete plugin distribution: {', '.join(failed)}")
+          print('Verified preparation and 3/3 plugin distribution jobs succeeded')
+          PYTHON

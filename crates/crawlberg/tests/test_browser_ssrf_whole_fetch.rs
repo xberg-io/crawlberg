@@ -24,6 +24,8 @@ use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
+#[path = "common/foreign_network.rs"]
+mod foreign_network;
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
 const SECRET_MARKER: &str = "denied-marker";
@@ -307,22 +309,61 @@ async fn cancelled_pooled_scrape_leaks_nothing() {
     let test_name = "cancelled_pooled_scrape_leaks_nothing";
     let denied = denied_server().await;
     let d = denied_url(&denied);
-    let (_site, seed) = seed_site(&format!(
+    let (site, seed) = seed_site(&format!(
         "<p>start</p><script>setInterval(() => {{ for (let k = 0; k < 20; k++) fetch({d:?} + '?' + Math.random(), {{ mode: 'no-cors' }}).catch(() => {{}}); window.open({d:?}); }}, 1);</script>"
     ))
     .await;
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     let mut config = pooled_config(&pool);
     config.browser.extra_wait = Some(Duration::from_secs(5));
+    let seed_timeout = config.browser.timeout;
     let engine = create_engine(Some(config)).expect("engine must build");
-    if tokio::time::timeout(Duration::from_millis(2500), scrape(&engine, &seed))
-        .await
-        .is_ok()
-    {
-        // ~keep The scrape ended before the timeout: Chrome is missing or the page failed.
-        pool.shutdown().await;
-        return;
-    }
+    let cancelled = {
+        let fetch = scrape(&engine, &seed);
+        tokio::pin!(fetch);
+        let seed_loaded = async {
+            loop {
+                if site
+                    .received_requests()
+                    .await
+                    .expect("record seed requests")
+                    .iter()
+                    .any(|request| request.url.path() == "/")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::select! {
+            result = &mut fetch => {
+                if let Err(CrawlError::BrowserError { message, .. }) = &result
+                    && is_missing_chrome_message(message)
+                {
+                    announce_chrome_skip(test_name, message);
+                    pool.shutdown().await;
+                    return;
+                }
+                panic!("{test_name}: the flood must remain running until the seed loads: {result:?}");
+            }
+            loaded = tokio::time::timeout(seed_timeout, seed_loaded) => {
+                loaded.expect("the cancellation must exercise a loaded seed within the browser timeout");
+            }
+        }
+        tokio::time::timeout(Duration::from_millis(2500), &mut fetch).await
+    };
+    assert!(
+        site.received_requests()
+            .await
+            .expect("record seed requests")
+            .iter()
+            .any(|request| request.url.path() == "/"),
+        "{test_name}: the cancellation must exercise a loaded seed"
+    );
+    assert!(
+        cancelled.is_err(),
+        "{test_name}: the flood must still be running when cancelled: {cancelled:?}"
+    );
     assert_refused(test_name, &denied).await;
     let (_next_site, next_seed) = seed_site("<p>next</p>").await;
     let next = run(test_name, &next_seed, pooled_config(&pool)).await;
@@ -469,12 +510,293 @@ async fn scrape_still_sends_allowed_requests_from_workers_frames_and_popups() {
     }
 }
 
+#[derive(Debug, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum ForeignFailurePhase {
+    Fetch,
+    Body,
+}
+
+#[derive(Debug, serde::Deserialize, PartialEq)]
+enum ForeignFailureName {
+    AbortError,
+    TypeError,
+    Other,
+}
+
+#[derive(Debug, serde::Deserialize, PartialEq)]
+struct ForeignFailure {
+    phase: ForeignFailurePhase,
+    name: ForeignFailureName,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ForeignProbeState {
+    loads: u64,
+    headers: u64,
+    continued: u64,
+    refused: u64,
+    failures: Vec<ForeignFailure>,
+}
+
+fn foreign_probe_script(target: &str) -> String {
+    format!(
+        r#"const tally = key => sessionStorage.setItem(key, Number(sessionStorage.getItem(key) || 0) + 1);
+        tally('loads');
+        let phase = 'fetch';
+        const controller = new AbortController();
+        window.abortForeignProbe = () => controller.abort();
+        window.foreignProbe = fetch({target:?}, {{ mode: 'cors', signal: controller.signal }})
+            .then(response => {{ tally('headers'); phase = 'body'; return response.text(); }})
+            .then(body => {{ window.foreignProbeBody = body; tally('continued'); }})
+            .catch(error => {{
+                tally('refused');
+                const failures = JSON.parse(sessionStorage.getItem('failures') || '[]');
+                if (failures.length < 16) {{
+                    const name = ['AbortError', 'TypeError'].includes(error.name) ? error.name : 'Other';
+                    failures.push({{phase, name}});
+                    sessionStorage.setItem('failures', JSON.stringify(failures));
+                }}
+            }})
+            .finally(() => {{
+                if (Number(sessionStorage.getItem('loads')) < (window.foreignProbeMaxLoads || Infinity)) {{
+                    setTimeout(() => location.reload(), 100);
+                }}
+            }});"#
+    )
+}
+
+const FOREIGN_PROBE_STATE: &str = "({loads: Number(sessionStorage.getItem('loads') || 0), \
+    headers: Number(sessionStorage.getItem('headers') || 0), \
+    continued: Number(sessionStorage.getItem('continued') || 0), \
+    refused: Number(sessionStorage.getItem('refused') || 0), \
+    failures: JSON.parse(sessionStorage.getItem('failures') || '[]')})";
+
+async fn foreign_probe_state(page: &chromiumoxide::Page) -> Result<ForeignProbeState, chromiumoxide::error::CdpError> {
+    page.evaluate(FOREIGN_PROBE_STATE)
+        .await?
+        .into_value()
+        .map_err(Into::into)
+}
+
+struct HeldForeignBody {
+    url: String,
+    headers_sent: tokio::sync::oneshot::Receiver<()>,
+    release: tokio::sync::watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HeldForeignBody {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+const FOREIGN_PROBE_BODY: &str = "foreign-body-complete";
+
+async fn respond_with_held_foreign_body(
+    stream: &mut tokio::net::TcpStream,
+    released: &mut tokio::sync::watch::Receiver<bool>,
+    headers_sent: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const MAX_REQUEST_BYTES: usize = 8192;
+    const READ_BUFFER_BYTES: usize = 1024;
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; READ_BUFFER_BYTES];
+    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        let read = stream.read(&mut buffer).await.expect("probe request");
+        assert_ne!(read, 0);
+        request.extend_from_slice(&buffer[..read]);
+        assert!(request.len() <= MAX_REQUEST_BYTES);
+    }
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        FOREIGN_PROBE_BODY.len()
+    );
+    stream.write_all(headers.as_bytes()).await.expect("probe headers");
+    if let Some(sent) = headers_sent.take() {
+        let _ = sent.send(());
+    }
+    if released.wait_for(|release| *release).await.is_ok() {
+        let _ = stream.write_all(FOREIGN_PROBE_BODY.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    }
+}
+
+async fn held_foreign_body() -> HeldForeignBody {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("probe listener");
+    let url = format!("http://{}/probe", listener.local_addr().unwrap());
+    let (headers_sent, headers_received) = tokio::sync::oneshot::channel();
+    let (release, mut released) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(async move {
+        let mut headers_sent = Some(headers_sent);
+        while let Ok((mut stream, _)) = listener.accept().await {
+            respond_with_held_foreign_body(&mut stream, &mut released, &mut headers_sent).await;
+        }
+    });
+    HeldForeignBody {
+        url,
+        headers_sent: headers_received,
+        release,
+        task,
+    }
+}
+
+async fn launch_foreign_probe_browser(
+    test_name: &str,
+) -> (chromiumoxide::Browser, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    let profile = tempfile::tempdir().expect("probe Chrome profile");
+    let config = chromiumoxide::browser::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(profile.path())
+        .build()
+        .expect("probe Chrome configuration");
+    let (browser, handler) = chromiumoxide::Browser::launch(config)
+        .await
+        .unwrap_or_else(|error| panic!("{test_name}: actual Chrome is required for this control: {error}"));
+    (browser, common::spawn_handler(handler), profile)
+}
+
+async fn wait_for_foreign_probe_headers(page: &chromiumoxide::Page) -> ForeignProbeState {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = foreign_probe_state(page).await.expect("probe state");
+            if state.headers > 0 {
+                break state;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("probe must observe response headers")
+}
+
+async fn release_foreign_body_and_wait_for_reload(page: &chromiumoxide::Page, body: &HeldForeignBody) {
+    use chromiumoxide::cdp::browser_protocol::page::EventDomContentEventFired;
+    use futures::StreamExt as _;
+    let mut reloaded = page
+        .event_listener::<EventDomContentEventFired>()
+        .await
+        .expect("reload listener");
+    body.release.send(true).expect("release body");
+    tokio::time::timeout(Duration::from_secs(5), reloaded.next())
+        .await
+        .expect("completed response must permit reload")
+        .expect("reload event");
+}
+
+async fn completed_foreign_probe(page: &chromiumoxide::Page) -> ForeignProbeState {
+    page.evaluate(format!("window.foreignProbe.then(() => {FOREIGN_PROBE_STATE})"))
+        .await
+        .expect("completed probe")
+        .into_value()
+        .expect("completed probe state")
+}
+
+#[tokio::test]
+async fn should_wait_for_the_foreign_response_body_before_reloading() {
+    let test_name = "should_wait_for_the_foreign_response_body_before_reloading";
+    let (mut browser, handler, _profile) = launch_foreign_probe_browser(test_name).await;
+    let mut body = held_foreign_body().await;
+    let (site, seed) = seed_site(&format!(
+        "<script>window.foreignProbeMaxLoads = 2; {}</script>",
+        foreign_probe_script(&body.url)
+    ))
+    .await;
+    let page = browser.new_page("about:blank").await.expect("probe tab");
+    page.goto(seed).await.expect("probe navigation");
+    tokio::time::timeout(Duration::from_secs(5), &mut body.headers_sent)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = wait_for_foreign_probe_headers(&page).await;
+    release_foreign_body_and_wait_for_reload(&page, &body).await;
+    let after = completed_foreign_probe(&page).await;
+    let completed_body = page
+        .evaluate("window.foreignProbeBody")
+        .await
+        .and_then(|result| result.into_value::<String>().map_err(Into::into))
+        .ok();
+    let received = site.received_requests().await.expect("probe recording");
+    foreign_network::shutdown_owned_browser(&mut browser, handler)
+        .await
+        .expect("probe cleanup");
+    assert_eq!(
+        (before.loads, before.headers, before.continued, before.refused),
+        (1, 1, 0, 0)
+    );
+    assert_eq!(before.failures, []);
+    assert_eq!(
+        (after.loads, after.headers, after.continued, after.refused),
+        (2, 2, 2, 0)
+    );
+    assert_eq!(after.failures, []);
+    assert_eq!(completed_body.as_deref(), Some(FOREIGN_PROBE_BODY));
+    assert_eq!(received.iter().filter(|request| request.url.path() == "/").count(), 2);
+}
+
+#[tokio::test]
+async fn should_count_an_explicitly_aborted_foreign_fetch_as_a_rejection() {
+    let test_name = "should_count_an_explicitly_aborted_foreign_fetch_as_a_rejection";
+    let (mut browser, handler, _profile) = launch_foreign_probe_browser(test_name).await;
+    let (site, seed) = seed_site("<p>probe</p>").await;
+    Mock::given(path("/held"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+        .mount(&site)
+        .await;
+    let page = browser.new_page(&seed).await.expect("probe tab");
+    let script = format!(
+        "window.foreignProbeMaxLoads = 1; {}",
+        foreign_probe_script(&format!("{seed}held"))
+    );
+    page.evaluate(format!("(() => {{{script}}})()"))
+        .await
+        .expect("start probe");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if site
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.url.path() == "/held")
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("probe must reach its server before cancellation");
+    page.evaluate("window.abortForeignProbe()").await.expect("cancel probe");
+    let state = completed_foreign_probe(&page).await;
+    foreign_network::shutdown_owned_browser(&mut browser, handler)
+        .await
+        .expect("probe cleanup");
+    assert_eq!((state.headers, state.continued, state.refused), (0, 0, 1));
+    assert_eq!(
+        state.failures,
+        [ForeignFailure {
+            phase: ForeignFailurePhase::Fetch,
+            name: ForeignFailureName::AbortError
+        }]
+    );
+}
+
 /// On an external browser used without IP denials, another client's tab keeps working while
 /// crawlberg scrapes, and Crawlberg does not claim a socket-denial boundary it cannot own.
 #[tokio::test]
 async fn an_external_browser_keeps_other_clients_tabs_working() {
     let test_name = "an_external_browser_keeps_other_clients_tabs_working";
-    let private = denied_server().await;
+    let private = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(html(SECRET_MARKER).append_header("access-control-allow-origin", "*"))
+        .mount(&private)
+        .await;
     let d = denied_url(&private);
     let Some(browser_config) = common::expect_chrome_or_skip(
         test_name,
@@ -486,25 +808,30 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     ) else {
         return;
     };
-    let Some((other_client, handler)) =
+    let Some((mut other_client, handler)) =
         common::expect_chrome_or_skip(test_name, chromiumoxide::Browser::launch(browser_config).await)
     else {
         return;
     };
-    common::spawn_handler(handler);
-    // ~keep The tab keeps its own tally in sessionStorage, which lasts across its reloads: a
-    // ~keep fetch the check refuses rejects, one it continues resolves. The next reload waits
-    // ~keep for the fetch to settle, so no fetch is cut off by its own page's unload.
+    let handler_task = common::spawn_handler(handler);
+    // ~keep Wait for a readable body before reloading; a no-cors response exposes no body to drain.
     let (_other_site, other_seed) = seed_site(&format!(
-        "<script>const tally = (key) => sessionStorage.setItem(key, Number(sessionStorage.getItem(key) || 0) + 1); \
-         fetch({d:?} + '?other', {{ mode: 'no-cors' }}).then(() => tally('continued'), () => tally('refused')) \
-         .finally(() => setTimeout(() => location.reload(), 100));</script>"
+        "<script>{}</script>",
+        foreign_probe_script(&format!("{d}?other"))
     ))
     .await;
     let other_tab = other_client
-        .new_page(other_seed.as_str())
+        .new_page("about:blank")
         .await
         .expect("the other client's tab must open");
+    // ~keep Observe before navigation so failures preceding interception remain distinguishable.
+    let observer = foreign_network::Observer::start(&other_tab)
+        .await
+        .expect("foreign network observer");
+    other_tab
+        .goto(other_seed.as_str())
+        .await
+        .expect("the other client's tab must navigate");
     let (_site, seed) = seed_site(&format!("<p>start</p><script>window.open({d:?} + '?popup');</script>")).await;
     let mut config = config();
     config.ssrf.deny_private = false;
@@ -518,24 +845,33 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
             .count()
     };
     let before = count(&private.received_requests().await.expect("recording"), "other");
+    let before_probe = foreign_probe_state(&other_tab).await.ok();
+    // ~keep Events drain asynchronously; these snapshots bound observation, not exact CDP failure time.
+    let before_failures = observer.snapshot();
     let result = run(test_name, &seed, config).await;
     let received = private.received_requests().await.expect("recording");
     if result.is_none() {
+        drop(observer);
+        foreign_network::shutdown_owned_browser(&mut other_client, handler_task)
+            .await
+            .expect("owned external browser cleanup");
         return;
     }
     let during = count(&received, "other") - before;
-    let mut refused = None;
+    let mut probe = None;
     for _ in 0..50 {
-        if let Ok(value) = other_tab
-            .evaluate("Number(sessionStorage.getItem('refused') || 0)")
-            .await
-            .and_then(|result| result.into_value::<u64>().map_err(Into::into))
-        {
-            refused = Some(value);
+        if let Ok(value) = foreign_probe_state(&other_tab).await {
+            probe = Some(value);
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let refused = probe.as_ref().map(|state| state.refused);
+    let failures = observer.snapshot();
+    drop(observer);
+    foreign_network::shutdown_owned_browser(&mut other_client, handler_task)
+        .await
+        .expect("owned external browser cleanup");
     // ~keep The other tab reloads 100 ms after each fetch settles, so its requests come from
     // ~keep documents loaded while crawlberg's check is on; a document loaded before that is
     // ~keep never paused. No count of them is asserted beyond one: load decides how many fit
@@ -547,7 +883,8 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     assert_eq!(
         refused,
         Some(0),
-        "{test_name}: the check must refuse none of the other client's requests"
+        "{test_name}: the check must refuse none of the other client's requests; \
+         pre_scrape_probe={before_probe:?}, probe={probe:?}, pre_scrape_network={before_failures:?}, network={failures:?}"
     );
     assert!(
         count(&received, "popup") >= 1,
@@ -572,6 +909,18 @@ async fn an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out() {
     let Some(mut other_client) = common::launch_external_chrome_with_cookie(test_name, &seed).await else {
         return;
     };
+    let baseline = other_client
+        .execute(GetCookiesParams::default())
+        .await
+        .expect("setup: the external browser must list its cookies")
+        .result
+        .cookies;
+    let owner = baseline.iter().find(|cookie| cookie.name == "owner");
+    assert_eq!(
+        owner.map(|cookie| cookie.value.as_str()),
+        Some("1"),
+        "setup: owner cookie baseline"
+    );
     let mut config = config();
     config.ssrf.deny_private = false;
     config.browser.endpoint = Some(other_client.websocket_address().clone());
@@ -601,7 +950,8 @@ async fn an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out() {
     }
     assert!(
         sent.contains("owner=1"),
-        "{test_name}: the page must start with the external browser's cookie, sent {sent:?}"
+        "{test_name}: setup verified owner=1; the page-request stage must send it; cookie_header_present={}",
+        !sent.is_empty()
     );
     assert_eq!(
         names,

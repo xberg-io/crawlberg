@@ -14,7 +14,27 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
 /// html-to-markdown-rs as the conversion engine for all formats
 /// (markdown, plain text, djot).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "output_format",
+        "preprocessing_preset",
+        "remove_navigation",
+        "remove_forms",
+        "strip_tags",
+        "preserve_tags",
+        "exclude_selectors",
+        "skip_images",
+        "max_depth",
+        "wrap",
+        "wrap_width",
+        "include_document_structure",
+        "extract_metadata"
+    ])
+)]
 pub struct ContentConfig {
     /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
     pub output_format: String,
@@ -67,6 +87,18 @@ pub struct ContentConfig {
     /// is populated independently by `crate::html::metadata::extract_metadata` from the
     /// parsed DOM, so turning this off does not lose any metadata field. ~keep
     pub extract_metadata: bool,
+    /// Replace paragraph source line breaks with spaces. Default: `false`.
+    pub strip_newlines: bool,
+    /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
+    pub bullets: String,
+    /// Spaces per nested list level. Default: `2`.
+    pub list_indent_width: usize,
+    /// Markdown emphasis marker: `"*"` (default) or `"_"`.
+    pub strong_em_symbol: String,
+    /// Render tables without column-width padding. Default: `false`.
+    pub compact_tables: bool,
+    /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
+    pub keep_inline_images_in: Vec<String>,
 }
 
 impl Default for ContentConfig {
@@ -83,6 +115,12 @@ impl Default for ContentConfig {
             max_depth: None,
             wrap: false,
             wrap_width: 80,
+            strip_newlines: false,
+            bullets: "-*+".to_owned(),
+            list_indent_width: 2,
+            strong_em_symbol: "*".to_owned(),
+            compact_tables: false,
+            keep_inline_images_in: Vec::new(),
             include_document_structure: true,
             extract_metadata: true,
         }
@@ -106,9 +144,13 @@ pub struct BrowserConfig {
     pub timeout: Duration,
     /// Overall deadline for a single browser fetch, covering browser launch (or
     /// page acquisition from a shared pool), page setup, navigation, rendering,
-    /// and screenshot capture. Must exceed `timeout` to leave room for launch
-    /// and setup overhead; a fetch that has not returned within this deadline
-    /// fails with a timeout error (in milliseconds when serialized).
+    /// screenshot capture, and every retry of the fetch. Must exceed `timeout`
+    /// to leave room for launch and setup overhead; a fetch that has not
+    /// returned within this deadline fails with a timeout error (in
+    /// milliseconds when serialized). The wait for the delay of the domain
+    /// (`rate_limit_ms`) is not counted, so a delay longer than this deadline
+    /// does not fail the page. A scrape with the native backend is not bounded
+    /// by this deadline.
     ///
     /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
     /// not counted against this deadline: an already-computed result is
@@ -134,7 +176,7 @@ pub struct BrowserConfig {
     pub proxy: Option<ProxyConfig>,
     /// URL patterns to block before the network request fires. Supports `*`
     /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-    /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+    /// both browser backends.
     #[serde(default)]
     pub block_url_patterns: Vec<String>,
     /// JavaScript snippet evaluated after navigation completes.
@@ -155,7 +197,8 @@ pub struct BrowserConfig {
     pub capture_network_events: bool,
     /// Enable session affinity: reuse chromiumoxide Pages for same-domain
     /// requests so cookies + fingerprint + solved challenges persist.
-    /// Default: true. When false, each request gets a fresh Page.
+    /// Default: true. Session reuse requires `CrawlConfig.browser_session_pool` alongside a browser pool.
+    /// Without a session pool, or when false, each request gets a fresh Page.
     pub session_affinity: bool,
     /// Chrome or Chromium executable to launch. When set, crawlberg launches only this
     /// binary, and a path that is missing or not executable is an error that names the
@@ -176,6 +219,21 @@ pub struct BrowserConfig {
     /// shared browser pool.
     #[cfg_attr(alef, alef(sensitive))]
     pub chrome_args: Vec<String>,
+    /// Launch Chrome on a private debugging pipe, not on a debugging port. Default: `false`.
+    /// With `true`, the launched Chrome listens on no TCP port, and it exits when the last
+    /// process that holds the pipe ends: the process that started it, and any process which
+    /// that one forked without `exec`. Unix only: on Windows the launch uses the debugging
+    /// port. Chromiumoxide backend only: ignored, with a warning, when `endpoint` is set and
+    /// with the native backend. A browser pool that the engine creates takes this key. A browser
+    /// pool that the caller supplies uses its own `private_pipe` setting for scrapes and crawls,
+    /// and this key is then ignored for them; a warning says so when this key is `true` and the
+    /// launch options of the pool are different. `interact` launches its own Chrome and takes
+    /// this key.
+    // ~keep Not in the generated bindings: a new constructor argument is source-breaking in PHP,
+    // ~keep Python, WebAssembly, Java, Swift, Dart and Zig with alef 0.109.1. Remove the skip with
+    // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
+    #[cfg_attr(alef, alef(skip))]
+    pub private_pipe: bool,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -209,6 +267,7 @@ impl std::fmt::Debug for BrowserConfig {
             session_affinity,
             chrome_path,
             chrome_args,
+            private_pipe,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -234,6 +293,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("session_affinity", session_affinity)
             .field("chrome_path", chrome_path)
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
+            .field("private_pipe", private_pipe)
             .finish()
     }
 }
@@ -258,6 +318,7 @@ impl Default for BrowserConfig {
             session_affinity: true,
             chrome_path: None,
             chrome_args: Vec::new(),
+            private_pipe: false,
         }
     }
 }
@@ -341,7 +402,8 @@ pub(crate) fn check_chrome_executable(section: &str, path: &Path) -> Result<(), 
     Ok(())
 }
 
-/// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set.
+/// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set,
+/// and that `private_pipe` has none, when it is on.
 /// `reason` completes the sentence "... are ignored when ...". The warning gives the number of
 /// flags, not their values, for the reason given on the `Debug` impl of `BrowserConfig`.
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
@@ -352,6 +414,9 @@ pub(crate) fn warn_ignored_launch_options(browser: &BrowserConfig, reason: &str)
             chrome_args = %format!("{} flags", browser.chrome_args.len()),
             "browser.chrome_path and browser.chrome_args are ignored when {reason}"
         );
+    }
+    if browser.private_pipe {
+        tracing::warn!("browser.private_pipe is ignored when {reason}");
     }
 }
 

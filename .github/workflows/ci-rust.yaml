@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+      # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+      - "vendor/crawlberg-chromiumoxide/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "fuzz/Cargo.toml"
@@ -17,6 +20,8 @@ on:
       - "e2e/rust/Cargo.lock"
       - "rust-toolchain.toml"
       - "Taskfile.yml"
+      - "scripts/ci/prepare-chrome-runtime.sh"
+      - "scripts/ci/test_chrome_runtime.py"
       - ".task/languages/rust.yml"
       - ".task/workflows/dev-cycle.yml"
       # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
@@ -38,6 +43,9 @@ on:
   #   branches: [main]
   #   paths:
   #     - "crates/**"
+  #     # ~keep The Rust test task runs the tests of the vendored browser driver, which is not
+  #     # ~keep under crates/. Without this pattern a commit that changed only the driver skipped them.
+  #     - "vendor/crawlberg-chromiumoxide/**"
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "fuzz/Cargo.toml"
@@ -50,6 +58,8 @@ on:
   #     - "e2e/rust/Cargo.lock"
   #     - "rust-toolchain.toml"
   #     - "Taskfile.yml"
+  #     - "scripts/ci/prepare-chrome-runtime.sh"
+  #     - "scripts/ci/test_chrome_runtime.py"
   #     - ".task/languages/rust.yml"
   #     - ".task/workflows/dev-cycle.yml"
   #     # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
@@ -155,9 +165,17 @@ jobs:
       # crates/crawlberg/tests (test_browser_pool_lifecycle, test_browser_profile,
       # test_browser_screenshot, test_interact) had no Chrome binary at all and silently skipped
       # via common::is_missing_chrome_message on every CI run.
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime:test
+
+      - name: Prepare Chromium snap runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime
+
       - name: Setup Chrome
         id: chrome
-        uses: xberg-io/actions/setup-chrome@v1
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
 
       - name: Prepare Chrome app bundle
         id: prepared_chrome
@@ -175,6 +193,11 @@ jobs:
           LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH || '' }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH || '' }}
           DYLD_FALLBACK_LIBRARY_PATH: ${{ env.DYLD_FALLBACK_LIBRARY_PATH || '' }}
+
+      # ~keep Compiling each feature cannot catch a native-only crawl silently choosing HTTP (#690).
+      - name: Test native browser without Chromiumoxide
+        run: task rust:test:native-only
+        shell: bash
 
       - name: Check no-default-features
         run: cargo check -p crawlberg --no-default-features
@@ -201,6 +224,29 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo check -p crawlberg --target wasm32-unknown-unknown --locked
         shell: bash
+
+  windows-browser:
+    name: Windows browser lifecycle
+    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@7c5c5d0e97742aad77838328385086d7c48735ba
+        with:
+          cache-key-prefix: windows-browser
+      - name: Install Task
+        uses: xberg-io/actions/install-task@7c5c5d0e97742aad77838328385086d7c48735ba
+      - name: Setup Chrome
+        id: chrome
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
+      - name: Run Windows browser tests
+        run: task rust:test:windows-browser
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
 
   # ~keep Every feature-configuration bug this workflow has accumulated a step for was the
   # ~keep same bug: a configuration nothing compiled. --all-features forces `browser` on,

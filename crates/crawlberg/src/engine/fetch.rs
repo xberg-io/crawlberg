@@ -285,7 +285,7 @@ impl CrawlEngine {
         native_state: Option<&mut NativeRenderState>,
         browser_cookies: Option<&[BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        #[cfg(feature = "browser")]
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
         if self.request_will_use_browser() {
             #[cfg(feature = "browser-native")]
             if self.config.browser.backend == BrowserBackend::Native
@@ -293,21 +293,16 @@ impl CrawlEngine {
             {
                 return self.native_render(url, state).await;
             }
-            let pool = self.config.browser_pool.as_deref();
-            #[cfg(feature = "browser-native")]
-            let page = crate::browser::browser_fetch(
-                url,
-                &self.config,
-                browser_cookies,
-                pool,
-                false,
-                self.native_browser_executor.as_deref(),
-            )
-            .await?;
-            #[cfg(not(feature = "browser-native"))]
-            let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
-            let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
-            return Ok((crawl_resp, true));
+            #[cfg(feature = "browser")]
+            {
+                let page = self.browser_fetch(url, browser_cookies, false).await?;
+                let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
+                return Ok((crawl_resp, true));
+            }
+            #[cfg(not(feature = "browser"))]
+            return Err(CrawlError::browser_error(
+                "native browser render state is not available",
+            ));
         }
 
         let plan = DispatchPlan::from_config(&self.config);
@@ -315,20 +310,7 @@ impl CrawlEngine {
         if matches!(plan.effective_strategy, EscalationStrategy::BypassFirst)
             && let Some(provider) = self.config.dispatch.as_ref().and_then(|d| d.bypass.as_ref())
         {
-            let bypass_resp = provider.fetch(url).await?;
-            return Ok((
-                crate::tower::CrawlResponse {
-                    status: bypass_resp.status,
-                    content_type: bypass_resp.content_type,
-                    body: bypass_resp.body,
-                    body_bytes: bypass_resp.body_bytes,
-                    headers: bypass_resp.headers,
-                    landed: None,
-                    sent_user_agent: None,
-                    soft_error: false,
-                },
-                false,
-            ));
+            return Ok((provider.fetch(url).await?.into_crawl_response(), false));
         }
 
         self.run_dispatch_loop(url, &plan, forced_user_agent, native_state, browser_cookies)

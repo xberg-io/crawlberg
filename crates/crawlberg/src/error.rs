@@ -271,6 +271,19 @@ pub enum CrawlError {
         #[source]
         source: Option<ErrorSource>,
     },
+    /// The page was fetched but could not be converted to Markdown.
+    ///
+    /// A crawl event and a batch item carry an error as text only. There, the text starts with
+    /// `conversion_failed:`, and that tag is stable.
+    #[error("conversion_failed: {message}")]
+    ConversionFailed {
+        /// Human-readable description of the failure. It names the page and the cause.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The browser failed to launch, connect, or navigate.
     #[error("browser: {message}")]
     BrowserError {
@@ -311,6 +324,18 @@ pub enum CrawlError {
         #[source]
         source: Option<ErrorSource>,
     },
+    /// The HTTP redirect chain exceeded the configured redirect limit.
+    #[error("too_many_redirects: {message}")]
+    // ~keep Stable ABI code 100 distinguishes this error from SsrfError's same-named variant; never renumber.
+    #[cfg_attr(alef, alef(error_code = 100))]
+    TooManyRedirects {
+        /// Human-readable description of the exhausted redirect chain.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
     #[error("ssrf_policy_violation: {url} - {reason}")]
     SsrfPolicyViolation {
@@ -336,6 +361,7 @@ pub enum CrawlError {
 }
 
 message_constructors! {
+    TooManyRedirects => (too_many_redirects, too_many_redirects_with_source),
     NotFound => (not_found, not_found_with_source),
     Unauthorized => (unauthorized, unauthorized_with_source),
     Forbidden => (forbidden, forbidden_with_source),
@@ -348,6 +374,7 @@ message_constructors! {
     Dns => (dns, dns_with_source),
     Ssl => (ssl, ssl_with_source),
     DataLoss => (data_loss, data_loss_with_source),
+    ConversionFailed => (conversion_failed, conversion_failed_with_source),
     BrowserError => (browser_error, browser_error_with_source),
     BrowserTimeout => (browser_timeout, browser_timeout_with_source),
     InvalidConfig => (invalid_config, invalid_config_with_source),
@@ -628,6 +655,23 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
 fn is_body_data_loss(e: &reqwest::Error, chain: &str) -> bool {
     let chain = chain_without_request_url(e, chain);
     chain.contains("content-length") || chain.contains("truncate") || chain.contains("incomplete")
+}
+
+/// Why a browser fetch failed when the browser's CDP connection closed under it. A crawl reports
+/// a page lost this way as its own error: the loss is the browser's, not the page's. ~keep
+#[derive(Debug, Error)]
+#[error("the browser's CDP connection closed")]
+pub(crate) struct BrowserConnectionClosed {
+    #[source]
+    pub(crate) source: Option<ErrorSource>,
+}
+
+impl CrawlError {
+    /// Whether this is a browser error whose cause is [`BrowserConnectionClosed`].
+    pub(crate) fn browser_connection_closed(&self) -> bool {
+        matches!(self, Self::BrowserError { source: Some(source), .. }
+            if std::error::Error::source(source).is_some_and(|cause| cause.is::<BrowserConnectionClosed>()))
+    }
 }
 
 #[cfg(test)]

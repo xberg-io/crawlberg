@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
@@ -578,9 +579,13 @@ class BrowserConfig {
 
   /// Overall deadline for a single browser fetch, covering browser launch (or
   /// page acquisition from a shared pool), page setup, navigation, rendering,
-  /// and screenshot capture. Must exceed `timeout` to leave room for launch
-  /// and setup overhead; a fetch that has not returned within this deadline
-  /// fails with a timeout error (in milliseconds when serialized).
+  /// screenshot capture, and every retry of the fetch. Must exceed `timeout`
+  /// to leave room for launch and setup overhead; a fetch that has not
+  /// returned within this deadline fails with a timeout error (in
+  /// milliseconds when serialized). The wait for the delay of the domain
+  /// (`rate_limit_ms`) is not counted, so a delay longer than this deadline
+  /// does not fail the page. A scrape with the native backend is not bounded
+  /// by this deadline.
   ///
   /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
   /// not counted against this deadline: an already-computed result is
@@ -608,7 +613,7 @@ class BrowserConfig {
 
   /// URL patterns to block before the network request fires. Supports `*`
   /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-  /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
+  /// both browser backends.
   final List<String> blockUrlPatterns;
 
   /// JavaScript snippet evaluated after navigation completes.
@@ -628,7 +633,8 @@ class BrowserConfig {
 
   /// Enable session affinity: reuse chromiumoxide Pages for same-domain
   /// requests so cookies + fingerprint + solved challenges persist.
-  /// Default: true. When false, each request gets a fresh Page.
+  /// Default: true. Session reuse requires `CrawlConfig.browser_session_pool` alongside a browser pool.
+  /// Without a session pool, or when false, each request gets a fresh Page.
   final bool sessionAffinity;
 
   /// Chrome or Chromium executable to launch. When set, crawlberg launches only this
@@ -910,6 +916,24 @@ class ContentConfig {
   /// parsed DOM, so turning this off does not lose any metadata field.
   final bool extractMetadata;
 
+  /// Replace paragraph source line breaks with spaces. Default: `false`.
+  final bool stripNewlines;
+
+  /// Markdown unordered-list markers, cycled by nesting level. Default: `"-*+"`.
+  final String bullets;
+
+  /// Spaces per nested list level. Default: `2`.
+  final PlatformInt64 listIndentWidth;
+
+  /// Markdown emphasis marker: `"*"` (default) or `"_"`.
+  final String strongEmSymbol;
+
+  /// Render tables without column-width padding. Default: `false`.
+  final bool compactTables;
+
+  /// HTML elements whose inline images stay images instead of alt text. Default: `[]`.
+  final List<String> keepInlineImagesIn;
+
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -924,6 +948,12 @@ class ContentConfig {
     required this.wrapWidth,
     required this.includeDocumentStructure,
     required this.extractMetadata,
+    this.stripNewlines = false,
+    this.bullets = "-*+",
+    this.listIndentWidth = 2,
+    this.strongEmSymbol = "*",
+    this.compactTables = false,
+    this.keepInlineImagesIn = const [],
   });
 
   @override
@@ -940,7 +970,13 @@ class ContentConfig {
       wrap.hashCode ^
       wrapWidth.hashCode ^
       includeDocumentStructure.hashCode ^
-      extractMetadata.hashCode;
+      extractMetadata.hashCode ^
+      stripNewlines.hashCode ^
+      bullets.hashCode ^
+      listIndentWidth.hashCode ^
+      strongEmSymbol.hashCode ^
+      compactTables.hashCode ^
+      keepInlineImagesIn.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -959,7 +995,13 @@ class ContentConfig {
           wrap == other.wrap &&
           wrapWidth == other.wrapWidth &&
           includeDocumentStructure == other.includeDocumentStructure &&
-          extractMetadata == other.extractMetadata;
+          extractMetadata == other.extractMetadata &&
+          stripNewlines == other.stripNewlines &&
+          bullets == other.bullets &&
+          listIndentWidth == other.listIndentWidth &&
+          strongEmSymbol == other.strongEmSymbol &&
+          compactTables == other.compactTables &&
+          keepInlineImagesIn == other.keepInlineImagesIn;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.
@@ -968,7 +1010,10 @@ enum ContentFilterKind {
   bm25,
 }
 
-/// Information about an HTTP cookie received from a response.
+/// Information about a cookie that a crawled page set.
+///
+/// A crawl result gives `domain` and `path` as the browser stores the cookie, so a cookie has
+/// the same fields whether an HTTP fetch or the browser received it.
 class CookieInfo {
   /// The cookie name.
   final String name;
@@ -976,10 +1021,14 @@ class CookieInfo {
   /// The cookie value.
   final String value;
 
-  /// The cookie domain, if specified.
+  /// The hosts that get the cookie back. A host-only cookie (no `Domain` attribute) has the
+  /// host that set it, such as `example.com`. A domain cookie has its domain with a leading
+  /// dot, such as `.example.com`. A `Domain` equal to an IP address or a one-label host gives
+  /// a host-only cookie.
   final String? domain;
 
-  /// The cookie path, if specified.
+  /// The path that gets the cookie back: the `Path` attribute when it starts with `/`,
+  /// otherwise the directory of the page that set the cookie (RFC 6265 default path).
   final String? path;
 
   const CookieInfo({
@@ -1096,10 +1145,10 @@ class CrawlConfig {
   /// (`bücher.de` is matched as `xn--bcher-kva.de`).
   final bool pathPatternsMatchUrl;
 
-  /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
-  /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
-  /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
-  /// query is fetched once.
+  /// Whether the crawl-dedup key includes the query string, sorted by parameter name.
+  /// Defaults to `true`: `/item?id=1` and `/item?id=2` are distinct pages, each fetched once.
+  /// Set to `false` to merge query variants and fetch only the first. Session parameters
+  /// produce a page for each distinct value unless removed with `strip_tracking_params`.
   final bool dedupIncludeQuery;
 
   /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
@@ -1122,7 +1171,8 @@ class CrawlConfig {
   final PlatformInt64 requestTimeout;
 
   /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-  /// between requests to the same domain. Defaults to 200ms when `None`.
+  /// between requests to the same domain, in HTTP mode and before each page load in
+  /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
   final PlatformInt64? rateLimitMs;
 
   /// Maximum number of redirects to follow.
@@ -1527,6 +1577,13 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.dataLoss({required String message}) =
       CrawlError_DataLoss;
 
+  /// The page was fetched but could not be converted to Markdown.
+  ///
+  /// A crawl event and a batch item carry an error as text only. There, the text starts with
+  /// `conversion_failed:`, and that tag is stable.
+  const factory CrawlError.conversionFailed({required String message}) =
+      CrawlError_ConversionFailed;
+
   /// The browser failed to launch, connect, or navigate.
   const factory CrawlError.browserError({required String message}) =
       CrawlError_BrowserError;
@@ -1542,6 +1599,10 @@ sealed class CrawlError with _$CrawlError {
   /// The requested capability is not supported by the active backend or build.
   const factory CrawlError.unsupported({required String message}) =
       CrawlError_Unsupported;
+
+  /// The HTTP redirect chain exceeded the configured redirect limit.
+  const factory CrawlError.tooManyRedirects({required String message}) =
+      CrawlError_TooManyRedirects;
 
   /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
   const factory CrawlError.ssrfPolicyViolation({
@@ -1664,6 +1725,10 @@ class CrawlPageResult {
   /// their credentials, each listed once. The page is kept; only the refused requests failed.
   final List<String> ssrfRefusedUrls;
 
+  /// Seed address as supplied, or the discovered link address resolved against its base.
+  /// Preserves source spelling through redirects; URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1691,6 +1756,7 @@ class CrawlPageResult {
     required this.noindexDetected,
     required this.nofollowDetected,
     required this.ssrfRefusedUrls,
+    this.originalUrl = "",
   });
 
   @override
@@ -1720,7 +1786,8 @@ class CrawlPageResult {
       redirectCount.hashCode ^
       noindexDetected.hashCode ^
       nofollowDetected.hashCode ^
-      ssrfRefusedUrls.hashCode;
+      ssrfRefusedUrls.hashCode ^
+      originalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1752,7 +1819,8 @@ class CrawlPageResult {
           redirectCount == other.redirectCount &&
           noindexDetected == other.noindexDetected &&
           nofollowDetected == other.nofollowDetected &&
-          ssrfRefusedUrls == other.ssrfRefusedUrls;
+          ssrfRefusedUrls == other.ssrfRefusedUrls &&
+          originalUrl == other.originalUrl;
 }
 
 /// The result of a multi-page crawl operation.
@@ -2336,12 +2404,18 @@ class LinkInfo {
   /// Whether the link has `rel="nofollow"`.
   final bool nofollow;
 
+  /// Link address resolved against the page's base without changing path spelling.
+  /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+  /// URL credentials are removed. <!-- -->
+  final String originalUrl;
+
   const LinkInfo({
     required this.url,
     required this.text,
     required this.linkType,
     this.rel,
     required this.nofollow,
+    this.originalUrl = "",
   });
 
   @override
@@ -2350,7 +2424,8 @@ class LinkInfo {
       text.hashCode ^
       linkType.hashCode ^
       rel.hashCode ^
-      nofollow.hashCode;
+      nofollow.hashCode ^
+      originalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2361,7 +2436,8 @@ class LinkInfo {
           text == other.text &&
           linkType == other.linkType &&
           rel == other.rel &&
-          nofollow == other.nofollow;
+          nofollow == other.nofollow &&
+          originalUrl == other.originalUrl;
 }
 
 /// The classification of a link.
@@ -2372,7 +2448,7 @@ enum LinkType {
   /// A link to a different domain.
   external_,
 
-  /// A fragment-only link (e.g., `#section`).
+  /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
   anchor,
 
   /// A link to a downloadable document (PDF, DOC, etc.).

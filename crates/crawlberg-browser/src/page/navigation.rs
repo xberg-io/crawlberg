@@ -48,6 +48,7 @@ impl Page {
             .fetch_document(&url, method, body, max_redirects, initiator.as_ref())
             .await?;
         let redirects = response.redirected_from.len();
+        self.unfollowed_redirect = unfollowed_redirect(&response);
 
         self.record_network_event(
             url.as_str(),
@@ -62,7 +63,15 @@ impl Page {
             self.url = Some(response.url.clone());
         }
 
-        let body_text = String::from_utf8_lossy(&response.body).to_string();
+        let (body_text, charset) = match self.document_decoder {
+            Some(decode) => decode(
+                response.content_type().unwrap_or_default(),
+                response.url.as_str(),
+                &response.body,
+            ),
+            None => (String::from_utf8_lossy(&response.body).into_owned(), None),
+        };
+        self.document_charset = charset;
         let dom = parse_html(&body_text);
         self.document_base_url = self.base_url_from_dom(&dom);
         self.title = dom
@@ -317,5 +326,112 @@ impl Page {
         }
 
         self.lifecycle = LifecycleState::NetworkIdle;
+    }
+}
+
+fn unfollowed_redirect(response: &Response) -> Option<PageError> {
+    const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+    if !REDIRECT_STATUSES.contains(&response.status) {
+        return None;
+    }
+    let target = response.url.join(response.headers.get("location")?).ok()?;
+    if !matches!(target.scheme(), "http" | "https") {
+        return None;
+    }
+    let target = crate::net::credential::without_userinfo(&target);
+    let visited = crate::net::credential::without_userinfo(&response.url) == target
+        || response
+            .redirected_from
+            .iter()
+            .any(|url| crate::net::credential::without_userinfo(url) == target);
+    Some(PageError::UnfollowedRedirect { target, visited })
+}
+
+#[cfg(test)]
+mod redirect_error_tests {
+    use super::*;
+
+    #[test]
+    fn should_return_no_unfollowed_redirect_for_success_with_location() {
+        let response = Response {
+            url: Url::parse("http://example.test/a").expect("response URL"),
+            status: 200,
+            headers: std::collections::HashMap::from([("location".to_owned(), "/b".to_owned())]),
+            body: Vec::new(),
+            redirected_from: Vec::new(),
+        };
+        assert_eq!(unfollowed_redirect(&response).map(|error| error.to_string()), None);
+    }
+
+    #[test]
+    fn should_return_no_unfollowed_redirect_for_non_http_location() {
+        for location in [
+            "mailto:help@example.test",
+            "javascript:alert(1)",
+            "data:text/plain,redirect",
+        ] {
+            let response = Response {
+                url: Url::parse("http://example.test/a").expect("response URL"),
+                status: 301,
+                headers: std::collections::HashMap::from([("location".to_owned(), location.to_owned())]),
+                body: Vec::new(),
+                redirected_from: Vec::new(),
+            };
+            assert_eq!(
+                unfollowed_redirect(&response).map(|error| error.to_string()),
+                None,
+                "location: {location}",
+            );
+        }
+    }
+
+    #[test]
+    fn should_return_no_unfollowed_redirect_without_location() {
+        let response = Response {
+            url: Url::parse("http://example.test/a").expect("response URL"),
+            status: 301,
+            headers: std::collections::HashMap::new(),
+            body: Vec::new(),
+            redirected_from: Vec::new(),
+        };
+        assert_eq!(unfollowed_redirect(&response).map(|error| error.to_string()), None);
+    }
+
+    #[test]
+    fn should_compare_credential_free_canonical_redirect_keys() {
+        for (earlier, location, visited) in [
+            (
+                "http://old:secret@EXAMPLE.test/b#part",
+                "http://user:pass@example.test/b#part",
+                true,
+            ),
+            (
+                "http://example.test/b#part",
+                "http://user:pass@example.test/b#other",
+                false,
+            ),
+            ("http://EXAMPLE.test", "http://user:pass@example.test/", true),
+        ] {
+            let response = Response {
+                url: Url::parse("http://example.test/a").expect("response URL"),
+                status: 301,
+                headers: std::collections::HashMap::from([("location".to_owned(), location.to_owned())]),
+                body: Vec::new(),
+                redirected_from: vec![Url::parse(earlier).expect("earlier URL")],
+            };
+            let expected = crate::net::credential::without_userinfo(&Url::parse(location).expect("target"));
+            match unfollowed_redirect(&response).expect("a pending redirect") {
+                PageError::UnfollowedRedirect {
+                    target,
+                    visited: actual,
+                } => {
+                    assert_eq!(target, expected);
+                    assert_eq!(actual, visited, "earlier: {earlier}, location: {location}");
+                    assert_eq!(target.username(), "");
+                    assert_eq!(target.password(), None);
+                }
+                error => panic!("unexpected redirect error: {error:?}"),
+            }
+        }
     }
 }

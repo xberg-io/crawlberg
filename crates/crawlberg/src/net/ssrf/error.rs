@@ -2,6 +2,7 @@
 
 /// SSRF validation error.
 #[derive(Debug, thiserror::Error)]
+#[cfg_attr(alef, alef(exception_base = "CrawlError"))]
 pub enum SsrfError {
     /// URL denied by SSRF policy: private IP, metadata IP, etc.
     #[error("denied by SSRF policy: {reason}")]
@@ -34,5 +35,7 @@ pub enum SsrfError {
 
     /// Too many HTTP redirects encountered during validation.
     #[error("too many redirects")]
+    // ~keep Stable ABI code 101 distinguishes this error from CrawlError's same-named variant; never renumber.
+    #[cfg_attr(alef, alef(error_code = 101))]
     TooManyRedirects,
 }

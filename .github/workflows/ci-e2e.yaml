@@ -12,6 +12,10 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "Taskfile.yml"
+      - ".task/**"
+      - "scripts/ci/**"
+      - "scripts/ci/prepare-chrome-runtime.sh"
+      - "scripts/ci/test_chrome_runtime.py"
       - ".github/workflows/ci-e2e.yaml"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
@@ -27,6 +31,10 @@ on:
   #     - "Cargo.toml"
   #     - "Cargo.lock"
   #     - "Taskfile.yml"
+  #     - ".task/**"
+  #     - "scripts/ci/**"
+  #     - "scripts/ci/prepare-chrome-runtime.sh"
+  #     - "scripts/ci/test_chrome_runtime.py"
   #     - ".github/workflows/ci-e2e.yaml"
   workflow_dispatch:
 
@@ -366,8 +374,19 @@ jobs:
         with:
           packages: "platforms;android-35"
 
+      - name: Install Task
+        uses: xberg-io/actions/install-task@v1
+
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime:test
+
+      - name: Prepare Chromium snap runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: task ci:chrome:runtime
+
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@v1
+        uses: xberg-io/actions/setup-chrome@7c5c5d0e97742aad77838328385086d7c48735ba
 
       - name: Setup library paths for FFI bindings
         if: |
@@ -384,9 +403,6 @@ jobs:
           export LD_LIBRARY_PATH="${PWD}/target/release:${PWD}/target/debug:${LD_LIBRARY_PATH}"
           echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-
-      - name: Install Task
-        uses: xberg-io/actions/install-task@v1
 
       # ~keep This drift check is only sound when the formatting alef applies here is
       # byte-identical to the formatting already in the committed tree. `alef e2e generate`
@@ -528,6 +544,12 @@ jobs:
           for f in target/release/libcrawlberg_ffi.*; do
             [ -e "$f" ] && ln -sf "$(pwd)/$f" "target/debug/$(basename "$f")"
           done
+
+      - name: Check released constructor calls
+        # ~keep These hand-written release calls import the actual binding, outside the generated E2E surface.
+        if: matrix.lang == 'swift' || matrix.lang == 'python'
+        run: task ${{ matrix.lang }}:test:released-constructors
+        shell: bash
 
       - name: Run tests
         run: ${{ matrix.test-cmd }}

@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'package:crawlberg/src/native_loader.dart';
+
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:io';
@@ -11,10 +12,12 @@ import 'dart:core' as _DartCore;
 import 'dart:core';
 import 'dart:async';
 import 'dart:convert';
+
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
 import 'lib.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Main entrypoint of the Rust API
@@ -2531,9 +2534,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Map.fromEntries(
-      dco_decode_list_record_string_string(
-        raw,
-      ).map((e) => MapEntry(e.$1, e.$2)),
+      dco_decode_list_record_string_string(raw)
+          .map((e) => MapEntry(e.$1, e.$2)),
     );
   }
 
@@ -2891,8 +2893,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2907,6 +2909,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrapWidth: dco_decode_i_64(arr[10]),
       includeDocumentStructure: dco_decode_bool(arr[11]),
       extractMetadata: dco_decode_bool(arr[12]),
+      stripNewlines: dco_decode_bool(arr[13]),
+      bullets: dco_decode_String(arr[14]),
+      listIndentWidth: dco_decode_i_64(arr[15]),
+      strongEmSymbol: dco_decode_String(arr[16]),
+      compactTables: dco_decode_bool(arr[17]),
+      keepInlineImagesIn: dco_decode_list_String(arr[18]),
     );
   }
 
@@ -3030,19 +3038,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 12:
         return CrawlError_DataLoss(message: dco_decode_String(raw[1]));
       case 13:
-        return CrawlError_BrowserError(message: dco_decode_String(raw[1]));
+        return CrawlError_ConversionFailed(message: dco_decode_String(raw[1]));
       case 14:
-        return CrawlError_BrowserTimeout(message: dco_decode_String(raw[1]));
+        return CrawlError_BrowserError(message: dco_decode_String(raw[1]));
       case 15:
-        return CrawlError_InvalidConfig(message: dco_decode_String(raw[1]));
+        return CrawlError_BrowserTimeout(message: dco_decode_String(raw[1]));
       case 16:
-        return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
+        return CrawlError_InvalidConfig(message: dco_decode_String(raw[1]));
       case 17:
+        return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
+      case 18:
+        return CrawlError_TooManyRedirects(message: dco_decode_String(raw[1]));
+      case 19:
         return CrawlError_SsrfPolicyViolation(
           url: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
-      case 18:
+      case 20:
         return CrawlError_Other(message: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3073,8 +3085,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 26)
-      throw Exception('unexpected arr length: expect 26 but see ${arr.length}');
+    if (arr.length != 27)
+      throw Exception('unexpected arr length: expect 27 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -3104,6 +3116,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       noindexDetected: dco_decode_bool(arr[23]),
       nofollowDetected: dco_decode_bool(arr[24]),
       ssrfRefusedUrls: dco_decode_list_String(arr[25]),
+      originalUrl: dco_decode_String(arr[26]),
     );
   }
 
@@ -3339,14 +3352,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LinkInfo dco_decode_link_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return LinkInfo(
       url: dco_decode_String(arr[0]),
       text: dco_decode_String(arr[1]),
       linkType: dco_decode_link_type(arr[2]),
       rel: dco_decode_opt_String(arr[3]),
       nofollow: dco_decode_bool(arr[4]),
+      originalUrl: dco_decode_String(arr[5]),
     );
   }
 
@@ -4356,6 +4370,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_wrapWidth = sse_decode_i_64(deserializer);
     var var_includeDocumentStructure = sse_decode_bool(deserializer);
     var var_extractMetadata = sse_decode_bool(deserializer);
+    var var_stripNewlines = sse_decode_bool(deserializer);
+    var var_bullets = sse_decode_String(deserializer);
+    var var_listIndentWidth = sse_decode_i_64(deserializer);
+    var var_strongEmSymbol = sse_decode_String(deserializer);
+    var var_compactTables = sse_decode_bool(deserializer);
+    var var_keepInlineImagesIn = sse_decode_list_String(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4370,6 +4390,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrapWidth: var_wrapWidth,
       includeDocumentStructure: var_includeDocumentStructure,
       extractMetadata: var_extractMetadata,
+      stripNewlines: var_stripNewlines,
+      bullets: var_bullets,
+      listIndentWidth: var_listIndentWidth,
+      strongEmSymbol: var_strongEmSymbol,
+      compactTables: var_compactTables,
+      keepInlineImagesIn: var_keepInlineImagesIn,
     );
   }
 
@@ -4567,21 +4593,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return CrawlError_DataLoss(message: var_message);
       case 13:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_BrowserError(message: var_message);
+        return CrawlError_ConversionFailed(message: var_message);
       case 14:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_BrowserTimeout(message: var_message);
+        return CrawlError_BrowserError(message: var_message);
       case 15:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_InvalidConfig(message: var_message);
+        return CrawlError_BrowserTimeout(message: var_message);
       case 16:
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_Unsupported(message: var_message);
+        return CrawlError_InvalidConfig(message: var_message);
       case 17:
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Unsupported(message: var_message);
+      case 18:
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_TooManyRedirects(message: var_message);
+      case 19:
         var var_url = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
-      case 18:
+      case 20:
         var var_message = sse_decode_String(deserializer);
         return CrawlError_Other(message: var_message);
       default:
@@ -4643,6 +4675,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_noindexDetected = sse_decode_bool(deserializer);
     var var_nofollowDetected = sse_decode_bool(deserializer);
     var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
+    var var_originalUrl = sse_decode_String(deserializer);
     return CrawlPageResult(
       url: var_url,
       normalizedUrl: var_normalizedUrl,
@@ -4670,6 +4703,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       noindexDetected: var_noindexDetected,
       nofollowDetected: var_nofollowDetected,
       ssrfRefusedUrls: var_ssrfRefusedUrls,
+      originalUrl: var_originalUrl,
     );
   }
 
@@ -4935,12 +4969,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_linkType = sse_decode_link_type(deserializer);
     var var_rel = sse_decode_opt_String(deserializer);
     var var_nofollow = sse_decode_bool(deserializer);
+    var var_originalUrl = sse_decode_String(deserializer);
     return LinkInfo(
       url: var_url,
       text: var_text,
       linkType: var_linkType,
       rel: var_rel,
       nofollow: var_nofollow,
+      originalUrl: var_originalUrl,
     );
   }
 
@@ -6313,6 +6349,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.wrapWidth, serializer);
     sse_encode_bool(self.includeDocumentStructure, serializer);
     sse_encode_bool(self.extractMetadata, serializer);
+    sse_encode_bool(self.stripNewlines, serializer);
+    sse_encode_String(self.bullets, serializer);
+    sse_encode_i_64(self.listIndentWidth, serializer);
+    sse_encode_String(self.strongEmSymbol, serializer);
+    sse_encode_bool(self.compactTables, serializer);
+    sse_encode_list_String(self.keepInlineImagesIn, serializer);
   }
 
   @protected
@@ -6443,24 +6485,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case CrawlError_DataLoss(message: final message):
         sse_encode_i_32(12, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_BrowserError(message: final message):
+      case CrawlError_ConversionFailed(message: final message):
         sse_encode_i_32(13, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_BrowserTimeout(message: final message):
+      case CrawlError_BrowserError(message: final message):
         sse_encode_i_32(14, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_InvalidConfig(message: final message):
+      case CrawlError_BrowserTimeout(message: final message):
         sse_encode_i_32(15, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_Unsupported(message: final message):
+      case CrawlError_InvalidConfig(message: final message):
         sse_encode_i_32(16, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+      case CrawlError_Unsupported(message: final message):
         sse_encode_i_32(17, serializer);
+        sse_encode_String(message, serializer);
+      case CrawlError_TooManyRedirects(message: final message):
+        sse_encode_i_32(18, serializer);
+        sse_encode_String(message, serializer);
+      case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
+        sse_encode_i_32(19, serializer);
         sse_encode_String(url, serializer);
         sse_encode_String(reason, serializer);
       case CrawlError_Other(message: final message):
-        sse_encode_i_32(18, serializer);
+        sse_encode_i_32(20, serializer);
         sse_encode_String(message, serializer);
     }
   }
@@ -6517,6 +6565,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.noindexDetected, serializer);
     sse_encode_bool(self.nofollowDetected, serializer);
     sse_encode_list_String(self.ssrfRefusedUrls, serializer);
+    sse_encode_String(self.originalUrl, serializer);
   }
 
   @protected
@@ -6719,6 +6768,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_link_type(self.linkType, serializer);
     sse_encode_opt_String(self.rel, serializer);
     sse_encode_bool(self.nofollow, serializer);
+    sse_encode_String(self.originalUrl, serializer);
   }
 
   @protected

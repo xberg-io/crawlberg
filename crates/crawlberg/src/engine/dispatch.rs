@@ -54,7 +54,7 @@ pub(super) fn content_density(body: &str) -> f32 {
 /// ~keep `crate::browser::browser_fetch` below actually sends, never a rotated pick.
 /// ~keep `resolve_robots_outcome` is also what `admits` calls to judge the tier chosen at
 /// ~keep admission, so the two never resolve the same origin two different ways.
-#[cfg(feature = "browser")]
+#[cfg(any(feature = "browser", feature = "browser-native"))]
 async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Result<Option<String>, CrawlError> {
     let Ok(parsed) = url::Url::parse(url) else {
         return Ok(Some(format!(
@@ -69,6 +69,39 @@ async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Resu
 }
 
 impl CrawlEngine {
+    /// Fetch `url` with the configured browser backend: through the engine's browser pool, and,
+    /// inside a crawl that keeps cookies, with the cookies of that crawl.
+    #[cfg(feature = "browser")]
+    pub(super) async fn browser_fetch(
+        &self,
+        url: &str,
+        prior_cookies: Option<&[crate::types::BrowserCookie]>,
+        want_screenshot: bool,
+    ) -> Result<crate::browser::BrowserPage, CrawlError> {
+        // ~keep Boxed: each caller's future holds this one inline, and one more level of it pushed
+        // ~keep the generated dart binding's async dispatch past rustc's query depth limit.
+        // ~keep The box is a `dyn Future + Send`, not the future's own type: a caller that needs
+        // ~keep its future to be `Send` (`tokio::spawn`) then proves it for this box, not for
+        // ~keep every type under the browser fetch. The retry loop of `browser_fetch` and the
+        // ~keep cookie step of this wrapper each add one level to that type, and the proof for
+        // ~keep the own type ran past rustc's recursion limit in the caller.
+        let fetch: futures::future::BoxFuture<'_, Result<crate::browser::BrowserPage, CrawlError>> =
+            Box::pin(crate::browser::browser_fetch(
+                url,
+                &self.config,
+                crate::browser::BrowserHandles {
+                    pool: self.browser_pool(),
+                    #[cfg(feature = "browser-native")]
+                    native_executor: self.native_browser_executor.as_deref(),
+                },
+                prior_cookies,
+                self.crawl_cookies.as_deref(),
+                want_screenshot,
+                self.browser_rate_limiter.as_ref(),
+            ));
+        fetch.await
+    }
+
     /// Dispatch a single fetch attempt to the given tier.
     ///
     /// Returns `(CrawlResponse, browser_used)` or a `CrawlError`.
@@ -81,7 +114,7 @@ impl CrawlEngine {
         native_state: Option<&mut super::fetch::NativeRenderState>,
         browser_cookies: Option<&[crate::types::BrowserCookie]>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        #[cfg(not(all(feature = "browser", feature = "browser-native")))]
+        #[cfg(not(feature = "browser-native"))]
         let _ = native_state;
         #[cfg(not(feature = "browser"))]
         let _ = browser_cookies;
@@ -112,24 +145,23 @@ impl CrawlEngine {
                         CrawlError::invalid_config("escalation to Bypass tier but no bypass provider configured")
                     })?;
                 let bypass_resp = provider.fetch(url).await?;
-                Ok((
-                    crate::tower::CrawlResponse {
-                        status: bypass_resp.status,
-                        content_type: bypass_resp.content_type,
-                        body: bypass_resp.body,
-                        body_bytes: bypass_resp.body_bytes,
-                        headers: bypass_resp.headers,
-                        landed: None,
-                        // ~keep A custom bypass provider is a user plugin outside the rotation
-                        // layer; it does not report which agent it sent, if any.
-                        sent_user_agent: None,
-                        soft_error: false,
-                    },
-                    false,
-                ))
+                // ~keep A provider's response does not pass the HTTP fetch service, so this is the
+                // ~keep second place a response fetched without the browser arrives. It reports
+                // ~keep the cookies the target set before anything can read the crawl's cookies.
+                #[cfg(feature = "browser")]
+                if let Some(crawl_cookies) = self.crawl_cookies.as_deref() {
+                    let landed = [bypass_resp.final_url.as_str(), url]
+                        .into_iter()
+                        .find(|url| url::Url::parse(url).is_ok())
+                        .unwrap_or(url);
+                    crawl_cookies.forget_set_without_browser(landed, &bypass_resp.headers);
+                }
+                // ~keep A custom bypass provider is a user plugin outside the rotation layer; it does
+                // ~keep not report which agent it sent, if any, so `sent_user_agent` stays unset.
+                Ok((bypass_resp.into_crawl_response(), false))
             }
             crate::types::Tier::Browser => {
-                #[cfg(feature = "browser")]
+                #[cfg(any(feature = "browser", feature = "browser-native"))]
                 {
                     // ~keep A hop that reaches this arm by escalating mid-crawl (`BrowserMode::Auto`
                     // ~keep with `EscalationStrategy::BrowserOnly`/`BypassThenBrowser`) had its robots
@@ -155,23 +187,16 @@ impl CrawlEngine {
                     {
                         return self.native_render(url, state).await;
                     }
-                    let pool = self.config.browser_pool.as_deref();
-                    #[cfg(feature = "browser-native")]
-                    let page = crate::browser::browser_fetch(
-                        url,
-                        &self.config,
-                        browser_cookies,
-                        pool,
-                        false,
-                        self.native_browser_executor.as_deref(),
-                    )
-                    .await?;
-                    #[cfg(not(feature = "browser-native"))]
-                    let page = crate::browser::browser_fetch(url, &self.config, browser_cookies, pool, false).await?;
-                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
-                    Ok((crawl_resp, true))
+                    #[cfg(feature = "browser")]
+                    {
+                        let page = self.browser_fetch(url, browser_cookies, false).await?;
+                        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
+                        Ok((crawl_resp, true))
+                    }
+                    #[cfg(not(feature = "browser"))]
+                    Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
                 }
-                #[cfg(not(feature = "browser"))]
+                #[cfg(not(any(feature = "browser", feature = "browser-native")))]
                 Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
             }
         }
@@ -184,6 +209,8 @@ impl CrawlEngine {
         page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
         let cookies = page.cookies;
+        let result_cookies = page.result_cookies;
+        let text = page.text;
         let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
@@ -200,31 +227,27 @@ impl CrawlEngine {
             );
         }
         let extras = r.browser_extras;
-        (
-            crate::tower::CrawlResponse {
-                status: r.status,
-                content_type: r.content_type,
-                body: r.body,
-                body_bytes: r.body_bytes,
-                // ~keep Both browser backends collect the response headers; discarding them here
-                // ~keep discarded them for every browser fetch on the crawl and escalation paths,
-                // ~keep so `ETag`, `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF
-                // ~keep classifier however faithfully the backend had reported them (crawlberg#148).
-                headers: r.headers,
-                landed: Some(Box::new(crate::tower::Landing {
-                    url: r.final_url,
-                    redirects: page.redirects,
-                    refused: page.refused,
-                    extras: None,
-                    cookies,
-                })),
-                // ~keep The browser tier never reads `config.user_agents`; it always sends the
-                // single configured agent, so callers fall back to the configured default.
-                sent_user_agent: None,
-                soft_error: false,
-            },
-            extras,
-        )
+        let body = match text {
+            crate::tower::BodyText::Undecoded => crate::tower::ResponseBody::Bytes(r.body_bytes),
+            crate::tower::BodyText::Decoded { charset } => crate::tower::ResponseBody::Text { text: r.body, charset },
+        };
+        // ~keep Both browser backends collect the response headers; discarding them here
+        // ~keep discarded them for every browser fetch on the crawl and escalation paths,
+        // ~keep so `ETag`, `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF
+        // ~keep classifier however faithfully the backend had reported them (crawlberg#148).
+        // ~keep The browser tier never reads `config.user_agents`; it always sends the single
+        // ~keep configured agent, so `sent_user_agent` stays unset and callers fall back to it.
+        let response = crate::tower::CrawlResponse::new(r.status, r.content_type, r.headers, body).with_landed(Some(
+            Box::new(crate::tower::Landing {
+                url: r.final_url,
+                redirects: page.redirects,
+                refused: page.refused,
+                extras: None,
+                result_cookies,
+                cookies,
+            }),
+        ));
+        (response, extras)
     }
 
     /// Synthesise a minimal response with the given HTTP status (empty body).
@@ -233,16 +256,13 @@ impl CrawlEngine {
     /// records rather than `CrawlError`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn synthesise_status(status: u16) -> crate::tower::CrawlResponse {
-        crate::tower::CrawlResponse {
+        crate::tower::CrawlResponse::new(
             status,
-            content_type: String::new(),
-            body: String::new(),
-            body_bytes: Vec::new(),
-            headers: std::collections::HashMap::new(),
-            landed: None,
-            sent_user_agent: None,
-            soft_error: true,
-        }
+            String::new(),
+            std::collections::HashMap::new(),
+            crate::tower::ResponseBody::Bytes(Vec::new()),
+        )
+        .with_soft_error(true)
     }
 
     /// Convert an [`crate::types::EscalationReason`] from a terminal success-path
@@ -452,6 +472,10 @@ mod tests {
             redirected: false,
             refused: vec!["http://127.0.0.1/secret".to_owned()],
             cookies: Vec::new(),
+            result_cookies: Vec::new(),
+            text: crate::tower::BodyText::Decoded {
+                charset: Some("windows-1252".to_owned()),
+            },
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
@@ -460,6 +484,13 @@ mod tests {
             "the dispatch conversion must retain the complete browser response header map"
         );
         assert_eq!(crawl.status, 304, "the status must survive the conversion too");
+        assert_eq!(
+            *crawl.body_text(),
+            crate::tower::BodyText::Decoded {
+                charset: Some("windows-1252".to_owned()),
+            },
+            "the response must still say that a browser decoded its text"
+        );
         assert_eq!(
             crawl.landed.map(|landed| landed.refused),
             Some(vec!["http://127.0.0.1/secret".to_owned()]),

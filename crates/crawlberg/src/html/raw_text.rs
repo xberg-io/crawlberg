@@ -630,8 +630,7 @@ mod tests {
     fn extract_links_through_the_pipeline(html: &str) -> Vec<String> {
         let masked = mask_raw_text_markup(html);
         let document_url = url::Url::parse("https://example.com/page").expect("valid document URL");
-        let base_url = crate::html::effective_base_url(masked.base_href.as_deref(), &document_url);
-        crate::html::extract_links(&masked, &base_url)
+        crate::html::extract_links(&masked, &document_url)
             .into_iter()
             .map(|link| link.url)
             .collect()

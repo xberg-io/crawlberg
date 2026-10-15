@@ -11,64 +11,91 @@ use crate::net::cookie::validate_cookie_domain;
 use crate::types::CookieInfo;
 use crate::types::ResponseMeta;
 
-/// Extract cookies from a `HashMap<String, Vec<String>>` of response headers.
+/// Extract the cookies a response for `url` stores from a `HashMap<String, Vec<String>>` of
+/// its headers.
 ///
-/// Looks for the `"set-cookie"` key and parses each value as an individual
-/// Set-Cookie header, preserving all cookies from the response.
+/// Looks for the `"set-cookie"` key and parses each value as an individual Set-Cookie header
+/// with the RFC 6265 storage rules of [`cookie_store`], the parser behind reqwest's cookie jar.
+/// A cookie the jar would not store is left out: one with no `name=value` pair, one that is
+/// deleted (`Max-Age` of zero or less, or an `Expires` in the past), or one whose last
+/// `Domain=` attribute does not domain-match `url`'s host (an IP host matches only its own
+/// address). A `Domain=` that names a public suffix fails [`validate_cookie_domain`] and drops
+/// the cookie whole as well, matching [`crate::net::cookie::PolicyCookieStore`]'s policy for
+/// the same headers on the plain-HTTP path; a `Domain=` that is the host's own public suffix
+/// gives a host-only cookie. These cookies feed `browser::page_fetch`'s
+/// `prior_cookies`, which are replayed into a page's CDP session, so an unvalidated `Domain=`
+/// here would let one crawled origin plant a cookie for another.
 ///
-/// `host` is the host that sent the response; a cookie whose `Domain=` attribute fails
-/// [`validate_cookie_domain`] (cross-origin spoof or public-suffix) is dropped entirely
-/// rather than accepted with the attribute stripped, matching [`crate::net::cookie::PolicyCookieStore`]'s
-/// policy for the same headers on the plain-HTTP path. These cookies feed
-/// `browser::page_fetch`'s `prior_cookies`, which are replayed into a page's CDP session,
-/// so an unvalidated `Domain=` here would let one crawled origin plant a cookie for another.
+/// `domain` is the `Domain` attribute without its leading dot, `None` for a host-only cookie;
+/// `path` is the `Path` attribute when it starts with `/`, `None` otherwise.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn extract_cookies_from_hashmap(
-    host: &str,
+    url: &url::Url,
     headers: &std::collections::HashMap<String, Vec<String>>,
 ) -> Vec<CookieInfo> {
     let Some(values) = headers.get("set-cookie") else {
         return Vec::new();
     };
-    values.iter().filter_map(|raw| parse_set_cookie(host, raw)).collect()
+    values.iter().filter_map(|raw| parse_set_cookie(url, raw)).collect()
 }
 
-/// Parse one `Set-Cookie` header value into a [`CookieInfo`].
-///
-/// Returns `None` when the value carries no `name=value` pair, or when its `Domain=`
-/// attribute fails [`validate_cookie_domain`] — the cookie is dropped whole rather than
-/// kept with the attribute stripped, matching the policy documented on
-/// [`extract_cookies_from_hashmap`]. ~keep
+/// The crawl-result cookies of the response for `url`: [`extract_cookies_from_hashmap`] with
+/// `domain` and `path` as [`CookieInfo`] documents them. An unparsable `url` stores nothing.
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_set_cookie(host: &str, raw: &str) -> Option<CookieInfo> {
-    let parts: Vec<&str> = raw.split(';').collect();
-    let (name, value) = parts.first()?.split_once('=')?;
-    let mut cookie = CookieInfo {
-        name: name.trim().to_owned(),
-        value: value.trim().to_owned(),
-        domain: None,
-        path: None,
+pub(crate) fn result_cookies_from_hashmap(
+    url: &str,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<CookieInfo> {
+    let Ok(url) = url::Url::parse(url) else {
+        return Vec::new();
     };
+    let host = url.host_str().unwrap_or_default();
+    extract_cookies_from_hashmap(&url, headers)
+        .into_iter()
+        .map(|cookie| cookie.with_stored_scope(host, url.path()))
+        .collect()
+}
 
-    for attr in &parts[1..] {
-        let attr = attr.trim().to_lowercase();
-        if let Some(d) = attr.strip_prefix("domain=") {
-            if let Err(e) = validate_cookie_domain(host, d) {
-                tracing::warn!(
-                    host = %host,
-                    cookie.name = %cookie.name,
-                    error = %e,
-                    "dropping cookie with invalid Set-Cookie domain"
-                );
-                return None;
-            }
-            cookie.domain = Some(d.to_owned());
-        } else if let Some(p) = attr.strip_prefix("path=") {
-            cookie.path = Some(p.to_owned());
+/// Parse one `Set-Cookie` header value of a response for `url` into a [`CookieInfo`].
+///
+/// Returns `None` for a cookie the jar would not store (see [`extract_cookies_from_hashmap`]):
+/// the cookie is dropped whole rather than kept with an attribute stripped. ~keep
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_set_cookie(url: &url::Url, raw: &str) -> Option<CookieInfo> {
+    let cookie = match cookie_store::Cookie::parse(raw, url) {
+        Ok(cookie) => cookie,
+        Err(error) => {
+            tracing::debug!(url = %url, error = %error, "dropping a Set-Cookie header the jar would not store");
+            return None;
         }
+    };
+    if cookie.expires.is_expired() {
+        tracing::debug!(url = %url, cookie.name = %cookie.name(), "dropping a deleted cookie");
+        return None;
     }
-
-    Some(cookie)
+    let domain = match &cookie.domain {
+        cookie_store::CookieDomain::Suffix(domain) => {
+            match validate_cookie_domain(url.host_str().unwrap_or_default(), domain) {
+                Ok(domain) => domain,
+                Err(error) => {
+                    tracing::warn!(
+                        url = %url,
+                        cookie.name = %cookie.name(),
+                        error = %error,
+                        "dropping cookie with invalid Set-Cookie domain"
+                    );
+                    return None;
+                }
+            }
+        }
+        _ => None,
+    };
+    Some(CookieInfo {
+        name: cookie.name().to_owned(),
+        value: cookie.value().to_owned(),
+        domain,
+        path: cookie.path.is_from_path_attr().then(|| String::from(&cookie.path)),
+    })
 }
 
 /// Extract response metadata from a `HashMap<String, Vec<String>>` of headers.
@@ -168,11 +195,16 @@ mod tests {
         std::collections::HashMap::from([("set-cookie".to_owned(), vec![raw.to_owned()])])
     }
 
+    /// The URL of a response from `host` at `/`.
+    fn from(host: &str) -> url::Url {
+        url::Url::parse(&format!("http://{host}/")).expect("a host")
+    }
+
     #[test]
     fn extract_cookies_drops_cross_origin_domain_spoof() {
         // ~keep The literal attack: a response from evil.example claims Domain=victim.example.
         let headers = set_cookie_headers("session=stolen; Domain=victim.example; Path=/");
-        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
+        let cookies = extract_cookies_from_hashmap(&from("evil.example"), &headers);
         assert!(
             cookies.is_empty(),
             "a cookie whose Domain does not domain-match the response host must be dropped, got {cookies:?}"
@@ -182,7 +214,7 @@ mod tests {
     #[test]
     fn extract_cookies_drops_known_public_suffix_domain() {
         let headers = set_cookie_headers("session=stolen; Domain=herokuapp.com");
-        let cookies = extract_cookies_from_hashmap("evil-tenant.herokuapp.com", &headers);
+        let cookies = extract_cookies_from_hashmap(&from("evil-tenant.herokuapp.com"), &headers);
         assert!(
             cookies.is_empty(),
             "a cookie scoped to a public-suffix Domain must be dropped, got {cookies:?}"
@@ -192,7 +224,7 @@ mod tests {
     #[test]
     fn extract_cookies_keeps_host_only_cookie() {
         let headers = set_cookie_headers("session=abc123; Path=/");
-        let cookies = extract_cookies_from_hashmap("example.com", &headers);
+        let cookies = extract_cookies_from_hashmap(&from("example.com"), &headers);
         assert_eq!(
             cookies.len(),
             1,
@@ -204,9 +236,81 @@ mod tests {
     }
 
     #[test]
+    fn result_cookies_have_the_domain_and_path_the_browser_stores() {
+        let headers = std::collections::HashMap::from([(
+            "set-cookie".to_owned(),
+            [
+                "a=1",
+                "b=2; Domain=127.0.0.1",
+                "c=3; Path=/X/",
+                "d=4; Domain=.127.0.0.1",
+                "e=5; Path=relative",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )]);
+        let fields: Vec<_> = result_cookies_from_hashmap("http://127.0.0.1:8080/a/b/c", &headers)
+            .into_iter()
+            .map(|c| (c.name, c.domain.unwrap_or_default(), c.path.unwrap_or_default()))
+            .collect();
+        let expected = [
+            ("a", "127.0.0.1", "/a/b"),
+            ("b", "127.0.0.1", "/a/b"),
+            ("c", "127.0.0.1", "/X/"),
+            ("d", "127.0.0.1", "/a/b"),
+            ("e", "127.0.0.1", "/a/b"),
+        ]
+        .map(|(n, d, p)| (n.to_owned(), d.to_owned(), p.to_owned()));
+        assert_eq!(fields, expected);
+
+        let headers = set_cookie_headers("s=1; domain=Example.COM");
+        let cookies = result_cookies_from_hashmap("https://api.example.com/", &headers);
+        assert_eq!(cookies[0].domain.as_deref(), Some(".example.com"));
+        assert_eq!(cookies[0].path.as_deref(), Some("/"));
+
+        for (raw, domain) in [
+            ("s=1; Domain=.example.com", ".example.com"),
+            ("s=1; Domain=", "api.example.com"),
+        ] {
+            let cookies = result_cookies_from_hashmap("https://api.example.com/", &set_cookie_headers(raw));
+            assert_eq!(cookies[0].domain.as_deref(), Some(domain), "{raw}");
+        }
+    }
+
+    /// ~keep RFC 6265 5.3: `Max-Age=0` or a past `Expires` deletes the cookie (step 11); an IP
+    /// host domain-matches only its own address (5.1.3); the last `Domain` attribute wins (step 4).
+    #[test]
+    fn result_cookies_follow_the_rfc_6265_storage_rules() {
+        let headers = std::collections::HashMap::from([(
+            "set-cookie".to_owned(),
+            [
+                "plain=1",
+                "gone=0; Max-Age=0",
+                "expired=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+                "ipsuffix=15; Domain=0.0.1",
+                "lastwins=16; Domain=other.test; Domain=127.0.0.1",
+                "future=21; Max-Age=3600",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )]);
+        let fields: Vec<_> = result_cookies_from_hashmap("http://127.0.0.1:8080/", &headers)
+            .into_iter()
+            .map(|c| (c.name, c.domain.unwrap_or_default(), c.path.unwrap_or_default()))
+            .collect();
+        let expected = [
+            ("plain", "127.0.0.1", "/"),
+            ("lastwins", "127.0.0.1", "/"),
+            ("future", "127.0.0.1", "/"),
+        ]
+        .map(|(n, d, p)| (n.to_owned(), d.to_owned(), p.to_owned()));
+        assert_eq!(fields, expected);
+    }
+
+    #[test]
     fn extract_cookies_keeps_legitimate_parent_domain_widening() {
         let headers = set_cookie_headers("session=abc123; Domain=example.com");
-        let cookies = extract_cookies_from_hashmap("api.example.com", &headers);
+        let cookies = extract_cookies_from_hashmap(&from("api.example.com"), &headers);
         assert_eq!(
             cookies.len(),
             1,
@@ -221,12 +325,48 @@ mod tests {
             "set-cookie".to_owned(),
             vec!["good=1; Path=/".to_owned(), "bad=2; Domain=victim.example".to_owned()],
         )]);
-        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
+        let cookies = extract_cookies_from_hashmap(&from("evil.example"), &headers);
         assert_eq!(
             cookies.len(),
             1,
             "only the spoofed cookie must be dropped, got {cookies:?}"
         );
         assert_eq!(cookies[0].name, "good");
+    }
+
+    #[test]
+    fn result_cookies_drop_a_domain_the_public_suffix_list_knows() {
+        // ~keep The rows of #762: a hosting suffix and a country suffix are public suffixes
+        // ~keep whatever any fixed list says; a registrable domain under a suffix is kept.
+        for (host, raw) in [
+            ("a.onrender.com", "psl=1; Domain=onrender.com"),
+            ("a.co.il", "psl=2; Domain=co.il"),
+            ("a.github.io", "listed=3; Domain=github.io"),
+        ] {
+            let cookies = extract_cookies_from_hashmap(&from(host), &set_cookie_headers(raw));
+            assert!(
+                cookies.is_empty(),
+                "{raw} from {host} names a public suffix and must be dropped, got {cookies:?}"
+            );
+        }
+        let headers = set_cookie_headers("control=4; Domain=example.org");
+        let cookies = extract_cookies_from_hashmap(&from("a.example.org"), &headers);
+        assert_eq!(cookies.len(), 1, "a registrable domain must be kept, got {cookies:?}");
+        assert_eq!(cookies[0].domain, Some("example.org".to_owned()));
+    }
+
+    #[test]
+    fn result_cookies_list_the_suffix_hosts_own_cookie_as_host_only() {
+        // ~keep RFC 6265 5.3 step 5: a Domain that is the request host's own public suffix
+        // ~keep gives a host-only cookie, so the result lists no domain for it.
+        let headers = set_cookie_headers("own=1; Domain=onrender.com");
+        let cookies = extract_cookies_from_hashmap(&from("onrender.com"), &headers);
+        assert_eq!(
+            cookies.len(),
+            1,
+            "the suffix host keeps its own cookie, got {cookies:?}"
+        );
+        assert_eq!(cookies[0].name, "own");
+        assert_eq!(cookies[0].domain, None, "the cookie is host-only, got {cookies:?}");
     }
 }

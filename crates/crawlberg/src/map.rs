@@ -7,8 +7,10 @@ use url::Url;
 
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
-use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
-use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
+use crate::html::{MaskedHtml, PageScan, extract_links, is_html_content, mask_raw_text_markup, media_type_essence};
+use crate::http::{
+    AdmitEvery, Fetched, RateLimited, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap_with_policy,
+};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_gzip,
@@ -41,10 +43,11 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     let parsed_url = seed.url().clone();
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
-    let context = SitemapWalkContext::new(config, &client, &filter);
+    let mut context = SitemapWalkContext::new(config, &client, &filter);
+    context.limiter = Some(engine.map_rate_limiter());
 
     if config.respect_robots_txt {
-        let urls = sitemap_urls_from_robots(url, config, &client, &context).await;
+        let urls = sitemap_urls_from_robots(&parsed_url, config, &client, &context).await?;
         if !urls.is_empty() {
             return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
@@ -66,8 +69,13 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     #[cfg(not(target_arch = "wasm32"))]
     let mut policy =
         crate::engine::redirect::RedirectPolicy::new(engine, &client, &filter.exclude_paths, &include_paths);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        policy.robots_limiter = context.limiter;
+    }
     #[cfg(target_arch = "wasm32")]
-    let mut policy = crate::http::AdmitEvery;
+    let policy = crate::http::AdmitEvery;
+    let mut policy = RateLimited::new(policy, context.limiter);
     let page = fetch_with_retry(
         url,
         config,
@@ -87,11 +95,11 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
 /// Returns an empty vector when robots.txt is unreadable or advertises no sitemaps,
 /// which the caller treats as "no hints" and falls through to `/sitemap.xml`.
 async fn sitemap_urls_from_robots(
-    url: &str,
+    url: &Url,
     config: &CrawlConfig,
     client: &reqwest::Client,
     context: &SitemapWalkContext<'_>,
-) -> Vec<SitemapUrl> {
+) -> Result<Vec<SitemapUrl>, CrawlError> {
     // ~keep The sitemap discovery stays fail-open where the crawl fails closed. It reads
     // robots.txt only to discover `Sitemap:` directives, so there is no access decision here to
     // fail closed on: the direct fetch makes that decision for every URL it requests. Both
@@ -100,12 +108,20 @@ async fn sitemap_urls_from_robots(
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
     let (crate::helpers::RobotsOutcome::Rules(rules), Some(robots_url)) =
-        crate::helpers::fetch_robots_document(url, config, client, ua).await
+        crate::helpers::fetch_robots_document_with_policy(
+            url.as_str(),
+            config,
+            client,
+            ua,
+            &mut RateLimited::new(AdmitEvery, context.limiter),
+        )
+        .await
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    crate::helpers::set_robots_crawl_delay(context.limiter, url, rules.crawl_delay).await?;
     if rules.sitemaps.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut all_urls = Vec::new();
@@ -121,7 +137,7 @@ async fn sitemap_urls_from_robots(
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
     }
-    all_urls
+    Ok(all_urls)
 }
 
 /// The URL to fetch for one robots.txt `Sitemap:` directive, resolved against `robots_url`, the
@@ -152,7 +168,14 @@ async fn sitemap_urls_from_well_known(
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
     let sitemap_url = format!("{}://{}/sitemap.xml", parsed_url.scheme(), parsed_url.authority());
-    let Ok(sitemap_resp) = http_fetch_sitemap(&sitemap_url, config, client).await else {
+    let Ok(sitemap_resp) = http_fetch_sitemap_with_policy(
+        &sitemap_url,
+        config,
+        client,
+        &mut RateLimited::new(AdmitEvery, context.limiter),
+    )
+    .await
+    else {
         return Vec::new();
     };
     if !reads_as_sitemap(&sitemap_resp.body_bytes, &sitemap_resp.body) {
@@ -181,7 +204,7 @@ async fn urls_from_direct_response(
     config: &CrawlConfig,
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
-    let is_xml = resp.content_type.contains("xml") || resp.body.trim_start().starts_with("<?xml");
+    let is_xml = media_type_essence(&resp.content_type).contains("xml") || resp.body.trim_start().starts_with("<?xml");
 
     if is_gzip(&resp.body_bytes)
         && let Ok(decompressed) = decompress_gzip(&resp.body_bytes)
@@ -221,16 +244,21 @@ async fn urls_from_direct_response(
             Some(page_scan) => page_scan.attach(&resp.body),
             None => mask_raw_text_markup(&resp.body),
         };
-        return links_as_sitemap_urls(&page, &base_url);
+        return links_as_sitemap_urls(&page, &base_url, &resp.headers);
     }
 
     Vec::new()
 }
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
-/// normalized URL. Anchor-only links are not URLs of their own and are skipped.
-fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(page, &effective_base_url(page.base_href.as_deref(), parsed_url));
+/// normalized URL. A link to a place on the page itself is not a URL of its own and is skipped.
+fn links_as_sitemap_urls(
+    page: &MaskedHtml<'_>,
+    parsed_url: &Url,
+    headers: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<SitemapUrl> {
+    let mut links = extract_links(page, parsed_url);
+    crate::html::append_refresh_header_link(&mut links, headers, parsed_url);
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
@@ -413,6 +441,83 @@ mod tests {
             .respond_with(response)
             .mount(mock)
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_sitemap_served_with_its_type_in_any_case_and_with_parameters_is_read() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        // No XML prologue: only the declared type says this body is a sitemap.
+        let body = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        // Not a well-known path: the well-known probe would read it without the direct fetch.
+        // Sent as bytes: a string body makes the mock replace the declared type with text/plain.
+        mount_bytes(
+            &mock,
+            "/feeds/main.xml",
+            "Application/XML; charset=utf-8",
+            body.into_bytes(),
+        )
+        .await;
+
+        let result = map(&format!("{base}/feeds/main.xml"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            locs,
+            "a media type has no case: Application/XML is a sitemap type"
+        );
+    }
+
+    /// The direct fetch of a URL that is not well-known reads a body with no XML prologue as a
+    /// sitemap only when its type says XML. The well-known `/sitemap.xml` is a sitemap by its
+    /// name, so there the body decides and the type is not read.
+    #[tokio::test]
+    async fn a_sitemap_with_no_prologue_is_read_by_its_type_at_a_direct_url_and_by_its_body_at_the_well_known_url() {
+        let locs = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        let bare = urlset(&locs).replacen(r#"<?xml version="1.0"?>"#, "", 1);
+        let none: Vec<String> = Vec::new();
+        for (route, content_type, expected, why) in [
+            (
+                "/feeds/main.xml",
+                "text/plain; name=sitemap.xml",
+                &none,
+                "a parameter that names xml is not the type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/octet-stream",
+                &none,
+                "the direct fetch reads a sitemap with no prologue only by its type",
+            ),
+            (
+                "/feeds/main.xml",
+                "application/xml; name=notes.txt",
+                &locs,
+                "the type says XML, whatever its parameters say",
+            ),
+            (
+                "/sitemap.xml",
+                "text/plain; name=sitemap.xml",
+                &locs,
+                "the well-known sitemap is read by its body",
+            ),
+        ] {
+            let mock = MockServer::start().await;
+            mount_bytes(&mock, route, content_type, bare.clone().into_bytes()).await;
+
+            let result = map(&format!("{}{route}", mock.uri()), &local_test_config())
+                .await
+                .expect("map should succeed");
+
+            assert_eq!(
+                &result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+                expected,
+                "{route} served as {content_type}: {why}"
+            );
+        }
     }
 
     fn page_urls(base: &str, count: usize) -> Vec<String> {
@@ -1357,7 +1462,7 @@ mod tests {
 
     #[tokio::test]
     async fn map_follows_a_meta_refresh_and_resolves_links_against_the_page_it_lands_on() {
-        // ~keep The crawl has no delay cap: it follows a refresh whatever its delay, so map does too.
+        // ~keep Delayed refreshes are discovered as links; only an immediate one replaces the page.
         for delay in ["0", "300"] {
             let mock = MockServer::start().await;
             let base = mock.uri();
@@ -1369,8 +1474,11 @@ mod tests {
 
             assert_eq!(
                 urls,
-                vec![format!("{base}/dir/x.html")],
-                "a meta refresh with delay {delay} must be followed, and the link resolved against the page it lands on"
+                vec![format!(
+                    "{base}/dir/{}",
+                    if delay == "0" { "x.html" } else { "page.html" }
+                )],
+                "only an immediate refresh replaces the mapped page"
             );
         }
     }
@@ -1924,19 +2032,55 @@ mod tests {
         assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
-    /// Where the crawl's own redirect chain stops for `url`: the final URL without `base`, and
-    /// its status. The crawl never fails on these chains, so neither may map.
     async fn crawl_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
         let engine = crate::CrawlEngine::builder()
-            .config(config.clone())
+            .config(CrawlConfig {
+                max_depth: Some(0),
+                ..config.clone()
+            })
             .build()
             .expect("engine builds");
-        let page = engine.scrape(url).await.expect("the crawl does not fail on this chain");
+        let result = engine.crawl(url).await.expect("crawl completes");
+        assert_eq!(result.pages.len(), 1, "the crawl must report its seed's response");
+        assert_eq!(result.error, None);
+        let page = &result.pages[0];
         (page.final_url.replace(base, ""), page.status_code)
     }
 
+    async fn scrape_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
+        let engine = crate::CrawlEngine::builder()
+            .config(config.clone())
+            .build()
+            .expect("engine");
+        let page = engine.scrape(url).await.expect("scrape returns its terminal response");
+        (page.final_url.replace(base, ""), page.status_code)
+    }
+
+    async fn assert_crawl_redirect_error(url: &str, config: &CrawlConfig) {
+        let engine = crate::CrawlEngine::builder()
+            .config(CrawlConfig {
+                max_depth: Some(0),
+                ..config.clone()
+            })
+            .build()
+            .expect("engine");
+        let result = engine.crawl(url).await.expect("crawl reports its failed seed");
+        assert!(
+            result.pages.is_empty(),
+            "an exhausted redirect must not produce a terminal 3xx page"
+        );
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("too_many_redirects:")),
+            "{:?}",
+            result.error
+        );
+    }
+
     #[tokio::test]
-    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         let start = r#"<html><head><meta http-equiv="refresh" content="0; url=/missing"></head>
@@ -1951,7 +2095,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/start"), &config).await,
+            scrape_stop(&base, &format!("{base}/start"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }
@@ -1961,7 +2105,7 @@ mod tests {
         let mock = MockServer::start().await;
         let base = mock.uri();
         // ~keep /r0 -meta-> /r1 -meta-> /r2 -301-> /r3 with a limit of 2: both refresh hops are
-        // ~keep taken, so the 301 is the page the chain stops on.
+        // ~keep taken, so the 301 exceeds the remaining redirect budget.
         mount_body(&mock, "/r0", "text/html", meta_refresh_page("0; url=/r1")).await;
         let r1 = r#"<html><head><meta http-equiv="refresh" content="0; url=/r2"></head>
             <body><a href="/from-r1">l</a></body></html>"#;
@@ -1976,18 +2120,15 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
-            "map must stop on the 301 without failing, got {result:?}"
+            matches!(&result, Err(CrawlError::TooManyRedirects { .. })),
+            "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
             request_count(&mock, "/r3").await,
             0,
             "a hop past the limit is not requested"
         );
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
-            ("/r2".to_owned(), 301)
-        );
+        assert_crawl_redirect_error(&format!("{base}/r0"), &config).await;
     }
 
     #[tokio::test]
@@ -1995,21 +2136,18 @@ mod tests {
         let mock = MockServer::start().await;
         let base = mock.uri();
         // ~keep /a -meta-> /b -301-> /a: the 301 leads back to a URL already requested, so the
-        // ~keep chain stops on /b as the crawl does.
+        // ~keep chain fails on /b without requesting /a again.
         let a = r#"<html><head><meta http-equiv="refresh" content="0; url=/b"></head>
             <body><a href="/from-a">a</a></body></html>"#;
         mount_body(&mock, "/a", "text/html", a.to_owned()).await;
         mount_redirect(&mock, "/b", "/a").await;
         let config = local_test_config();
 
-        let urls = map_urls(&format!("{base}/a"), &config).await;
+        let result = map(&format!("{base}/a"), &config).await;
 
         assert_eq!(request_count(&mock, "/a").await, 1, "/a must be requested once");
-        assert_eq!(urls, Vec::<String>::new(), "map stops on /b, which has no links");
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/a"), &config).await,
-            ("/b".to_owned(), 301)
-        );
+        assert!(matches!(result, Err(CrawlError::TooManyRedirects { .. })));
+        assert_crawl_redirect_error(&format!("{base}/a"), &config).await;
     }
 
     #[tokio::test]
@@ -2115,18 +2253,15 @@ mod tests {
         let result = map(&format!("{base}/r0"), &config).await;
 
         assert!(
-            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
-            "map must stop on the second 301 without failing, got {result:?}"
+            matches!(&result, Err(CrawlError::TooManyRedirects { .. })),
+            "map must reject the redirect past its limit, got {result:?}"
         );
         assert_eq!(
             request_count(&mock, "/r2").await,
             0,
             "a hop past the limit is not requested"
         );
-        assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
-            ("/r1".to_owned(), 301)
-        );
+        assert_crawl_redirect_error(&format!("{base}/r0"), &config).await;
     }
 
     #[tokio::test]
@@ -2164,7 +2299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_crawl_does() {
+    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_scrape_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         mount_redirect(&mock, "/r0", "/missing").await;
@@ -2177,7 +2312,7 @@ mod tests {
             "map must stop on the missing page without failing, got {result:?}"
         );
         assert_eq!(
-            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            scrape_stop(&base, &format!("{base}/r0"), &config).await,
             ("/missing".to_owned(), 404)
         );
     }

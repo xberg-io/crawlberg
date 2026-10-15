@@ -18,33 +18,45 @@ use chromiumoxide_cdp::cdp::{CdpEventMessage, IntoEventKind};
 use chromiumoxide_types::*;
 
 pub use self::config::{BrowserConfig, BrowserConfigBuilder, LAUNCH_TIMEOUT};
-use crate::async_process::{Child, ExitStatus};
+use crate::async_process::{Child, ExitStatus, ManagedChild, SpawnedChild};
 use crate::cmd::{CommandMessage, to_command_response};
 use crate::conn::Connection;
 use crate::error::{BrowserStderr, CdpError, Result};
 use crate::handler::browser::BrowserContext;
-use crate::handler::{Handler, HandlerConfig, HandlerMessage};
+use crate::handler::{Handler, HandlerConfig, HandlerConnection, HandlerMessage};
 use crate::listeners::{EventListenerRequest, EventStream};
 use crate::page::Page;
 use crate::utils;
 
 mod argument;
 mod config;
+#[cfg(unix)]
+mod pipe;
 
 /// A [`Browser`] is created when chromiumoxide connects to a Chromium instance.
 #[derive(Debug)]
 pub struct Browser {
+    owned_termination: std::sync::Arc<crate::handler::termination::OwnedTermination>,
     /// The `Sender` to send messages to the connection handler that drives the
     /// websocket
     sender: Sender<HandlerMessage>,
     /// How the spawned chromium instance was configured, if any
     config: Option<BrowserConfig>,
     /// The spawned chromium instance
-    child: Option<Child>,
+    child: Option<SpawnedChild>,
     /// The debug web socket url of the chromium instance
     debug_ws_url: String,
     /// The context of the browser
     browser_context: BrowserContext,
+    #[cfg(unix)]
+    pipe_hub: Option<crate::pipe::PipeHub>,
+}
+
+struct LaunchConnection {
+    address: String,
+    connection: HandlerConnection,
+    #[cfg(unix)]
+    hub: Option<crate::pipe::PipeHub>,
 }
 
 /// Browser connection information.
@@ -71,6 +83,26 @@ pub struct BrowserConnection {
 }
 
 impl Browser {
+    /// Declare termination only for a process owned by this browser in this process. ~keep
+    pub fn begin_owned_termination(&self) -> bool {
+        if !self.has_owned_process() || self.spawned_elsewhere() {
+            return false;
+        }
+        self.owned_termination.request();
+        true
+    }
+
+    /// Whether a terminal transport close was observed after this process requested owned teardown. ~keep
+    pub fn observed_owned_termination(&self) -> bool {
+        self.owned_termination.observed()
+    }
+
+    /// Classify a matching connection's EOF/Close (`None`) or typed terminal error after owned intent. ~keep
+    /// A borrowed browser, a forked copy, and a nonterminal error never establish expected teardown. ~keep
+    pub fn observe_owned_transport_end(&self, error: Option<&crate::error::CdpError>) -> bool {
+        self.owned_termination.observe(error)
+    }
+
     /// Connect to an already running chromium instance via the given URL.
     ///
     /// If the URL is a http(s) URL, it will first attempt to retrieve the Websocket URL from the `json/version` endpoint.
@@ -125,10 +157,13 @@ impl Browser {
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
+            owned_termination: std::sync::Arc::clone(&fut.owned_termination),
             sender: tx,
             config: None,
             child: None,
             debug_ws_url,
+            #[cfg(unix)]
+            pipe_hub: None,
             browser_context,
         };
         Ok((browser, fut))
@@ -142,12 +177,53 @@ impl Browser {
     /// This fails if no web socket url could be detected from the child
     /// processes stderr for more than the configured `launch_timeout`
     /// (20 seconds by default).
-    pub async fn launch(mut config: BrowserConfig) -> Result<(Self, Handler)> {
+    pub async fn launch(config: BrowserConfig) -> Result<(Self, Handler)> {
+        Self::launch_with(config, BrowserConfig::launch).await
+    }
+
+    /// Like [`Self::launch`], with the child process started by `spawn`.
+    ///
+    /// `spawn` gets the final config and runs once, before the wait for the web socket url. A
+    /// caller that must know the process from the moment it exists records it there.
+    pub async fn launch_with(
+        config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<Child>,
+    ) -> Result<(Self, Handler)> {
+        Self::launch_process(config, |config| spawn(config).map(SpawnedChild::Runtime)).await
+    }
+
+    /// Launch with native Unix child waits, avoiding process-wide SIGCHLD registration.
+    /// Managed instances expose their child through [`Self::get_mut_managed_child`].
+    pub async fn launch_managed(config: BrowserConfig) -> Result<(Self, Handler)> {
+        Self::launch_managed_with(config, BrowserConfig::launch_managed).await
+    }
+
+    /// Like [`Self::launch_managed`], with the managed process recorded by the caller at spawn.
+    pub async fn launch_managed_with(
+        config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<ManagedChild>,
+    ) -> Result<(Self, Handler)> {
+        #[cfg(unix)]
+        {
+            Self::launch_process(config, |config| spawn(config).map(SpawnedChild::Managed)).await
+        }
+        #[cfg(not(unix))]
+        Self::launch_with(config, spawn).await
+    }
+
+    async fn launch_process(
+        mut config: BrowserConfig,
+        spawn: impl FnOnce(&BrowserConfig) -> io::Result<SpawnedChild>,
+    ) -> Result<(Self, Handler)> {
         // Canonalize paths to reduce issues with sandboxing
         config.executable = utils::canonicalize_except_snap(config.executable).await?;
 
         // Launch a new chromium instance
-        let mut child = config.launch()?;
+        let mut child = spawn(&config)?;
+        // A child that `BrowserConfig::command` started on a private debugging pipe holds this
+        // end of it. A child with none printed a web socket url on its stderr.
+        #[cfg(unix)]
+        let pipe = child.take_debugging_pipe();
 
         /// Faillible initialization to run once the child process is created.
         ///
@@ -155,18 +231,35 @@ impl Browser {
         /// errors are caught and that the child process is properly cleaned-up.
         async fn with_child(
             config: &BrowserConfig,
-            child: &mut Child,
-        ) -> Result<(String, Connection<CdpEventMessage>)> {
+            child: &mut SpawnedChild,
+            #[cfg(unix)] pipe: Option<std::os::unix::net::UnixStream>,
+        ) -> Result<LaunchConnection> {
+            #[cfg(unix)]
+            if let Some(pipe) = pipe {
+                return self::pipe::initialize(pipe, child, config.launch_timeout).await;
+            }
             let dur = config.launch_timeout;
             let timeout_fut = Box::pin(tokio::time::sleep(dur));
 
             // extract the ws:
             let debug_ws_url = ws_url_from_output(child, timeout_fut).await?;
             let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
-            Ok((debug_ws_url, conn))
+            Ok(LaunchConnection {
+                address: debug_ws_url,
+                connection: HandlerConnection::WebSocket(conn),
+                #[cfg(unix)]
+                hub: None,
+            })
         }
 
-        let (debug_ws_url, conn) = match with_child(&config, &mut child).await {
+        let launch = match with_child(
+            &config,
+            &mut child,
+            #[cfg(unix)]
+            pipe,
+        )
+        .await
+        {
             Ok(conn) => conn,
             Err(e) => {
                 // An initialization error occurred, clean up the process
@@ -203,14 +296,17 @@ impl Browser {
             manage_child_targets: config.manage_child_targets,
         };
 
-        let fut = Handler::new(conn, rx, handler_config);
+        let fut = Handler::with_connection(launch.connection, rx, handler_config);
         let browser_context = fut.default_browser_context().clone();
 
         let browser = Self {
+            owned_termination: std::sync::Arc::clone(&fut.owned_termination),
             sender: tx,
             config: Some(config),
             child: Some(child),
-            debug_ws_url,
+            debug_ws_url: launch.address,
+            #[cfg(unix)]
+            pipe_hub: launch.hub,
             browser_context,
         };
 
@@ -241,6 +337,7 @@ impl Browser {
     /// [`Browser::wait_sync`], [`Browser::try_wait`]).
     /// [`Browser::drop`] waits automatically if needed.
     pub async fn close(&mut self) -> Result<CloseReturns> {
+        self.begin_owned_termination();
         let (tx, rx) = oneshot_channel();
 
         self.sender.clone().send(HandlerMessage::CloseBrowser(tx)).await?;
@@ -257,7 +354,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub async fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.own_child() {
             Ok(Some(child.wait().await?))
         } else {
             Ok(None)
@@ -273,7 +370,7 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.own_child() {
             child.try_wait()
         } else {
             Ok(None)
@@ -290,8 +387,45 @@ impl Browser {
     ///
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
+    ///
+    /// It returns `None` in a process forked from the one that spawned the instance. So do
+    /// [`Browser::wait`], [`Browser::try_wait`] and [`Browser::kill`], and a drop there leaves the
+    /// instance running: only the process that spawned it ends it.
     pub fn get_mut_child(&mut self) -> Option<&mut Child> {
-        self.child.as_mut()
+        self.own_child()?.runtime_mut()
+    }
+
+    /// The native-wait child of a managed launch, in its spawning process.
+    pub fn get_mut_managed_child(&mut self) -> Option<&mut ManagedChild> {
+        self.own_child()?.managed_mut()
+    }
+
+    /// Whether this process owns a launched instance, for either wait backend.
+    pub fn has_owned_process(&self) -> bool {
+        self.child.as_ref().is_some_and(SpawnedChild::spawned_here)
+    }
+
+    /// The unreaped child ID for either wait backend, in the spawning process.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child
+            .as_ref()
+            .filter(|child| child.spawned_here())
+            .and_then(SpawnedChild::id)
+    }
+
+    /// The spawned chromium instance, in the process that spawned it. Every call that waits for
+    /// the instance or ends it goes through here.
+    fn own_child(&mut self) -> Option<&mut SpawnedChild> {
+        self.child.as_mut().filter(|child| child.spawned_here())
+    }
+
+    /// Whether this [`Browser`] is a copy, in a forked process, of one that spawned a chromium
+    /// instance: the instance exists, and another process spawned it.
+    ///
+    /// It is `false` in the process that spawned the instance, and for a [`Browser`] that
+    /// spawned none (e.g. connected to an existing browser through [`Browser::connect`]).
+    pub fn spawned_elsewhere(&self) -> bool {
+        self.child.as_ref().is_some_and(|child| !child.spawned_here())
     }
 
     /// Forcibly kill the spawned chromium instance
@@ -305,7 +439,8 @@ impl Browser {
     /// This call has no effect if this [`Browser`] did not spawn any chromium instance (e.g.
     /// connected to an existing browser through [`Browser::connect`])
     pub async fn kill(&mut self) -> Option<io::Result<()>> {
-        match self.child.as_mut() {
+        self.begin_owned_termination();
+        match self.own_child() {
             Some(child) => Some(child.kill().await),
             None => None,
         }
@@ -355,6 +490,15 @@ impl Browser {
     /// Returns the address of the websocket this browser is attached to
     pub fn websocket_address(&self) -> &String {
         &self.debug_ws_url
+    }
+
+    /// For a browser that was launched on a private debugging pipe: a future that opens one
+    /// more CDP client of that pipe. `None` for every other browser: such a browser has a
+    /// WebSocket address, and a client connects to [`Self::websocket_address`].
+    #[cfg(unix)]
+    pub fn pipe_client(&self) -> Option<impl Future<Output = Result<crate::pipe::PipeClient>> + Send + use<>> {
+        let hub = self.pipe_hub.clone()?;
+        Some(async move { hub.open_client().await })
     }
 
     /// Whether the BrowserContext is incognito.
@@ -468,17 +612,24 @@ impl Browser {
 
 impl Drop for Browser {
     fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
+        // In a process forked from the one that spawned the instance, the handle is a copy.
+        // Dropping it would kill the instance, which `kill_on_drop` asks the runtime to do, so
+        // the copy is leaked instead.
+        if let Some(copy) = self.child.take_if(|child| !child.spawned_here()) {
+            std::mem::forget(copy);
+        }
+        // A caller that spawned the instance with `kill_on_drop(false)` stops it itself: the
+        // runtime kills nothing, so there is nothing to warn about.
+        if let Some(child) = self.child.as_mut().filter(|child| child.killed_on_drop()) {
             if let Ok(Some(_)) = child.try_wait() {
                 // Already exited, do nothing. Usually occurs after using the method close or kill.
             } else {
-                // We set the `kill_on_drop` property for the child process, so no need to explicitely
-                // kill it here. It can't really be done anyway since the method is async.
+                // The child has the `kill_on_drop` property, so the runtime kills it. It cannot be
+                // done here, since the method is async.
                 //
-                // On Unix, the process will be reaped in the background by the runtime automatically
-                // so it won't leave any resources locked. It is, however, a better practice for the user to
-                // do it himself since the runtime doesn't provide garantees as to when the reap occurs, so we
-                // warn him here.
+                // On Unix the runtime reaps the process in the background, so it leaves no resource
+                // locked. The runtime gives no guarantee as to when the reap occurs, so a caller
+                // does better to close the browser itself, and is warned here.
                 tracing::warn!("Browser was not closed manually, it will be killed automatically in the background");
             }
         }
@@ -495,12 +646,12 @@ impl Drop for Browser {
 /// - [`CdpError::LaunchIo`]: an input/output error occurs when await the process exit or reading
 ///   the browser's stderr: end of stream, invalid UTF-8, other
 async fn ws_url_from_output(
-    child_process: &mut Child,
+    child_process: &mut SpawnedChild,
     timeout_fut: impl Future<Output = ()> + Unpin,
 ) -> Result<String> {
     use futures::{AsyncBufReadExt, FutureExt};
     let mut timeout_fut = timeout_fut.fuse();
-    let stderr = child_process.stderr.take().expect("no stderror");
+    let stderr = child_process.take_stderr().expect("no stderror");
     let mut stderr_bytes = Vec::<u8>::new();
     let mut exit_status_fut = Box::pin(child_process.wait()).fuse();
     let mut buf = futures::io::BufReader::new(stderr);
@@ -540,5 +691,247 @@ async fn ws_url_from_output(
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+#[allow(unsafe_code)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::async_process::{Command, Stdio};
+
+    unsafe extern "C" {
+        fn fork() -> i32;
+        fn _exit(code: i32) -> !;
+        fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+
+    /// A browser whose spawned instance is a `cat` that waits on its standard input.
+    fn browser_with_a_waiting_instance() -> Browser {
+        browser_with_an_instance_of(Command::new("cat").stdin(Stdio::piped()))
+    }
+
+    fn browser_with_an_instance_of(command: &mut Command) -> Browser {
+        let child = command.spawn().expect("cat must start");
+        Browser {
+            owned_termination: std::sync::Arc::default(),
+            sender: channel(1).0,
+            config: None,
+            child: Some(SpawnedChild::Runtime(child)),
+            debug_ws_url: String::new(),
+            browser_context: BrowserContext::default(),
+            pipe_hub: None,
+        }
+    }
+
+    /// The address of a WebSocket server that sends each of its first two clients one text
+    /// message of `size` bytes in one frame.
+    async fn server_of_one_message(size: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("client");
+                // ~keep A client that refuses the frame stops reading, so its write never ends:
+                // ~keep each client has its own task.
+                tokio::spawn(async move {
+                    let mut socket = async_tungstenite::tokio::accept_async(stream).await.expect("handshake");
+                    let _ = socket
+                        .send(async_tungstenite::tungstenite::Message::Text("a".repeat(size).into()))
+                        .await;
+                });
+            }
+        });
+        format!("ws://{address}")
+    }
+
+    /// An independent client of a browser with a debugging port has the default limits of the
+    /// WebSocket: a message over the frame limit of 16 MiB ends the client with an error. The
+    /// child-target controller of the request firewall is such a client. The connection of the
+    /// handler has no limit and reads the same message whole.
+    #[tokio::test]
+    async fn an_independent_websocket_client_refuses_a_message_over_the_frame_limit() {
+        use async_tungstenite::tungstenite::Error as WsError;
+        use futures::StreamExt;
+
+        const OVER_THE_FRAME_LIMIT: usize = (16 << 20) + 1;
+        const WAIT: Duration = Duration::from_secs(60);
+
+        let browser = Browser {
+            owned_termination: std::sync::Arc::default(),
+            sender: channel(1).0,
+            config: None,
+            child: None,
+            debug_ws_url: server_of_one_message(OVER_THE_FRAME_LIMIT).await,
+            browser_context: BrowserContext::default(),
+            pipe_hub: None,
+        };
+
+        // ~keep The firewall opens its client with this call, on the address of the browser.
+        let (mut independent, _) = async_tungstenite::tokio::connect_async(browser.websocket_address().as_str())
+            .await
+            .expect("independent client");
+        let refused = tokio::time::timeout(WAIT, independent.next())
+            .await
+            .expect("the independent client must answer");
+        assert!(
+            matches!(refused, Some(Err(WsError::Capacity(_)))),
+            "a message over the frame limit must end the independent client with a capacity error"
+        );
+
+        let mut handler_client = Connection::<CdpEventMessage>::connect(browser.websocket_address())
+            .await
+            .expect("client of the handler");
+        let whole = tokio::time::timeout(WAIT, handler_client.next())
+            .await
+            .expect("the client of the handler must answer");
+        // ~keep The message is not a protocol message, so the connection gives its whole text
+        // ~keep back in the error.
+        let whole_size = match whole {
+            Some(Err(CdpError::InvalidMessage(text, _))) => Some(text.len()),
+            _ => None,
+        };
+        assert_eq!(
+            whole_size,
+            Some(OVER_THE_FRAME_LIMIT),
+            "the client of the handler must read the whole message"
+        );
+    }
+
+    /// Collects the message of every event.
+    struct Messages(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::field::Visit for Messages {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0
+                    .lock()
+                    .expect("the messages must not be poisoned")
+                    .push(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl tracing::Subscriber for Messages {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            event.record(&mut Messages(self.0.clone()));
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// The messages logged on this thread while `browser` is dropped.
+    fn messages_of_the_drop(browser: Browser) -> Vec<String> {
+        let messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(Messages(messages.clone()));
+        drop(browser);
+        drop(guard);
+        std::mem::take(&mut *messages.lock().expect("the messages must not be poisoned"))
+    }
+
+    /// The drop of a browser warns that the runtime kills the running instance only when the
+    /// runtime does. A caller that spawned the instance with `kill_on_drop(false)` stops it
+    /// itself, and its drop logs no warning.
+    #[tokio::test]
+    async fn dropping_a_browser_warns_of_a_kill_only_when_the_runtime_kills_the_instance() {
+        const WARNING: &str = "Browser was not closed manually";
+
+        let killed = messages_of_the_drop(browser_with_a_waiting_instance());
+        assert!(
+            killed.iter().any(|message| message.contains(WARNING)),
+            "the drop of a running instance the runtime kills must warn: {killed:?}"
+        );
+
+        let kept = messages_of_the_drop(browser_with_an_instance_of(
+            Command::new("cat").stdin(Stdio::piped()).kill_on_drop(false),
+        ));
+        assert!(
+            !kept.iter().any(|message| message.contains(WARNING)),
+            "the drop of an instance its caller stops must not warn of a kill: {kept:?}"
+        );
+    }
+
+    /// Wait up to ten seconds for the forked child `pid` and return its wait status. A child that
+    /// has not left by then is killed, and the status is the one of that kill.
+    fn wait_for_forked_child(pid: i32) -> i32 {
+        const NO_HANG: i32 = 1;
+        const KILL: i32 = 9;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut status = 0;
+        // SAFETY: `pid` is a child of this process and `status` is writable.
+        while unsafe { waitpid(pid, &raw mut status, NO_HANG) } == 0 {
+            if Instant::now() >= deadline {
+                // SAFETY: as above; the child is not reaped yet, so the pid is still its own.
+                unsafe {
+                    kill(pid, KILL);
+                    waitpid(pid, &raw mut status, 0);
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        status
+    }
+
+    /// A process forked from the one that spawned a browser holds a copy of the browser. It gets
+    /// no child from it, its `kill` and `try_wait` do nothing, and its drop leaves the instance
+    /// running.
+    #[tokio::test]
+    async fn a_forked_process_does_not_end_the_instance_its_parent_spawned() {
+        let mut browser = browser_with_a_waiting_instance();
+
+        // SAFETY: the forked child has one thread. It uses its copy of the browser and leaves
+        // through `_exit`, so it never returns into the test harness.
+        let forked = unsafe { fork() };
+        assert!(forked >= 0, "fork must work");
+        if forked == 0 {
+            let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let a_copy = browser.spawned_elsewhere();
+                let has_child = browser.get_mut_child().is_some();
+                let killed = futures::executor::block_on(browser.kill()).is_some();
+                let waited = !matches!(browser.try_wait(), Ok(None));
+                drop(browser);
+                i32::from(has_child) | (i32::from(killed) << 1) | (i32::from(waited) << 2) | (i32::from(!a_copy) << 3)
+            }));
+            // SAFETY: leaves the forked child at once, with no exit function of the parent.
+            unsafe { _exit(found.unwrap_or(64)) }
+        }
+        let status = wait_for_forked_child(forked);
+
+        let still_runs = matches!(browser.try_wait(), Ok(None));
+        let own_child = browser.get_mut_child().is_some();
+        let a_copy_here = browser.spawned_elsewhere();
+        let killed_here = browser.kill().await;
+        assert_eq!(
+            status, 0,
+            "the forked process must get no child, kill nothing, wait for nothing and see a copy (wait status {status})"
+        );
+        assert!(
+            !a_copy_here,
+            "the browser is no copy in the process that spawned the instance"
+        );
+        assert!(
+            still_runs,
+            "the instance must still run after a forked process killed and dropped its copy of the browser"
+        );
+        assert!(
+            own_child,
+            "the process that spawned the instance must still get its child"
+        );
+        assert!(
+            matches!(killed_here, Some(Ok(()))),
+            "the process that spawned the instance must still be able to kill it: {killed_here:?}"
+        );
     }
 }

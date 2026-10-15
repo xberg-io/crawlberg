@@ -3,8 +3,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::CrawlEngine;
+use crate::engine::{CrawlEngine, Politeness};
+use crate::types::CrawlConfig;
 
+use super::error::ApiError;
 use super::jobs::JobRegistry;
 
 /// Default time-to-live for jobs (1 hour).
@@ -126,8 +128,12 @@ fn env_usize(var: &str, default: usize) -> usize {
 /// Shared state for all API handlers.
 #[derive(Clone)]
 pub struct ApiState {
-    /// The crawl engine used to execute scrape, crawl, and map operations.
-    pub engine: Arc<CrawlEngine>,
+    /// The crawl settings of the server. Private, so that a handler can only reach an engine
+    /// through [`ApiState::request_engine`].
+    config: CrawlConfig,
+    /// The rate limiter and the robots.txt cache of the server engine. Every request engine
+    /// shares them, so the per-host throttle holds across requests. They hold no cookie.
+    politeness: Politeness,
     /// Registry of asynchronous crawl and batch scrape jobs.
     pub jobs: Arc<JobRegistry>,
     /// Authentication and resource-limit configuration for this server instance.
@@ -135,8 +141,8 @@ pub struct ApiState {
 }
 
 impl ApiState {
-    /// Create a new `ApiState` wrapping the given engine with explicit security
-    /// configuration.
+    /// Create a new `ApiState` from the configuration of the given engine, with explicit
+    /// security configuration.
     ///
     /// This also spawns a background task that periodically evicts expired jobs
     /// from the registry (default TTL: 1 hour). Callers resolve
@@ -146,7 +152,32 @@ impl ApiState {
     pub fn with_security(engine: Arc<CrawlEngine>, security: ApiSecurityConfig) -> Self {
         let jobs = Arc::new(JobRegistry::new());
         jobs.spawn_eviction_task(DEFAULT_JOB_MAX_AGE);
-        Self { engine, jobs, security }
+        Self {
+            config: engine.config.clone(),
+            politeness: engine.politeness(),
+            jobs,
+            security,
+        }
+    }
+
+    /// Build the engine for one request: the configuration of the server with the changes that
+    /// `configure` makes for this request.
+    ///
+    /// ~keep This is the only way a handler gets an engine. The state holds no engine, so every
+    /// ~keep request has its own cookie store and no route can send the cookies that another
+    /// ~keep request received (crawlberg#652). The engine shares the rate limiter and the robots
+    /// ~keep cache of the server, which hold no cookie.
+    pub(super) fn request_engine(
+        &self,
+        configure: impl FnOnce(&mut CrawlConfig) -> Result<(), ApiError>,
+    ) -> Result<CrawlEngine, ApiError> {
+        let mut config = self.config.clone();
+        configure(&mut config)?;
+        CrawlEngine::builder()
+            .config(config)
+            .politeness(self.politeness.clone())
+            .build()
+            .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
     }
 }
 
@@ -172,6 +203,38 @@ mod tests {
     #[test]
     fn env_usize_falls_back_to_default_when_unset_or_invalid() {
         assert_eq!(env_usize("CRAWLBERG_TEST_UNSET_VAR_XYZ", 42), 42);
+    }
+
+    /// Each request engine owns a browser pool of its own: one Chrome for each request, not the
+    /// startup engine's Chrome for all of them.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn request_engines_own_a_browser_pool_each() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                backend: crate::types::BrowserBackend::Chromiumoxide,
+                ..crate::types::BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let startup = Arc::new(CrawlEngine::builder().config(config).build().expect("engine"));
+        let state = ApiState::with_security(Arc::clone(&startup), ApiSecurityConfig::default());
+
+        let first = state.request_engine(|_| Ok(())).expect("request engine");
+        let second = state.request_engine(|_| Ok(())).expect("request engine");
+
+        let pools = [&*startup, &first, &second].map(|engine| {
+            Arc::clone(
+                engine
+                    .owned_browser_pool
+                    .as_ref()
+                    .expect("an engine in browser mode owns a pool"),
+            )
+        });
+        assert!(!Arc::ptr_eq(&pools[0], &pools[1]));
+        assert!(!Arc::ptr_eq(&pools[0], &pools[2]));
+        assert!(!Arc::ptr_eq(&pools[1], &pools[2]));
+        assert!(state.config.browser_pool.is_none());
     }
 
     #[test]

@@ -9,6 +9,23 @@ use async_trait::async_trait;
 use crate::error::CrawlError;
 use crate::traits::{Frontier, FrontierEntry};
 
+fn pop_excluding_hosts(queue: &mut VecDeque<FrontierEntry>, n: usize, hosts: &[String]) -> Vec<FrontierEntry> {
+    let mut batch = Vec::with_capacity(n.min(queue.len()));
+    let mut index = 0;
+    while index < queue.len() && batch.len() < n {
+        let host = url::Url::parse(&queue[index].url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_default();
+        if hosts.contains(&host) {
+            index += 1;
+        } else {
+            batch.push(queue.remove(index).expect("valid queue index"));
+        }
+    }
+    batch
+}
+
 /// A simple in-memory URL frontier with deduplication.
 ///
 /// FIFO: entries are popped in the order they were pushed, which makes the crawl
@@ -62,6 +79,18 @@ impl Frontier for InMemoryFrontier {
         Ok(batch)
     }
 
+    async fn pop_batch_excluding_hosts(
+        &self,
+        n: usize,
+        hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(Some(pop_excluding_hosts(
+            &mut self.queue.lock().expect("lock poisoned"),
+            n,
+            hosts,
+        )))
+    }
+
     async fn is_seen(&self, url: &str) -> Result<bool, CrawlError> {
         Ok(self.seen.lock().expect("lock poisoned").contains(url))
     }
@@ -69,6 +98,10 @@ impl Frontier for InMemoryFrontier {
     async fn mark_seen(&self, url: &str) -> Result<(), CrawlError> {
         self.seen.lock().expect("lock poisoned").insert(url.to_owned());
         Ok(())
+    }
+
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
     }
 
     async fn len(&self) -> Result<usize, CrawlError> {
@@ -133,6 +166,18 @@ impl Frontier for LifoFrontier {
         Ok(batch)
     }
 
+    async fn pop_batch_excluding_hosts(
+        &self,
+        n: usize,
+        hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(Some(pop_excluding_hosts(
+            &mut self.queue.lock().expect("lock poisoned"),
+            n,
+            hosts,
+        )))
+    }
+
     async fn is_seen(&self, url: &str) -> Result<bool, CrawlError> {
         Ok(self.seen.lock().expect("lock poisoned").contains(url))
     }
@@ -140,6 +185,10 @@ impl Frontier for LifoFrontier {
     async fn mark_seen(&self, url: &str) -> Result<(), CrawlError> {
         self.seen.lock().expect("lock poisoned").insert(url.to_owned());
         Ok(())
+    }
+
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        Ok(self.seen.lock().expect("lock poisoned").insert(url.to_owned()))
     }
 
     async fn len(&self) -> Result<usize, CrawlError> {
@@ -157,10 +206,101 @@ mod tests {
     use crate::traits::FrontierEntry;
 
     #[tokio::test]
+    async fn should_select_free_hosts_without_reordering_or_changing_retained_entries() {
+        for lifo in [false, true] {
+            let frontier: std::sync::Arc<dyn Frontier> = if lifo {
+                std::sync::Arc::new(LifoFrontier::new())
+            } else {
+                std::sync::Arc::new(InMemoryFrontier::new())
+            };
+            let entries = (0..4)
+                .map(|id| FrontierEntry {
+                    original_url: Some(format!("https://source.test/{id}?original=%2f")),
+                    url: format!(
+                        "https://{}/raw%2f?id={id}",
+                        if id % 2 == 0 { "slow.test" } else { "free.test" }
+                    ),
+                    depth: id + 9,
+                    doc_depth: id as u32 + 7,
+                    priority: id as f64 + 0.25,
+                })
+                .collect::<Vec<_>>();
+            for entry in &entries {
+                frontier.push(entry.clone()).await.unwrap();
+            }
+            let selected = frontier
+                .pop_batch_excluding_hosts(2, &["slow.test".into()])
+                .await
+                .unwrap()
+                .unwrap();
+            let expected = if lifo {
+                vec![entries[3].clone(), entries[1].clone()]
+            } else {
+                vec![entries[1].clone(), entries[3].clone()]
+            };
+            assert_eq!(
+                serde_json::to_value(&selected).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+            let retained = frontier.pop_batch(4).await.unwrap();
+            let expected = if lifo {
+                vec![entries[2].clone(), entries[0].clone()]
+            } else {
+                vec![entries[0].clone(), entries[2].clone()]
+            };
+            assert_eq!(
+                serde_json::to_value(retained).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+        }
+    }
+
+    // ~keep The claim is one step only if no other thread can run between its check and its mark, so
+    // ~keep the test needs threads in parallel: tasks on one thread never interleave inside a call
+    // ~keep that does not wait. Eight tasks start together and claim the same keys in the same order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn should_atomically_claim_a_key_once_in_each_memory_frontier() {
+        const TASKS: usize = 8;
+        const KEYS: usize = 20_000;
+        let frontiers: Vec<std::sync::Arc<dyn Frontier>> = vec![
+            std::sync::Arc::new(InMemoryFrontier::new()),
+            std::sync::Arc::new(LifoFrontier::new()),
+        ];
+        let keys: std::sync::Arc<Vec<String>> =
+            std::sync::Arc::new((0..KEYS).map(|key| format!("key-{key}")).collect());
+        for frontier in frontiers {
+            let start = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
+            let tasks: Vec<_> = (0..TASKS)
+                .map(|_| {
+                    let (frontier, keys, start) = (frontier.clone(), keys.clone(), start.clone());
+                    tokio::spawn(async move {
+                        start.wait().await;
+                        let mut claimed = 0_usize;
+                        for key in keys.iter() {
+                            if frontier.claim(key).await.expect("claim") {
+                                claimed += 1;
+                            }
+                        }
+                        claimed
+                    })
+                })
+                .collect();
+            let mut claimed = 0_usize;
+            for task in tasks {
+                claimed += task.await.expect("claim task");
+            }
+            assert_eq!(claimed, KEYS, "each key is claimed by one task");
+            assert!(frontier.is_seen("key-0").await.expect("seen"));
+            assert_eq!(frontier.len().await.expect("queue length"), 0);
+        }
+    }
+
+    #[tokio::test]
     async fn test_push_pop_fifo_order() {
         let f = InMemoryFrontier::new();
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -169,6 +309,7 @@ mod tests {
         .unwrap();
         f.push(FrontierEntry {
             url: "b".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -177,6 +318,7 @@ mod tests {
         .unwrap();
         f.push(FrontierEntry {
             url: "c".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -210,6 +352,7 @@ mod tests {
         assert_eq!(f.len().await.unwrap(), 0);
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -219,6 +362,7 @@ mod tests {
         assert_eq!(f.len().await.unwrap(), 1);
         f.push(FrontierEntry {
             url: "b".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -236,6 +380,7 @@ mod tests {
         for i in 0..5 {
             f.push(FrontierEntry {
                 url: format!("url{i}"),
+                original_url: None,
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
@@ -275,6 +420,7 @@ mod tests {
         assert!(f.is_empty().await.unwrap());
         f.push(FrontierEntry {
             url: "a".into(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,
@@ -292,6 +438,7 @@ mod lifo_tests {
     fn entry(url: &str) -> FrontierEntry {
         FrontierEntry {
             url: url.to_owned(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,

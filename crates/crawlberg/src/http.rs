@@ -18,15 +18,17 @@ use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
-pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
-};
-pub(crate) use challenge::{challenge_status_error, is_challenge_status};
-pub(crate) use client::{build_client, request_client};
-pub(crate) use headers::build_headers_map;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use body::validate_content_encoding;
+pub(crate) use body::{effective_max_body_size, read_body_bounded, truncate_body_at_char_boundary};
+pub(crate) use challenge::{challenge_status_error, is_challenge_status};
+pub(crate) use client::{build_client, request_client, send_with_cookies};
+pub(crate) use headers::build_headers_map;
+#[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use headers::result_cookies_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
@@ -96,7 +98,6 @@ pub struct HttpResponse {
 
 /// Everything a fetch needs that does not change from one redirect hop to the next.
 struct FetchContext<'a> {
-    url: &'a str,
     config: &'a CrawlConfig,
     extra_headers: &'a HashMap<String, String>,
     client: &'a reqwest::Client,
@@ -219,6 +220,10 @@ pub(crate) trait HopPolicy {
     /// `Err` refuses `url`, which is then never requested, and ends the fetch with that error.
     /// `is_redirect_hop` is `false` for the URL the fetch starts from and `true` for each hop.
     async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError>;
+
+    async fn received(&mut self, _url: &url::Url, _status: u16) -> Result<(), CrawlError> {
+        Ok(())
+    }
 }
 
 /// A fetch with no check beyond the SSRF policy.
@@ -226,6 +231,36 @@ pub(crate) struct AdmitEvery;
 
 impl HopPolicy for AdmitEvery {
     async fn admit(&mut self, _url: &url::Url, _is_redirect_hop: bool) -> Result<(), CrawlError> {
+        Ok(())
+    }
+}
+
+/// Apply an engine's politeness to every hop of a substrate fetch.
+pub(crate) struct RateLimited<'a, P> {
+    inner: P,
+    limiter: Option<&'a dyn crate::traits::RateLimiter>,
+}
+
+impl<'a, P> RateLimited<'a, P> {
+    pub(crate) fn new(inner: P, limiter: Option<&'a dyn crate::traits::RateLimiter>) -> Self {
+        Self { inner, limiter }
+    }
+}
+
+impl<P: HopPolicy> HopPolicy for RateLimited<'_, P> {
+    async fn admit(&mut self, url: &url::Url, is_redirect_hop: bool) -> Result<(), CrawlError> {
+        self.inner.admit(url, is_redirect_hop).await?;
+        if let (Some(limiter), Some(host)) = (self.limiter, url.host_str()) {
+            limiter.acquire(host).await?;
+        }
+        Ok(())
+    }
+
+    async fn received(&mut self, url: &url::Url, status: u16) -> Result<(), CrawlError> {
+        self.inner.received(url, status).await?;
+        if let (Some(limiter), Some(host)) = (self.limiter, url.host_str()) {
+            limiter.record_response(host, status).await?;
+        }
         Ok(())
     }
 }
@@ -271,7 +306,7 @@ impl FetchedPage {
 /// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
 /// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
 /// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
-/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
+/// ~keep rules (see `ChainRules`): the chain stops or fails where the crawl's does.
 pub(crate) async fn http_fetch_with(
     url: &str,
     config: &CrawlConfig,
@@ -293,10 +328,11 @@ pub(crate) async fn http_fetch_with(
 
 /// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
 /// without its whole-line comments, at any size up to the classifier's body limit.
-pub(crate) async fn http_fetch_robots_txt(
+pub(crate) async fn http_fetch_robots_txt_with_policy(
     url: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    policy: &mut impl HopPolicy,
 ) -> Result<HttpResponse, CrawlError> {
     fetch_as(
         url,
@@ -305,7 +341,7 @@ pub(crate) async fn http_fetch_robots_txt(
         client,
         RefreshRedirects::Ignore,
         Fetched::RobotsTxt,
-        &mut AdmitEvery,
+        policy,
     )
     .await
     .map(|page| page.response)
@@ -313,10 +349,11 @@ pub(crate) async fn http_fetch_robots_txt(
 
 /// [`http_fetch`] for a sitemap: a 2xx body that reads as a sitemap document is returned whatever
 /// its URLs say, and any other body gets the page decision.
-pub(crate) async fn http_fetch_sitemap(
+pub(crate) async fn http_fetch_sitemap_with_policy(
     url: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    policy: &mut impl HopPolicy,
 ) -> Result<HttpResponse, CrawlError> {
     fetch_as(
         url,
@@ -325,7 +362,7 @@ pub(crate) async fn http_fetch_sitemap(
         client,
         RefreshRedirects::Ignore,
         Fetched::Sitemap,
-        &mut AdmitEvery,
+        policy,
     )
     .await
     .map(|page| page.response)
@@ -348,7 +385,6 @@ async fn fetch_as(
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
     let context = FetchContext {
-        url,
         config,
         extra_headers,
         client,
@@ -362,7 +398,7 @@ async fn fetch_as(
         policy.admit(&current_url, redirects_followed > 0).await?;
         let hop_left = redirects_followed < config.max_redirects;
         let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
-        let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
+        let outcome = match fetch_one_hop(&context, &current_url, follows_location, policy).await {
             Ok(outcome) => outcome,
             Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
                 return Ok(FetchedPage::unread(not_found_response(&current_url)));
@@ -396,7 +432,7 @@ async fn fetch_as(
         // fixtures/schema.json contract) and is not read at runtime -- SSRF safety itself is
         // unaffected because every redirect target is still validated by `validate_url` above.
         if redirects_followed > config.max_redirects {
-            return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
+            reject_redirect(&next_url, true, false)?;
         }
 
         rules.insert(&next_url);
@@ -409,16 +445,25 @@ async fn fetch_as(
 /// `engine::redirect` is native-only and this module is not).
 pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
+pub(crate) fn reject_redirect(target: &url::Url, unseen: bool, hop_left: bool) -> Result<(), CrawlError> {
+    if !unseen || !hop_left {
+        return Err(redirect_error(target, unseen));
+    }
+    Ok(())
+}
+
+pub(crate) fn redirect_error(target: &url::Url, unseen: bool) -> CrawlError {
+    let reason = if unseen {
+        "redirect limit exceeded"
+    } else {
+        "redirect loop"
+    };
+    let source = crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target);
+    CrawlError::too_many_redirects_with_source(format!("{} - {reason}", source.url), source)
+}
+
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
 /// has requested.
-///
-/// ~keep The rules are the crawl's (`engine/redirect.rs`'s `follow_redirects` and
-/// ~keep `next_redirect_target`): the limit is checked first, a `Location` is followed only to a
-/// ~keep URL not yet requested and otherwise falls through to the refresh sources, a 3xx that
-/// ~keep leads nowhere new is the response, and a 404 past the first hop is the response. The
-/// ~keep crawl fails none of these chains, so a map of the same chain does not fail either.
-/// ~keep A fetch that ignores refreshes keeps the plain rules: every `Location` is followed and a
-/// ~keep hop past the limit or a 404 is an error.
 ///
 /// ~keep A parsed URL's serialization is already the crawl's cycle key for it
 /// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
@@ -441,10 +486,14 @@ impl ChainRules {
     /// Whether the fetch goes on to the `Location` target `target` of a hop that answered with
     /// `status`, given whether a hop is left. `status` is checked against the crawl's own
     /// `REDIRECT_STATUSES` so a 300, 304 or 305 naming a `Location` stays unfollowed here too.
-    fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> bool {
-        self.0
-            .as_ref()
-            .is_none_or(|seen| REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str()))
+    fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> Result<bool, CrawlError> {
+        if let Some(seen) = self.0.as_ref() {
+            if !REDIRECT_STATUSES.contains(&status) {
+                return Ok(false);
+            }
+            reject_redirect(target, !seen.contains(target.as_str()), hop_left)?;
+        }
+        Ok(true)
     }
 
     /// Whether `error`, raised past the first hop, ends the chain on a response instead.
@@ -489,23 +538,25 @@ impl ChainRules {
 async fn fetch_one_hop(
     context: &FetchContext<'_>,
     current_url: &url::Url,
-    follows_location: impl Fn(u16, &url::Url) -> bool,
+    follows_location: impl Fn(u16, &url::Url) -> Result<bool, CrawlError>,
+    policy: &mut impl HopPolicy,
 ) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     let head = ResponseHead::from_response(&resp);
+    policy.received(current_url, head.status).await?;
+    body::validate_content_encoding(resp.headers())?;
 
-    if (300..400).contains(&head.status) {
-        match redirect_target(current_url, &head.headers) {
-            Some(RedirectTarget::Follow(next_url)) if follows_location(head.status, &next_url) => {
-                return Ok(HopOutcome::Redirect(next_url));
-            }
-            Some(_) => {
-                return Ok(HopOutcome::Complete(
-                    unfollowed_redirect_response(context.config, resp, head).await,
-                ));
-            }
-            None => {}
+    if (300..400).contains(&head.status)
+        && let Some(target) = redirect_target(current_url, &head.headers)
+    {
+        if let RedirectTarget::Follow(next_url) = target
+            && follows_location(head.status, &next_url)?
+        {
+            return Ok(HopOutcome::Redirect(next_url));
         }
+        return Ok(HopOutcome::Complete(
+            unfollowed_redirect_response(context.config, resp, head).await,
+        ));
     }
 
     // ~keep Computed lazily and cached below rather than unconditionally up front: most
@@ -522,14 +573,14 @@ async fn fetch_one_hop(
         let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
         return Err(challenge_status_error(
             head.status,
-            context.url,
+            current_url.as_str(),
             headers_map,
             resp,
             effective_max_body_size(context.config),
         )
         .await);
     }
-    if let Some(error) = status_error(head.status, context.url) {
+    if let Some(error) = status_error(head.status, current_url.as_str()) {
         return Err(error);
     }
 
@@ -608,7 +659,9 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(k.as_str(), v.as_str());
     }
 
-    req.send().await.map_err(classify_reqwest_error)
+    send_with_cookies(req, context.config)
+        .await
+        .map_err(classify_reqwest_error)
 }
 
 /// Resolve a 3xx response's `Location` header against the URL that served it.
@@ -704,9 +757,10 @@ async fn read_validated_body(
     resp: reqwest::Response,
     expected_len: Option<usize>,
 ) -> Result<Vec<u8>, CrawlError> {
+    let response_url = resp.url().clone();
     let (body_bytes, hit_cap) = read_body_bounded(resp, effective_max_body_size(config))
         .await
-        .map_err(classify_body_read_error)?;
+        .map_err(|error| classify_body_read_error(error.with_url(response_url)))?;
 
     if let Some(error) = content_length_shortfall_error(expected_len, body_bytes.len(), hit_cap) {
         return Err(error);
@@ -717,6 +771,9 @@ async fn read_validated_body(
 
 /// Tell a truncated or failed body transfer apart from any other reqwest failure.
 fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
+    if e.is_timeout() {
+        return classify_reqwest_error(e);
+    }
     let chain = error_chain_string(&e);
     let is_body_error = chain.contains("content-length")
         || chain.contains("truncate")
@@ -750,6 +807,27 @@ mod tests {
     use tokio_rustls::TlsAcceptor;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn redirect_exhaustion_preserves_redacted_network_source() {
+        use std::error::Error as _;
+        let target = url::Url::parse("https://user:secret@example.com/hop").expect("valid target");
+        for (unseen, hop_left, expected) in [(false, true, "redirect loop"), (true, false, "redirect limit exceeded")] {
+            let error = reject_redirect(&target, unseen, hop_left).expect_err("must reject exhaustion");
+            assert!(
+                matches!(&error, CrawlError::TooManyRedirects { message, .. } if *message == format!("https://***:***@example.com/hop - {expected}"))
+            );
+            let source = error
+                .source()
+                .and_then(|source| source.source())
+                .and_then(|source| source.downcast_ref::<crate::error::UrlSsrfError>())
+                .expect("URL-aware network source must survive");
+            assert_eq!(source.url, "https://***:***@example.com/hop");
+            assert!(matches!(source.source, crate::net::ssrf::SsrfError::TooManyRedirects));
+            assert!(!format!("{error:?}").contains("secret"));
+        }
+        assert!(reject_redirect(&target, true, true).is_ok());
+    }
 
     async fn truncated_body_reqwest_error() -> reqwest::Error {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener must bind");
@@ -980,8 +1058,8 @@ mod tests {
             Ok(_) => panic!("must stop once the second hop exceeds max_redirects(1), got Ok"),
         };
         assert!(
-            matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
-            "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
+            matches!(err, CrawlError::TooManyRedirects { ref message, .. } if *message == format!("{}/hop2 - redirect limit exceeded", mock.uri())),
+            "expected TooManyRedirects, got {err:?}"
         );
     }
 
@@ -1797,6 +1875,132 @@ mod tests {
             .map(|request| request.url.path().to_owned())
             .collect();
         assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
+    }
+
+    #[tokio::test]
+    async fn a_body_deadline_should_report_timeout_and_address() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let url = format!("http://{}/slow-body", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).await.expect("read request") > 0);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nstart")
+                .await
+                .expect("headers");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        let mut config = permissive_config();
+        config.request_timeout = Duration::from_millis(100);
+        let client = build_client(&config).expect("client");
+        let error = http_fetch(&url, &config, &HashMap::new(), &client)
+            .await
+            .err()
+            .expect("body deadline");
+        assert!(matches!(error, CrawlError::Timeout { .. }), "{error}");
+        assert!(error.to_string().contains(&url), "{error}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_status_error_after_a_redirect_names_the_address_that_answered() {
+        let mock = MockServer::start().await;
+        Mock::given(path("/start"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/missing"))
+            .mount(&mock)
+            .await;
+        Mock::given(path("/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client");
+        let error = http_fetch(&format!("{}/start", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .err()
+            .expect("the 404 behind the redirect");
+        assert_eq!(
+            error.to_string(),
+            format!("not_found: HTTP 404 for {}/missing", mock.uri())
+        );
+    }
+
+    #[tokio::test]
+    async fn deflate_decodes_and_only_a_body_left_compressed_fails() {
+        use std::io::Write as _;
+        let mock = MockServer::start().await;
+        let html = b"<p>page body words</p>";
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(html).expect("compression");
+        let body = encoder.finish().expect("compressed body");
+        for (encoding, bytes) in [("deflate", &body[..]), ("DEFLATE", &body[..]), ("UTF-8", &html[..])] {
+            Mock::given(path(format!("/{encoding}")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("Content-Encoding", encoding)
+                        .set_body_bytes(bytes),
+                )
+                .mount(&mock)
+                .await;
+        }
+        let config = permissive_config();
+        let client = build_client(&config).expect("client");
+        let response = http_fetch(&format!("{}/deflate", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("deflate decoded");
+        assert_eq!(response.body_bytes, html);
+        let error = http_fetch(&format!("{}/DEFLATE", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .err()
+            .expect("a body that is still compressed");
+        assert!(error.to_string().contains("DEFLATE"), "{error}");
+        let response = http_fetch(&format!("{}/UTF-8", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("a plain page with a label that is not a coding");
+        assert_eq!(response.body_bytes, html);
+    }
+
+    fn content_encoding(value: &'static [u8]) -> Result<(), CrawlError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_ENCODING,
+            reqwest::header::HeaderValue::from_bytes(value).expect("header value"),
+        );
+        validate_content_encoding(&headers)
+    }
+
+    #[test]
+    fn a_compression_coding_left_on_the_response_is_refused_in_each_spelling() {
+        for value in [
+            "gzip",
+            "GZIP",
+            "x-gzip",
+            "X-Gzip",
+            "gzip, identity",
+            "identity,BR",
+            "zstd",
+            "Deflate",
+        ] {
+            let error = content_encoding(value.as_bytes()).expect_err(value);
+            assert!(matches!(error, CrawlError::Unsupported { .. }), "{value}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_label_that_is_not_a_compression_coding_leaves_the_page() {
+        for value in [
+            &b""[..],
+            b"identity",
+            b"IDENTITY, identity",
+            b"UTF-8",
+            b"none",
+            b" , ",
+            b"gzipped",
+            b"\xff",
+        ] {
+            assert!(content_encoding(value).is_ok(), "{value:?}");
+        }
     }
 
     fn permissive_config() -> CrawlConfig {

@@ -4,6 +4,11 @@ mod admission;
 #[cfg(not(target_arch = "wasm32"))]
 mod batch;
 mod builder;
+mod chain_claim;
+#[cfg(not(target_arch = "wasm32"))]
+mod continuation;
+#[cfg(not(target_arch = "wasm32"))]
+mod cooperative;
 #[cfg(not(target_arch = "wasm32"))]
 mod crawl_loop;
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,6 +17,9 @@ mod crawl_state;
 mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod fetch;
+mod frontier_claim;
+#[cfg(not(target_arch = "wasm32"))]
+mod host_turn;
 #[cfg(not(target_arch = "wasm32"))]
 mod link_discovery;
 mod link_scope;
@@ -22,6 +30,8 @@ pub(crate) mod redirect;
 #[cfg(not(target_arch = "wasm32"))]
 mod robots_cache;
 mod scrape_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod seed_schedule;
 mod selection;
 // ~keep Also compiled under `cfg(test)` natively: see the module doc for why.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -56,6 +66,13 @@ pub struct CrawlEngine {
     pub(crate) config: CrawlConfig,
     pub(crate) frontier: Arc<dyn Frontier>,
     pub(crate) rate_limiter: Arc<dyn RateLimiter>,
+    pub(crate) map_rate_limiter: Arc<dyn RateLimiter>,
+    /// The rate limiter of the browser paths (the Chrome page and the native render). It is
+    /// `rate_limiter` when the caller set `rate_limit_ms` or installed a limiter, and a limiter
+    /// that grants every turn at once otherwise: with the default settings, browser mode loads
+    /// the pages of one host with no delay, as it did before the delay reached the browser paths.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    pub(crate) browser_rate_limiter: Arc<dyn RateLimiter>,
     pub(crate) store: Arc<dyn CrawlStore>,
     pub(crate) event_emitter: Arc<dyn EventEmitter>,
     pub(crate) strategy: Arc<dyn CrawlStrategy>,
@@ -74,11 +91,76 @@ pub struct CrawlEngine {
     ua_rotation: crate::tower::UaRotation,
     #[cfg(not(target_arch = "wasm32"))]
     robots_cache: Arc<robots_cache::RobotsCache>,
+    #[cfg(not(target_arch = "wasm32"))]
+    crawl_schedule: Option<Arc<cooperative::CooperativeContext>>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     pub(crate) native_browser_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
+    /// The cookies the Chrome pages of one crawl have in common, when `cookies_enabled` is set.
+    /// `None` outside a crawl: each crawl call gets its own, so no two crawls share a cookie.
+    #[cfg(feature = "browser")]
+    crawl_cookies: Option<Arc<crate::browser::CrawlCookies>>,
+    /// The browser pool the builder made for this engine, when the caller gave none: one Chrome
+    /// for every page of the engine, launched at the first browser fetch. Its Chrome stops and
+    /// its profile directory goes with the last clone of the engine, or with `shutdown_engine`.
+    /// A pool the caller gave is the caller's and is not here. This pool is engine state, not
+    /// part of `config`: an engine built from a clone of this engine's configuration makes a
+    /// pool of its own.
+    #[cfg(feature = "browser")]
+    pub(crate) owned_browser_pool: Option<Arc<crate::browser_pool::BrowserPool>>,
+}
+
+/// The parts of an engine that keep the politeness toward a host: the rate limiter with its
+/// per-host throttle state, and the robots.txt cache. Neither holds a cookie.
+///
+/// ~keep A server takes this from its own engine and gives it to the engine of each request,
+/// ~keep so that the requests share the throttle and the robots rules while each keeps its own
+/// ~keep cookie store.
+#[cfg(feature = "api")]
+#[derive(Clone)]
+pub(crate) struct Politeness {
+    rate_limiter: Arc<dyn RateLimiter>,
+    map_rate_limiter: Arc<dyn RateLimiter>,
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    browser_rate_limiter: Arc<dyn RateLimiter>,
+    robots_cache: Arc<robots_cache::RobotsCache>,
 }
 
 impl CrawlEngine {
+    /// The browser pool the Chrome pages of this engine come from: the pool the caller gave,
+    /// else the engine's own. `None` for an engine that launches a Chrome for each page.
+    #[cfg(feature = "browser")]
+    pub(crate) fn browser_pool(&self) -> Option<&crate::browser_pool::BrowserPool> {
+        self.config
+            .browser_pool
+            .as_deref()
+            .or(self.owned_browser_pool.as_deref())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn scheduling_limiter(&self) -> Arc<dyn RateLimiter> {
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        if self.request_will_use_browser() {
+            return self.browser_rate_limiter.clone();
+        }
+        self.rate_limiter.clone()
+    }
+
+    /// The politeness parts of this engine, for another engine to share.
+    #[cfg(feature = "api")]
+    pub(crate) fn politeness(&self) -> Politeness {
+        Politeness {
+            rate_limiter: self.rate_limiter.clone(),
+            map_rate_limiter: self.map_rate_limiter.clone(),
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter: self.browser_rate_limiter.clone(),
+            robots_cache: self.robots_cache.clone(),
+        }
+    }
+
+    pub(crate) fn map_rate_limiter(&self) -> &dyn RateLimiter {
+        self.map_rate_limiter.as_ref()
+    }
+
     /// Create a new [`CrawlEngineBuilder`].
     pub fn builder() -> CrawlEngineBuilder {
         CrawlEngineBuilder::new()
@@ -98,6 +180,9 @@ impl CrawlEngine {
     ) -> tower::util::BoxCloneService<CrawlRequest, crate::tower::CrawlResponse, CrawlError> {
         use tower::ServiceBuilder;
 
+        let fetch = crate::tower::HttpFetchService::new(client.clone(), self.config.clone());
+        #[cfg(feature = "browser")]
+        let fetch = fetch.for_crawl(self.crawl_cookies.clone());
         let service = ServiceBuilder::new()
             .layer(crate::tower::PerDomainRateLimitLayer::new(self.rate_limiter.clone()))
             .layer(
@@ -105,7 +190,7 @@ impl CrawlEngine {
                     .bypassing_credentials(Arc::new(self.config.clone())),
             )
             .layer(self.ua_rotation.clone())
-            .service(crate::tower::HttpFetchService::new(client.clone(), self.config.clone()));
+            .service(fetch);
 
         let service = tower::ServiceBuilder::new()
             .layer(crate::tower::CrawlTracingLayer::new())
@@ -118,12 +203,14 @@ impl CrawlEngine {
     /// tier, bypassing the Tower stack -- and with it, UA rotation -- entirely.
     ///
     /// ~keep Mirrors the exact condition `fetch_response` itself checks before routing:
-    /// `feature = "browser"` compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
+    /// the configured backend compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
     /// one place so `choose_request_user_agent` cannot drift from what `fetch_response` actually
     /// does (crawlberg#423).
     #[cfg(not(target_arch = "wasm32"))]
     fn request_will_use_browser(&self) -> bool {
-        cfg!(feature = "browser") && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
+        let available = cfg!(feature = "browser")
+            || (cfg!(feature = "browser-native") && self.config.browser.backend == BrowserBackend::Native);
+        available && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
     }
 
     /// Decide the agent the next request should send.

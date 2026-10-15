@@ -1,0 +1,52 @@
+{
+	"id": "crawl_trailing_slash_distinct",
+	"description": "Fetches /page and /page/ as two pages",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-trailing-slash-distinct",
+		"title": "Fetches /page and /page/ as two pages"
+	},
+	"tags": ["crawl", "normalization"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><a href=\"/page\">Page</a><a href=\"/page/\">Page Slash</a></body></html>"
+			},
+			{
+				"path": "/page",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>The file named page</h1></body></html>"
+			},
+			{
+				"path": "/page/",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>The folder named page</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 3
+		}
+	]
+}

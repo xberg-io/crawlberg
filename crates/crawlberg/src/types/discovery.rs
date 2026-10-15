@@ -14,7 +14,7 @@ pub enum LinkType {
     Internal,
     /// A link to a different domain.
     External,
-    /// A fragment-only link (e.g., `#section`).
+    /// A link into the page it is on: its address without the fragment is the page address (e.g., `#section`).
     Anchor,
     /// A link to a downloadable document (PDF, DOC, etc.).
     Document,
@@ -35,6 +35,12 @@ impl std::fmt::Display for LinkType {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = ["url", "text", "link_type", "rel", "nofollow"])
+)]
 pub struct LinkInfo {
     /// The resolved URL of the link.
     pub url: String,
@@ -46,6 +52,11 @@ pub struct LinkInfo {
     pub rel: Option<String>,
     /// Whether the link has `rel="nofollow"`.
     pub nofollow: bool,
+    /// Link address resolved against the page's base without changing path spelling.
+    /// Percent escapes, Unicode, spaces, backslashes and dot segments are preserved.
+    /// URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
 }
 
 /// The source of an image reference.
@@ -134,7 +145,10 @@ pub struct JsonLdEntry {
     pub raw: String,
 }
 
-/// Information about an HTTP cookie received from a response.
+/// Information about a cookie that a crawled page set.
+///
+/// A crawl result gives `domain` and `path` as the browser stores the cookie, so a cookie has
+/// the same fields whether an HTTP fetch or the browser received it.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -144,10 +158,42 @@ pub struct CookieInfo {
     /// The cookie value.
     #[cfg_attr(alef, alef(sensitive))]
     pub value: String,
-    /// The cookie domain, if specified.
+    /// The hosts that get the cookie back. A host-only cookie (no `Domain` attribute) has the
+    /// host that set it, such as `example.com`. A domain cookie has its domain with a leading
+    /// dot, such as `.example.com`. A `Domain` equal to an IP address or a one-label host gives
+    /// a host-only cookie.
     pub domain: Option<String>,
-    /// The cookie path, if specified.
+    /// The path that gets the cookie back: the `Path` attribute when it starts with `/`,
+    /// otherwise the directory of the page that set the cookie (RFC 6265 default path).
     pub path: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl CookieInfo {
+    /// Replace the `Domain` and `Path` attributes in `domain` and `path` with the values the
+    /// type documents, for a cookie that `host` set on a page at `page_path`.
+    pub(crate) fn with_stored_scope(mut self, host: &str, page_path: &str) -> Self {
+        let host = host.to_ascii_lowercase();
+        let attribute = self
+            .domain
+            .as_deref()
+            .map(|domain| domain.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|domain| !domain.is_empty());
+        let no_registrable_domain = host.parse::<std::net::IpAddr>().is_ok() || !host.contains('.');
+        self.domain = Some(match attribute {
+            Some(domain) if !(domain == host && no_registrable_domain) => format!(".{domain}"),
+            _ => host,
+        });
+        if !self.path.as_deref().is_some_and(|path| path.starts_with('/')) {
+            let default_path = page_path
+                .rsplit_once('/')
+                .map(|(directory, _)| directory)
+                .filter(|directory| directory.starts_with('/'))
+                .unwrap_or("/");
+            self.path = Some(default_path.to_owned());
+        }
+        self
+    }
 }
 
 /// A cookie carried between Chromiumoxide pages in one redirect chain.

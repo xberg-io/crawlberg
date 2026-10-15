@@ -156,8 +156,25 @@ tasks:
       RUST_BACKTRACE: "1"
       CARGO_TERM_COLOR: "always"
     cmds:
+      # ~keep The vendored driver is not a workspace member, so no workspace command runs its
+      # ~keep tests. It runs first: `task` stops at the first failing cmd. The root lockfile does
+      # ~keep not apply to it: `--locked` holds it to the driver's own lockfile.
+      - cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib
       - cmd: bash scripts/ci/rust/run-unit-tests.sh
         platforms: [linux, darwin]
+
+  test:windows-browser:
+    desc: Run Windows driver job tests and real Chrome lifecycle regressions
+    platforms: [windows]
+    preconditions:
+      - sh: powershell -NoProfile -Command 'if (-not (Test-Path -LiteralPath $env:CRAWLBERG_TEST_CHROME_PATH -PathType Leaf)) { exit 1 }'
+        msg: CRAWLBERG_TEST_CHROME_PATH must point to the installed Chrome executable
+    cmds:
+      - cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib -- --test-threads=1
+      # ~keep The two library tests of the crate that compile only on Windows. They get their own
+      # ~keep command: a name filter beside `--test` would filter the two test files below too.
+      - cargo test -p crawlberg --features browser,interact --lib -- --exact browser_pool::tests::a_process_started_at_once_by_the_launched_one_is_in_its_process_tree browser_pool::tests::a_launched_profile_holds_the_process_tree_of_its_chrome --test-threads=1
+      - cargo test -p crawlberg --features browser,interact --test test_browser_profile_cleanup --test test_browser_pool_lifecycle -- --test-threads=1
 
   test:quick:
     desc: Run fast Rust tests (unit tests only)
@@ -165,6 +182,16 @@ tasks:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
       - cargo test --lib --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm
+
+  test:native-only:
+    desc: Execute native browser behavior without the Chromiumoxide feature
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+    cmds:
+      - >-
+        cargo test --locked -p crawlberg --no-default-features --features browser-native
+        --test test_browser_native --test test_native_browser_proxy_provider
+        --test test_native_crawl_feature_configuration
 
   lint:
     desc: Auto-fix Rust code linting (cargo fmt + clippy)
@@ -220,17 +247,18 @@ tasks:
     env:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
-      # ~keep These four manifests own independent lockfiles and are not covered by commands
+      # ~keep These five manifests own independent lockfiles and are not covered by commands
       # ~keep against the root workspace. Assert both counts so a lost path or an empty loop
       # ~keep cannot turn this drift gate into a successful zero-work check (#296).
       - cmd: |
-          expected=4
+          expected=5
           checked=0
           set -- \
             fuzz/Cargo.toml \
             e2e/rust/Cargo.toml \
             packages/elixir/native/crawlberg_nif/Cargo.toml \
-            packages/ruby/ext/crawlberg_rb/native/Cargo.toml
+            packages/ruby/ext/crawlberg_rb/native/Cargo.toml \
+            vendor/crawlberg-chromiumoxide/Cargo.toml
 
           echo "secondary Cargo manifests: expected $expected, configured $#"
           if [ "$#" -ne "$expected" ]; then
@@ -361,6 +389,8 @@ tasks:
         ignore_error: true
       - cmd: cargo update --manifest-path packages/ruby/ext/crawlberg_rb/native/Cargo.toml
         ignore_error: true
+      - cmd: echo "Updating Rust dependencies (vendored browser driver)..."
+      - cmd: cargo update --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml
 
   e2e:generate:
     desc: Generate and format Rust E2E tests from fixtures

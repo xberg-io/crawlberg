@@ -8,6 +8,17 @@
 use super::*;
 use crate::net::ssrf::HostMatcher;
 
+#[test]
+fn query_parameters_participate_in_page_identity_by_default() {
+    assert!(CrawlConfig::default().dedup_include_query);
+    assert!(CrawlConfig::builder().build().dedup_include_query);
+    let config: CrawlConfig = serde_json::from_str("{}").expect("empty configuration");
+    assert!(config.dedup_include_query);
+    let config: CrawlConfig =
+        serde_json::from_str(r#"{"dedup_include_query":false}"#).expect("explicit legacy setting");
+    assert!(!config.dedup_include_query);
+}
+
 /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
 /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
 /// already carries `#[serde(default)]` the field attribute is therefore not redundant — it
@@ -48,6 +59,33 @@ fn should_keep_nested_defaults_when_one_unrelated_field_is_set() {
         config.browser.session_affinity,
         "setting one browser field must not turn off session_affinity, documented as default true"
     );
+}
+
+#[test]
+fn the_debug_text_of_a_browser_config_shows_the_private_pipe_key() {
+    let text = format!(
+        "{:?}",
+        BrowserConfig {
+            private_pipe: true,
+            ..BrowserConfig::default()
+        }
+    );
+    assert!(text.contains("private_pipe: true"), "{text}");
+}
+
+#[test]
+fn private_pipe_is_off_by_default_and_reads_from_the_config() {
+    assert!(!BrowserConfig::default().private_pipe);
+    let config: CrawlConfig = serde_json::from_str(r#"{"browser":{}}"#).expect("parse");
+    assert!(
+        !config.browser.private_pipe,
+        "a config that does not name the key must keep the debugging port"
+    );
+
+    let config: CrawlConfig = serde_json::from_str(r#"{"browser":{"private_pipe":true}}"#).expect("parse");
+    assert!(config.browser.private_pipe);
+    let written = serde_json::to_value(&config).expect("serialize");
+    assert_eq!(written["browser"]["private_pipe"], serde_json::Value::Bool(true));
 }
 
 /// Characterization: `validate` reports the FIRST violation, and the order it checks
@@ -390,6 +428,35 @@ fn validate_rejects_native_endpoint() {
     let err = config.validate().unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("chromiumoxide"), "unexpected error: {msg}");
+}
+
+// ~keep The store holds session cookies, so `Debug` shows only whether it exists.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn crawl_config_debug_does_not_print_the_cookies_of_its_store() {
+    use reqwest::cookie::CookieStore as _;
+
+    let store = crate::net::cookie::PolicyCookieStore::default();
+    let url = url::Url::parse("https://example.com/").expect("a valid URL");
+    let header = reqwest::header::HeaderValue::from_static("session=s3cr3t-cookie-value; Path=/");
+    store.set_cookies(&mut std::iter::once(&header), &url);
+    assert!(store.cookies(&url).is_some(), "the store must hold the cookie");
+    let config = CrawlConfig {
+        cookies_enabled: true,
+        cookie_store: Some(std::sync::Arc::new(store)),
+        ..CrawlConfig::default()
+    };
+
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(
+            !rendered.contains("s3cr3t-cookie-value"),
+            "Debug output must not contain a cookie value"
+        );
+    }
+    assert!(
+        format!("{config:?}").contains("cookie_store: true"),
+        "Debug output must show that the store exists"
+    );
 }
 
 #[test]

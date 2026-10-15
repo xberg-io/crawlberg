@@ -44,10 +44,7 @@ impl CrawlEngine {
         url: &str,
         forced_user_agent: Option<&str>,
     ) -> Result<ScrapeResult, CrawlError> {
-        self.config.validate()?;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        self.warn_if_capture_screenshot_is_a_no_op();
+        self.scrape_preflight()?;
 
         // ~keep Short-circuit chromiumoxide BrowserMode::Always/Stealth when a screenshot was
         // ~keep requested: the generic `fetch_response`/`follow_redirects` path converts to
@@ -93,15 +90,12 @@ impl CrawlEngine {
                 RedirectResolution::Refused { refusal, .. } => return Err(refusal.into_error()),
             };
 
-            let status = outcome.final_response.status;
-            if outcome.final_response.soft_error {
-                return Ok(self.bodyless_status_result(status, outcome.final_url));
-            }
-            if outcome.final_response.status == 404
-                && outcome.final_response.body.is_empty()
-                && outcome.redirect_count > 0
+            if outcome.final_response.soft_error
+                || (outcome.final_response.status == 404
+                    && outcome.final_response.body.is_empty()
+                    && outcome.redirect_count > 0)
             {
-                return Ok(self.bodyless_status_result(404, outcome.final_url));
+                return Ok(self.bodyless_status_result(outcome.final_response.status, outcome.final_url));
             }
             (
                 outcome.final_url,
@@ -116,11 +110,43 @@ impl CrawlEngine {
         #[cfg(target_arch = "wasm32")]
         let page_scan = None;
 
+        self.scrape_resolved(final_url, response, page_scan, browser_used_for_fetch)
+            .await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) async fn scrape_redirect_outcome(
+        &self,
+        outcome: super::redirect::RedirectOutcome,
+    ) -> Result<ScrapeResult, CrawlError> {
+        if outcome.final_response.soft_error
+            || (outcome.final_response.status == 404
+                && outcome.final_response.body.is_empty()
+                && outcome.redirect_count > 0)
+        {
+            return Ok(self.bodyless_status_result(outcome.final_response.status, outcome.final_url));
+        }
+        self.scrape_resolved(
+            outcome.final_url,
+            outcome.final_response,
+            outcome.page_scan,
+            outcome.browser_used,
+        )
+        .await
+    }
+
+    pub(super) async fn scrape_resolved(
+        &self,
+        final_url: String,
+        response: crate::tower::CrawlResponse,
+        page_scan: Option<crate::html::PageScan>,
+        browser_used_for_fetch: bool,
+    ) -> Result<ScrapeResult, CrawlError> {
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &response,
             page_scan,
-            &self.config,
+            self,
             self.document_filter.as_deref(),
         )
         .await?;
@@ -141,6 +167,13 @@ impl CrawlEngine {
         }
 
         Ok(result)
+    }
+
+    pub(super) fn scrape_preflight(&self) -> Result<(), CrawlError> {
+        self.config.validate()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.warn_if_capture_screenshot_is_a_no_op();
+        Ok(())
     }
 
     /// Warn when `capture_screenshot` is set on a configuration that cannot honour it.
@@ -180,48 +213,72 @@ impl CrawlEngine {
         url: &str,
         state: &mut crawlberg_browser::adapter::NativeRenderState,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+        let domain = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned));
+        for attempt in 0..=self.config.retry_count {
+            if let Some(domain) = domain.as_deref() {
+                self.browser_rate_limiter.acquire(domain).await?;
+            }
+            match self.native_render_once(url, state).await {
+                Err(error)
+                    if attempt < self.config.retry_count
+                        && crate::http::should_retry_error(&error, &self.config.retry_codes) =>
+                {
+                    let delay = crate::defaults::dispatch::compute_backoff_ms(
+                        u32::try_from(attempt).unwrap_or(u32::MAX),
+                        self.config.retry_initial_delay_ms,
+                        self.config.retry_max_delay_ms,
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+                outcome => return outcome,
+            }
+        }
+        Err(CrawlError::other("native browser retry exhausted"))
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
+    async fn native_render_once(
+        &self,
+        url: &str,
+        state: &mut crawlberg_browser::adapter::NativeRenderState,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let (response, refused, redirects) =
+        let (response, refused, redirects, charset, result_cookies) =
             crate::native_browser::native_browser_render(url, &self.config, state, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: response.status,
-            content_type: response.content_type,
-            body: response.body,
-            body_bytes: response.body_bytes,
-            headers: response.headers,
-            landed: Some(Box::new(crate::tower::Landing {
-                url: response.final_url,
-                redirects,
-                refused,
-                extras: response.browser_extras,
-                cookies: Vec::new(),
-            })),
-            // ~keep The native browser backend never reads `config.user_agents`.
-            sent_user_agent: None,
-            soft_error: false,
+        // ~keep The native backend decoded the document, with the character set it reports. It
+        // ~keep never reads `config.user_agents`, so `sent_user_agent` stays unset.
+        let body = crate::tower::ResponseBody::Text {
+            text: response.body,
+            charset,
         };
+        let crawl_resp =
+            crate::tower::CrawlResponse::new(response.status, response.content_type, response.headers, body)
+                .with_landed(Some(Box::new(crate::tower::Landing {
+                    url: response.final_url,
+                    redirects,
+                    refused,
+                    extras: response.browser_extras,
+                    result_cookies,
+                    cookies: Vec::new(),
+                })));
         Ok((crawl_resp, true))
     }
 
     /// Scrape through chromiumoxide, keeping the screenshot it captured.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let pool = self.config.browser_pool.as_deref();
-        #[cfg(feature = "browser-native")]
-        let mut page = crate::browser::browser_fetch(
-            url,
-            &self.config,
-            None,
-            pool,
-            true,
-            self.native_browser_executor.as_deref(),
-        )
-        .await?;
-        #[cfg(not(feature = "browser-native"))]
-        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page = self.browser_fetch(url, None, true).await?;
+
+        // ~keep This fetch does not go through `follow_redirects`, so it applies the rule of the
+        // ~keep chain for a redirect that Chrome stopped on.
+        if let Some(error) = super::redirect::stopped_navigation_error(&page.response, url, &page.response.final_url) {
+            return Err(error);
+        }
 
         let screenshot = page.response.screenshot.take();
         let final_url = page.response.final_url.clone();
@@ -230,7 +287,7 @@ impl CrawlEngine {
             &final_url,
             &crawl_resp,
             None,
-            &self.config,
+            self,
             self.document_filter.as_deref(),
         )
         .await?;
@@ -316,16 +373,13 @@ impl CrawlEngine {
         .response;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
-        let crawl_resp = crate::tower::CrawlResponse {
-            status: resp.status,
-            content_type: resp.content_type,
-            body: resp.body,
-            body_bytes: resp.body_bytes,
-            headers: resp.headers,
-            landed: None,
-            sent_user_agent: forced_user_agent.map(str::to_owned),
-            soft_error: false,
-        };
+        let crawl_resp = crate::tower::CrawlResponse::new(
+            resp.status,
+            resp.content_type,
+            resp.headers,
+            crate::tower::ResponseBody::Bytes(resp.body_bytes),
+        )
+        .with_sent_user_agent(forced_user_agent.map(str::to_owned));
         Ok((post_redirect_url, crawl_resp, false))
     }
 }

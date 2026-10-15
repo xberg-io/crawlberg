@@ -19,6 +19,8 @@ use tokio::net::TcpListener;
 use tracing::instrument::WithSubscriber;
 
 const IGNORED_WARNING: &str = "browser.chrome_path and browser.chrome_args are ignored when";
+#[cfg(feature = "browser")]
+const IGNORED_PIPE_WARNING: &str = "browser.private_pipe is ignored when";
 const IGNORED_PROFILE_WARNING: &str = "browser_profile is ignored by interact";
 
 #[derive(Clone, Default)]
@@ -201,6 +203,47 @@ async fn a_shared_browser_pool_ignores_the_launch_options_with_a_warning() {
         logs.contains(IGNORED_WARNING) && logs.contains("browser_pool"),
         "the pool path must warn that the launch options are ignored; logs: {logs}"
     );
+}
+
+/// A scrape on a shared pool uses the pool's `private_pipe`. The key of the fetch is ignored with
+/// a warning when it is on and the pool's is off; a fetch that sets nothing gets no warning.
+#[cfg(feature = "browser")]
+#[tokio::test]
+async fn a_shared_browser_pool_ignores_the_private_pipe_key_with_a_warning() {
+    for (private_pipe, warns) in [(true, true), (false, false)] {
+        // ~keep The pool's own chrome_path does not exist, so page acquisition fails without Chrome.
+        let pool = crawlberg::BrowserPool::new(crawlberg::BrowserPoolConfig {
+            chrome_path: Some("/nonexistent/crawlberg-pool-chrome".into()),
+            ..crawlberg::BrowserPoolConfig::default()
+        });
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(5),
+                overall_timeout: Duration::from_secs(10),
+                backend: BrowserBackend::Chromiumoxide,
+                session_affinity: false,
+                private_pipe,
+                ..BrowserConfig::default()
+            },
+            browser_pool: Some(pool),
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let (logs, subscriber) = capture_warnings();
+        async {
+            let engine = create_engine(Some(config)).expect("a pooled config must build");
+            let url = start_page_server().await;
+            let _ = scrape(&engine, &url).await;
+        }
+        .with_subscriber(subscriber)
+        .await;
+        let logs = logs.text();
+        assert_eq!(
+            logs.contains(IGNORED_PIPE_WARNING) && logs.contains("browser_pool"),
+            warns,
+            "private_pipe {private_pipe}: the pool path must warn only for a key that is on; logs: {logs}"
+        );
+    }
 }
 
 #[cfg(feature = "browser")]

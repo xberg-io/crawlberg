@@ -76,12 +76,14 @@ impl From<CrawlError> for ApiError {
             CrawlError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED"),
             CrawlError::ServerError { .. } => (StatusCode::BAD_GATEWAY, "SERVER_ERROR"),
             CrawlError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
+            CrawlError::TooManyRedirects { .. } => (StatusCode::BAD_GATEWAY, "TOO_MANY_REDIRECTS"),
             CrawlError::Gone { .. } => (StatusCode::GONE, "GONE"),
             CrawlError::InvalidConfig { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_CONFIG"),
             CrawlError::Connection { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CONNECTION_ERROR"),
             CrawlError::Dns { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DNS_ERROR"),
             CrawlError::Ssl { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SSL_ERROR"),
             CrawlError::DataLoss { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATA_LOSS"),
+            CrawlError::ConversionFailed { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CONVERSION_FAILED"),
             CrawlError::BrowserError { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "BROWSER_ERROR"),
             CrawlError::Unsupported { .. } => (StatusCode::NOT_IMPLEMENTED, "UNSUPPORTED"),
             CrawlError::SsrfPolicyViolation { .. } => (StatusCode::FORBIDDEN, "SSRF_POLICY_VIOLATION"),
@@ -93,5 +95,30 @@ impl From<CrawlError> for ApiError {
             code,
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_exhaustion_is_an_upstream_failure_not_an_ssrf_refusal() {
+        let error = ApiError::from(CrawlError::too_many_redirects("redirect loop"));
+        assert_eq!(error.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.code, "TOO_MANY_REDIRECTS");
+        assert_eq!(error.message, "too_many_redirects: redirect loop");
+    }
+
+    #[test]
+    fn a_failed_conversion_has_its_own_code_and_keeps_its_text() {
+        let error = CrawlError::conversion_failed("could not convert https://example.com/ to Markdown: refused");
+        let text = error.to_string();
+
+        let api_error = ApiError::from(error);
+
+        assert_eq!(api_error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(api_error.code, "CONVERSION_FAILED");
+        assert_eq!(api_error.message, text);
     }
 }

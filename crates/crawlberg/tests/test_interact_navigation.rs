@@ -2,6 +2,7 @@
 //! Chrome follows, and a seed that answers without a document returns at once. Where the
 //! navigation ends on a response with no document, `interact` reports the URL `scrape` reports,
 //! an empty page, and one failed result per action.
+//! Where it ends on a redirect that `scrape` fails on, `interact` fails with the same error.
 //!
 //! Requires a real Chrome binary; skipped (not failed) when Chrome is unavailable, matching the
 //! other browser tests.
@@ -106,6 +107,49 @@ async fn scrape_outcome(max_redirects: usize, url: &str, base: &str) -> (String,
     (result.final_url.trim_start_matches(base).to_owned(), result.html)
 }
 
+/// The address and the message of a redirect failure, the address relative to `base`.
+///
+/// The message of the error is `<address> - <reason>`.
+fn redirect_failure(what: &str, error: &CrawlError, base: &str) -> (String, String) {
+    match error {
+        CrawlError::TooManyRedirects {
+            message,
+            source: Some(_),
+        } => {
+            let (address, reason) = message
+                .split_once(" - ")
+                .unwrap_or_else(|| panic!("{what}: the redirect error must carry the address: {message}"));
+            (address.trim_start_matches(base).to_owned(), reason.to_owned())
+        }
+        other => panic!("{what} must fail with the redirect error: {other:?}"),
+    }
+}
+
+/// The redirect failure of an HTTP-mode `scrape` of `url`.
+async fn scrape_failure(max_redirects: usize, url: &str, base: &str) -> (String, String) {
+    let engine = create_engine(Some(config(BrowserMode::Never, max_redirects))).expect("engine must build");
+    match scrape(&engine, url).await {
+        Ok(result) => panic!("scrape must fail, got {} at {}", result.status_code, result.final_url),
+        Err(error) => redirect_failure("scrape", &error, base),
+    }
+}
+
+/// The redirect failure of `interact` on `url`. `None` when no usable Chrome exists on this host.
+async fn interact_failure(test_name: &str, config: CrawlConfig, url: &str, base: &str) -> Option<(String, String)> {
+    let engine = create_engine(Some(config)).expect("engine must build");
+    match interact(&engine, url, actions()).await {
+        Ok(result) => panic!(
+            "{test_name}: interact must fail, got {:?} at {}",
+            result.action_results, result.final_url
+        ),
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            None
+        }
+        Err(error) => Some(redirect_failure(test_name, &error, base)),
+    }
+}
+
 async fn requested_paths(mock: &MockServer) -> Vec<String> {
     mock.received_requests()
         .await
@@ -154,25 +198,54 @@ fn assert_no_document(
 async fn interact_stops_a_chain_longer_than_max_redirects_where_scrape_does() {
     let test_name = "interact_stops_a_chain_longer_than_max_redirects_where_scrape_does";
     let http_site = redirect_chain(5).await;
-    let expected = scrape_outcome(2, &format!("{}/", http_site.uri()), &http_site.uri()).await;
+    let expected = scrape_failure(2, &format!("{}/", http_site.uri()), &http_site.uri()).await;
     assert_eq!(
         expected,
-        ("/r2".to_owned(), String::new()),
-        "scrape stops on the 3xx at the limit"
+        ("/r3".to_owned(), "redirect limit exceeded".to_owned()),
+        "scrape fails on the 3xx at the limit (#613)"
     );
 
     let site = redirect_chain(5).await;
-    let Some((result, _)) =
-        timed_interact(test_name, config(BrowserMode::Always, 2), &format!("{}/", site.uri())).await
-    else {
+    let url = format!("{}/", site.uri());
+    let Some(failure) = interact_failure(test_name, config(BrowserMode::Always, 2), &url, &site.uri()).await else {
         return;
     };
-    assert_no_document(test_name, &result, &site.uri(), &expected, 301);
+    assert_eq!(failure, expected, "{test_name}: interact must fail as scrape fails");
     let requested = requested_paths(&site).await;
     assert!(
         !requested.iter().any(|p| p == "/r3"),
         "the redirect past the limit must not be requested: {requested:?}"
     );
+}
+
+/// `/loop` redirects to itself.
+async fn redirect_loop() -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/loop"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/loop"))
+        .mount(&mock)
+        .await;
+    mock
+}
+
+#[tokio::test]
+async fn interact_fails_on_a_redirect_loop_as_scrape_does() {
+    let test_name = "interact_fails_on_a_redirect_loop_as_scrape_does";
+    let http_site = redirect_loop().await;
+    let expected = scrape_failure(3, &format!("{}/loop", http_site.uri()), &http_site.uri()).await;
+    assert_eq!(
+        expected,
+        ("/loop".to_owned(), "redirect loop".to_owned()),
+        "scrape fails on a redirect to an address it has requested (#613)"
+    );
+
+    let site = redirect_loop().await;
+    let url = format!("{}/loop", site.uri());
+    let Some(failure) = interact_failure(test_name, config(BrowserMode::Always, 3), &url, &site.uri()).await else {
+        return;
+    };
+    assert_eq!(failure, expected, "{test_name}: interact must fail as scrape fails");
 }
 
 /// A chain that sits exactly on the limit is followed to its end, and the actions run there.

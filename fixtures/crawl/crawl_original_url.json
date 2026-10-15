@@ -1,0 +1,54 @@
+{
+	"id": "crawl_original_url",
+	"description": "Gives the address of a followed page as the link wrote it",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-original-url",
+		"title": "Gives the address of a followed page as the link wrote it"
+	},
+	"tags": ["crawl", "normalization", "regression"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><a href=\"/t/d/%2e%2e/up\">Up</a></body></html>"
+			},
+			{
+				"path": "/t/up",
+				"method": "GET",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>Up</h1></body></html>"
+			}
+		],
+		"config": {
+			"max_depth": 1,
+			"max_concurrent": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "pages.length",
+			"value": 2
+		},
+		{
+			"type": "contains",
+			"field": "pages[1].original_url",
+			"value": "/t/d/%2e%2e/up"
+		},
+		{
+			"type": "contains",
+			"field": "pages[1].url",
+			"value": "/t/up"
+		}
+	]
+}

@@ -713,3 +713,167 @@ async fn the_ssrf_check_refuses_a_request_from_a_launched_page_behind_the_proxy(
         assert_refused_in_the_proxy_context(&label, &html, &refused, &denied, &seen, &accepted);
     }
 }
+
+async fn open_and_close_foreign_tabs(
+    chrome: Arc<chromiumoxide::Browser>,
+    count: usize,
+) -> Vec<chromiumoxide::cdp::browser_protocol::target::TargetId> {
+    use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, CreateTargetParams};
+    let mut closed = Vec::with_capacity(count);
+    for _ in 0..count {
+        let target = chrome
+            .execute(CreateTargetParams::new("about:blank"))
+            .await
+            .expect("foreign create");
+        chrome
+            .execute(CloseTargetParams::new(target.result.target_id.clone()))
+            .await
+            .expect("foreign close");
+        closed.push(target.result.target_id);
+    }
+    closed
+}
+
+#[tokio::test]
+async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
+    const FOREIGN_TABS: usize = 200;
+    const INTERACTIONS: usize = 5;
+    let profile = tempfile::tempdir().expect("profile");
+    let Some((chrome, owner_handler)) = launch_endpoint_chrome(
+        "an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction",
+        profile.path(),
+        &[],
+    )
+    .await
+    else {
+        return;
+    };
+    let chrome = Arc::new(chrome);
+    let churn = tokio::spawn(open_and_close_foreign_tabs(Arc::clone(&chrome), FOREIGN_TABS));
+    let (configured, seen) = spawn_named_proxy("served-by-the-configured-proxy").await;
+    let mut config = render_config(proxy_at(configured, None, None));
+    config.ssrf.deny_private = false;
+    config.browser.endpoint = Some(chrome.websocket_address().clone());
+    let engine = create_engine(Some(config)).expect("engine");
+    let mut outcomes = Vec::new();
+    for _ in 0..INTERACTIONS {
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            interact(&engine, TARGET, vec![PageAction::Scrape]),
+        )
+        .await;
+        let failed = !matches!(&result, Ok(Ok(_)));
+        outcomes.push(result);
+        if failed {
+            break;
+        }
+    }
+    let closed = churn.await.expect("churn task");
+    let removed = foreign_targets_are_absent(&chrome, &closed).await;
+    assert!(removed, "every acknowledged foreign close must remove its target");
+    assert_eq!(
+        outcomes.len(),
+        INTERACTIONS,
+        "every owned interaction must finish: {outcomes:?}"
+    );
+    for result in outcomes {
+        let html = result
+            .expect("interaction timeout")
+            .expect("external owner's unrelated tab teardown must not abort the owned page");
+        assert!(html.final_html.contains("served-by-the-configured-proxy"));
+    }
+    assert_eq!(
+        closed.len(),
+        FOREIGN_TABS,
+        "every foreign tab must be created and closed"
+    );
+    assert!(!target_requests(&seen).is_empty());
+    // ~keep The endpoint pool must release its connection before the fixture owner asks Chrome to exit.
+    crawlberg::shutdown_engine(engine).await;
+    chrome
+        .execute(chromiumoxide::cdp::browser_protocol::browser::GetVersionParams::default())
+        .await
+        .expect("engine shutdown must keep the external owner's Chrome running");
+    let mut chrome = Arc::try_unwrap(chrome).expect("only owner remains");
+    chrome.close().await.expect("the fixture owner must close Chrome");
+    // ~keep Chrome may acknowledge close before its platform cleanup ends. Only this fixture owns its child.
+    match tokio::time::timeout(Duration::from_secs(5), chrome.wait()).await {
+        Ok(waited) => {
+            waited.expect("wait for fixture Chrome");
+        }
+        Err(_) => {
+            tokio::time::timeout(Duration::from_secs(5), chrome.kill())
+                .await
+                .expect("the fixture kill must reap its child within the kill bound")
+                .expect("the fixture must retain its own launched child")
+                .expect("the fixture owner must reap Chrome after the close grace");
+        }
+    }
+    owner_handler.abort();
+}
+
+async fn foreign_targets_are_absent(
+    chrome: &chromiumoxide::Browser,
+    closed: &[chromiumoxide::cdp::browser_protocol::target::TargetId],
+) -> bool {
+    use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
+    // ~keep CloseTarget acknowledges the request before Chrome has necessarily destroyed the target.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let census = chrome
+                .execute(GetTargetsParams::default())
+                .await
+                .expect("target census");
+            if closed
+                .iter()
+                .all(|target| census.result.target_infos.iter().all(|info| &info.target_id != target))
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn a_foreign_close_barrier_waits_for_the_target_to_disappear() {
+    use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, CreateTargetParams};
+    let profile = tempfile::tempdir().expect("profile");
+    let Some((chrome, handler)) = launch_endpoint_chrome(
+        "a_foreign_close_barrier_waits_for_the_target_to_disappear",
+        profile.path(),
+        &[],
+    )
+    .await
+    else {
+        return;
+    };
+    let chrome = Arc::new(chrome);
+    let target = chrome
+        .execute(CreateTargetParams::new("about:blank"))
+        .await
+        .expect("create")
+        .result
+        .target_id;
+    let closer = Arc::clone(&chrome);
+    let target_to_close = target.clone();
+    let close = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        closer
+            .execute(CloseTargetParams::new(target_to_close))
+            .await
+            .expect("close");
+    });
+    let absent = foreign_targets_are_absent(&chrome, &[target]).await;
+    close.await.expect("closer");
+    let mut chrome = Arc::try_unwrap(chrome).expect("owner");
+    chrome.close().await.expect("close Chrome");
+    chrome.wait().await.expect("wait Chrome");
+    handler.abort();
+    assert!(
+        absent,
+        "the barrier must await actual destruction rather than one census"
+    );
+}

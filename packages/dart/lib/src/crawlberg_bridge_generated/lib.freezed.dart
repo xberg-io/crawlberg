@@ -435,7 +435,7 @@ extension CrawlErrorPatterns on CrawlError {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( CrawlError_NotFound value)?  notFound,TResult Function( CrawlError_Unauthorized value)?  unauthorized,TResult Function( CrawlError_Forbidden value)?  forbidden,TResult Function( CrawlError_WafBlocked value)?  wafBlocked,TResult Function( CrawlError_Timeout value)?  timeout,TResult Function( CrawlError_RateLimited value)?  rateLimited,TResult Function( CrawlError_ServerError value)?  serverError,TResult Function( CrawlError_BadGateway value)?  badGateway,TResult Function( CrawlError_Gone value)?  gone,TResult Function( CrawlError_Connection value)?  connection,TResult Function( CrawlError_Dns value)?  dns,TResult Function( CrawlError_Ssl value)?  ssl,TResult Function( CrawlError_DataLoss value)?  dataLoss,TResult Function( CrawlError_BrowserError value)?  browserError,TResult Function( CrawlError_BrowserTimeout value)?  browserTimeout,TResult Function( CrawlError_InvalidConfig value)?  invalidConfig,TResult Function( CrawlError_Unsupported value)?  unsupported,TResult Function( CrawlError_SsrfPolicyViolation value)?  ssrfPolicyViolation,TResult Function( CrawlError_Other value)?  other,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( CrawlError_NotFound value)?  notFound,TResult Function( CrawlError_Unauthorized value)?  unauthorized,TResult Function( CrawlError_Forbidden value)?  forbidden,TResult Function( CrawlError_WafBlocked value)?  wafBlocked,TResult Function( CrawlError_Timeout value)?  timeout,TResult Function( CrawlError_RateLimited value)?  rateLimited,TResult Function( CrawlError_ServerError value)?  serverError,TResult Function( CrawlError_BadGateway value)?  badGateway,TResult Function( CrawlError_Gone value)?  gone,TResult Function( CrawlError_Connection value)?  connection,TResult Function( CrawlError_Dns value)?  dns,TResult Function( CrawlError_Ssl value)?  ssl,TResult Function( CrawlError_DataLoss value)?  dataLoss,TResult Function( CrawlError_ConversionFailed value)?  conversionFailed,TResult Function( CrawlError_BrowserError value)?  browserError,TResult Function( CrawlError_BrowserTimeout value)?  browserTimeout,TResult Function( CrawlError_InvalidConfig value)?  invalidConfig,TResult Function( CrawlError_Unsupported value)?  unsupported,TResult Function( CrawlError_TooManyRedirects value)?  tooManyRedirects,TResult Function( CrawlError_SsrfPolicyViolation value)?  ssrfPolicyViolation,TResult Function( CrawlError_Other value)?  other,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
@@ -451,11 +451,13 @@ return gone(_that);case CrawlError_Connection() when connection != null:
 return connection(_that);case CrawlError_Dns() when dns != null:
 return dns(_that);case CrawlError_Ssl() when ssl != null:
 return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
+return dataLoss(_that);case CrawlError_ConversionFailed() when conversionFailed != null:
+return conversionFailed(_that);case CrawlError_BrowserError() when browserError != null:
 return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
 return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
 return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return unsupported(_that);case CrawlError_TooManyRedirects() when tooManyRedirects != null:
+return tooManyRedirects(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
 return other(_that);case _:
   return orElse();
@@ -475,7 +477,7 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( CrawlError_NotFound value)  notFound,required TResult Function( CrawlError_Unauthorized value)  unauthorized,required TResult Function( CrawlError_Forbidden value)  forbidden,required TResult Function( CrawlError_WafBlocked value)  wafBlocked,required TResult Function( CrawlError_Timeout value)  timeout,required TResult Function( CrawlError_RateLimited value)  rateLimited,required TResult Function( CrawlError_ServerError value)  serverError,required TResult Function( CrawlError_BadGateway value)  badGateway,required TResult Function( CrawlError_Gone value)  gone,required TResult Function( CrawlError_Connection value)  connection,required TResult Function( CrawlError_Dns value)  dns,required TResult Function( CrawlError_Ssl value)  ssl,required TResult Function( CrawlError_DataLoss value)  dataLoss,required TResult Function( CrawlError_BrowserError value)  browserError,required TResult Function( CrawlError_BrowserTimeout value)  browserTimeout,required TResult Function( CrawlError_InvalidConfig value)  invalidConfig,required TResult Function( CrawlError_Unsupported value)  unsupported,required TResult Function( CrawlError_SsrfPolicyViolation value)  ssrfPolicyViolation,required TResult Function( CrawlError_Other value)  other,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( CrawlError_NotFound value)  notFound,required TResult Function( CrawlError_Unauthorized value)  unauthorized,required TResult Function( CrawlError_Forbidden value)  forbidden,required TResult Function( CrawlError_WafBlocked value)  wafBlocked,required TResult Function( CrawlError_Timeout value)  timeout,required TResult Function( CrawlError_RateLimited value)  rateLimited,required TResult Function( CrawlError_ServerError value)  serverError,required TResult Function( CrawlError_BadGateway value)  badGateway,required TResult Function( CrawlError_Gone value)  gone,required TResult Function( CrawlError_Connection value)  connection,required TResult Function( CrawlError_Dns value)  dns,required TResult Function( CrawlError_Ssl value)  ssl,required TResult Function( CrawlError_DataLoss value)  dataLoss,required TResult Function( CrawlError_ConversionFailed value)  conversionFailed,required TResult Function( CrawlError_BrowserError value)  browserError,required TResult Function( CrawlError_BrowserTimeout value)  browserTimeout,required TResult Function( CrawlError_InvalidConfig value)  invalidConfig,required TResult Function( CrawlError_Unsupported value)  unsupported,required TResult Function( CrawlError_TooManyRedirects value)  tooManyRedirects,required TResult Function( CrawlError_SsrfPolicyViolation value)  ssrfPolicyViolation,required TResult Function( CrawlError_Other value)  other,}){
 final _that = this;
 switch (_that) {
 case CrawlError_NotFound():
@@ -491,11 +493,13 @@ return gone(_that);case CrawlError_Connection():
 return connection(_that);case CrawlError_Dns():
 return dns(_that);case CrawlError_Ssl():
 return ssl(_that);case CrawlError_DataLoss():
-return dataLoss(_that);case CrawlError_BrowserError():
+return dataLoss(_that);case CrawlError_ConversionFailed():
+return conversionFailed(_that);case CrawlError_BrowserError():
 return browserError(_that);case CrawlError_BrowserTimeout():
 return browserTimeout(_that);case CrawlError_InvalidConfig():
 return invalidConfig(_that);case CrawlError_Unsupported():
-return unsupported(_that);case CrawlError_SsrfPolicyViolation():
+return unsupported(_that);case CrawlError_TooManyRedirects():
+return tooManyRedirects(_that);case CrawlError_SsrfPolicyViolation():
 return ssrfPolicyViolation(_that);case CrawlError_Other():
 return other(_that);}
 }
@@ -511,7 +515,7 @@ return other(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( CrawlError_NotFound value)?  notFound,TResult? Function( CrawlError_Unauthorized value)?  unauthorized,TResult? Function( CrawlError_Forbidden value)?  forbidden,TResult? Function( CrawlError_WafBlocked value)?  wafBlocked,TResult? Function( CrawlError_Timeout value)?  timeout,TResult? Function( CrawlError_RateLimited value)?  rateLimited,TResult? Function( CrawlError_ServerError value)?  serverError,TResult? Function( CrawlError_BadGateway value)?  badGateway,TResult? Function( CrawlError_Gone value)?  gone,TResult? Function( CrawlError_Connection value)?  connection,TResult? Function( CrawlError_Dns value)?  dns,TResult? Function( CrawlError_Ssl value)?  ssl,TResult? Function( CrawlError_DataLoss value)?  dataLoss,TResult? Function( CrawlError_BrowserError value)?  browserError,TResult? Function( CrawlError_BrowserTimeout value)?  browserTimeout,TResult? Function( CrawlError_InvalidConfig value)?  invalidConfig,TResult? Function( CrawlError_Unsupported value)?  unsupported,TResult? Function( CrawlError_SsrfPolicyViolation value)?  ssrfPolicyViolation,TResult? Function( CrawlError_Other value)?  other,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( CrawlError_NotFound value)?  notFound,TResult? Function( CrawlError_Unauthorized value)?  unauthorized,TResult? Function( CrawlError_Forbidden value)?  forbidden,TResult? Function( CrawlError_WafBlocked value)?  wafBlocked,TResult? Function( CrawlError_Timeout value)?  timeout,TResult? Function( CrawlError_RateLimited value)?  rateLimited,TResult? Function( CrawlError_ServerError value)?  serverError,TResult? Function( CrawlError_BadGateway value)?  badGateway,TResult? Function( CrawlError_Gone value)?  gone,TResult? Function( CrawlError_Connection value)?  connection,TResult? Function( CrawlError_Dns value)?  dns,TResult? Function( CrawlError_Ssl value)?  ssl,TResult? Function( CrawlError_DataLoss value)?  dataLoss,TResult? Function( CrawlError_ConversionFailed value)?  conversionFailed,TResult? Function( CrawlError_BrowserError value)?  browserError,TResult? Function( CrawlError_BrowserTimeout value)?  browserTimeout,TResult? Function( CrawlError_InvalidConfig value)?  invalidConfig,TResult? Function( CrawlError_Unsupported value)?  unsupported,TResult? Function( CrawlError_TooManyRedirects value)?  tooManyRedirects,TResult? Function( CrawlError_SsrfPolicyViolation value)?  ssrfPolicyViolation,TResult? Function( CrawlError_Other value)?  other,}){
 final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
@@ -527,11 +531,13 @@ return gone(_that);case CrawlError_Connection() when connection != null:
 return connection(_that);case CrawlError_Dns() when dns != null:
 return dns(_that);case CrawlError_Ssl() when ssl != null:
 return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
+return dataLoss(_that);case CrawlError_ConversionFailed() when conversionFailed != null:
+return conversionFailed(_that);case CrawlError_BrowserError() when browserError != null:
 return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
 return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
 return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return unsupported(_that);case CrawlError_TooManyRedirects() when tooManyRedirects != null:
+return tooManyRedirects(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
 return other(_that);case _:
   return null;
@@ -550,7 +556,7 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  conversionFailed,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String message)?  tooManyRedirects,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
@@ -565,11 +571,13 @@ return gone(_that.message);case CrawlError_Connection() when connection != null:
 return connection(_that.message);case CrawlError_Dns() when dns != null:
 return dns(_that.message);case CrawlError_Ssl() when ssl != null:
 return ssl(_that.message);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that.message);case CrawlError_BrowserError() when browserError != null:
+return dataLoss(_that.message);case CrawlError_ConversionFailed() when conversionFailed != null:
+return conversionFailed(_that.message);case CrawlError_BrowserError() when browserError != null:
 return browserError(_that.message);case CrawlError_BrowserTimeout() when browserTimeout != null:
 return browserTimeout(_that.message);case CrawlError_InvalidConfig() when invalidConfig != null:
 return invalidConfig(_that.message);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return unsupported(_that.message);case CrawlError_TooManyRedirects() when tooManyRedirects != null:
+return tooManyRedirects(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
 return other(_that.message);case _:
   return orElse();
@@ -589,7 +597,7 @@ return other(_that.message);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  conversionFailed,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String message)  tooManyRedirects,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound():
 return notFound(_that.message);case CrawlError_Unauthorized():
@@ -604,11 +612,13 @@ return gone(_that.message);case CrawlError_Connection():
 return connection(_that.message);case CrawlError_Dns():
 return dns(_that.message);case CrawlError_Ssl():
 return ssl(_that.message);case CrawlError_DataLoss():
-return dataLoss(_that.message);case CrawlError_BrowserError():
+return dataLoss(_that.message);case CrawlError_ConversionFailed():
+return conversionFailed(_that.message);case CrawlError_BrowserError():
 return browserError(_that.message);case CrawlError_BrowserTimeout():
 return browserTimeout(_that.message);case CrawlError_InvalidConfig():
 return invalidConfig(_that.message);case CrawlError_Unsupported():
-return unsupported(_that.message);case CrawlError_SsrfPolicyViolation():
+return unsupported(_that.message);case CrawlError_TooManyRedirects():
+return tooManyRedirects(_that.message);case CrawlError_SsrfPolicyViolation():
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other():
 return other(_that.message);}
 }
@@ -624,7 +634,7 @@ return other(_that.message);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  conversionFailed,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String message)?  tooManyRedirects,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
@@ -639,11 +649,13 @@ return gone(_that.message);case CrawlError_Connection() when connection != null:
 return connection(_that.message);case CrawlError_Dns() when dns != null:
 return dns(_that.message);case CrawlError_Ssl() when ssl != null:
 return ssl(_that.message);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that.message);case CrawlError_BrowserError() when browserError != null:
+return dataLoss(_that.message);case CrawlError_ConversionFailed() when conversionFailed != null:
+return conversionFailed(_that.message);case CrawlError_BrowserError() when browserError != null:
 return browserError(_that.message);case CrawlError_BrowserTimeout() when browserTimeout != null:
 return browserTimeout(_that.message);case CrawlError_InvalidConfig() when invalidConfig != null:
 return invalidConfig(_that.message);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return unsupported(_that.message);case CrawlError_TooManyRedirects() when tooManyRedirects != null:
+return tooManyRedirects(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
 return other(_that.message);case _:
   return null;
@@ -1542,6 +1554,74 @@ as String,
 /// @nodoc
 
 
+class CrawlError_ConversionFailed extends CrawlError {
+  const CrawlError_ConversionFailed({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of CrawlError
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$CrawlError_ConversionFailedCopyWith<CrawlError_ConversionFailed> get copyWith => _$CrawlError_ConversionFailedCopyWithImpl<CrawlError_ConversionFailed>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_ConversionFailed&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'CrawlError.conversionFailed(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $CrawlError_ConversionFailedCopyWith<$Res> implements $CrawlErrorCopyWith<$Res> {
+  factory $CrawlError_ConversionFailedCopyWith(CrawlError_ConversionFailed value, $Res Function(CrawlError_ConversionFailed) _then) = _$CrawlError_ConversionFailedCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$CrawlError_ConversionFailedCopyWithImpl<$Res>
+    implements $CrawlError_ConversionFailedCopyWith<$Res> {
+  _$CrawlError_ConversionFailedCopyWithImpl(this._self, this._then);
+
+  final CrawlError_ConversionFailed _self;
+  final $Res Function(CrawlError_ConversionFailed) _then;
+
+/// Create a copy of CrawlError
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(CrawlError_ConversionFailed(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
 class CrawlError_BrowserError extends CrawlError {
   const CrawlError_BrowserError({required this.message}): super._();
 
@@ -1803,6 +1883,74 @@ class _$CrawlError_UnsupportedCopyWithImpl<$Res>
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Unsupported(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class CrawlError_TooManyRedirects extends CrawlError {
+  const CrawlError_TooManyRedirects({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of CrawlError
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$CrawlError_TooManyRedirectsCopyWith<CrawlError_TooManyRedirects> get copyWith => _$CrawlError_TooManyRedirectsCopyWithImpl<CrawlError_TooManyRedirects>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_TooManyRedirects&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'CrawlError.tooManyRedirects(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $CrawlError_TooManyRedirectsCopyWith<$Res> implements $CrawlErrorCopyWith<$Res> {
+  factory $CrawlError_TooManyRedirectsCopyWith(CrawlError_TooManyRedirects value, $Res Function(CrawlError_TooManyRedirects) _then) = _$CrawlError_TooManyRedirectsCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$CrawlError_TooManyRedirectsCopyWithImpl<$Res>
+    implements $CrawlError_TooManyRedirectsCopyWith<$Res> {
+  _$CrawlError_TooManyRedirectsCopyWithImpl(this._self, this._then);
+
+  final CrawlError_TooManyRedirects _self;
+  final $Res Function(CrawlError_TooManyRedirects) _then;
+
+/// Create a copy of CrawlError
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(CrawlError_TooManyRedirects(
 message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));

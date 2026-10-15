@@ -279,6 +279,7 @@ When `respect_robots_txt` is on, a crawl does not follow the links of a page mar
 | `session_affinity`       | `bool`             | `true`        | Reuse same-domain browser sessions when supported.                     |
 | `chrome_path`            | `Option<PathBuf>`  | `None`        | Chrome executable to launch; the only binary used when set. `None` uses the `CHROME` environment variable, then an installed Chrome. |
 | `chrome_args`            | `Vec<String>`      | `[]`          | Extra Chrome flags, each `--flag` or `--flag=value`. A flag with the same name as a crawlberg default replaces it. Trusted input only: `--proxy-server` and `--host-resolver-rules` bypass the SSRF policy. |
+| `private_pipe`           | `bool`             | `false`       | Launch Chrome on a private debugging pipe, with no debugging port. Linux and macOS only. See [Browser](browser.md#launching-chrome-on-a-private-pipe). |
 
 ### WARC output
 

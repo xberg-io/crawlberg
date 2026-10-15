@@ -147,8 +147,10 @@ impl RetryPolicy for SimpleRetryPolicy {
             | CrawlError::Unauthorized { .. }
             | CrawlError::Gone { .. }
             | CrawlError::DataLoss { .. }
+            | CrawlError::ConversionFailed { .. }
             | CrawlError::BrowserError { .. }
             | CrawlError::BrowserTimeout { .. }
+            | CrawlError::TooManyRedirects { .. }
             | CrawlError::SsrfPolicyViolation { .. }
             | CrawlError::Other { .. } => RetryDirective::Stop,
         }
@@ -309,6 +311,14 @@ mod tests {
             ),
             other => panic!("expected Retry, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_conversion_is_not_retried() {
+        let policy = SimpleRetryPolicy::new();
+        let err = CrawlError::conversion_failed("could not convert https://example.com/ to Markdown: refused");
+        let directive = policy.decide(&outcome_with_error(err, 0)).await;
+        assert_eq!(directive, RetryDirective::Stop);
     }
 
     #[tokio::test]

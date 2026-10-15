@@ -90,6 +90,7 @@ axum = { workspace = true, optional = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
 bytes = { version = "1", optional = true }
+chardetng = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
@@ -147,9 +148,15 @@ uuid = { workspace = true, optional = true }
 
 # ~keep Tokio OS features stay target-scoped here because Cargo feature activations are global.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# ~keep The RFC 6265 parser behind reqwest's cookie jar: a result cookie gets the domain, path
+# ~keep and expiry the jar would store, from the same code.
+cookie_store = { workspace = true }
 # ~keep Crawlberg must select system proxies before choosing its DNS resolver: reqwest's
 # ~keep internal matcher selects too late to distinguish a private proxy from a private target.
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system", "tokio"] }
+# ~keep The Public Suffix List, compiled in: the cookie domain check rejects a `Domain` that is
+# ~keep a public suffix (RFC 6265 5.3 step 5), as the browser does.
+psl = { workspace = true }
 # ~keep reqwest's native TLS/HTTP2/proxy features (its `default` set) pull tokio/net -> mio,
 # which fails to compile on wasm32; restore them for native builds only.
 reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
@@ -197,7 +204,7 @@ tracing-subscriber = { workspace = true }
 wiremock = "0.6"
 
 # ~keep A profile teardown test holds a thread of its child at its exit with ptrace.
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 libc = { workspace = true }
 
 [[bench]]

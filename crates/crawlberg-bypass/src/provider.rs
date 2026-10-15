@@ -5,7 +5,7 @@ use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use crawlberg::{BypassProvider, BypassResponse, CrawlError};
+use crawlberg::{BypassBody, BypassProvider, BypassResponse, CrawlError};
 use tracing::{Instrument, info_span};
 
 use crate::config::{
@@ -150,7 +150,7 @@ impl BypassProvider for SimpleHttpProvider {
 
             let raw_body = String::from_utf8_lossy(&body_bytes).into_owned();
 
-            let (body, body_bytes_final) = self.decode_body(&raw_body, body_bytes.to_vec(), &vendor)?;
+            let (body, body_bytes_final, body_kind) = self.decode_body(&raw_body, body_bytes.to_vec(), &vendor)?;
 
             let cost_usd = extract::cost(
                 &resp_headers,
@@ -164,6 +164,7 @@ impl BypassProvider for SimpleHttpProvider {
                 content_type: "text/html".into(),
                 body,
                 body_bytes: body_bytes_final,
+                body_kind,
                 headers: HashMap::new(),
                 // ~keep The response URL is the vendor's API endpoint (with any query-parameter key), not the
                 // ~keep target's. `ProviderConfig` has no way to read a vendor-reported target URL, so this stays empty.
@@ -260,9 +261,19 @@ impl SimpleHttpProvider {
         None
     }
 
-    fn decode_body(&self, raw_body: &str, raw_bytes: Vec<u8>, vendor: &str) -> Result<(String, Vec<u8>), CrawlError> {
+    /// The page in the vendor's answer, and whether it is the origin's bytes or text.
+    ///
+    /// ~keep A raw body is the bytes of the page as the origin sent them. A JSON field is a
+    /// ~keep string, so it is text the vendor decoded already (Zyte's `browserHtml` is the HTML
+    /// ~keep its browser rendered); its `<meta charset>` no longer describes it.
+    fn decode_body(
+        &self,
+        raw_body: &str,
+        raw_bytes: Vec<u8>,
+        vendor: &str,
+    ) -> Result<(String, Vec<u8>, BypassBody), CrawlError> {
         match &self.config.response.kind {
-            ResponseKind::RawBody => Ok((raw_body.to_owned(), raw_bytes)),
+            ResponseKind::RawBody => Ok((raw_body.to_owned(), raw_bytes, BypassBody::Bytes)),
             ResponseKind::JsonField { html_field } => {
                 let v: serde_json::Value = serde_json::from_str(raw_body).map_err(|e| {
                     CrawlError::other(
@@ -287,7 +298,7 @@ impl SimpleHttpProvider {
                     })?
                     .to_owned();
                 let bytes = html.as_bytes().to_vec();
-                Ok((html, bytes))
+                Ok((html, bytes, BypassBody::Text))
             }
         }
     }

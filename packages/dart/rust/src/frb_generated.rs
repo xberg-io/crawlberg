@@ -1940,6 +1940,12 @@ const _: fn() = || {
         let _: i64 = ContentConfig.wrap_width;
         let _: bool = ContentConfig.include_document_structure;
         let _: bool = ContentConfig.extract_metadata;
+        let _: bool = ContentConfig.strip_newlines;
+        let _: String = ContentConfig.bullets;
+        let _: i64 = ContentConfig.list_indent_width;
+        let _: String = ContentConfig.strong_em_symbol;
+        let _: bool = ContentConfig.compact_tables;
+        let _: Vec<String> = ContentConfig.keep_inline_images_in;
     }
     {
         let CookieInfo = None::<crate::CookieInfo>.unwrap();
@@ -2047,6 +2053,9 @@ const _: fn() = || {
         crate::CrawlError::DataLoss { message } => {
             let _: String = message;
         }
+        crate::CrawlError::ConversionFailed { message } => {
+            let _: String = message;
+        }
         crate::CrawlError::BrowserError { message } => {
             let _: String = message;
         }
@@ -2057,6 +2066,9 @@ const _: fn() = || {
             let _: String = message;
         }
         crate::CrawlError::Unsupported { message } => {
+            let _: String = message;
+        }
+        crate::CrawlError::TooManyRedirects { message } => {
             let _: String = message;
         }
         crate::CrawlError::SsrfPolicyViolation { url, reason } => {
@@ -2107,6 +2119,7 @@ const _: fn() = || {
         let _: bool = CrawlPageResult.noindex_detected;
         let _: bool = CrawlPageResult.nofollow_detected;
         let _: Vec<String> = CrawlPageResult.ssrf_refused_urls;
+        let _: String = CrawlPageResult.original_url;
     }
     {
         let CrawlResult = None::<crate::CrawlResult>.unwrap();
@@ -2215,6 +2228,7 @@ const _: fn() = || {
         let _: crate::LinkType = LinkInfo.link_type;
         let _: Option<String> = LinkInfo.rel;
         let _: bool = LinkInfo.nofollow;
+        let _: String = LinkInfo.original_url;
     }
     {
         let MapResult = None::<crate::MapResult>.unwrap();
@@ -2751,6 +2765,12 @@ impl SseDecode for crate::ContentConfig {
         let mut var_wrapWidth = <i64>::sse_decode(deserializer);
         let mut var_includeDocumentStructure = <bool>::sse_decode(deserializer);
         let mut var_extractMetadata = <bool>::sse_decode(deserializer);
+        let mut var_stripNewlines = <bool>::sse_decode(deserializer);
+        let mut var_bullets = <String>::sse_decode(deserializer);
+        let mut var_listIndentWidth = <i64>::sse_decode(deserializer);
+        let mut var_strongEmSymbol = <String>::sse_decode(deserializer);
+        let mut var_compactTables = <bool>::sse_decode(deserializer);
+        let mut var_keepInlineImagesIn = <Vec<String>>::sse_decode(deserializer);
         return crate::ContentConfig {
             output_format: var_outputFormat,
             preprocessing_preset: var_preprocessingPreset,
@@ -2765,6 +2785,12 @@ impl SseDecode for crate::ContentConfig {
             wrap_width: var_wrapWidth,
             include_document_structure: var_includeDocumentStructure,
             extract_metadata: var_extractMetadata,
+            strip_newlines: var_stripNewlines,
+            bullets: var_bullets,
+            list_indent_width: var_listIndentWidth,
+            strong_em_symbol: var_strongEmSymbol,
+            compact_tables: var_compactTables,
+            keep_inline_images_in: var_keepInlineImagesIn,
         };
     }
 }
@@ -2977,21 +3003,29 @@ impl SseDecode for crate::CrawlError {
             }
             13 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserError { message: var_message };
+                return crate::CrawlError::ConversionFailed { message: var_message };
             }
             14 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserTimeout { message: var_message };
+                return crate::CrawlError::BrowserError { message: var_message };
             }
             15 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::InvalidConfig { message: var_message };
+                return crate::CrawlError::BrowserTimeout { message: var_message };
             }
             16 => {
                 let mut var_message = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Unsupported { message: var_message };
+                return crate::CrawlError::InvalidConfig { message: var_message };
             }
             17 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Unsupported { message: var_message };
+            }
+            18 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::TooManyRedirects { message: var_message };
+            }
+            19 => {
                 let mut var_url = <String>::sse_decode(deserializer);
                 let mut var_reason = <String>::sse_decode(deserializer);
                 return crate::CrawlError::SsrfPolicyViolation {
@@ -2999,7 +3033,7 @@ impl SseDecode for crate::CrawlError {
                     reason: var_reason,
                 };
             }
-            18 => {
+            20 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::CrawlError::Other { message: var_message };
             }
@@ -3069,6 +3103,7 @@ impl SseDecode for crate::CrawlPageResult {
         let mut var_noindexDetected = <bool>::sse_decode(deserializer);
         let mut var_nofollowDetected = <bool>::sse_decode(deserializer);
         let mut var_ssrfRefusedUrls = <Vec<String>>::sse_decode(deserializer);
+        let mut var_originalUrl = <String>::sse_decode(deserializer);
         return crate::CrawlPageResult {
             url: var_url,
             normalized_url: var_normalizedUrl,
@@ -3096,6 +3131,7 @@ impl SseDecode for crate::CrawlPageResult {
             noindex_detected: var_noindexDetected,
             nofollow_detected: var_nofollowDetected,
             ssrf_refused_urls: var_ssrfRefusedUrls,
+            original_url: var_originalUrl,
         };
     }
 }
@@ -3405,12 +3441,14 @@ impl SseDecode for crate::LinkInfo {
         let mut var_linkType = <crate::LinkType>::sse_decode(deserializer);
         let mut var_rel = <Option<String>>::sse_decode(deserializer);
         let mut var_nofollow = <bool>::sse_decode(deserializer);
+        let mut var_originalUrl = <String>::sse_decode(deserializer);
         return crate::LinkInfo {
             url: var_url,
             text: var_text,
             link_type: var_linkType,
             rel: var_rel,
             nofollow: var_nofollow,
+            original_url: var_originalUrl,
         };
     }
 }
@@ -4760,6 +4798,12 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.wrap_width.into_into_dart().into_dart(),
             self.0.include_document_structure.into_into_dart().into_dart(),
             self.0.extract_metadata.into_into_dart().into_dart(),
+            self.0.strip_newlines.into_into_dart().into_dart(),
+            self.0.bullets.into_into_dart().into_dart(),
+            self.0.list_indent_width.into_into_dart().into_dart(),
+            self.0.strong_em_symbol.into_into_dart().into_dart(),
+            self.0.compact_tables.into_into_dart().into_dart(),
+            self.0.keep_inline_images_in.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4910,25 +4954,31 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
             crate::CrawlError::DataLoss { message } => {
                 [12.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BrowserError { message } => {
+            crate::CrawlError::ConversionFailed { message } => {
                 [13.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BrowserTimeout { message } => {
+            crate::CrawlError::BrowserError { message } => {
                 [14.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::InvalidConfig { message } => {
+            crate::CrawlError::BrowserTimeout { message } => {
                 [15.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Unsupported { message } => {
+            crate::CrawlError::InvalidConfig { message } => {
                 [16.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
+            crate::CrawlError::Unsupported { message } => {
+                [17.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            crate::CrawlError::TooManyRedirects { message } => {
+                [18.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
             crate::CrawlError::SsrfPolicyViolation { url, reason } => [
-                17.into_dart(),
+                19.into_dart(),
                 url.into_into_dart().into_dart(),
                 reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::CrawlError::Other { message } => [18.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Other { message } => [20.into_dart(), message.into_into_dart().into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -4997,6 +5047,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlPageResult> {
             self.0.noindex_detected.into_into_dart().into_dart(),
             self.0.nofollow_detected.into_into_dart().into_dart(),
             self.0.ssrf_refused_urls.into_into_dart().into_dart(),
+            self.0.original_url.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5321,6 +5372,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::LinkInfo> {
             self.0.link_type.into_into_dart().into_dart(),
             self.0.rel.into_into_dart().into_dart(),
             self.0.nofollow.into_into_dart().into_dart(),
+            self.0.original_url.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5937,6 +5989,12 @@ impl SseEncode for crate::ContentConfig {
         <i64>::sse_encode(self.wrap_width, serializer);
         <bool>::sse_encode(self.include_document_structure, serializer);
         <bool>::sse_encode(self.extract_metadata, serializer);
+        <bool>::sse_encode(self.strip_newlines, serializer);
+        <String>::sse_encode(self.bullets, serializer);
+        <i64>::sse_encode(self.list_indent_width, serializer);
+        <String>::sse_encode(self.strong_em_symbol, serializer);
+        <bool>::sse_encode(self.compact_tables, serializer);
+        <Vec<String>>::sse_encode(self.keep_inline_images_in, serializer);
     }
 }
 
@@ -6083,29 +6141,37 @@ impl SseEncode for crate::CrawlError {
                 <i32>::sse_encode(12, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserError { message } => {
+            crate::CrawlError::ConversionFailed { message } => {
                 <i32>::sse_encode(13, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserTimeout { message } => {
+            crate::CrawlError::BrowserError { message } => {
                 <i32>::sse_encode(14, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::InvalidConfig { message } => {
+            crate::CrawlError::BrowserTimeout { message } => {
                 <i32>::sse_encode(15, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Unsupported { message } => {
+            crate::CrawlError::InvalidConfig { message } => {
                 <i32>::sse_encode(16, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+            crate::CrawlError::Unsupported { message } => {
                 <i32>::sse_encode(17, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::CrawlError::TooManyRedirects { message } => {
+                <i32>::sse_encode(18, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::CrawlError::SsrfPolicyViolation { url, reason } => {
+                <i32>::sse_encode(19, serializer);
                 <String>::sse_encode(url, serializer);
                 <String>::sse_encode(reason, serializer);
             }
             crate::CrawlError::Other { message } => {
-                <i32>::sse_encode(18, serializer);
+                <i32>::sse_encode(20, serializer);
                 <String>::sse_encode(message, serializer);
             }
             _ => {
@@ -6168,6 +6234,7 @@ impl SseEncode for crate::CrawlPageResult {
         <bool>::sse_encode(self.noindex_detected, serializer);
         <bool>::sse_encode(self.nofollow_detected, serializer);
         <Vec<String>>::sse_encode(self.ssrf_refused_urls, serializer);
+        <String>::sse_encode(self.original_url, serializer);
     }
 }
 
@@ -6416,6 +6483,7 @@ impl SseEncode for crate::LinkInfo {
         <crate::LinkType>::sse_encode(self.link_type, serializer);
         <Option<String>>::sse_encode(self.rel, serializer);
         <bool>::sse_encode(self.nofollow, serializer);
+        <String>::sse_encode(self.original_url, serializer);
     }
 }
 

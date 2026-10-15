@@ -4,6 +4,229 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- Swift `RustBridge` wrappers for `AuthConfig`, `CrawlEvent`, `HostMatcher` and `PageAction` now
+  return tagged JSON with their payloads from `to_string()`, including authentication credential
+  fields. The facade `toString()` still returns the variant tag.
+- **`CrawlError` gained `TooManyRedirects`.** Exhaustive Rust error matches need the new case.
+  Redirect exhaustion uses its own error family; the underlying network error remains its source. (#676)
+- **SSRF exceptions now inherit the crawl-error family.** Python's `SsrfError` base changes
+  from `Exception` to `CrawlError`. The C# `SsrfErrorException` base changes from
+  `CrawlbergException` to `CrawlErrorException`; Java changes from `CrawlbergRsException` to
+  `CrawlErrorException`. Place specific SSRF handlers before handlers for the new parent.
+  Existing catches of the older general base still work. (#676)
+- The generated Node Rust shim's `SSRF_ERROR_ERROR_TOO_MANY_REDIRECTS_CODE` changes from
+  v1.10.3's `2` to `101`; `CRAWL_ERROR_ERROR_TOO_MANY_REDIRECTS_CODE` is `100`. These values
+  describe the Rust shim; JavaScript errors retain NAPI's `GenericFailure` status and the
+  error's display text. (#676)
+- **`crawlberg-browser`: `PageError` gained `UnfollowedRedirect`.** Native interaction uses
+  it for unfinished HTTP redirects. A `match` on `PageError` with no wildcard arm needs an arm
+  for the new variant. (#695)
+- **A `BypassProvider` must say what the body of its answer is.** `BypassResponse` has a new field,
+  `body_kind`: `BypassBody::Bytes` when `body_bytes` holds the bytes the origin sent, and
+  `BypassBody::Text` when `body` holds text that is decoded already, such as the HTML a vendor's
+  browser rendered. A `BypassResponse { .. }` literal does not compile until it sets the field.
+- **`crawlberg-browser`: `NativeBrowserConfig` and `RenderedPage` each have a new public field**,
+  `document_decoder` and `charset`, and the crate has a new public type, `DocumentDecoder`. A
+  struct literal that names every field must add the new one; `..NativeBrowserConfig::default()`
+  needs no change.
+- **`CachedPage` has two new public fields**, `charset` and `decoded`. A `CrawlCache` that stores
+  the entry as it gets it needs no change. A cache entry that an earlier release stored is not
+  served: the page is fetched again and the entry is replaced. A `CrawlCache` that builds its own
+  entries must set `decoded` to `true` for a body it stored as decoded text:
+  `..CachedPage::default()` sets it to `false`, and such an entry is not served.
+- **`BrowserConfig` and `BrowserPoolConfig` each have a new public field, `private_pipe`.** A
+  Rust struct literal that names every field must add it; a literal with `..Default::default()`
+  needs no change. The language packages are not changed: their `BrowserConfig` has no new
+  field and its constructors take the same arguments.
+- **`CrawlPageResult`, `LinkInfo`, `FrontierEntry` and `ContentConfig` have new public fields.**
+  The first three have `original_url`. `ContentConfig` has `strip_newlines`, `bullets`,
+  `list_indent_width`, `strong_em_symbol`, `compact_tables` and `keep_inline_images_in`. A Rust
+  struct literal that names every field must add them. `..Default::default()` needs no change
+  for `CrawlPageResult`, `LinkInfo` and `ContentConfig`; for `FrontierEntry` set
+  `original_url: None`. The added fields are the last fields of `CrawlPageResult`, `LinkInfo` and
+  `ContentConfig`. In Python, Dart, Zig and Swift, a v1.10.3 constructor call of these three
+  types needs no change, and Java keeps the v1.10.3 constructor beside the full one; the entry
+  for #717 under Fixed gives the form of the added fields in the bindings it names. A Go struct literal
+  without keys must add the new fields. In the serialized JSON of these three types, the added
+  keys are last: a consumer that compares JSON text with the output of an earlier build of the
+  main branch sees a different key order, and the values are equal. A `Frontier` that stores
+  its entries reads an entry of an earlier release with no change.
+
+### Added
+
+- Per-domain rate limiting emits TRACE events at `crawlberg::rate_limiter` with `domain` and
+  numeric `wait_ms` fields for each selected pacing delay.
+
+- The vendored browser process `Command::get_args()` exposes a read-only iterator over the
+  configured arguments. It does not change their order or launch behavior.
+  ([#702](https://github.com/xberg-io/crawlberg/pull/702))
+- `Frontier::pop_batch_excluding_hosts` selects entries whose hosts are not waiting for a
+  rate-limiter turn, without removing or reordering retained entries. Return `Some(entries)`
+  to support this selection, or `None` to retain the existing bounded-window fallback. The
+  built-in FIFO and LIFO frontiers support it. (#684)
+- **BREAKING (swift, kotlin, dart): the error type has a new case, `ConversionFailed`.** A caller
+  that matches the error exhaustively with no default case must add a case for it. Rust callers
+  are not affected. The error is for a page that was fetched but could not be converted to
+  Markdown. Its text starts with `conversion_failed:`. Python, Go, Java, C#, Kotlin, Swift, Dart
+  and Zig have it as its own error class or error value. Node, Ruby, Elixir, PHP and the C
+  interface have no class for any error case: read the text there. In PHP the text starts with
+  `[ConversionFailed] `, and the usual `conversion_failed:` text follows it. The API server
+  reports it as `CONVERSION_FAILED` with status 500, and the MCP server returns it as a tool error.
+- **`browser.private_pipe` starts Chrome on a private debugging pipe (Linux and macOS).** The
+  key is a `bool` and its default is `false`: a caller that sets nothing gets the Chrome of the
+  release before, with a debugging port on 127.0.0.1. With `true`:
+  - The Chrome that crawlberg starts listens on no TCP port. crawlberg speaks the DevTools
+    protocol with it over the pipe, so no other local process can drive the browser of a crawl.
+    The profile directory of that Chrome has no `DevToolsActivePort` file. (#624)
+  - The Chrome ends when the last process that holds the pipe ends. The process that started
+    the Chrome holds it: when no other process does, the Chrome ends when that process exits,
+    is killed with SIGKILL or gets a SIGTERM that it does not handle. A process that the owner
+    forked without `exec` holds a copy of the pipe, and the Chrome runs until that process ends
+    too. A process that the owner started with `exec` does not hold the pipe. Without the key
+    this change does nothing for the Chrome of a killed process. (#620)
+  - Limit: the pipe is less reliable than the debugging port when the machine is loaded. On a
+    host at a load of 18 to 45, with 22 browser tests in parallel, the firewall test file was
+    green in 2 of 10 runs on the pipe against 8 of 10 on the debugging port. In 5 of the 10 pipe
+    runs a scrape failed with `failed to open page after relaunch: browser: failed to create
+    page: oneshot canceled`; in 0 of the 10 runs on the debugging port. The cause is not known.
+  - On Windows the key changes nothing. A Chrome behind `browser.endpoint` belongs to the caller
+    and is not changed. The native backend ignores the key, with a warning.
+  - The Rust `BrowserPoolConfig` has the same key for the Chrome that a pool launches. A scrape
+    or crawl on a shared pool uses the pool's key. `CrawlConfig::adopt_operator_egress` sets the
+    key from the operator, and `reject_untrusted_fields` refuses `/browser/private_pipe` from
+    an untrusted caller.
+  - The key is in the Rust API and in a `CrawlConfig` that crawlberg reads as JSON. The
+    language packages (Python, Node, PHP, Ruby, Go, Java, C#, Kotlin, Swift, Dart, Elixir, Zig,
+    WebAssembly, C) do not have it yet: a new constructor argument breaks the callers of some
+    of them, and the generator release that adds an argument without that break is not out.
+  #620 and #624 are fixed only with the key on.
+- `ContentConfig` has six options for the form of the Markdown. `strip_newlines` writes a line
+  break in the HTML source of a paragraph as a space. `bullets` sets the list markers for each
+  level of nesting, and `list_indent_width` the spaces for each level. `strong_em_symbol` sets the
+  emphasis marker. `compact_tables` writes table cells with no padding. `keep_inline_images_in`
+  names the elements in which an image stays an image. Each default is the default of the
+  converter, so a page converts as before. `bullets` accepts `-`, `*` and `+`,
+  `list_indent_width` accepts 1 to 256, and `strong_em_symbol` accepts `*` or `_`. Another value
+  is a configuration error. (#612)
+- `CrawlPageResult.original_url` and `LinkInfo.original_url` give the address as the link wrote
+  it. The link is resolved against the base address of its page, with no other change: no
+  percent-encoding, no change of a backslash, no removal of dot segments. For the start page it
+  is the address that the caller passed. A redirect does not change it. Credentials in the
+  address are removed. (#626)
+- Python: `crawlberg.shutdown_async_runtime()` stops the async runtime of the package and gives
+  back its threads and file descriptors. Call it when no request and no stream is in progress;
+  it raises `RuntimeError` while work is active. The next async call starts a new runtime, and
+  an engine made before the call still works. Two descriptors that Tokio opens for signals stay
+  until the process ends. (#630)
+
+### Changed
+
+- A batch admits its URLs as slots free up: the first fetch of a large batch starts after the
+  first admission, not after every URL is admitted and queued. The scheduling of host waits
+  from #711 is unchanged. (#716)
+- An engine built with `CrawlEngine::builder()` in browser mode reuses one Chrome for all its
+  pages, as the language bindings already did, instead of launching a Chrome for each page: for
+  30 pages the peak Chrome memory (PSS) is about 0.47 of what it was (590 MB against 1240 MB,
+  medians of 15 runs). Pages open on it `max_concurrent` at a time
+  (8 by default), each in a browser context of its own with its own cookies. The Chrome stops
+  and its profile directory is removed when the last clone of the engine is dropped. A
+  `browser_profile` keeps a Chrome for each page, and a pool given with `with_browser_pool`
+  stays the caller's. The pool is the engine's, not part of its configuration: the API server
+  and the MCP endpoint build an engine for each request, and each request keeps a Chrome of its
+  own, as before. (#749)
+- Child-target acknowledgement failures report the pending command kind and numeric CDP error
+  code, without recording the error text or target/session identifiers. (#734)
+- Crawls and batches use less scheduler CPU when several URLs are queued for many hosts.
+  Per-host admission order, pacing and cancellation are unchanged. (#716)
+- Native `interact` rejects unfinished HTTP redirect chains and loops with the target URL and
+  error source. A chain that reaches its final page within the limit and a redirect without
+  `Location` still succeed. (#695)
+- Link results remove credentials from `original_url` even when a link uses backslashes or
+  embedded tabs and newlines. Query strings and fragments are kept, with that normalization. (#696)
+- **BREAKING: `dedup_include_query` now defaults to `true`.** A caller that sets nothing gets one
+  page for each query string: `/item?id=1` and `/item?id=2` are two pages, and `/item` and
+  `/item?` are two pages. The same parameters in a different order are still one page. A site
+  with query parameters gives more pages, so a crawl reaches `max_pages` earlier. A session
+  parameter in a link gives one page for each value unless `strip_tracking_params` removes it. A
+  configuration that does not have the field now means `true`. Set `dedup_include_query` to
+  `false` to get the earlier result. (#637)
+- **BREAKING: a crawl keeps empty path segments.** `/a/b` and `/a//b` are two pages, requested and
+  reported separately, also when `dedup_include_query` is `false`. No setting merges them again.
+  `normalized_url` and `map` keep the doubled separator. (#636)
+- **BREAKING (go): `CrawlConfig.DedupIncludeQuery` is now `*bool`.** `nil` uses the new default,
+  and a pointer to `false` merges queries. A struct literal that sets `DedupIncludeQuery: true`
+  does not compile until it uses a pointer. (#637)
+- **BREAKING: a frontier store with keys of an earlier version requests those pages again.** The
+  key of a page now keeps its query and its empty path segments. A custom `Frontier` that keeps
+  its seen keys between runs holds the earlier keys, so a page with a query or with a doubled
+  slash gets a new key and is requested one more time. (#636, #637)
+- **`Frontier` has a new method, `claim`.** It marks an address as seen and returns `true` only to
+  the first caller. The engine calls it for each discovered link and each redirect target, in
+  place of `is_seen` and then `mark_seen`. The default implementation calls those two methods, so
+  a custom frontier needs no change: within one engine and its clones, the engine lets one call
+  at a time claim a given address. A frontier that more than one process uses must implement
+  `claim` as one conditional write. Before, a custom frontier that answers slowly let a page that
+  several redirects point to be requested and reported once for each redirect. (#638)
+- **BREAKING: a redirect loop or a redirect chain longer than `max_redirects` is an error.** A
+  scrape returned a result with status 302 and no text. It now fails with an SSRF policy
+  violation whose reason is `redirect loop` or `redirect limit exceeded`, in HTTP mode and in
+  browser mode, with or without a screenshot. A crawl reports the error for that address and no
+  page. `interact` with the chromiumoxide backend fails with the same error. (#613)
+- **BREAKING: a response whose body is still compressed is an error.** When `Content-Encoding`
+  names a compression coding that the client did not decode (`GZIP`, `x-gzip`, `gzip, identity`),
+  the fetch fails as unsupported. It returned the compressed bytes as text. `identity`, an empty
+  value and a label that is not a compression coding keep the page. A body that the server
+  compressed with deflate is now decoded. (#614)
+- A `Refresh` header or meta tag with a delay above zero is not followed. The page that carries
+  it is the result, in HTTP mode and in browser mode. The target of the meta tag is one of its
+  links. (#605)
+- The error for an HTTP error status names the status and the address, for example
+  `forbidden: HTTP 403 for https://example.com/page`. The address has its credentials removed.
+  The error class of each status is the same. (#611)
+- A response body that does not end before `request_timeout` fails as a timeout that names the
+  address. It failed as a data loss. (#623)
+- **A crawl now treats two addresses that differ only by a trailing slash as two pages.** `/docs`
+  and `/docs/` are two resources, and a server can answer them differently, so the crawl requests
+  both. Before, it requested the one it met first and never requested the other.
+  `CrawlPageResult.normalized_url` keeps the trailing slash of the address, and `map` lists both
+  addresses. A site that serves the same content at both addresses now gives two pages where it
+  gave one, and each of the two counts against `max_pages`. When one form redirects to the other,
+  the crawl reports one page. For each such pair it sends one more request in HTTP mode, and up
+  to two more in browser mode and in the sequential loop of the wasm build. To merge two pages,
+  compare them in your own code. (#607)
+- `CrawlPageResult.normalized_url` writes percent-encoding in one form, as RFC 3986 section 6.2.2
+  states it: an escape of a letter, a digit, `-`, `.`, `_` or `~` is decoded, and the hex digits of
+  every other escape are in upper case. `/a%2db` is reported as `/a-b`, and `/caf%c3%a9` as
+  `/caf%C3%A9`. (#615)
+- `LinkInfo.link_type` is decided against the address of the page, not against its `<base>`
+  address. `anchor` is a link that has a fragment and names the page it is on, however the link
+  is written. `external` is a link to another host than the page's host.
+- With `dedup_include_query`, a crawl keeps each query parameter as it is written. It sorts the
+  parameters by name and keeps the order of the values of one name. Before, it decoded each
+  parameter and encoded it again, so `?a=1&a=2` and `?a=2&a=1`, `?a` and `?a=`, and `?q=a+b` and
+  `?q=a%20b` were one page, and the crawl requested only the first. `/p?m=1&n=2` and
+  `/p?n=2&m=1` are still one page. `CrawlPageResult.normalized_url` writes the query the same
+  way: `?x=A%26y=B` was reported as `?x=A%26y%3DB`.
+- `detected_charset` names the detected encoding (for example `windows-1252`) for a page that
+  declares none and is not UTF-8, where it was `None`. A declared label that no encoding has is no
+  longer reported. A page declared as `us-ascii` is read as windows-1252, as the HTML standard reads it.
+- **BREAKING (python): an error that `scrape`, `crawl`, `batch_scrape`, `batch_crawl`, `interact`
+  or `map_urls` raises is a `CrawlError` subclass, such as `CrawlConnectionError`.** Before, it
+  was a `RuntimeError`. `CrawlError` is not a `RuntimeError`, so `except RuntimeError` no longer
+  catches these errors. Catch `CrawlError`. (#618)
+- **Dart: the package needs Dart 3.13 or later.** The SDK floor was 3.11. A project on Dart 3.11
+  or 3.12 cannot resolve the package.
+- **Ruby: the gem needs `sorbet-runtime` 0.6 or later.** It accepted 0.5 before. A bundle that
+  locks 0.5 must update it.
+- The Go setup command (`cmd/setup`) has two new flags. `-link static` links the static archive,
+  and `-platform` names the release platform. On a Linux host with musl, the command now selects
+  the `linux-<arch>-musl` platform.
+- Swift: `to_string()` of a `CrawlEvent` and of the bridge values of `AuthConfig`, `HostMatcher`
+  and `PageAction` returns the JSON of the value. Before, it returned the name of the variant
+  (`"page"`, `"basic"`, `"exact"`, `"click"`).
+
 ### Security
 
 - Update Rustls to 0.23.46 across Rust lockfiles to address RUSTSEC-2026-0346,
@@ -13,6 +236,257 @@ title: "Changelog"
 
 ### Fixed
 
+- A crawl-result cookie has the same `domain` and `path` over HTTP and in the browser, so a
+  crawl that uses both lists it once (#753). The fields give the scope that the browser stores:
+  `domain` is the host for a host-only cookie and the domain with a leading dot for a domain
+  cookie; `path` is the default path of the page when `Set-Cookie` has no valid `Path`. A
+  `Path` keeps its case. Over HTTP a result cookie follows the RFC 6265 storage rules of the
+  cookie jar: a deleted cookie (`Max-Age=0` or an `Expires` in the past) is not listed, an IP
+  host accepts only its own address as `Domain` (`Domain=0.0.1` from `127.0.0.1` is dropped),
+  and of two `Domain` attributes the last decides. Over HTTP this changes the values: `domain`
+  was `None` with no `Domain` and `path` was `None` with no `Path`; `Domain=example.com` gave
+  `example.com`, now `.example.com`; a dotted IP or one-label `Domain` such as `.127.0.0.1` kept
+  its dot, now the bare host; an empty `Domain` gave `""`, now the host; a relative `Path` was
+  kept, now the default path; `Path=/X/` gave `/x/`, now `/X/`; `Domain = x` with spaces around
+  `=` was ignored, now it is read and checked against the host; a deleted cookie was listed, now
+  it is not; `Domain=0.0.1` from `127.0.0.1` was listed, now it is dropped;
+  `Domain=other.test; Domain=127.0.0.1` was dropped, now it is listed; and a cookie with an
+  empty name (`=1`) was listed, now it is not (the jar never stored it). In browser mode this
+  changes the values: a host-only cookie gave `domain` `None` in Chrome and in the native
+  browser, now the host; in the native browser a domain cookie gave `example.com`, now
+  `.example.com`, `Path=/A/b` gave `/a/b`, now `/A/b`, and an empty `Domain=` gave two rows
+  (`""` and `None`), now one with the host.
+- Over HTTP a cookie whose `Domain` is a public suffix of the Public Suffix List (`onrender.com`,
+  `co.il`) is not stored, not listed and not sent to another site under that suffix, as the
+  browser does; before, a fixed list of a few suffixes decided (#762). A `Domain` that is the
+  host's own public suffix gives a host-only cookie.
+- The HTTP cookie jar admits the `Domain` that the jar stores: the last non-empty one, with the
+  attribute key and value trimmed, so `Domain=a.onrender.com; Domain=onrender.com` and
+  `Domain = onrender.com` no longer reach the jar past the public-suffix check. In the native
+  browser a later `Path` that does not start with `/` replaces an earlier valid one with the
+  default path, as in the HTTP jar and Chrome.
+- A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
+  longer kills a browser whose page creation takes more than two seconds: the page's own fetch
+  timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
+  The browser pool shuts down at once while a page waits on Chrome, and a page request that its
+  timeout ends during the pool's connection leaves no connection on an external browser. (#705)
+- Owned Chrome teardown recognizes expected closure of its primary and child connections.
+  Active and borrowed transport failures remain errors; successful profile retirement avoids
+  a second process-family kill. Successful CLI commands await owned browser cleanup before the
+  async runtime exits (#734).
+- Foreign-tab browser tests finish readable response bodies before reloading and report bounded
+  rejection phases; external-cookie checks verify their owner-cookie setup first (#735).
+- Browser protocol parsing accepts current Chrome network policy field names while preserving
+  the reported policy and the legacy typed event API (#750).
+- macOS runtime tests retry when framework workqueue counts change during thread sampling,
+  and exit subprocesses use the same sampler (#751).
+- Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
+- Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
+  including checks that Chrome stored and sent the excluded cookies (#754).
+- Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
+  `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
+  and before navigation with the final store; unchanged profile or external-browser cookies are
+  excluded. Both backends restrict reported browser cookies to the requested and final hosts.
+  Same-value rewrites, deleted cookies and cookies scoped only to an intermediate redirect host
+  are not recoverable from this store comparison; concurrent changes in the same context are not
+  attributed to a specific cookie-setting event. Results preserve the existing first-observed
+  cookie identity: Native headers can retain the first value after JavaScript rewrites that cookie,
+  so this list is not a final browser-store snapshot.
+- MCP classifies redirect exhaustion as an internal execution failure and returns its
+  `too_many_redirects:` message through the tool-result error channel. (#676)
+- Maps keep zero-delay defaults while configured and custom limiters pace robots, sitemap children
+  and redirect requests, receive response statuses, and retain robots Crawl-delay state. Each
+  sitemap-index child takes its own configured host delay. (#681)
+- Redirect loops and exhausted hop limits use `TooManyRedirects`, including native interaction;
+  the API reports status 502 with `TOO_MANY_REDIRECTS`. The message names the address that ended
+  the chain, with credentials hidden:
+  `too_many_redirects: http://example.com/r3 - redirect limit exceeded` or
+  `too_many_redirects: http://example.com/a - redirect loop`. (#676)
+- Delayed HTTP Refresh targets participate in scrape, map and crawl link discovery. Headerless HTML
+  fragments use the normal conversion path, preserving conversion failures. (#677, #682)
+- Scrape extraction shares the engine robots cache while credentialed requests remain isolated. (#685)
+- CLI configuration errors report nested paths and JSON types; unknown content and SSRF keys fail
+  validation. (#679)
+- The v1.10.3 constructors of `ContentConfig`, `LinkInfo` and `CrawlPageResult` work again in
+  the bindings (#717). The six Markdown options and `original_url` are keyword arguments in
+  Python, Dart and Kotlin, and in Swift for `ContentConfig` and `LinkInfo`; in Swift,
+  `original_url` of `CrawlPageResult` is the last positional argument of `new_with_fields`.
+  They are optional trailing arguments in PHP and WebAssembly, a second constructor or the
+  builder in Java, and optional struct fields in Zig and Go.
+- A retired owned browser starts its process and profile cleanup before waiting on its security
+  controller, so cleanup finishes even if the host stops driving the runtime before dropping the pool.
+- Dart E2E tests use source compilation to avoid the kernel compiler's child reaper stealing
+  native child exits. Linux Dart applications that start their own child processes remain affected.
+- Crawlberg's Unix browser launches use native child waits through shutdown and pidfd fallbacks,
+  preserving waitable host `SIGCHLD` handlers, masks and flags and avoiding Go's fatal signal-stack error.
+  Managed launches reserve one waiter thread before spawning; failed launches and completed children release it.
+  The vendored driver exposes additive managed launch APIs; its legacy Tokio launch and raw child APIs retain
+  their existing signal-registry behavior.
+- Managed Unix launches normalize `SIG_IGN` and clear `SA_NOCLDWAIT` before starting the guardian,
+  preserving callable handlers, signal masks and other flags. These dispositions no longer provide
+  kernel reaping, even after the Crawlberg runtime is dropped: the host must explicitly wait for its
+  own children, or exited children remain zombies. ([#712](https://github.com/xberg-io/crawlberg/pull/712))
+- Browser cookies set on a browser-rendered page remain available to later pages in the crawl;
+  terminal document responses finish without waiting for HTML readiness when downloads are disabled.
+  Unrelated tabs closed by an external Chrome owner no longer cancel an owned interaction. (#671, #609)
+- Refused Unix browser launchers stop their descendants, and parent signal termination stops the
+  owned browser group. Unix guardians require `/bin/sh` and `/bin/sleep`; Linux uses procfs for
+  parent ownership, while macOS/BSD use their system `/bin/ps`. (#674)
+- Batch crawls with more seeds than `max_concurrent` complete after host waits by sharing
+  each seed's permit acquisition. Ready batch scrape operations run on parallel runtime tasks
+  while retaining the configured concurrency bound. (#684)
+- Dropping an inherited browser pool after a process forks leaves its parent's Chrome and
+  Tokio reactor untouched, avoiding a panic on macOS. The parent can keep using and shutting down its pool.
+
+- Cancelled pooled pages retain their capacity until context cleanup finishes. Failed security
+  controllers retire their browser, while stalled cleanup leaves unrelated live pages usable.
+- A shared browser pool works with the default session-affinity setting when no session pool is supplied;
+  each request gets a fresh page in the shared Chrome. (#703)
+- With `cookies_enabled`, a crawl in browser mode did not send a page the cookies that earlier
+  pages of the crawl set, so a page behind a session cookie answered 403. The Chrome pages of
+  one crawl now share their cookies, as the pages of a crawl in HTTP mode do. A second crawl
+  does not get them. In automatic mode, a cookie that a response over HTTP or from a bypass
+  provider sets or deletes is not sent to later Chrome pages with its old value. With a session
+  pool and `session_affinity`, the page kept for a site keeps its cookies: a later crawl gets
+  them, and so does a later page after a response over HTTP deleted one. (#603)
+- Browser mode applies `block_url_patterns` on the default backend. A request of the page whose
+  address matches a pattern is not sent. Before, the setting had no effect there. (#608)
+- Browser mode applies the retry settings. A page that fails with a status in `retry_codes` is
+  loaded again after the retry delay, up to `retry_count` times, on the two backends. A browser
+  timeout is not retried. (#610)
+- Browser mode waits for the delay of the domain before each page load, on the two backends,
+  when `rate_limit_ms` is set. The delay applies to the page, not to the files that the page
+  loads. The wait is not counted against `browser.overall_timeout`, which bounds the rest of a
+  Chrome fetch, its retries included. With `rate_limit_ms` unset, browser mode loads the pages of one
+  host with no delay, as before. (#622)
+- Browser mode sends client hints that agree with a configured Chrome user agent: the brands
+  with its version, its platform and the mobile flag, on every request of the page. For a user
+  agent that does not name Chrome on Android, Windows, macOS or Linux, Chrome sends no client
+  hints, as before. (#627)
+- A page that is loading when the pooled Chrome dies is loaded again on the new Chrome when
+  `retry_count` is 1 or more. Before, the retry settings did not cover this failure. (#621)
+- Python async runtime shuts down automatically at interpreter exit and rejects inherited
+  runtime work after a process fork. The runtime starts at the first async call, not at import.
+  A call after the exit hooks ran raises `RuntimeError`. (#633)
+- Swift: the `mode`, `backend` and `wait` of `BrowserConfig`, `LinkInfo.linkType`,
+  `ImageInfo.source`, `FeedInfo.feedType`, `DownloadedAsset.assetCategory` and the `allowlist`
+  and `denylist` of `SsrfPolicy` had no effect: the binding passed the default value. It now
+  passes the value that the caller sets.
+- With a browser pool, a session pool and `session_affinity` on, the fetch that reused the page
+  kept for a site failed at once with a browser error: every second fetch of the site. The engine
+  closed the page it kept. The kept page now serves the next fetch. (#653)
+- In the command-line tool, a `--config` value reset settings that it did not name, so
+  `--browser-mode always` with any `--config` value fetched the page over plain HTTP. A `--config`
+  value now replaces only the settings that it names, also inside a section such as `browser` or
+  `ssrf`. A `null` clears an optional setting. A value that is not a JSON object is an error. (#600)
+- Windows browser teardown no longer reports success when querying or inspecting job members fails.
+  Job member lists grow when Chrome has more processes than the initial buffer holds. (#659)
+- A crawl requested one page once for each percent-encoded spelling of its address. `/a-b`,
+  `/a%2db` and `/a%2Db` are now one page, requested once with the spelling of the first link.
+  An escape of a reserved character, such as `%2F`, still names its own page. (#615)
+- A crawl did not follow a link that is only a fragment, such as `#part`, on a page whose
+  `<base>` address is another document. The link names that other document, and the crawl now
+  requests it. `map` lists it too. (#616)
+- A crawl dropped a linked page that redirects to another address of the same page, and every
+  page behind it. A link to `/docs` that answers a redirect to `/docs/` gave one request, no
+  page and no error. The crawl now follows the redirect and reads the links of the page it
+  lands on, in HTTP mode and in browser mode. The same holds for a redirect to another
+  percent-encoded spelling of the address, and for a redirect that adds a query. A redirect to
+  a page the crawl already has from another link is still not requested again. (#629)
+- The sequential crawl loop of the wasm build reported a page two times when a link and a
+  redirect both reached it, for example a folder linked as `/docs` and as `/docs/` where the
+  first redirects to the second. It now reports the page one time, and it does not request a
+  page again that it first reached through a redirect.
+- The Python package sometimes printed `RuntimeError: _crawlberg::CrawlEngineHandle is
+  unsendable, but is being dropped on another thread` on stderr after an async call, and the
+  engine was then never freed: its connections and its browser stayed until the process ended.
+  The engine handle is now a class that any thread can release. (#641)
+- Read a page with the character set a browser uses for it. In HTTP mode a page that declares no
+  character set and is not UTF-8 came back with replacement characters; its encoding is now detected
+  from its bytes. The sources are read in the order of the HTML standard: a byte-order mark, the
+  `Content-Type` header, a `<meta>` tag or an XML declaration, then detection. A `charset=` in a
+  comment or in the text of the page no longer counts as a declaration, an unknown label no longer
+  stops the decision, and one bad byte sequence no longer discards the decode of the whole page.
+  Undeclared UTF-8 stays UTF-8, also when a size limit cut the body inside a character or the page
+  holds a few bytes that are not UTF-8. An undeclared Shift_JIS, EUC-JP, EUC-KR, GBK or Big5 page
+  that a size limit cut inside its last character keeps its encoding. JSON is read as UTF-8. Only
+  HTML is searched for a `<meta>` tag, and only its first 1 MiB.
+- Keep the text a browser decoded. In browser mode a page whose `<meta>` tag names a character set
+  other than UTF-8 came back with two wrong letters for each non-ASCII letter (`cafÃ©`), because the
+  decoded text was decoded again by that tag. `detected_charset` now reports the character set the
+  browser used.
+- Keep the text a bypass vendor decoded. A provider that reads the page from a JSON field (Zyte's
+  `browserHtml`) returns text; it was decoded again by the `<meta>` tag of the page.
+- Read a page with its character set on the native browser backend. It read every document as
+  UTF-8, so a page in another character set lost its letters. It now makes the same decision as HTTP
+  mode.
+- Replay the text of a cached page. A cache hit for a page that is not UTF-8 came back with broken
+  letters. The entry now holds the decoded text and its character set.
+- Browser mode lost a page that opens a JavaScript dialog. Chrome stops the page until the
+  dialog is answered, and nothing answered it, so `scrape`, `crawl` and `interact` failed with
+  a browser timeout after the full `browser.timeout`. Browser mode now closes the dialog and
+  returns the page. An `alert`, a `confirm` and a `prompt` are dismissed: the page gets `false`
+  from the `confirm` and `null` from the `prompt`. A `beforeunload` dialog is accepted, so the
+  navigation that opened it goes on. The text of a dialog is not part of the page and is not
+  returned. (#602)
+- Browser mode lost a page that opens a popup window when the popup opens a JavaScript dialog.
+  The popup runs beside the page that opened it, and nothing answered its dialog, so `scrape`,
+  `crawl` and `interact` failed with a browser timeout after the full `browser.timeout`. Browser
+  mode now closes a dialog of a popup by the same rule as a dialog of the page, and returns the
+  page. (#683)
+- Browser mode lost a page whose text holds one half of a surrogate pair, such as a string that
+  a script cut in the middle of an emoji. The reply from Chrome could not be read, and the
+  call failed with a browser timeout after the full `browser.timeout`. The page is now
+  returned, with U+FFFD in place of the unpaired half, as a browser shows it. The same holds
+  for an attribute, for the title and for the result of an `interact` script. (#631)
+- With `cookies_enabled`, a new engine in HTTP mode sent the cookies that an earlier engine with
+  the same configuration had received. A program that makes one engine for each user sent the
+  session cookie of one user in the crawl of the next user. Each engine now has its own cookie
+  store, and a new engine starts with no cookie. One engine still sends the cookies it received
+  on its later requests. This changes the behaviour of a program that relied on two engines
+  sharing cookies: use one engine to keep the cookies. The API server and the MCP server make one
+  engine for each request, so a cookie from one request is no longer sent in the next. The API
+  server gives each of these engines the rate limiter and the robots.txt cache of the server, so
+  the delay for each host holds across `/v1/scrape` and `/v1/download` requests, also when they
+  arrive at the same time. `/v1/map` sends its requests without the rate limiter, as before. The
+  cache, store, content filter and event sink of an engine given to `serve` are not used by any
+  API route: `/v1/download` and `/v1/map` used them before. (#652)
+- Requests that waited for one host at the same time all started after one delay. With
+  `rate_limit_ms` or a robots.txt `Crawl-delay`, five such requests ended in one delay where four
+  are due. The requests that wait for one host now go one at a time, in the order of arrival,
+  each one delay after the request before it. A request that is cancelled while it waits leaves
+  the queue and delays no other request. This makes a crawl with more than one concurrent request
+  to one host slower: it now keeps the delay. A request that waits holds one of the
+  `max_concurrent` slots of its crawl, as before, but now for up to `max_concurrent` delays: a
+  crawl of many hosts slows down while its next pages are all on one host with a long delay.
+  Jitter no longer makes a gap shorter than a robots.txt `Crawl-delay`. A page that the browser
+  fetches has no delay, as before.
+- Report a page whose conversion to Markdown fails as an error, not as a page with no Markdown. A
+  scrape returns `conversion_failed: could not convert <page> to Markdown: <cause>`. A crawl sends
+  that error for the page, follows no links from it, and continues; a failed seed is the error of
+  the crawl. The cause is the text the converter gives. The error is only for a page: a response
+  that is HTML or has a `text/` type. The type is read without case and without its parameters,
+  so `APPLICATION/XHTML+XML` and `Text/HTML; Charset=UTF-8` are pages. A parameter no longer
+  counts as the type: `text/plain; name=page.html` is not HTML by its type. The same test decides
+  whether `map` reads a response as a page, whether a `<meta>` refresh is followed, and what is
+  read from an HTML page: links, metadata, images, feeds, assets and the render hint. These
+  change in the same way. The `map` sitemap check reads the type the same way, so `Application/XML`
+  is a sitemap. A type that names `xml` only in a parameter, such as
+  `text/plain; name=sitemap.xml`, is no longer a sitemap type: `map` of such a URL returns no
+  URLs when the body has no XML declaration. A body that
+  starts as HTML is a page with any declared type, `application/json` included. A response of
+  another type, such as `application/java-archive` or `font/woff2`, with a body that is not HTML,
+  and a response that `download_documents` keeps as a document, is a result with no `markdown`
+  when it cannot be converted, as before.
+- Do not convert a binary or PDF response in a scrape. The result has no `markdown` and
+  `was_skipped` is set, as in a crawl. Before, a scrape of an image returned its bytes as
+  Markdown text.
+- Read the type of a response as binary or PDF without its parameters. A parameter that holds the
+  name of a binary format no longer makes a response binary: `text/plain; name=startup.txt` holds
+  `tar` and was skipped as an archive. It is now text. A type that names a binary format or PDF
+  only in a parameter is no longer binary by its type.
+- Give the `mime_type` of a downloaded document in lowercase: `Application/PDF` is
+  `application/pdf`. A document filter gets the same lowercase value.
 - A browser command no longer waits for its full timeout after Chrome closes the DevTools
   connection. The command fails at once, and a browser pool that is dropped lets go of its
   Chrome.
@@ -29,6 +503,44 @@ title: "Changelog"
   (measured on Chrome 155 and on headless shell 153). No request of the page or of the popup
   gets past the check, the next check of the page still starts and ends, and other tabs are
   not affected. A `window.open` from a timer or an event handler does not block its page.
+- An engine made by `create_engine` no longer leaves its Chrome running. The Chrome stops, and its
+  profile directory is removed, when the last clone of the engine handle is dropped, and when the
+  process exits through the C runtime with an engine still alive or with its Chrome still
+  launching. No new call is needed. Only the process that launched a Chrome stops it: a process
+  forked from that one, such as a `multiprocessing` worker, holds a copy of the engine, and
+  dropping the copy or exiting leaves the parent's Chrome and profile directory alone. On Linux
+  and macOS a process that is killed by a signal, aborts, or leaves through `_exit` (Python's
+  `os._exit`, which ends every `multiprocessing` worker) still leaves the Chrome it launched:
+  nothing ends that Chrome for it. A Python program that ends with an unhandled
+  `KeyboardInterrupt` ends by that signal: it leaves the profile directory, and sometimes the
+  Chrome. On Windows the Chrome and its helper processes run in a job object, and the system ends
+  them when the process ends in any way. (#594)
+- On Linux and macOS a browser launch fails with an error when the process table does not show
+  the Chrome it started, and it stops that Chrome at once. Without that entry the engine cannot
+  stop the Chrome later, and the Chrome ran on after its engine was gone. The error says what to
+  do: on Linux, run the program where the `/proc` of its own process id namespace is mounted; on
+  macOS, let the sandbox profile allow the program to read process information. A Chrome that
+  ended at once is reported with its exit status instead. The engine knows its Chrome by the
+  process id and a start value that a later change of the system clock does not move. (#594)
+- On Windows a program that captures the output of a crawling child process returns when that
+  child has exited. A Chrome the child left running kept the output pipes open.
+- Chrome no longer gets the standard input of the process that launched it.
+- The browser driver now reports the close of a browser's last page at once. It held that event
+  back until the next page opened, so a page closed outside the request check kept its browser
+  context until then. This is the cause of the wait on the Chromium headless shell that 1.10.3
+  already ended for pooled pages. (#595)
+- With `session_affinity`, the fetch that keeps a new page no longer returns 5 seconds late.
+  Chrome 155 opens targets of its own in each new browser context and does not close them on
+  request; the engine waited for them to close before it kept the page. (#694)
+- Browser interception preserves current ownership and retired-context safeguards when retiring foreign sessions.
+  Foreign-retirement census validation and retirement use one registry lock. (#701)
+
+- Released constructor checks preserve Swift initializer and factory function references, getter
+  effects and alias visibility. Python and Swift call fixtures assert constructed values, and
+  Python CI executes the released calls after type checking (#738, #739). Alef 0.110.11 restores
+  the exact released Swift initializer overloads for `ContentConfig` and `LinkInfo`.
+- Dedicated binding compatibility CI checks released declarations and Python/Swift calls on
+  pull requests, independently of the full E2E workflow (#737).
 
 ## [1.10.2] - 2026-10-06
 

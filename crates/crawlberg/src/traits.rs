@@ -17,6 +17,10 @@ use serde::{Deserialize, Serialize};
 pub struct FrontierEntry {
     /// URL waiting to be crawled.
     pub url: String,
+    /// Resolved source link spelling, retained across persistent frontier round trips.
+    /// `None` supports older stored entries, which report `url` as their source address. <!-- ~keep -->
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_url: Option<String>,
     /// Crawl depth at which this URL was discovered.
     pub depth: usize,
     /// Document-only depth: number of consecutive `LinkType::Document` hops from
@@ -73,8 +77,8 @@ pub struct CompleteEvent {
 ///
 /// The engine drives the crawl entirely through this trait. Every URL it intends to visit —
 /// the seed and each link that survives discovery filtering — is handed to [`push`], and the
-/// crawl loop takes work back out with [`pop_batch`]. `is_seen`/`mark_seen` deduplicate on
-/// the discovery path.
+/// crawl loop takes work back out with [`pop_batch`]. [`claim`] deduplicates discovery and
+/// redirect targets.
 ///
 /// # Window semantics
 ///
@@ -110,6 +114,7 @@ pub struct CompleteEvent {
 ///   instance unless that sharing is intended.
 ///
 /// [`push`]: Frontier::push
+/// [`claim`]: Frontier::claim
 /// [`pop_batch`]: Frontier::pop_batch
 /// [`isolated`]: Frontier::isolated
 /// [`BestFirstStrategy`]: crate::defaults::BestFirstStrategy
@@ -141,6 +146,19 @@ pub trait Frontier: Send + Sync {
         Ok(batch)
     }
 
+    /// Pop eligible entries without moving entries on excluded hosts.
+    ///
+    /// ~keep `None` means this backend has no host-aware selection. The engine then uses
+    /// its existing bounded window; fairness beyond that window requires an override.
+    /// Supported implementations preserve each entry and the order of retained entries.
+    async fn pop_batch_excluding_hosts(
+        &self,
+        _n: usize,
+        _hosts: &[String],
+    ) -> Result<Option<Vec<FrontierEntry>>, CrawlError> {
+        Ok(None)
+    }
+
     /// Return the number of entries in the frontier.
     async fn len(&self) -> Result<usize, CrawlError>;
 
@@ -154,6 +172,19 @@ pub trait Frontier: Send + Sync {
 
     /// Mark a URL as seen.
     async fn mark_seen(&self, url: &str) -> Result<(), CrawlError>;
+
+    /// Mark a URL as seen, returning `true` only when it was newly claimed.
+    ///
+    /// ~keep The default preserves compatibility with existing frontiers. The engine serializes
+    /// ~keep claims to the same key within one engine and its clones. A distributed backend must
+    /// ~keep override this with an atomic conditional write to coordinate other engines or processes.
+    async fn claim(&self, url: &str) -> Result<bool, CrawlError> {
+        if self.is_seen(url).await? {
+            return Ok(false);
+        }
+        self.mark_seen(url).await?;
+        Ok(true)
+    }
 
     /// Return a fresh instance scoped to a single crawl call, or `None` to keep
     /// sharing this instance's state across calls.
@@ -287,6 +318,7 @@ mod tests {
     fn sample() -> FrontierEntry {
         FrontierEntry {
             url: "https://example.com/page".to_owned(),
+            original_url: None,
             depth: 3,
             doc_depth: 1,
             priority: 0.25,
@@ -308,6 +340,17 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_original_url_through_persistent_frontier_serialization() {
+        let json = serde_json::json!({
+            "url": "https://example.com/na%C3%AFve",
+            "original_url": "https://example.com/naïve",
+            "depth": 1, "doc_depth": 0, "priority": 0.5
+        });
+        let entry: FrontierEntry = serde_json::from_value(json.clone()).expect("frontier entry");
+        assert_eq!(serde_json::to_value(entry).expect("serialized entry"), json);
+    }
+
+    #[test]
     fn should_round_trip_frontier_entry_through_json() {
         let original = sample();
         let encoded = serde_json::to_string(&original).expect("FrontierEntry must serialize");
@@ -323,6 +366,7 @@ mod tests {
     fn should_round_trip_seed_entry_at_depth_zero() {
         let seed = FrontierEntry {
             url: "https://example.com/".to_owned(),
+            original_url: None,
             depth: 0,
             doc_depth: 0,
             priority: 1.0,

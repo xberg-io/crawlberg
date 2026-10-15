@@ -459,6 +459,7 @@ impl BypassProvider for CountingBypass {
             status: self.status,
             content_type: "text/html".to_owned(),
             body_bytes: body.clone().into_bytes(),
+            body_kind: crawlberg::BypassBody::Bytes,
             body,
             headers: std::collections::HashMap::new(),
             final_url: String::new(),

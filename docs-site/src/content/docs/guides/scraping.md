@@ -21,6 +21,27 @@ println!("Body size: {} bytes", result.body_size);
 
 The scrape request routes through the engine's Tower service stack, which applies per-domain rate limiting, HTTP response caching, and user-agent rotation before the actual HTTP fetch.
 
+## Python runtime lifecycle
+
+Python's async functions use a shared native runtime that starts when needed. After all requests and streams finish, call `crawlberg.shutdown_async_runtime()` to release its worker threads and runtime-owned file descriptors. The next async call creates a fresh runtime, and existing engine handles remain usable. Shutdown raises `RuntimeError` while work is active; finish or cancel that work before trying again. Tokio retains two process-global signal descriptors after its first use, so those remain until the Python process exits.
+
+The interpreter exit hook closes the runtime permanently before Python finalizes. A child forked after the parent has started the runtime raises `RuntimeError` when it attempts async work; use the `spawn` multiprocessing start method for those workers. Forking before the runtime starts lets each process initialize its own runtime.
+
+```python
+import asyncio
+import crawlberg
+
+async def main():
+    engine = crawlberg.create_engine()
+    result = await crawlberg.scrape(engine, "https://example.com")
+    crawlberg.shutdown_async_runtime()
+    return result
+
+result = asyncio.run(main())
+```
+
+Async failures inherit from `crawlberg.CrawlError` and preserve their category, such as `crawlberg.NotFoundError`, `crawlberg.CrawlConnectionError`, or `crawlberg.CrawlTimeoutError`.
+
 ## Page interaction
 
 Use `interact()` when a page must be changed before HTML is captured: click a button, type into an input, wait for a selector, run JavaScript, take a screenshot, or scrape the current DOM.
@@ -75,7 +96,7 @@ The `ScrapeResult` struct contains everything extracted from a single page:
 | `content_type`     | `String`         | The Content-Type header value.                                          |
 | `html`             | `String`         | The response body (possibly truncated by `content.max_body_size`).      |
 | `body_size`        | `usize`          | Size of the response body in bytes.                                     |
-| `detected_charset` | `Option<String>` | Character encoding detected from Content-Type header or HTML meta tags. |
+| `detected_charset` | `Option<String>` | The character set the page was decoded with: the label a header or a meta tag declares, or the name of the encoding detected from the bytes. In browser mode, the character set the browser used. `None` for an undeclared UTF-8 page in HTTP mode. |
 | `is_pdf`           | `bool`           | Whether the content was detected as PDF.                                |
 | `was_skipped`      | `bool`           | Whether extraction was skipped (binary or PDF content).                 |
 

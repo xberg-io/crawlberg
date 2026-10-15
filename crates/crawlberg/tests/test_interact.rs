@@ -1343,11 +1343,14 @@ async fn native_interact_stops_a_chain_longer_than_max_redirects() {
         .await;
 
     let engine = create_engine(Some(native_interact_config(2))).unwrap();
-    let result = interact(&engine, &format!("{}/", mock.uri()), vec![PageAction::Scrape])
+    let error = interact(&engine, &format!("{}/", mock.uri()), vec![PageAction::Scrape])
         .await
-        .unwrap();
-
-    assert_eq!(result.final_url.trim_start_matches(&mock.uri()), "/r2");
+        .expect_err("an unfinished redirect chain is not an interaction page");
+    assert!(
+        matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+        if *message == format!("{}/r3 - redirect limit exceeded", mock.uri()) && format!("{source:?}").contains(&format!("{}/r3", mock.uri()))),
+        "{error:?}"
+    );
     let requested: Vec<String> = mock
         .received_requests()
         .await
@@ -1406,4 +1409,84 @@ async fn native_interact_follows_a_click_navigation_at_max_redirects_zero() {
     assert!(result.action_results.iter().all(|action| action.success));
     assert!(result.final_url.ends_with("/landed"), "{}", result.final_url);
     assert!(result.final_html.contains("id=\"arrived\""));
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_reports_a_redirect_loop_as_scrape_does() {
+    let mock = MockServer::start().await;
+    for (from, to) in [("/", "/b"), ("/b", "/")] {
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(301).append_header("location", to))
+            .mount(&mock)
+            .await;
+    }
+    let engine = create_engine(Some(native_interact_config(2))).unwrap();
+    let url = format!("{}/", mock.uri());
+    let interact_error = interact(&engine, &url, vec![PageAction::Scrape])
+        .await
+        .expect_err("a redirect loop is not an interaction page");
+    let scrape_error = crawlberg::scrape(&engine, &url)
+        .await
+        .expect_err("scrape rejects the loop");
+    for error in [interact_error, scrape_error] {
+        assert!(
+            matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+            if *message == format!("{}/b - redirect loop", mock.uri()) && format!("{source:?}").contains(&format!("{}/b", mock.uri()))),
+            "{error:?}"
+        );
+    }
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_keeps_pages_at_the_exact_redirect_budget_and_without_location() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(301).append_header("location", "/landed"))
+        .mount(&mock)
+        .await;
+    for (route, status) in [("/landed", 200), ("/no-location", 302)] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(status).set_body_raw("<p>kept page</p>", "text/html"))
+            .mount(&mock)
+            .await;
+    }
+    let engine = create_engine(Some(native_interact_config(1))).unwrap();
+    for route in ["/", "/no-location"] {
+        let result = interact(&engine, &format!("{}{route}", mock.uri()), vec![PageAction::Scrape])
+            .await
+            .expect("a real page within the budget remains usable");
+        assert!(result.final_html.contains("kept page"), "{result:?}");
+        assert_eq!(result.action_results.len(), 1);
+        assert!(result.action_results[0].success);
+    }
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_redacts_credentials_when_reporting_a_redirect_loop() {
+    let mock = MockServer::start().await;
+    let host = mock.uri().trim_start_matches("http://").to_owned();
+    for (from, to) in [("/", "/b"), ("/b", "/")] {
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(301).append_header("location", format!("http://user:pass@{host}{to}")))
+            .mount(&mock)
+            .await;
+    }
+    let engine = create_engine(Some(native_interact_config(2))).unwrap();
+    let url = format!("{}/", mock.uri());
+    let error = interact(&engine, &url, vec![PageAction::Scrape])
+        .await
+        .expect_err("redirect loop");
+    assert!(
+        matches!(error, CrawlError::TooManyRedirects { ref message, source: Some(ref source) }
+        if *message == format!("{}/b - redirect loop", mock.uri()) && format!("{source:?}").contains(&format!("{}/b", mock.uri()))),
+        "{error:?}"
+    );
+    assert!(!error.to_string().contains("user:pass"));
 }

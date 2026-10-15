@@ -4,9 +4,8 @@ use url::Url;
 
 use super::CrawlEngine;
 use super::crawl_state::{CrawlState, FALLBACK_URL, FetchResult, LoopContext, ParentPage};
-use super::redirect::url_host;
 use crate::error::CrawlError;
-use crate::http::extract_cookies_from_hashmap;
+use crate::http::result_cookies_from_hashmap;
 use crate::normalize::normalize_url;
 use crate::traits::*;
 use crate::types::*;
@@ -52,15 +51,29 @@ impl CrawlEngine {
 
         let (final_url, page_parsed, norm_url, stayed_on_domain) = resolved_page_location(&fetch, context.base_host);
 
+        // ~keep Before link discovery: a page that cannot be converted is a failed page, and a
+        // ~keep failed page contributes no links, as a failed fetch does not.
+        let (downloaded_document, markdown) = match self
+            .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_scan, page_was_skipped)
+            .await
+        {
+            Ok(content) => content,
+            Err(error) => {
+                state.pages_failed += 1;
+                if depth == 0 {
+                    state.error = Some(error.to_string());
+                }
+                self.report_fetch_error(&page_url, &error, context).await;
+                return Ok(false);
+            }
+        };
+
         self.discover_links_if_allowed(&fetch, &final_url, page_was_skipped, context, state)
             .await?;
 
-        let (downloaded_document, markdown) = self
-            .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_scan, page_was_skipped)
-            .await;
-
         let page = CrawlPageResult {
             url: page_url.clone(),
+            original_url: fetch.entry.original_url.clone().unwrap_or_else(|| page_url.clone()),
             normalized_url: norm_url,
             status_code: fetch.status_code,
             content_type: fetch.content_type,
@@ -99,15 +112,15 @@ impl CrawlEngine {
         Ok(self.deliver_page(page, state, context).await)
     }
 
-    /// Fold this response's `Set-Cookie` headers into the crawl-wide cookie jar.
+    /// Collect browser-store changes and this response's `Set-Cookie` headers.
     fn collect_page_cookies(&self, page_url: &str, fetch: &FetchResult, state: &mut CrawlState) {
         if !self.config.cookies_enabled {
             return;
         }
-        let fetch_host = url_host(page_url);
+        state.all_cookies.extend(fetch.browser_result_cookies.iter().cloned());
         state
             .all_cookies
-            .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
+            .extend(result_cookies_from_hashmap(page_url, &fetch.headers));
     }
 
     /// Enqueue the page's outbound links, unless its depth, its document context or its own
@@ -140,6 +153,10 @@ impl CrawlEngine {
 
     /// Build the representations derived from a page body: the downloaded-document record,
     /// and the markdown rendering (skipped, like the record's content, for binary/PDF pages).
+    ///
+    /// # Errors
+    ///
+    /// The conversion's error, for a page that cannot be converted.
     async fn derive_page_content(
         &self,
         page_url: &str,
@@ -148,7 +165,7 @@ impl CrawlEngine {
         body: &str,
         page_scan: Option<crate::html::PageScan>,
         page_was_skipped: bool,
-    ) -> (Option<DownloadedDocument>, Option<MarkdownResult>) {
+    ) -> Result<(Option<DownloadedDocument>, Option<MarkdownResult>), CrawlError> {
         let downloaded_document = crate::document::build_downloaded_document_with_filter(
             page_url,
             page_parsed,
@@ -166,10 +183,18 @@ impl CrawlEngine {
             None
         } else {
             let content_config = crate::scrape::merged_content_config(&self.config);
-            crate::markdown::convert_to_markdown(body, page_scan, page_parsed, &content_config).await
+            crate::markdown::convert_response_to_markdown(
+                body,
+                page_scan,
+                page_parsed,
+                &content_config,
+                &fetch.content_type,
+                downloaded_document.is_some(),
+            )
+            .await?
         };
 
-        (downloaded_document, markdown)
+        Ok((downloaded_document, markdown))
     }
 
     /// Emit the error events for a page whose fetch came back 5xx.

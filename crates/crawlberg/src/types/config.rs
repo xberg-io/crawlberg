@@ -153,11 +153,10 @@ pub struct CrawlConfig {
     /// (`bücher.de` is matched as `xn--bcher-kva.de`).
     #[serde(default)]
     pub path_patterns_match_url: bool,
-    /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
-    /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
-    /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
-    /// query is fetched once.
-    #[serde(default)]
+    /// Whether the crawl-dedup key includes the query string, sorted by parameter name.
+    /// Defaults to `true`: `/item?id=1` and `/item?id=2` are distinct pages, each fetched once.
+    /// Set to `false` to merge query variants and fetch only the first. Session parameters
+    /// produce a page for each distinct value unless removed with `strip_tracking_params`.
     pub dedup_include_query: bool,
     /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
     /// fetched, and reported. Defaults to `false`, so no tracking parameters are stripped
@@ -180,7 +179,8 @@ pub struct CrawlConfig {
     #[serde(with = "duration_ms")]
     pub request_timeout: Duration,
     /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-    /// between requests to the same domain. Defaults to 200ms when `None`.
+    /// between requests to the same domain, in HTTP mode and before each page load in
+    /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
     pub rate_limit_ms: Option<u64>,
     /// Maximum number of redirects to follow.
     pub max_redirects: usize,
@@ -349,7 +349,17 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub credential_scope: Option<crate::net::CredentialScope>,
+    /// The cookie store of the engine that holds this configuration.
+    ///
+    /// Set by the engine when it is built: a new store when `cookies_enabled` is on, `None` when
+    /// it is off. A caller leaves it `None`.
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub cookie_store: Option<std::sync::Arc<crate::net::cookie::PolicyCookieStore>>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
+    /// A session pool is optional: without one, requests reuse Chrome with fresh Pages.
     #[cfg(feature = "browser")]
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
@@ -392,7 +402,7 @@ impl Default for CrawlConfig {
             exclude_paths: Vec::new(),
             path_patterns_match_query: false,
             path_patterns_match_url: false,
-            dedup_include_query: false,
+            dedup_include_query: true,
             strip_tracking_params: false,
             tracking_params: default_tracking_params(),
             custom_headers: HashMap::new(),
@@ -432,6 +442,8 @@ impl Default for CrawlConfig {
             ssrf_deny_private_explicit: None,
             dispatch: None,
             credential_scope: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            cookie_store: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]
@@ -475,6 +487,25 @@ impl CrawlConfig {
         self.validate_request_timeout()?;
         self.validate_browser_endpoint()?;
         self.validate_browser_launch()?;
+        self.validate_content_formatting()?;
+        Ok(())
+    }
+
+    fn validate_content_formatting(&self) -> Result<(), CrawlError> {
+        if self.content.bullets.is_empty() || !self.content.bullets.chars().all(|c| matches!(c, '-' | '*' | '+')) {
+            return Err(CrawlError::invalid_config(
+                "content.bullets must contain only Markdown list markers (-, *, +)",
+            ));
+        }
+        const MAX_LIST_INDENT_WIDTH: usize = 256;
+        if !(1..=MAX_LIST_INDENT_WIDTH).contains(&self.content.list_indent_width) {
+            return Err(CrawlError::invalid_config(
+                "content.list_indent_width must be between 1 and 256",
+            ));
+        }
+        if !matches!(self.content.strong_em_symbol.as_str(), "*" | "_") {
+            return Err(CrawlError::invalid_config("content.strong_em_symbol must be * or _"));
+        }
         Ok(())
     }
 

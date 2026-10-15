@@ -572,7 +572,7 @@ async fn engine_preserves_empty_scheme_allowlist_as_deny_all() {
 
 /// When a redirect chain cycles and the ssrf.max_redirects counter is
 /// exhausted inside http_fetch, scrape() must return
-/// CrawlError::SsrfPolicyViolation with "too many redirects" in the reason.
+/// CrawlError::TooManyRedirects with the underlying network error as its source.
 ///
 /// allow_private_networks(true) is set so that loopback hops are not blocked
 /// before the redirect limit is hit.  ssrf.max_redirects is set to 1 so the
@@ -620,15 +620,15 @@ async fn too_many_redirects_refused() {
     let result = scrape(&engine(config), &url_str).await;
 
     match result {
-        Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
-            assert!(
-                reason.contains("too many redirects"),
-                "SsrfPolicyViolation reason must contain 'too many redirects', got: '{reason}'"
+        Err(CrawlError::TooManyRedirects { ref message, .. }) => {
+            assert_eq!(
+                *message,
+                format!("{}/r1 - redirect loop", mock.uri()),
+                "the error must name the redirect loop"
             );
         }
-        Ok(ref page) if page.status_code == 302 => {}
         other => {
-            panic!("expected SsrfPolicyViolation(too many redirects) or Ok(302), got: {other:?}");
+            panic!("expected TooManyRedirects(redirect loop), got: {other:?}");
         }
     }
 }

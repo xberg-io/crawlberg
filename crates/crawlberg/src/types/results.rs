@@ -229,6 +229,39 @@ pub struct ScrapeResult {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+// ~keep The constructor of v1.10.3: the generated bindings keep it, and every field after it is
+// ~keep optional there. Add a new field at the END of the struct and leave this list alone.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "url",
+        "normalized_url",
+        "status_code",
+        "content_type",
+        "html",
+        "body_size",
+        "metadata",
+        "links",
+        "images",
+        "feeds",
+        "json_ld",
+        "depth",
+        "stayed_on_domain",
+        "was_skipped",
+        "is_pdf",
+        "detected_charset",
+        "markdown",
+        "extracted_data",
+        "extraction_meta",
+        "downloaded_document",
+        "browser_used",
+        "final_url",
+        "redirect_count",
+        "noindex_detected",
+        "nofollow_detected",
+        "ssrf_refused_urls"
+    ])
+)]
 pub struct CrawlPageResult {
     /// The original URL of the page.
     pub url: String,
@@ -293,6 +326,10 @@ pub struct CrawlPageResult {
     /// their credentials, each listed once. The page is kept; only the refused requests failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssrf_refused_urls: Vec<String>,
+    /// Seed address as supplied, or the discovered link address resolved against its base.
+    /// Preserves source spelling through redirects; URL credentials are removed. <!-- ~keep -->
+    #[serde(default)]
+    pub original_url: String,
 }
 
 /// The result of a multi-page crawl operation.
@@ -535,7 +572,7 @@ pub struct CachedPage {
     pub status_code: u16,
     /// `Content-Type` header captured from the original response.
     pub content_type: String,
-    /// Raw response body stored verbatim in the cache.
+    /// The response body as text, decoded with the character set of the page.
     pub body: String,
     /// `ETag` header value, if any. Sent back as `If-None-Match` to revalidate this entry.
     pub etag: Option<String>,
@@ -557,6 +594,20 @@ pub struct CachedPage {
     /// never be served without first revalidating it against the origin.
     #[serde(default)]
     pub must_revalidate: bool,
+    /// The character set `body` was decoded with, as `detected_charset` reports it.
+    ///
+    /// `None` for a page that declares no character set and is UTF-8.
+    pub charset: Option<String>,
+    /// Whether `body` is the text of the page, decoded with the character set of the page.
+    ///
+    /// False for an entry that an earlier release stored. The body of such an entry is a lossy UTF-8 read
+    /// of the bytes, so a page in another character set has lost its letters. The cache layer
+    /// does not serve an entry that is not decoded; it fetches the page again and replaces it.
+    ///
+    /// `CachedPage::default()` sets it to false. A `CrawlCache` that builds its own entries must
+    /// set it to true for a body it stored as decoded text.
+    #[serde(default)]
+    pub decoded: bool,
 }
 
 #[cfg(test)]

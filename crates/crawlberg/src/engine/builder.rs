@@ -37,6 +37,11 @@ pub struct CrawlEngineBuilder {
     config: Option<CrawlConfig>,
     frontier: Option<Arc<dyn Frontier>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
+    map_rate_limiter: Option<Arc<dyn RateLimiter>>,
+    /// The limiter of the browser paths, when it is not the decision of `build`: the one of
+    /// another engine, shared through `politeness`.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    browser_rate_limiter: Option<Arc<dyn RateLimiter>>,
     store: Option<Arc<dyn CrawlStore>>,
     event_emitter: Option<Arc<dyn EventEmitter>>,
     strategy: Option<Arc<dyn CrawlStrategy>>,
@@ -51,6 +56,8 @@ pub struct CrawlEngineBuilder {
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     native_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
     proxy_provider: Option<Arc<dyn crate::ProxyProvider>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    robots_cache: Option<Arc<super::robots_cache::RobotsCache>>,
 }
 
 impl CrawlEngineBuilder {
@@ -60,6 +67,9 @@ impl CrawlEngineBuilder {
             config: None,
             frontier: None,
             rate_limiter: None,
+            map_rate_limiter: None,
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter: None,
             store: None,
             event_emitter: None,
             strategy: None,
@@ -74,7 +84,22 @@ impl CrawlEngineBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_executor: None,
             proxy_provider: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            robots_cache: None,
         }
+    }
+
+    /// Share the rate limiter and the robots.txt cache of another engine.
+    #[cfg(feature = "api")]
+    pub(crate) fn politeness(mut self, politeness: super::Politeness) -> Self {
+        self.rate_limiter = Some(politeness.rate_limiter);
+        self.map_rate_limiter = Some(politeness.map_rate_limiter);
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        {
+            self.browser_rate_limiter = Some(politeness.browser_rate_limiter);
+        }
+        self.robots_cache = Some(politeness.robots_cache);
+        self
     }
 
     /// Set the crawl configuration.
@@ -90,10 +115,17 @@ impl CrawlEngineBuilder {
         self
     }
 
-    /// Set the rate limiter implementation.
+    /// Set the rate limiter implementation. Every fetch takes a turn of it, in HTTP mode and in
+    /// browser mode alike.
     #[allow(dead_code)]
     pub fn rate_limiter(mut self, rate_limiter: impl RateLimiter + 'static) -> Self {
-        self.rate_limiter = Some(Arc::new(rate_limiter));
+        let rate_limiter: Arc<dyn RateLimiter> = Arc::new(rate_limiter);
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        {
+            self.browser_rate_limiter = Some(Arc::clone(&rate_limiter));
+        }
+        self.map_rate_limiter = Some(Arc::clone(&rate_limiter));
+        self.rate_limiter = Some(rate_limiter);
         self
     }
 
@@ -184,9 +216,10 @@ impl CrawlEngineBuilder {
 
     /// Inject a pre-built [`BrowserPool`] for chromiumoxide-backed browser fetches.
     ///
-    /// When set, the engine reuses this pool across all crawl operations rather than
-    /// constructing a new pool per engine or per request. Intended for long-lived
-    /// worker processes that need to amortise Chrome startup cost.
+    /// When set, the engine uses this pool for all its crawl operations and does not make one
+    /// of its own; the pool stays the caller's and outlives the engine. Intended for engines
+    /// that share one Chrome, such as the engines of a long-lived worker process. Without it,
+    /// the engine makes a pool of its own at build and stops its Chrome with its last clone.
     ///
     /// The injected pool takes precedence over any pool stored in `CrawlConfig.browser_pool`.
     ///
@@ -238,6 +271,8 @@ impl CrawlEngineBuilder {
         if let Some(pool) = self.browser_pool {
             config.browser_pool = Some(pool);
         }
+        #[cfg(feature = "browser")]
+        let owned_browser_pool = owned_browser_pool(&mut config)?;
 
         if let Some(provider) = self.proxy_provider {
             config.proxy_provider = Some(provider);
@@ -245,8 +280,37 @@ impl CrawlEngineBuilder {
 
         resolve_ssrf_deny_private(&mut config);
 
-        let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
-        let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
+        // ~keep Always replaced, never kept: a configuration cloned from another engine carries
+        // ~keep that engine's store, and a new engine must start with no cookie.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            config.cookie_store = config.cookies_enabled.then(Default::default);
+        }
+
+        let rate_limiter: Arc<dyn RateLimiter> = self.rate_limiter.unwrap_or_else(|| {
+            Arc::new(default_rate_limiter(
+                config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS),
+                config.rate_limit_jitter_ratio,
+            ))
+        });
+        // ~keep The only place where the default delay reaches the browser paths. A page of
+        // ~keep Chrome and a native render take a turn of the throttle only when the caller set
+        // ~keep `rate_limit_ms` or installed a limiter: with the default settings, browser mode
+        // ~keep loads the pages of one host with no delay, as before #622 (the owner refused a
+        // ~keep slower default). HTTP mode keeps its default delay.
+        #[cfg(any(feature = "browser", feature = "browser-native"))]
+        let browser_rate_limiter: Arc<dyn RateLimiter> = match self.browser_rate_limiter {
+            Some(shared) => shared,
+            None if config.rate_limit_ms.is_some() => Arc::clone(&rate_limiter),
+            None => Arc::new(defaults::NoopRateLimiter),
+        };
+        // ~keep Maps retain their zero-delay default while honoring configured/custom pacing.
+        // ~keep The zero-delay throttle can adopt robots Crawl-delay; statuses still reach configured/custom backoff.
+        let map_rate_limiter: Arc<dyn RateLimiter> = match self.map_rate_limiter {
+            Some(shared) => shared,
+            None if config.rate_limit_ms.is_some() => Arc::clone(&rate_limiter),
+            None => Arc::new(default_rate_limiter(0, config.rate_limit_jitter_ratio)),
+        };
         let ua_rotation = crate::tower::UaRotation::new(config.user_agents.clone());
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
@@ -264,10 +328,13 @@ impl CrawlEngineBuilder {
 
         Ok(CrawlEngine {
             config,
-            frontier: self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
-            rate_limiter: self
-                .rate_limiter
-                .unwrap_or_else(|| Arc::new(default_rate_limiter(rate_limit_ms, rate_limit_jitter_ratio))),
+            frontier: super::frontier_claim::GuardedFrontier::wrap(
+                self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
+            ),
+            rate_limiter,
+            map_rate_limiter,
+            #[cfg(any(feature = "browser", feature = "browser-native"))]
+            browser_rate_limiter,
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
             event_emitter: self.event_emitter.unwrap_or_else(|| Arc::new(defaults::NoopEmitter)),
             strategy: self.strategy.unwrap_or_else(|| default_strategy(crawl_strategy)),
@@ -283,10 +350,73 @@ impl CrawlEngineBuilder {
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
             ua_rotation,
             #[cfg(not(target_arch = "wasm32"))]
-            robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
+            robots_cache: self.robots_cache.unwrap_or_default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            crawl_schedule: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
+            #[cfg(feature = "browser")]
+            crawl_cookies: None,
+            #[cfg(feature = "browser")]
+            owned_browser_pool,
         })
+    }
+}
+
+/// The browser pool of an engine whose caller gave none: one Chrome for every page of the
+/// engine, made from the engine's launch options. Chrome launches at the first browser fetch,
+/// so an engine that never renders a page never starts one.
+///
+/// `None`, and so a Chrome for each page, when the caller gave a pool (it stays the caller's),
+/// when the backend is not Chrome, or with a named `browser_profile`: a pool launches Chrome
+/// before any crawl can claim that profile, and the profile's storage is the page's, which a
+/// pool's context of its own is not.
+///
+/// ~keep The pool is the engine's, never written to `config.browser_pool`: the API server, its
+/// ~keep MCP endpoint and the standalone MCP server build an engine for each request from a
+/// ~keep clone of their engine's configuration, and a pool in that clone would serve the pages
+/// ~keep of every request from one Chrome with one budget of page permits. A configuration
+/// ~keep carries only a pool the caller gave; each engine built from it makes its own.
+#[cfg(feature = "browser")]
+fn owned_browser_pool(config: &mut CrawlConfig) -> Result<Option<Arc<crate::browser_pool::BrowserPool>>, CrawlError> {
+    if config.browser_pool.is_some()
+        || config.browser.backend != crate::types::BrowserBackend::Chromiumoxide
+        || config.browser_profile.is_some()
+    {
+        return Ok(None);
+    }
+
+    // ~keep Semaphore::new panics above MAX_PERMITS, and CrawlConfig::validate (deferred past
+    // ~keep build) only rejects zero, so the pool's page budget is bounded here.
+    if config
+        .max_concurrent
+        .is_some_and(|n| n > tokio::sync::Semaphore::MAX_PERMITS)
+    {
+        return Err(CrawlError::invalid_config(format!(
+            "max_concurrent must be <= {}",
+            tokio::sync::Semaphore::MAX_PERMITS
+        )));
+    }
+
+    // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
+    // ~keep a pool permit. Engine-made pools therefore reuse Chrome, but close each page as
+    // ~keep the one-shot path did, until parked pages have safe lifecycle ownership.
+    config.browser.session_affinity = false;
+    Ok(Some(crate::browser_pool::BrowserPool::new(owned_browser_pool_config(
+        config,
+    ))))
+}
+
+#[cfg(feature = "browser")]
+fn owned_browser_pool_config(config: &CrawlConfig) -> crate::browser_pool::BrowserPoolConfig {
+    let defaults = crate::browser_pool::BrowserPoolConfig::default();
+    crate::browser_pool::BrowserPoolConfig {
+        max_pages: config.max_concurrent.unwrap_or(defaults.max_pages),
+        browser_endpoint: config.browser.endpoint.clone(),
+        chrome_path: config.browser.chrome_path.clone(),
+        chrome_args: config.browser.chrome_args.clone(),
+        private_pipe: config.browser.private_pipe,
+        ..defaults
     }
 }
 
@@ -425,6 +555,365 @@ fn build_native_browser_executor(
 impl Default for CrawlEngineBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod cookie_store_tests {
+    use std::sync::Arc;
+
+    use crate::engine::CrawlEngine;
+    use crate::types::CrawlConfig;
+
+    fn engine_with(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("the engine builds")
+    }
+
+    // ~keep The API server builds the engine of each request from the configuration of its
+    // ~keep long-lived engine, so a store that the builder kept would be one store for every
+    // ~keep request of every API client.
+    #[test]
+    fn an_engine_built_from_the_configuration_of_another_engine_has_a_store_of_its_own() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(first.config.clone());
+
+        let first = first
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        let second = second
+            .config
+            .cookie_store
+            .expect("an engine with cookies on has a store");
+        assert!(!Arc::ptr_eq(&first, &second), "each engine must have its own store");
+    }
+
+    #[test]
+    fn an_engine_with_cookies_off_drops_the_store_its_configuration_carries() {
+        let first = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let second = engine_with(CrawlConfig {
+            cookies_enabled: false,
+            ..first.config.clone()
+        });
+
+        assert!(second.config.cookie_store.is_none());
+    }
+
+    #[test]
+    fn a_clone_of_an_engine_is_the_same_cookie_session() {
+        let engine = engine_with(CrawlConfig {
+            cookies_enabled: true,
+            ..CrawlConfig::default()
+        });
+        let clone = engine.clone();
+
+        let (first, second) = (engine.config.cookie_store, clone.config.cookie_store);
+        assert!(
+            Arc::ptr_eq(&first.expect("a store"), &second.expect("a store")),
+            "a clone of an engine must share its store"
+        );
+    }
+
+    #[test]
+    fn an_engine_with_default_configuration_has_no_store() {
+        assert!(engine_with(CrawlConfig::default()).config.cookie_store.is_none());
+    }
+}
+
+#[cfg(all(test, feature = "browser"))]
+mod owned_browser_pool_tests {
+    use std::sync::Arc;
+
+    use crate::browser_pool::tests::{
+        assert_profile_directory_is_gone_for_good, chrome_process_count_for_profile, expect_chrome_or_skip,
+        pool_profile_dir,
+    };
+    use crate::browser_pool::{BrowserPool, BrowserPoolConfig};
+    use crate::engine::CrawlEngine;
+    use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
+
+    /// A browser-mode configuration that reaches a loopback site and follows its links one
+    /// level down.
+    fn browser_config(max_concurrent: Option<usize>) -> CrawlConfig {
+        CrawlConfig {
+            max_concurrent,
+            max_depth: Some(1),
+            respect_robots_txt: false,
+            browser: BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                mode: BrowserMode::Always,
+                chrome_path: std::env::var_os("CHROME").map(Into::into),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        }
+    }
+
+    fn browser_engine(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("the engine builds")
+    }
+
+    fn owned_pool(engine: &CrawlEngine) -> Arc<BrowserPool> {
+        Arc::clone(
+            engine
+                .owned_browser_pool
+                .as_ref()
+                .expect("a builder engine in browser mode owns a browser pool"),
+        )
+    }
+
+    #[test]
+    fn a_builder_engine_owns_one_pool_that_its_clones_share_and_its_configuration_does_not_carry() {
+        let engine = browser_engine(browser_config(Some(3)));
+        let pool = owned_pool(&engine);
+        assert!(Arc::ptr_eq(&pool, &owned_pool(&engine.clone())));
+        assert!(std::ptr::eq(
+            &*pool,
+            engine.browser_pool().expect("the engine's fetches use its own pool")
+        ));
+        assert!(
+            engine.config.browser_pool.is_none(),
+            "the engine's pool is engine state; a clone of its configuration must carry no pool"
+        );
+        assert!(!engine.config.browser.session_affinity);
+    }
+
+    #[test]
+    fn build_rejects_max_concurrent_beyond_the_semaphore_limit_instead_of_panicking() {
+        for excessive in [usize::MAX, tokio::sync::Semaphore::MAX_PERMITS + 1] {
+            let result = CrawlEngine::builder().config(browser_config(Some(excessive))).build();
+            let err = result
+                .err()
+                .expect("an excessive max_concurrent is a configuration error");
+            assert!(err.to_string().contains("max_concurrent"), "{err}");
+        }
+        assert!(
+            CrawlEngine::builder()
+                .config(browser_config(Some(tokio::sync::Semaphore::MAX_PERMITS)))
+                .build()
+                .is_ok()
+        );
+    }
+
+    /// The shape of the API server and the MCP endpoint: an engine for each request, built from
+    /// a clone of the startup engine's configuration. Each owns a pool of its own.
+    #[test]
+    fn engines_built_from_a_configuration_clone_each_own_a_pool_of_their_own() {
+        let startup = browser_engine(browser_config(Some(3)));
+        let first = browser_engine(startup.config.clone());
+        let second = browser_engine(startup.config.clone());
+
+        let pools = [owned_pool(&startup), owned_pool(&first), owned_pool(&second)];
+        for (i, a) in pools.iter().enumerate() {
+            for b in &pools[i + 1..] {
+                assert!(!Arc::ptr_eq(a, b), "engine {i} must not share its pool");
+            }
+        }
+    }
+
+    #[test]
+    fn owned_browser_pool_config_carries_engine_launch_options() {
+        let config = CrawlConfig {
+            max_concurrent: Some(3),
+            browser: BrowserConfig {
+                endpoint: Some("ws://browser.example:9222/devtools/browser/test".to_owned()),
+                chrome_path: Some("/opt/chrome".into()),
+                chrome_args: vec!["--lang=de".to_owned()],
+                private_pipe: true,
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        };
+
+        let pool_config = super::owned_browser_pool_config(&config);
+
+        assert_eq!(pool_config.max_pages, 3);
+        assert_eq!(pool_config.browser_endpoint, config.browser.endpoint);
+        assert_eq!(pool_config.chrome_path, config.browser.chrome_path);
+        assert_eq!(pool_config.chrome_args, config.browser.chrome_args);
+        assert!(
+            pool_config.private_pipe,
+            "the key must reach the pool that the engine makes"
+        );
+        assert!(
+            !super::owned_browser_pool_config(&CrawlConfig::default()).private_pipe,
+            "the pool of a default config must launch on the debugging port"
+        );
+    }
+
+    #[test]
+    fn a_pool_the_caller_gives_stays_the_callers() {
+        let given = BrowserPool::new(BrowserPoolConfig::default());
+        let engine = CrawlEngine::builder()
+            .config(browser_config(None))
+            .with_browser_pool(Arc::clone(&given))
+            .build()
+            .expect("the engine builds");
+        assert!(engine.owned_browser_pool.is_none());
+        assert!(Arc::ptr_eq(
+            &given,
+            engine.config.browser_pool.as_ref().expect("the given pool")
+        ));
+    }
+
+    #[test]
+    fn a_named_profile_and_the_native_backend_get_no_pool() {
+        let profile = browser_engine(CrawlConfig {
+            browser_profile: Some("owned-pool-test-profile".to_owned()),
+            ..browser_config(None)
+        });
+        assert!(profile.owned_browser_pool.is_none());
+        assert!(profile.config.browser_pool.is_none());
+
+        let native = browser_engine(CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                ..browser_config(None).browser
+            },
+            ..browser_config(None)
+        });
+        assert!(native.owned_browser_pool.is_none());
+        assert!(native.config.browser_pool.is_none());
+    }
+
+    /// Whether a Chrome can be launched here. Announces the skip when none can.
+    async fn chrome_launches(test_name: &str) -> bool {
+        let pool = BrowserPool::new(BrowserPoolConfig {
+            chrome_path: std::env::var_os("CHROME").map(Into::into),
+            ..BrowserPoolConfig::default()
+        });
+        let launched = expect_chrome_or_skip(test_name, pool.warm().await).is_some();
+        pool.shutdown().await;
+        launched
+    }
+
+    /// A site whose index links to six pages: seven pages at depth 1.
+    async fn seven_page_site() -> wiremock::MockServer {
+        let site = wiremock::MockServer::start().await;
+        let links: String = (0..6).map(|i| format!("<a href=\"/p{i}\">p{i}</a>")).collect();
+        // ~keep `set_body_raw`, not `set_body_string`: the latter serves `text/plain`, which
+        // Chrome shows as text, so the index would have no links.
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_raw(format!("<html><body>{links}</body></html>"), "text/html"),
+            )
+            .mount(&site)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_raw("<html><body><p>a page</p></body></html>", "text/html"),
+            )
+            .mount(&site)
+            .await;
+        site
+    }
+
+    /// A builder engine crawls seven pages through one Chrome, and the Chrome stops and its
+    /// profile directory goes when the engine is dropped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_builder_crawl_of_seven_pages_launches_one_chrome_that_stops_with_the_engine() {
+        const TEST_NAME: &str = "a_builder_crawl_of_seven_pages_launches_one_chrome_that_stops_with_the_engine";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = seven_page_site().await;
+        let engine = browser_engine(browser_config(None));
+
+        let result = engine.crawl(&site.uri()).await.expect("the browser crawl must succeed");
+
+        let seen: Vec<_> = result
+            .pages
+            .iter()
+            .map(|page| (page.url.as_str(), page.status_code, page.links.len(), page.html.len()))
+            .collect();
+        assert_eq!(
+            result.pages.len(),
+            7,
+            "every page of the site is crawled; error: {:?}; pages: {seen:?}",
+            result.error
+        );
+        let pool = owned_pool(&engine);
+        assert_eq!(pool.launches(), 1, "one Chrome serves every page of the crawl");
+        let profile = pool_profile_dir(&pool).await;
+        assert!(chrome_process_count_for_profile(&profile) > 0);
+        drop(pool);
+
+        drop(engine);
+
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&profile);
+            assert_eq!(chrome_process_count_for_profile(&profile), 0);
+        })
+        .await
+        .expect("dropping the engine must stop its Chrome and remove the profile directory");
+    }
+
+    /// Two engines built from one engine's configuration clone, as the API server builds one
+    /// for each request: two Chromes, and each stops with its own engine.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine() {
+        const TEST_NAME: &str =
+            "two_engines_from_one_configuration_clone_get_two_chromes_each_stopping_with_its_engine";
+        if !chrome_launches(TEST_NAME).await {
+            return;
+        }
+        let site = seven_page_site().await;
+        let startup = browser_engine(browser_config(None));
+        let first = browser_engine(startup.config.clone());
+        let second = browser_engine(startup.config.clone());
+
+        for engine in [&first, &second] {
+            let result = engine.crawl(&site.uri()).await.expect("the browser crawl must succeed");
+            assert_eq!(result.pages.len(), 7, "error: {:?}", result.error);
+        }
+
+        let (first_pool, second_pool) = (owned_pool(&first), owned_pool(&second));
+        assert!(!Arc::ptr_eq(&first_pool, &second_pool));
+        assert_eq!(owned_pool(&startup).launches(), 0, "the startup engine never rendered");
+        assert_eq!(first_pool.launches(), 1);
+        assert_eq!(second_pool.launches(), 1);
+        let first_profile = pool_profile_dir(&first_pool).await;
+        let second_profile = pool_profile_dir(&second_pool).await;
+        assert_ne!(first_profile, second_profile, "each engine has a Chrome of its own");
+        assert!(chrome_process_count_for_profile(&first_profile) > 0);
+        assert!(chrome_process_count_for_profile(&second_profile) > 0);
+        drop((first_pool, second_pool));
+
+        drop(first);
+        let second_profile_after_first_drop = second_profile.clone();
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&first_profile);
+            assert_eq!(chrome_process_count_for_profile(&first_profile), 0);
+            assert!(
+                chrome_process_count_for_profile(&second_profile_after_first_drop) > 0,
+                "dropping one engine must leave the other's Chrome alive"
+            );
+        })
+        .await
+        .expect("dropping the first engine must stop only its own Chrome");
+
+        drop(second);
+        tokio::task::spawn_blocking(move || {
+            assert_profile_directory_is_gone_for_good(&second_profile);
+            assert_eq!(chrome_process_count_for_profile(&second_profile), 0);
+        })
+        .await
+        .expect("dropping the second engine must stop its Chrome and remove the profile directory");
     }
 }
 
@@ -607,5 +1096,255 @@ mod rate_limiter_plumbing_tests {
             "a ratio above 1.0 must clamp to 1.0 (max 2x the 100ms delay), not scale it by 5x \
              (up to 600ms), got {waited:?}"
         );
+    }
+}
+
+/// The delay of the domain in browser mode: the Chrome page and the native render take a turn
+/// of the limiter the builder gives the browser paths. These tests observe that limiter under a
+/// paused tokio clock, as `rate_limiter_plumbing_tests` does: the wait is the computed one.
+#[cfg(all(test, any(feature = "browser", feature = "browser-native")))]
+mod browser_rate_limiter_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::CrawlEngine;
+    use crate::types::CrawlConfig;
+
+    const DOMAIN: &str = "example.com";
+
+    async fn second_turn_of_the_browser_paths(engine: &CrawlEngine) -> Duration {
+        engine.browser_rate_limiter.acquire(DOMAIN).await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        engine.browser_rate_limiter.acquire(DOMAIN).await.expect("second turn");
+        start.elapsed()
+    }
+
+    async fn second_turn_of_http(engine: &CrawlEngine) -> Duration {
+        engine.rate_limiter.acquire(DOMAIN).await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        engine.rate_limiter.acquire(DOMAIN).await.expect("second turn");
+        start.elapsed()
+    }
+
+    fn engine_with(config: CrawlConfig) -> CrawlEngine {
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build")
+    }
+
+    // ~keep The owner refused a slower default: a crawl with the default settings loads the
+    // ~keep pages of one host in browser mode as it did before the delay reached the browser
+    // ~keep paths, with no delay, while HTTP mode keeps its default delay.
+    #[tokio::test(start_paused = true)]
+    async fn with_the_default_settings_the_browser_paths_get_their_turns_at_once() {
+        let engine = engine_with(CrawlConfig::default());
+
+        assert_eq!(
+            second_turn_of_the_browser_paths(&engine).await,
+            Duration::ZERO,
+            "with rate_limit_ms unset, the second page of a host must get its turn at once in browser mode"
+        );
+        assert_eq!(
+            second_turn_of_http(&engine).await,
+            Duration::from_millis(200),
+            "HTTP mode keeps the default delay of 200 ms"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_set_rate_limit_ms_spaces_the_turns_of_the_browser_paths() {
+        let engine = engine_with(CrawlConfig {
+            rate_limit_ms: Some(300),
+            ..CrawlConfig::default()
+        });
+
+        assert_eq!(
+            second_turn_of_the_browser_paths(&engine).await,
+            Duration::from_millis(300),
+            "with rate_limit_ms set, the second page of a host gets its turn one delay after the first"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rate_limit_ms_of_zero_spaces_nothing_in_the_browser_paths() {
+        let engine = engine_with(CrawlConfig {
+            rate_limit_ms: Some(0),
+            ..CrawlConfig::default()
+        });
+
+        assert_eq!(second_turn_of_the_browser_paths(&engine).await, Duration::ZERO);
+    }
+
+    #[test]
+    fn an_installed_rate_limiter_is_the_one_of_the_browser_paths_too() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig::default())
+            .rate_limiter(crate::defaults::PerDomainThrottle::new(Duration::from_millis(50)))
+            .build()
+            .expect("engine must build");
+
+        assert!(
+            Arc::ptr_eq(&engine.rate_limiter, &engine.browser_rate_limiter),
+            "a limiter the caller installed must take the turns of the browser paths"
+        );
+    }
+
+    // ~keep The API server builds the engine of each request from its own politeness, so the
+    // ~keep decision of the server's build must reach the engine of the request unchanged: with
+    // ~keep the default settings, no delay in browser mode there either.
+    #[cfg(feature = "api")]
+    #[tokio::test(start_paused = true)]
+    async fn an_engine_that_shares_the_politeness_of_another_keeps_its_browser_delay() {
+        let server = engine_with(CrawlConfig::default());
+        let request = CrawlEngine::builder()
+            .config(server.config.clone())
+            .politeness(server.politeness())
+            .build()
+            .expect("engine must build");
+
+        assert!(Arc::ptr_eq(&server.rate_limiter, &request.rate_limiter));
+        assert_eq!(second_turn_of_the_browser_paths(&request).await, Duration::ZERO);
+
+        let server = engine_with(CrawlConfig {
+            rate_limit_ms: Some(300),
+            ..CrawlConfig::default()
+        });
+        let request = CrawlEngine::builder()
+            .config(server.config.clone())
+            .politeness(server.politeness())
+            .build()
+            .expect("engine must build");
+        assert_eq!(
+            second_turn_of_the_browser_paths(&request).await,
+            Duration::from_millis(300)
+        );
+    }
+}
+
+#[cfg(test)]
+mod map_rate_limiter_tests {
+    use super::CrawlEngine;
+    use crate::types::CrawlConfig;
+    use std::time::Duration;
+
+    async fn second_map_turn(engine: &CrawlEngine) -> Duration {
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("first turn");
+        let start = tokio::time::Instant::now();
+        limiter.acquire("example.com").await.expect("second turn");
+        start.elapsed()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn default_maps_have_no_host_delay_while_http_keeps_its_default() {
+        let engine = CrawlEngine::builder().build().expect("engine");
+        assert_eq!(second_map_turn(&engine).await, Duration::ZERO);
+        engine
+            .rate_limiter
+            .acquire("http.example.com")
+            .await
+            .expect("first HTTP turn");
+        let start = tokio::time::Instant::now();
+        engine
+            .rate_limiter
+            .acquire("http.example.com")
+            .await
+            .expect("second HTTP turn");
+        assert_eq!(start.elapsed(), Duration::from_millis(200));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_map_delay_is_used_for_every_host_turn() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig {
+                rate_limit_ms: Some(150),
+                rate_limit_jitter_ratio: 0.0,
+                ..CrawlConfig::default()
+            })
+            .build()
+            .expect("engine");
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("robots turn");
+        for _ in 0..3 {
+            let start = tokio::time::Instant::now();
+            limiter.acquire("example.com").await.expect("sitemap turn");
+            assert_eq!(start.elapsed(), Duration::from_millis(150));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_map_pacing_backs_off_after_a_429_response() {
+        let engine = CrawlEngine::builder()
+            .config(CrawlConfig {
+                rate_limit_ms: Some(150),
+                rate_limit_jitter_ratio: 0.0,
+                ..CrawlConfig::default()
+            })
+            .build()
+            .expect("engine");
+        let limiter = engine.map_rate_limiter();
+        limiter.acquire("example.com").await.expect("first turn");
+        limiter
+            .record_response("example.com", 429)
+            .await
+            .expect("response status");
+        let start = tokio::time::Instant::now();
+        limiter.acquire("example.com").await.expect("backoff turn");
+        assert_eq!(start.elapsed(), Duration::from_millis(300));
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test(start_paused = true)]
+    async fn api_map_pacing_shares_default_and_configured_limiter_state() {
+        for delay in [None, Some(150)] {
+            let server = CrawlEngine::builder()
+                .config(CrawlConfig {
+                    rate_limit_ms: delay,
+                    rate_limit_jitter_ratio: 0.0,
+                    ..CrawlConfig::default()
+                })
+                .build()
+                .expect("server engine");
+            let request = CrawlEngine::builder()
+                .politeness(server.politeness())
+                .build()
+                .expect("request engine");
+            server
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("server turn");
+            let start = tokio::time::Instant::now();
+            request
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("request turn");
+            assert_eq!(start.elapsed(), Duration::from_millis(delay.unwrap_or(0)));
+            server
+                .map_rate_limiter()
+                .set_crawl_delay("example.com", Duration::from_secs(2))
+                .await
+                .expect("robots delay");
+            let start = tokio::time::Instant::now();
+            request
+                .map_rate_limiter()
+                .acquire("example.com")
+                .await
+                .expect("shared robots turn");
+            assert_eq!(start.elapsed(), Duration::from_secs(2));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn default_map_limiter_honors_robots_crawl_delay() {
+        let engine = CrawlEngine::builder().build().expect("engine");
+        engine
+            .map_rate_limiter()
+            .set_crawl_delay("example.com", Duration::from_secs(2))
+            .await
+            .expect("robots delay");
+        assert_eq!(second_map_turn(&engine).await, Duration::from_secs(2));
     }
 }

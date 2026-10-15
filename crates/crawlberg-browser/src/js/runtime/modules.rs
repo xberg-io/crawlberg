@@ -52,12 +52,21 @@ impl BrowserJsRuntime {
             // ~keep deno_core reports a module that throws as an unhandled rejection on the event loop, not
             // ~keep through its evaluation. One more pass collects it here, so the module is not taken
             // ~keep for a success and the rejection does not fail the next module's wait.
-            Ok(Ok(())) => std::future::poll_fn(|cx| match self.runtime.poll_event_loop(cx, options) {
-                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                _ => Poll::Ready(Ok(())),
-            })
-            .await
-            .map_err(|e| format!("Module evaluation error: {}", e)),
+            Ok(Ok(())) => {
+                let _watchdog = super::script::EventLoopWatchdog::new(&mut self.runtime, MODULE_BUDGET);
+                std::future::poll_fn(|cx| match self.runtime.poll_event_loop(cx, options) {
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                    _ => Poll::Ready(Ok(())),
+                })
+                .await
+                .map_err(|e| format!("Module evaluation error: {}", e))?;
+                // ~keep mod_evaluate reports completion, not success; an asynchronous rejection
+                // ~keep may have been consumed while unrelated work kept the event loop running.
+                self.runtime
+                    .get_module_namespace(module_id)
+                    .map(|_| ())
+                    .map_err(|e| format!("Module evaluation error: {}", e))
+            }
             Ok(Err(e)) => Err(format!("Module evaluation error: {}", e)),
             Err(_) => {
                 tracing::warn!("Module evaluation timed out after {:?}: {}", MODULE_BUDGET, name);

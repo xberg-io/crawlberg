@@ -7,6 +7,7 @@
 
 #![cfg(any(target_arch = "wasm32", test))]
 
+use super::chain_claim::ChainClaim;
 use super::link_scope::{LinkScopePolicy, link_in_scope};
 use super::{CrawlEngine, DEFAULT_MAX_LINKS_PER_PAGE, take_selected};
 use crate::error::CrawlError;
@@ -21,7 +22,13 @@ use crate::types::*;
 /// strategy logic sequentially using `.await` only — no concurrency primitives.
 impl CrawlEngine {
     /// Convert a `ScrapeResult` into a `CrawlPageResult` at the given depth.
-    fn scrape_to_crawl_page(scrape: ScrapeResult, url: &str, depth: usize, base_host: &str) -> CrawlPageResult {
+    fn scrape_to_crawl_page(
+        scrape: ScrapeResult,
+        url: &str,
+        original_url: &str,
+        depth: usize,
+        base_host: &str,
+    ) -> CrawlPageResult {
         let domain = url::Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(|h| h.to_owned()))
@@ -29,6 +36,7 @@ impl CrawlEngine {
         let stayed_on_domain = domain == base_host;
         CrawlPageResult {
             url: url.to_owned(),
+            original_url: original_url.to_owned(),
             normalized_url: crate::normalize::normalize_url(url),
             status_code: scrape.status_code,
             content_type: scrape.content_type,
@@ -85,7 +93,7 @@ impl CrawlEngine {
         self.config.validate()?;
 
         let plan = SequentialPlan::new(url, &self.config)?;
-        self.seed_sequential_frontier(url).await?;
+        self.seed_sequential_frontier(url, seed.as_str()).await?;
 
         let mut state = SequentialState::new(url);
         if let Some(blocked) = self.drive_sequential_loop(&plan, &mut state).await? {
@@ -166,12 +174,13 @@ impl CrawlEngine {
     }
 
     /// Put the seed on the frontier as the depth-0 entry, marking it seen first.
-    async fn seed_sequential_frontier(&self, url: &str) -> Result<(), CrawlError> {
+    async fn seed_sequential_frontier(&self, url: &str, original_url: &str) -> Result<(), CrawlError> {
         let seed_dedup = crate::normalize::normalize_url_for_dedup(url, self.config.dedup_include_query);
         self.frontier.mark_seen(&seed_dedup).await?;
         self.frontier
             .push(FrontierEntry {
                 url: url.to_owned(),
+                original_url: Some(original_url.to_owned()),
                 depth: 0,
                 doc_depth: 0,
                 priority: 1.0,
@@ -247,12 +256,22 @@ impl CrawlEngine {
 
             state.note_page_outcome(&entry, &scrape);
 
+            if !self.claims_landed_page(&entry, &scrape).await? {
+                continue;
+            }
+
             if self.should_discover_sequentially(&entry, &scrape, plan) {
                 self.discover_sequential_links(&scrape, &entry, plan, state).await?;
             }
 
             let page_url = scrape.final_url.clone();
-            let page = Self::scrape_to_crawl_page(scrape, &page_url, entry.depth, &plan.base_host);
+            let page = Self::scrape_to_crawl_page(
+                scrape,
+                &page_url,
+                entry.original_url.as_deref().unwrap_or(&entry.url),
+                entry.depth,
+                &plan.base_host,
+            );
 
             let Some(page) = self.content_filter.filter(page).await? else {
                 state.urls_filtered += 1;
@@ -319,6 +338,22 @@ impl CrawlEngine {
                 None
             }
         }
+    }
+
+    /// Whether the page `entry` landed on is this entry's page to report.
+    ///
+    /// ~keep The fetch follows a redirect by itself, so the loop learns where it landed only
+    /// ~keep afterwards. The landed address then makes the claim a redirect hop makes in the
+    /// ~keep native loop, with the same [`ChainClaim`]: a page that another entry holds is
+    /// ~keep dropped here, and a page nobody holds is marked, so a later link to it is not
+    /// ~keep fetched again. Without it a folder linked as `/docs` and as `/docs/`, where the
+    /// ~keep first redirects to the second, is reported twice.
+    async fn claims_landed_page(&self, entry: &FrontierEntry, scrape: &ScrapeResult) -> Result<bool, CrawlError> {
+        let mut chain = ChainClaim::default();
+        let frontier = self.frontier.as_ref();
+        let include_query = self.config.dedup_include_query;
+        chain.admits(frontier, include_query, &entry.url, false).await?;
+        chain.admits(frontier, include_query, &scrape.final_url, true).await
     }
 
     /// Whether this page's links are followed at all. A `nofollow` page's links are not,
@@ -395,7 +430,7 @@ impl CrawlEngine {
 
             let is_doc_link = link.link_type == LinkType::Document;
             if self
-                .enqueue_discovered_link(&link_url, is_doc_link, entry, state)
+                .enqueue_discovered_link(&link_url, &link.original_url, is_doc_link, entry, state)
                 .await?
             {
                 enqueued_from_page += 1;
@@ -409,6 +444,7 @@ impl CrawlEngine {
     async fn enqueue_discovered_link(
         &self,
         link_url: &str,
+        original_url: &str,
         is_doc_link: bool,
         entry: &FrontierEntry,
         state: &mut SequentialState,
@@ -417,17 +453,16 @@ impl CrawlEngine {
         // owns the queue, so a persistent implementation that survives a restart
         // would otherwise re-enqueue every URL it had already crawled.
         let dedup_key = crate::normalize::normalize_url_for_dedup(link_url, self.config.dedup_include_query);
-        if self.frontier.is_seen(&dedup_key).await? {
+        if !self.frontier.claim(&dedup_key).await? {
             return Ok(false);
         }
-
-        self.frontier.mark_seen(&dedup_key).await?;
         let child_depth = entry.depth + 1;
         let child_doc_depth: u32 = if is_doc_link { entry.doc_depth + 1 } else { 0 };
         let priority = self.strategy.score_url(link_url, child_depth);
         self.frontier
             .push(FrontierEntry {
                 url: link_url.to_owned(),
+                original_url: Some(original_url.to_owned()),
                 depth: child_depth,
                 doc_depth: child_doc_depth,
                 priority,
@@ -646,3 +681,7 @@ fn passes_robots(entry: &FrontierEntry, robots: &crate::helpers::RobotsOutcome, 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "wasm_crawl_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "original_url_tests.rs"]
+mod original_url_tests;

@@ -7,15 +7,17 @@ use crate::helpers::PathPattern;
 use url::Url;
 
 use super::CrawlEngine;
+use super::chain_claim::ChainClaim;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
-use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
-use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
+use crate::html::{
+    PageScan, effective_base_url, immediate_meta_refresh, immediate_refresh_target, mask_raw_text_markup,
+};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
-use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
+use crate::normalize::resolve_redirect;
 
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
@@ -25,8 +27,9 @@ pub(crate) struct RedirectOutcome {
     pub(crate) final_response: crate::tower::CrawlResponse,
     /// Number of redirect hops taken.
     pub(crate) redirect_count: usize,
-    /// `(host, response headers)` for each intermediate redirect hop, so cookie extraction
-    /// can validate each hop's `Set-Cookie` `Domain=` attribute against the host that sent it.
+    /// `(URL, response headers)` for each intermediate redirect hop, so cookie extraction
+    /// can validate each hop's `Set-Cookie` `Domain=` attribute against the host that sent it
+    /// and give a cookie with no `Path` the directory of that URL.
     pub(crate) intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)>,
     /// Whether headless-browser fetch was used for the final hop.
     pub(crate) browser_used: bool,
@@ -135,6 +138,19 @@ pub(crate) struct RedirectPolicy<'a> {
     /// actually goes out (including its retries and escalations, which re-send the same
     /// request rather than starting a new one) are the same agent (crawlberg#423).
     pub(super) pending_user_agent: Option<String>,
+    /// What this policy's one chain holds on the frontier: its starting URL and every hop it
+    /// claimed.
+    chain: ChainClaim,
+    pub(crate) robots_limiter: Option<&'a dyn crate::traits::RateLimiter>,
+}
+
+#[derive(Default)]
+pub(super) struct RedirectPolicyState {
+    outcomes: HashMap<RobotsCacheKey, Arc<RobotsOutcome>>,
+    last_origin: Option<RobotsCacheKey>,
+    urls_filtered: usize,
+    pending_user_agent: Option<String>,
+    chain: ChainClaim,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -154,6 +170,40 @@ impl<'a> RedirectPolicy<'a> {
             last_origin: None,
             urls_filtered: 0,
             pending_user_agent: None,
+            chain: ChainClaim::default(),
+            robots_limiter: None,
+        }
+    }
+
+    pub(super) fn into_state(self) -> RedirectPolicyState {
+        RedirectPolicyState {
+            outcomes: self.outcomes,
+            last_origin: self.last_origin,
+            urls_filtered: self.urls_filtered,
+            pending_user_agent: self.pending_user_agent,
+            chain: self.chain,
+        }
+    }
+
+    pub(super) fn from_state(
+        engine: &'a CrawlEngine,
+        client: &'a reqwest::Client,
+        exclude_regexes: &'a [PathPattern],
+        include_regexes: &'a [PathPattern],
+        state: RedirectPolicyState,
+    ) -> Self {
+        Self {
+            engine,
+            client,
+            exclude_regexes,
+            include_regexes,
+            target: PathPatternTarget::from_config(&engine.config),
+            outcomes: state.outcomes,
+            last_origin: state.last_origin,
+            urls_filtered: state.urls_filtered,
+            pending_user_agent: state.pending_user_agent,
+            chain: state.chain,
+            robots_limiter: None,
         }
     }
 
@@ -191,7 +241,7 @@ impl<'a> RedirectPolicy<'a> {
             Err(refusal) => return Ok(Some(refusal)),
         };
 
-        if is_redirect_hop && let Some(refusal) = self.claim_redirect_target(url).await? {
+        if let Some(refusal) = self.claim_redirect_target(url, is_redirect_hop).await? {
             return Ok(Some(refusal));
         }
 
@@ -202,7 +252,16 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep rather than behind it. Publishing it before the block check above would make
         // ~keep a refused URL wait out a delay for a request that is never sent.
         if first_visit {
-            self.engine.apply_crawl_delay(&outcome, &parsed).await?;
+            if self.robots_limiter.is_some() {
+                crate::helpers::set_robots_crawl_delay(
+                    self.robots_limiter,
+                    &parsed,
+                    outcome.rules().and_then(|rules| rules.crawl_delay),
+                )
+                .await?;
+            } else {
+                self.engine.apply_crawl_delay(&outcome, &parsed).await?;
+            }
         }
         self.last_origin = Some(origin);
         self.pending_user_agent = Some(user_agent);
@@ -261,7 +320,15 @@ impl<'a> RedirectPolicy<'a> {
         let outcome = match self.outcomes.get(origin) {
             Some(outcome) => Arc::clone(outcome),
             None => {
-                let outcome = resolve_robots_outcome(self.engine, self.client, parsed, url, user_agent).await;
+                let outcome = resolve_robots_outcome_with_limiter(
+                    self.engine,
+                    self.client,
+                    parsed,
+                    url,
+                    user_agent,
+                    self.robots_limiter,
+                )
+                .await;
                 self.outcomes.insert(origin.clone(), Arc::clone(&outcome));
                 outcome
             }
@@ -288,20 +355,24 @@ impl<'a> RedirectPolicy<'a> {
         (!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() })
     }
 
-    /// Claim `url` -- a redirect hop, never the chain's own starting URL -- against the
-    /// frontier's seen-set.
-    ///
-    /// ~keep Deduplicates against the frontier's own seen-set rather than a set local to this
-    /// ~keep policy: a page reachable both directly (its own frontier entry) and via a
-    /// ~keep redirect must be requested once, and the frontier is the one place both paths
-    /// ~keep already agree on what "seen" means.
-    async fn claim_redirect_target(&self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
-        let dedup_key = normalize_url_for_dedup(url, self.engine.config.dedup_include_query);
-        if self.engine.frontier.is_seen(&dedup_key).await? {
-            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
-        }
-        self.engine.frontier.mark_seen(&dedup_key).await?;
-        Ok(None)
+    /// Claim `url` for this policy's chain against the frontier's seen-set, as
+    /// [`ChainClaim::admits`] decides it. A hop the chain may not take is
+    /// [`PolicyRefusal::Filtered`].
+    async fn claim_redirect_target(
+        &mut self,
+        url: &str,
+        is_redirect_hop: bool,
+    ) -> Result<Option<PolicyRefusal>, CrawlError> {
+        let admitted = self
+            .chain
+            .admits(
+                self.engine.frontier.as_ref(),
+                self.engine.config.dedup_include_query,
+                url,
+                is_redirect_hop,
+            )
+            .await?;
+        Ok((!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() }))
     }
 
     /// What robots.txt established for the origin the chain ended on, which the crawl loop
@@ -317,7 +388,7 @@ impl<'a> RedirectPolicy<'a> {
 /// the crawl loop: `map()`'s direct fetch, which sends the configured agent on every request.
 ///
 /// ~keep The crawl's extras stay out: that fetch picks no agent from the rotation, has no
-/// ~keep frontier to claim a hop in and goes through no rate limiter to publish a crawl delay to.
+/// ~keep frontier to claim a hop in. Map pacing receives Crawl-delay only after robots admission.
 impl crate::http::HopPolicy for RedirectPolicy<'_> {
     async fn admit(&mut self, url: &Url, is_redirect_hop: bool) -> Result<(), CrawlError> {
         let refusal = match self.address_refusal(url.as_str(), is_redirect_hop) {
@@ -326,9 +397,18 @@ impl crate::http::HopPolicy for RedirectPolicy<'_> {
                 let engine = self.engine;
                 let user_agent = crate::helpers::default_robots_user_agent(&engine.config);
                 let origin = RobotsCacheKey::new(&parsed, user_agent);
-                self.robots_refusal(&origin, &parsed, url.as_str(), user_agent)
-                    .await
-                    .err()
+                match self.robots_refusal(&origin, &parsed, url.as_str(), user_agent).await {
+                    Err(refusal) => Some(refusal),
+                    Ok(outcome) => {
+                        crate::helpers::set_robots_crawl_delay(
+                            self.robots_limiter,
+                            &parsed,
+                            outcome.rules().and_then(|rules| rules.crawl_delay),
+                        )
+                        .await?;
+                        None
+                    }
+                }
             }
         };
         refusal.map_or(Ok(()), |refusal| Err(refusal.into_error()))
@@ -340,31 +420,50 @@ impl crate::http::HopPolicy for RedirectPolicy<'_> {
 /// credentialed request (never shared with another caller of the same origin), and
 /// `AllowAll` when robots.txt is off.
 ///
-/// ~keep `pub(super)`: the one place that resolves a robots.txt outcome for an agent, shared by
+/// ~keep One robots outcome resolver serves extraction and admission for the chosen agent, shared by
 /// `admits` (judging the agent chosen for the current tier) and
 /// `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm (re-judging the browser's own agent on
 /// escalation), so the two can never resolve the same `(origin, agent)` two different ways
 /// (crawlberg#423).
-pub(super) async fn resolve_robots_outcome(
+pub(crate) async fn resolve_robots_outcome(
     engine: &CrawlEngine,
     client: &reqwest::Client,
     parsed: &Url,
     url: &str,
     agent: &str,
 ) -> Arc<RobotsOutcome> {
+    resolve_robots_outcome_with_limiter(engine, client, parsed, url, agent, None).await
+}
+
+async fn resolve_robots_outcome_with_limiter(
+    engine: &CrawlEngine,
+    client: &reqwest::Client,
+    parsed: &Url,
+    url: &str,
+    agent: &str,
+    limiter: Option<&dyn crate::traits::RateLimiter>,
+) -> Arc<RobotsOutcome> {
+    let fetch = || async {
+        crate::helpers::fetch_robots_document_with_policy(
+            url,
+            &engine.config,
+            client,
+            agent,
+            &mut crate::http::RateLimited::new(crate::http::AdmitEvery, limiter),
+        )
+        .await
+        .0
+    };
     if !engine.config.respect_robots_txt {
         return Arc::new(RobotsOutcome::AllowAll);
     }
     // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
     // ~keep would hand it to the next crawl of the same origin.
     if crate::net::credentials::is_credentialed(&engine.config, parsed) {
-        return Arc::new(fetch_robots_outcome(url, &engine.config, client, agent).await);
+        return Arc::new(fetch().await);
     }
     let key = RobotsCacheKey::new(parsed, agent);
-    engine
-        .robots_cache
-        .get_or_fetch(key, || fetch_robots_outcome(url, &engine.config, client, agent))
-        .await
+    engine.robots_cache.get_or_fetch(key, fetch).await
 }
 
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.
@@ -408,61 +507,86 @@ pub(crate) enum Hop {
     NativeRender,
 }
 
-/// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
-///
-/// This is the shared redirect-following implementation used by both
-/// [`CrawlEngine::scrape`] and the initial-redirect phase of
-/// [`CrawlEngine::crawl`]. The global reqwest redirect policy remains
-/// `Policy::none()` — this function performs manual redirect resolution so
-/// that the crawl loop retains full control over the redirect chain.
-///
-/// # Errors
-///
-/// Returns `Err` only on network-level failures (DNS, connection refused, timeout, …).
-/// Reaching `max_redirects` or detecting a cycle is **not** an error — the loop
-/// stops and the most recent response (the 3xx that would have redirected further)
-/// is returned to the caller. This matches the historical behavior of
-/// [`CrawlEngine::resolve_initial_redirects`], where the crawl would stop and
-/// surface a soft `state.error` rather than aborting the request.
-/// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
-/// cannot reach a URL the configuration forbids, whatever order it does its own work in.
-///
-/// `override_user_agent` pins the agent every hop sends, ahead of whatever `policy` would have
-/// picked. `scrape()` passes `None` for both, unchanged; the wasm crawl loop passes
-/// `Some(agent)` with no policy, so the one pick its own per-page robots check already made is
-/// the one that reaches the wire here too (crawlberg#483) -- native's own frontier loop still
-/// picks entirely through `policy`, so passing `None` here changes nothing for it.
-/// `hop` says how each hop is fetched.
-pub(crate) async fn follow_redirects(
-    engine: &CrawlEngine,
-    initial_url: &str,
+pub(super) struct RedirectCursor {
+    prepared: bool,
+    chain: RedirectChain,
     max_redirects: usize,
-    mut policy: Option<&mut RedirectPolicy<'_>>,
-    override_user_agent: Option<&str>,
-    hop: Hop,
-) -> Result<RedirectResolution, CrawlError> {
-    let mut chain = RedirectChain::new(initial_url, max_redirects);
+    browser_used: bool,
+    browser_cookies: Vec<crate::types::BrowserCookie>,
+    native_state: super::fetch::NativeRenderState,
+    refused_on_earlier_hops: Vec<String>,
+}
 
-    let mut browser_used = false;
-    let mut browser_cookies = Vec::new();
-    // ~keep Each native hop is its own render, so the chain carries cookies and the previous
-    // ~keep document's site from one to the next, as a single browser session would.
-    #[cfg(feature = "browser-native")]
-    let mut native_state = crawlberg_browser::adapter::NativeRenderState::new(&[]);
-    #[cfg(not(feature = "browser-native"))]
-    let mut native_state = ();
-    // ~keep A hop the chain leaves still sent its page's requests, so the result lists what the
-    // ~keep SSRF check refused on every hop, not only on the page the chain lands on.
-    let mut refused_on_earlier_hops: Vec<String> = Vec::new();
-    loop {
-        if let Some(policy) = policy.as_deref_mut()
+pub(super) enum RedirectStep {
+    Continue(RedirectCursor),
+    Done(RedirectResolution),
+}
+
+impl RedirectCursor {
+    pub(super) fn new(url: &str, max_redirects: usize) -> Self {
+        #[cfg(feature = "browser-native")]
+        let native_state = crawlberg_browser::adapter::NativeRenderState::new(&[]);
+        #[cfg(not(feature = "browser-native"))]
+        let native_state = ();
+        Self {
+            prepared: false,
+            chain: RedirectChain::new(url, max_redirects),
+            max_redirects,
+            browser_used: false,
+            browser_cookies: Vec::new(),
+            native_state,
+            refused_on_earlier_hops: Vec::new(),
+        }
+    }
+
+    pub(super) async fn prepare(
+        &mut self,
+        policy: &mut RedirectPolicy<'_>,
+    ) -> Result<Option<RedirectResolution>, CrawlError> {
+        if let Some(refusal) = policy
+            .admits(&self.chain.current_url, self.chain.redirect_count > 0)
+            .await?
+        {
+            return Ok(Some(RedirectResolution::Refused {
+                refusal,
+                redirect_count: self.chain.redirect_count,
+                intermediate_headers: std::mem::take(&mut self.chain.intermediate_headers),
+            }));
+        }
+        self.prepared = true;
+        Ok(None)
+    }
+
+    pub(super) fn url(&self) -> &str {
+        &self.chain.current_url
+    }
+
+    pub(super) async fn step(
+        self,
+        engine: &CrawlEngine,
+        mut policy: Option<&mut RedirectPolicy<'_>>,
+        override_user_agent: Option<&str>,
+        hop: Hop,
+    ) -> Result<RedirectStep, CrawlError> {
+        let Self {
+            prepared,
+            mut chain,
+            max_redirects,
+            mut browser_used,
+            mut browser_cookies,
+            mut native_state,
+            mut refused_on_earlier_hops,
+        } = self;
+
+        if !prepared
+            && let Some(policy) = policy.as_deref_mut()
             && let Some(refusal) = policy.admits(&chain.current_url, chain.redirect_count > 0).await?
         {
-            return Ok(RedirectResolution::Refused {
+            return Ok(RedirectStep::Done(RedirectResolution::Refused {
                 refusal,
                 redirect_count: chain.redirect_count,
                 intermediate_headers: chain.intermediate_headers,
-            });
+            }));
         }
         // ~keep The agent `admits()` just chose (for robots.txt group selection) and this hop's
         // ~keep fetch must send are the same one: pinned onto the request below so every retry
@@ -500,10 +624,8 @@ pub(crate) async fn follow_redirects(
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
             Err(CrawlError::NotFound { .. }) if chain.redirect_count > 0 => {
-                return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
-                    synthetic_not_found(),
-                    None,
-                    browser_used,
+                return Ok(RedirectStep::Done(RedirectResolution::Fetched(Box::new(
+                    chain.into_outcome(synthetic_not_found(), None, browser_used),
                 ))));
             }
             Err(e) => return Err(e),
@@ -517,24 +639,27 @@ pub(crate) async fn follow_redirects(
             chain
                 .advance_to(landed, landed_key, hops, HashMap::new(), &engine.config.ssrf)
                 .await?;
-            if let Some(policy) = policy.as_deref_mut()
+            if let Some(policy) = policy
                 && let Some(refusal) = policy.admits(&chain.current_url, true).await?
             {
-                return Ok(RedirectResolution::Refused {
+                return Ok(RedirectStep::Done(RedirectResolution::Refused {
                     refusal,
                     redirect_count: chain.redirect_count,
                     intermediate_headers: chain.intermediate_headers,
-                });
+                }));
             }
         }
 
         let mut page_scan = None;
         let Some(next) = next_redirect(&resp, &chain, max_redirects, &mut page_scan) else {
+            if let Some(error) = unfollowed_redirect_error(&resp, &chain.current_url, |target| {
+                chain.unseen_key(target.as_str()).is_none()
+            }) {
+                return Err(error);
+            }
             prepend_refused(&mut resp, refused_on_earlier_hops);
-            return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
-                resp,
-                page_scan,
-                browser_used,
+            return Ok(RedirectStep::Done(RedirectResolution::Fetched(Box::new(
+                chain.into_outcome(resp, page_scan, browser_used),
             ))));
         };
 
@@ -551,6 +676,60 @@ pub(crate) async fn follow_redirects(
         chain
             .advance_to(next.target, next.target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
+        Ok(RedirectStep::Continue(Self {
+            prepared: false,
+            chain,
+            max_redirects,
+            browser_used,
+            browser_cookies,
+            native_state,
+            refused_on_earlier_hops,
+        }))
+    }
+}
+
+#[cfg(test)]
+#[path = "redirect_cursor_tests.rs"]
+mod redirect_cursor_tests;
+
+/// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
+///
+/// This is the shared redirect-following implementation used by both
+/// [`CrawlEngine::scrape`] and the initial-redirect phase of
+/// [`CrawlEngine::crawl`]. The global reqwest redirect policy remains
+/// `Policy::none()` — this function performs manual redirect resolution so
+/// that the crawl loop retains full control over the redirect chain.
+///
+/// # Errors
+///
+/// Returns `Err` on a network-level failure (DNS, connection refused, timeout, …), and when the
+/// chain ends on an HTTP redirect it may not follow: see [`unfollowed_redirect_error`].
+/// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
+/// cannot reach a URL the configuration forbids, whatever order it does its own work in.
+///
+/// `override_user_agent` pins the agent every hop sends, ahead of whatever `policy` would have
+/// picked. `scrape()` passes `None` for both, unchanged; the wasm crawl loop passes
+/// `Some(agent)` with no policy, so the one pick its own per-page robots check already made is
+/// the one that reaches the wire here too (crawlberg#483) -- native's own frontier loop still
+/// picks entirely through `policy`, so passing `None` here changes nothing for it.
+/// `hop` says how each hop is fetched.
+pub(crate) async fn follow_redirects(
+    engine: &CrawlEngine,
+    initial_url: &str,
+    max_redirects: usize,
+    mut policy: Option<&mut RedirectPolicy<'_>>,
+    override_user_agent: Option<&str>,
+    hop: Hop,
+) -> Result<RedirectResolution, CrawlError> {
+    let mut cursor = RedirectCursor::new(initial_url, max_redirects);
+    loop {
+        match cursor
+            .step(engine, policy.as_deref_mut(), override_user_agent, hop)
+            .await?
+        {
+            RedirectStep::Continue(next) => cursor = next,
+            RedirectStep::Done(outcome) => return Ok(outcome),
+        }
     }
 }
 
@@ -630,7 +809,7 @@ impl RedirectChain {
         if let Err(e) = validate_url(&target, ssrf).await {
             return Err(CrawlError::ssrf_violation(target, e.to_string()));
         }
-        self.intermediate_headers.push((url_host(&self.current_url), headers));
+        self.intermediate_headers.push((self.current_url.clone(), headers));
         self.seen.insert(target_key);
         self.redirect_count += hops;
         self.current_url = target.into();
@@ -654,18 +833,32 @@ impl RedirectChain {
     }
 }
 
+/// The error for a chain that ends on `resp`, when `resp` is an HTTP redirect to an address the
+/// crawl can fetch. `visited` says whether the chain has requested the target.
+///
+/// A redirect with no page behind it is a failure, not a page (#613). The chain ends on such a
+/// response when the target is an address it has requested (a redirect loop) or when
+/// `max_redirects` leaves no hop.
+///
+/// ~keep Called once no redirect source of `resp` names a next hop, so a `Location` that loops
+/// ~keep back is an error only when no `Refresh` header and no meta refresh supersedes it.
+pub(crate) fn unfollowed_redirect_error<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    visited: impl Fn(&Url) -> bool,
+) -> Option<CrawlError> {
+    let target = http_redirect_target(resp, current_url)?;
+    crate::http::reject_redirect(&target, !visited(&target), false).err()
+}
+
 /// The response a 404 further down a redirect chain is reported as.
 fn synthetic_not_found() -> crate::tower::CrawlResponse {
-    crate::tower::CrawlResponse {
-        status: 404,
-        content_type: String::new(),
-        body: String::new(),
-        body_bytes: Vec::new(),
-        headers: HashMap::new(),
-        landed: None,
-        sent_user_agent: None,
-        soft_error: false,
-    }
+    crate::tower::CrawlResponse::new(
+        404,
+        String::new(),
+        HashMap::new(),
+        crate::tower::ResponseBody::Bytes(Vec::new()),
+    )
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
@@ -720,6 +913,41 @@ impl RedirectSignals for crate::http::HttpResponse {
     fn body(&self) -> &str {
         &self.body
     }
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+impl RedirectSignals for crate::ssrf_intercept::StoppedResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        self.header("content-type").unwrap_or_default()
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+/// [`unfollowed_redirect_error`] for a navigation that Chrome made from `requested` and that
+/// stopped on `resp` at `landed`.
+///
+/// ~keep Chrome follows the redirects of a navigation itself, so the addresses known here are
+/// ~keep the one requested and the one that answered last. A loop through a third address is
+/// ~keep reported with the reason of the redirect limit.
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) fn stopped_navigation_error<R: RedirectSignals>(
+    resp: &R,
+    requested: &str,
+    landed: &str,
+) -> Option<CrawlError> {
+    unfollowed_redirect_error(resp, landed, |target| {
+        [requested, landed]
+            .iter()
+            .any(|seen| Url::parse(seen).is_ok_and(|seen| seen == *target))
+    })
 }
 
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
@@ -835,7 +1063,7 @@ fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Opti
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
     let refresh = resp.header("refresh")?;
-    let target = refresh_target(refresh)?;
+    let target = immediate_refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
 
@@ -858,7 +1086,7 @@ fn meta_refresh_target<R: RedirectSignals>(
     let parsed_html = mask_raw_text_markup(resp.body());
     let found = crate::html::parse_html(&parsed_html.text)
         .ok()
-        .and_then(|doc| detect_meta_refresh(&doc))
+        .and_then(|doc| immediate_meta_refresh(&doc))
         .map(|target| {
             let base = Url::parse(current_url)
                 .map(|document_url| effective_base_url(parsed_html.base_href.as_deref(), &document_url).to_string())
@@ -1080,20 +1308,16 @@ mod tests {
         for (name, value) in headers {
             map.entry((*name).to_owned()).or_default().push((*value).to_owned());
         }
-        crate::tower::CrawlResponse {
+        crate::tower::CrawlResponse::new(
             status,
-            content_type: if body.is_empty() {
+            if body.is_empty() {
                 String::new()
             } else {
                 "text/html".to_owned()
             },
-            body: body.to_owned(),
-            body_bytes: body.as_bytes().to_vec(),
-            headers: map,
-            landed: None,
-            sent_user_agent: None,
-            soft_error: false,
-        }
+            map,
+            crate::tower::ResponseBody::Bytes(body.as_bytes().to_vec()),
+        )
     }
 
     fn chain_at(current: &str, already_seen: &[&str]) -> RedirectChain {
@@ -1165,6 +1389,7 @@ mod tests {
                 refused: Vec::new(),
                 extras: None,
                 cookies: Vec::new(),
+                result_cookies: Vec::new(),
             }));
             landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };
@@ -1225,7 +1450,7 @@ mod tests {
         let resp = response(
             200,
             &[("refresh", ".; url=/from-header")],
-            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+            r#"<html><head><meta http-equiv="refresh" content="0; url=/from-meta"></head></html>"#,
         );
         let chain = chain_at("https://example.com/start", &[]);
 
@@ -1513,6 +1738,7 @@ mod tests {
                 refused: Vec::new(),
                 extras: None,
                 cookies: Vec::new(),
+                result_cookies: Vec::new(),
             }));
             let sources = [
                 ("Location", response(302, &[("location", target_url)], "")),
@@ -1628,7 +1854,7 @@ mod tests {
         let second = Some("https://example.com/second".to_owned());
         assert_eq!(refresh_hop(None, &["0; url=/first", "0; url=/second"]), second);
         assert_eq!(refresh_hop(None, &["3; url=/first", "0; url=/second"]), second);
-        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), None);
         assert_eq!(
             refresh_hop(None, &["0; url=/first", "3; url=/second"]),
             Some("https://example.com/first".to_owned())
@@ -1657,8 +1883,18 @@ mod tests {
         );
     }
 
-    /// A `javascript:` refresh target is no refresh at all: the next meta refresh is used whatever
-    /// its delay, and a lone one leaves the chain where it is (#279). ~keep
+    /// A `Refresh` header with a delay leaves the chain on the page that carries it (#605).
+    #[test]
+    fn a_delayed_refresh_header_is_not_a_hop() {
+        assert_eq!(refresh_hop(Some("5; url=/later"), &[]), None);
+        assert_eq!(
+            refresh_hop(Some("0; url=/now"), &[]),
+            Some("https://example.com/now".to_owned())
+        );
+    }
+
+    /// A `javascript:` refresh target is ignored; the next immediate refresh is used,
+    /// and a lone one leaves the chain where it is (#279). ~keep
     #[test]
     fn a_javascript_meta_refresh_is_ignored() {
         for first in [
@@ -1668,7 +1904,7 @@ mod tests {
             "0; url=java&#9;script:void(0)",
         ] {
             assert_eq!(
-                refresh_hop(None, &[first, "3; url=/second"]),
+                refresh_hop(None, &[first, "0; url=/second"]),
                 Some("https://example.com/second".to_owned()),
                 "{first:?} must be ignored"
             );
@@ -1682,7 +1918,7 @@ mod tests {
     fn a_javascript_refresh_header_is_ignored() {
         assert_eq!(refresh_hop(Some("0; url=javascript:void(0)"), &[]), None);
         assert_eq!(
-            refresh_hop(Some("0; url=javascript:void(0)"), &["3; url=/second"]),
+            refresh_hop(Some("0; url=javascript:void(0)"), &["0; url=/second"]),
             Some("https://example.com/second".to_owned())
         );
     }

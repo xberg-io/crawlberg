@@ -1,0 +1,4 @@
+# The Swift reader of scripts/ci/check_released_constructors.py: the tree-sitter bindings and the
+# Swift grammar. Both are MIT. Pinned by version, as the other Python tools of ci-lint are.
+tree-sitter==0.26.0
+tree-sitter-swift==0.7.4

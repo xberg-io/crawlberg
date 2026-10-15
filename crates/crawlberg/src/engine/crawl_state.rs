@@ -8,9 +8,10 @@ use url::Url;
 
 use crate::helpers::PathPattern;
 use crate::html::{
-    HtmlExtraction, PageScan, detect_charset, extract_page_data, is_binary_content_type, is_binary_url,
-    is_html_content, is_pdf_content, is_pdf_url, mask_raw_text_markup,
+    HtmlExtraction, PageScan, decode_page, extract_page_data, is_binary_content_type, is_binary_url, is_html_content,
+    is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
+use crate::tower::BodyText;
 use crate::types::*;
 
 use crate::helpers::RobotsOutcome;
@@ -93,6 +94,7 @@ pub(super) struct FetchResult {
     pub(super) redirect_count: usize,
     /// The URLs the browser's SSRF check refused for requests the page sent.
     pub(super) ssrf_refused_urls: Vec<String>,
+    pub(super) browser_result_cookies: Vec<CookieInfo>,
     /// The extraction's read of `body`, taken by the markdown conversion so the page is read once.
     pub(super) page_scan: Option<PageScan>,
 }
@@ -113,8 +115,8 @@ pub(super) enum FetchOutcome {
 
 /// Result of blocking HTML extraction within a fetch task.
 pub(super) struct PageExtraction {
-    /// The page body, re-decoded with `detected_charset` when a non-UTF-8 encoding
-    /// was detected (see [`blocking_extract_page`]). This is the body extraction,
+    /// The page body, decoded with `detected_charset` when the page is not UTF-8
+    /// (see [`blocking_extract_page`]). This is the body extraction,
     /// markdown conversion, and the final `CrawlPageResult::html` must all use —
     /// never the caller's original UTF-8-lossy `body`.
     pub(super) body: String,
@@ -171,6 +173,16 @@ impl CrawlState {
     /// `pages`, so `pages.len()` is permanently 0 there. Reading that field directly is what
     /// made the `crawl.pages_completed` span report 0 for every iteration of every streaming
     /// crawl; the three budget/stats callers already branched correctly and the span did not.
+    /// Count a page whose fetch failed. A page lost because its browser's CDP connection closed
+    /// is the crawl's error too, the first one kept: the browser failed, not the page, so a
+    /// result with no error and fewer pages would hide it (xberg-io/crawlberg#705). ~keep
+    pub(super) fn record_failed_fetch(&mut self, error: &crate::error::CrawlError) {
+        self.pages_failed += 1;
+        if error.browser_connection_closed() && self.error.is_none() {
+            self.error = Some(error.to_string());
+        }
+    }
+
     pub(super) fn pages_processed(&self) -> usize {
         if self.is_streaming {
             self.pages_count
@@ -198,35 +210,43 @@ impl CrawlState {
     }
 }
 
+/// The body of a fetched page, as the fetch returned it.
+pub(super) struct FetchedBody {
+    pub(super) body: String,
+    pub(super) body_bytes: Vec<u8>,
+    /// Whether `body` is the text of the page already. See [`BodyText`].
+    pub(super) body_text: BodyText,
+}
+
 /// Perform HTML extraction in a blocking context.
 ///
 /// The parsed document borrows the input string, so this must run via `spawn_blocking`.
 ///
-/// ~keep Re-decodes `body` from `body_bytes` using the detected charset (mirrors
-/// `scrape_from_crawl_response` in `scrape.rs`) *before* parsing, so extraction,
+/// ~keep Decides the character set of the page from `body_bytes` and decodes them (as
+/// `scrape_from_crawl_response` in `scrape.rs` does) *before* parsing, so extraction,
 /// markdown conversion, and the `html` field the caller reports downstream all see
-/// correctly decoded text instead of `crawl()`'s original UTF-8-lossy fallback body.
-/// `detect_charset` runs on `body_bytes` (not `body`) so a byte-order mark or non-ASCII
-/// meta tag survives even when `body` is already lossy-mangled.
+/// the text of the page instead of `crawl()`'s original UTF-8-lossy fallback body.
+/// `body_text` says whether `body` is that text already, as the body of a browser is.
 ///
-/// `page_scan` is the redirect check's read of `body`, reused unless the re-decode replaced it.
+/// `page_scan` is the redirect check's read of `body`, reused unless the decode replaced it.
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
     header_robots: RobotsDirectives,
     user_agent: &str,
-    body: String,
-    body_bytes: Vec<u8>,
+    fetched: FetchedBody,
     page_scan: Option<PageScan>,
 ) -> PageExtraction {
+    let FetchedBody {
+        body,
+        body_bytes,
+        body_text,
+    } = fetched;
     let parsed_url = Url::parse(url).unwrap_or_else(|_| FALLBACK_URL.clone());
 
-    let detected_charset = detect_charset(content_type, &body_bytes);
-    let (body, page_scan) = match detected_charset
-        .as_deref()
-        .and_then(|charset| crate::http::redecode_with_charset(charset, &body_bytes))
-    {
-        Some(redecoded) => (redecoded, None),
+    let (text, detected_charset) = decode_page(&body_text, content_type, url, &body_bytes);
+    let (body, page_scan) = match text {
+        Some(text) => (text, None),
         None => (body, page_scan),
     };
 
@@ -266,5 +286,37 @@ pub(super) fn blocking_extract_page(
         is_pdf,
         detected_charset,
         page_scan,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CrawlState;
+    use crate::error::{BrowserConnectionClosed, CrawlError};
+
+    /// A page lost because its browser's CDP connection closed is the crawl's error, the first
+    /// one kept; a page a browser error of its own failed is not (xberg-io/crawlberg#705).
+    #[test]
+    fn a_lost_browser_connection_is_the_crawls_error() {
+        let mut state = CrawlState::new(0, false);
+        state.record_failed_fetch(&CrawlError::browser_error("navigation failed"));
+        assert_eq!(state.pages_failed, 1);
+        assert!(state.error.is_none(), "a page's own browser error is not the crawl's");
+
+        let lost = |page: &str| {
+            CrawlError::browser_error_with_source(
+                format!("the browser's CDP connection closed: failed to create page {page}: oneshot canceled"),
+                BrowserConnectionClosed { source: None },
+            )
+        };
+        state.record_failed_fetch(&lost("first"));
+        state.record_failed_fetch(&lost("second"));
+        assert_eq!(state.pages_failed, 3);
+        let result = state.into_result("http://a.localhost/".to_owned());
+        let error = result.error.expect("a lost browser connection is the crawl's error");
+        assert!(
+            error.contains("failed to create page first"),
+            "the first loss is kept, got: {error}"
+        );
     }
 }
