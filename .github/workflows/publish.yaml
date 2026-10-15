@@ -1112,6 +1112,7 @@ jobs:
         with:
           crate-name: crawlberg-ffi
           target: ${{ matrix.target }}
+          require-static: "true"
 
       - name: Stage C FFI distribution
         # Inline: bundle library + header + LICENSE into a single tarball
@@ -1128,7 +1129,9 @@ jobs:
           STAGE="crawlberg-ffi-v${VERSION}-${TARGET}"
           mkdir -p "$STAGE/lib" "$STAGE/include"
           find "target/${TARGET}/release" -maxdepth 1 -type f \
-            \( -name 'libcrawlberg_ffi.*' -o -name 'crawlberg_ffi.dll' \) \
+            \( -name 'libcrawlberg_ffi.so' -o -name 'libcrawlberg_ffi.dylib' \
+            -o -name 'libcrawlberg_ffi.a' -o -name 'crawlberg_ffi.dll' \
+            -o -name 'crawlberg_ffi.lib' -o -name 'native-static-libs.txt' \) \
             -exec cp {} "$STAGE/lib/" \;
           cp crates/crawlberg-ffi/include/crawlberg.h "$STAGE/include/"
           cp LICENSE "$STAGE/" 2>/dev/null || true
@@ -3137,7 +3140,7 @@ jobs:
   # explicitly rather than relying on the `needs:` edge alone. ~keep
 
   publish-plugin-opencode:
-    name: Publish OpenCode plugin to npm
+    name: Publish OpenCode and Pi plugin to npm
     needs: [prepare, validate-versions]
     if: >-
       ${{ !cancelled() && needs.prepare.outputs.release_any == 'true'
@@ -3155,6 +3158,14 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org/"
+      - name: Install ai-rulez
+        uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+        with:
+          ai-rulez-version: "5.3.0"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
+      - name: Verify generated plugin bundles before publishing
+        run: |
+          ai-rulez verify --plugin
       # ~keep The bundle must be proven to match the release BEFORE the skip probe below,
       # not by publish-npm's `expected-version` afterwards. The probe reads the ARTIFACT's
       # version, so a stale-but-already-published bundle sets skip=true, publish-npm never
@@ -3180,6 +3191,29 @@ jobs:
 
       # Plain ESM adapter — no build step. Skip if this version is already on npm so a
       # release re-run is idempotent (publish-npm has no built-in skip-existing). ~keep
+      - name: Verify packed OpenCode and Pi resources
+        shell: bash
+        run: |
+          pack_dir="$(mktemp -d)"
+          npm pack ./plugin --ignore-scripts --json --pack-destination "$pack_dir" > "$pack_dir/pack.json"
+          node - "$pack_dir/pack.json" <<'NODE'
+          const fs = require('node:fs');
+          const pkg = require('./plugin/package.json');
+          const files = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))[0].files.map(file => file.path);
+          for (const prefix of ['.opencode/plugins/', '.pi/skills/', '.pi/prompts/']) {
+            if (!files.some(path => path.startsWith(prefix))) throw new Error(`Missing packed resource: ${prefix}`);
+          }
+          if (!pkg.keywords.includes('pi-package') || !pkg.pi.skills.length || !pkg.pi.prompts.length) {
+            throw new Error('Missing Pi package metadata');
+          }
+          for (const resource of [...pkg.pi.skills, ...pkg.pi.prompts]) {
+            const relative = resource.replace(/^\.\//, '').replace(/\/$/, '');
+            if (!files.some(path => path === relative || path.startsWith(`${relative}/`))) {
+              throw new Error(`Declared Pi resource was not packed: ${resource}`);
+            }
+          }
+          console.log(`Verified ${files.length} packed files for OpenCode and Pi`);
+          NODE
       - name: Skip if already on npm
         id: guard
         run: |
@@ -3220,6 +3254,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
+      - name: Install ai-rulez
+        uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+        with:
+          ai-rulez-version: "5.3.0"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
+      - name: Verify plugin source and generated artifacts
+        uses: xberg-io/actions/verify-ai-rulez-plugin@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+        with:
+          config-directory: .ai-rulez
       - name: Install uv
         uses: astral-sh/setup-uv@v10.1.0
         with:
@@ -3458,3 +3501,75 @@ jobs:
             homebrew-bottles=${{ needs.publish-homebrew-bottles.result }}
             scoop=${{ needs.publish-scoop-manifest.result }}
           token: ${{ steps.app-token.outputs.token }}
+
+  publish-plugin-artifacts:
+    name: Publish all plugin runtime artifacts
+    permissions:
+      contents: write
+    needs: [prepare, release-finalize]
+    if: ${{ !cancelled() && needs.prepare.outputs.dry_run != 'true' && needs.release-finalize.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+      - name: Install ai-rulez
+        uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+        with:
+          ai-rulez-version: "5.3.0"
+          source-revision: "bdabc8a6e9211de60ca1e4ad76225ac92fcf218f"
+      - name: Verify public skill exports
+        run: python3 scripts/sync_public_skills.py --check
+      - name: Package all supported plugin runtimes
+        uses: xberg-io/actions/package-ai-rulez-plugin@66e9a172c28ae7e57496fe92de1ab74f2a604194
+        with:
+          cursor-marketplace: "true"
+          tag: ${{ needs.prepare.outputs.tag }}
+          config-directory: .ai-rulez
+          version-sync-script: scripts/sync_plugin_version.py
+      - name: Archive verified runtime bundles and marketplace indexes
+        shell: bash
+        env:
+          PLUGIN_TAG: ${{ needs.prepare.outputs.tag }}
+          PLUGIN_PRODUCT: crawlberg
+        run: |
+          set -euo pipefail
+          test -n "$PLUGIN_TAG"
+          bundle="dist/${PLUGIN_PRODUCT}-plugins-${PLUGIN_TAG//\//-}.tar.gz"
+          tar --sort=name --mtime="@$(git show -s --format=%ct HEAD)" \
+            --owner=0 --group=0 --numeric-owner -cf - -C dist/plugin . | gzip -n > "$bundle"
+          (cd dist && sha256sum "$(basename "$bundle")") > "$bundle.sha256"
+      - name: Attach verified plugin archive and metadata
+        uses: xberg-io/actions/upload-release-assets@v1
+        with:
+          tag: ${{ needs.prepare.outputs.tag }}
+          assets: |
+            dist/*-plugins-*.tar.gz
+            dist/*-plugins-*.tar.gz.sha256
+
+  plugin-release-report:
+    name: Verify all plugin distribution jobs succeeded
+    needs: [prepare, publish-plugin-artifacts, publish-plugin-opencode, publish-plugin-hermes]
+    if: always() && needs.prepare.outputs.dry_run != 'true' && startsWith(needs.prepare.outputs.tag, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject failed or skipped plugin distribution
+        env:
+          RESULTS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+
+          results = json.loads(os.environ['RESULTS_JSON'])
+          expected = {'prepare', 'publish-plugin-artifacts', 'publish-plugin-opencode', 'publish-plugin-hermes'}
+          if set(results) != expected:
+              raise SystemExit('Expected preparation and exactly three plugin distribution jobs')
+          failed = [name for name, job in results.items() if job['result'] != 'success']
+          if failed:
+              raise SystemExit(f"Incomplete plugin distribution: {', '.join(failed)}")
+          print('Verified preparation and 3/3 plugin distribution jobs succeeded')
+          PYTHON

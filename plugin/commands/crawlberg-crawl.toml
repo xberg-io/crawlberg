@@ -1,0 +1,4 @@
+description = "Crawl a site with bounded scope"
+prompt = """
+Crawl {{args}} with `crawlberg crawl`. Read the crawling-a-site skill first. Use bounded depth and page limits, respect robots, and stay on the requested domain. Summarize the saved output and any skipped or failed pages.
+"""

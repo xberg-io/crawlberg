@@ -3,12 +3,19 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [project]
+maintainers = [
+  { name = "Na'aman Hirschfeld", email = "naaman@xberg.io" },
+  { name = "Tobias Perlstein", email = "tobias@xberg.io" },
+]
 name = "crawlberg-cli"
 version = "0.1.0"
 description = "CLI proxy for crawlberg — downloads and runs the native crawlberg binary from GitHub releases."
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Na'aman Hirschfeld", email = "naaman@xberg.io" }]
+authors = [
+  { name = "Na'aman Hirschfeld", email = "naaman@xberg.io" },
+  { name = "Tobias Perlstein", email = "tobias@xberg.io" },
+]
 requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 4 - Beta",

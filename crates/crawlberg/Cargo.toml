@@ -1,4 +1,18 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+    "/README.md",
+    "/rules/waf_fingerprints.toml",
+    "!/src/tracing_capture.rs",
+    "!/src/browser_pool_tests.rs",
+    "!/src/types/config_tests.rs",
+    "!/src/net/ssrf/cases.rs",
+    "!/src/waf/tests.rs",
+    "!/src/engine/wasm_crawl_tests.rs",
+    "!/src/types/config/untrusted_tests.rs",
+]
 name = "crawlberg"
 version.workspace = true
 edition.workspace = true
@@ -158,7 +172,7 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
 
-# ~keep sysinfo 0.39.6 uses iOS Mach bindings removed by libc 0.2.190.
+# ~keep sysinfo 0.38 uses iOS Mach bindings removed by libc 0.2.190.
 # ~keep Remove this compatibility pin after sysinfo releases GuillaumeGomez/sysinfo#1758.
 [target.'cfg(target_os = "ios")'.dependencies]
 libc = { workspace = true, optional = true }

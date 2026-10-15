@@ -33,7 +33,12 @@
 
   <developers>
     <developer>
-      <name>Xberg Team</name>
+      <name>Na&apos;aman Hirschfeld</name>
+      <email>naaman@xberg.io</email>
+    </developer>
+    <developer>
+      <name>Tobias Perlstein</name>
+      <email>tobias@xberg.io</email>
     </developer>
   </developers>
 

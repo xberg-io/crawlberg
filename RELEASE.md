@@ -25,9 +25,9 @@ work:
 
 - `crates/crawlberg-node/package.json` still lists both musl targets under `napi.targets` and
   pins both as `optionalDependencies` at the current version. Those versions 404 on npm.
-  npm treats an unresolvable optional dependency as a skip, so `npm install` on Alpine exits 0
+  npm treats an unresolvable optional dependency as a skip, so `pnpm install` on Alpine exits 0
   and installs no native binary; the failure surfaces at `require()` time. Verified with
-  `npm install @xberg-io/crawlberg@1.3.3 --os=linux --cpu=x64 --libc=musl`, which adds one
+  `pnpm add @xberg-io/crawlberg@1.3.3 --os=linux --cpu=x64 --libc=musl`, which adds one
   package (the glibc equivalent adds two).
 - `crates/crawlberg-node/npm/linux-{x64,arm64}-musl/` still exist as package directories.
 

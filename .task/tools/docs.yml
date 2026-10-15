@@ -28,7 +28,7 @@ tasks:
   lint:prose:
     desc: Lint prose with textlint
     cmds:
-      - npx textlint 'docs-site/src/content/docs/**/*.{md,mdx}'
+      - pnpm exec textlint 'docs-site/src/content/docs/**/*.{md,mdx}'
 
   snippets:list:
     desc: List all documentation snippets discovered by alef

@@ -1,18 +1,17 @@
 ---
-name: crawlberg
-description: >-
-  Crawl, scrape, and convert websites to Markdown using the local crawlberg
-  CLI and its MCP server. Use when the user wants to fetch a page, follow
-  links across a domain, enumerate URLs, or drive a real browser. Covers
-  installation, the subcommands (scrape, crawl, map, interact, batch-scrape,
-  batch-crawl, download, citations, version, mcp, serve), output formats
-  (JSON + Markdown), browser fallback, and when to prefer the MCP server over
-  shelling out.
-license: MIT
-metadata:
-  author: xberg-io
-  version: "0.1.0"
-  repository: https://github.com/xberg-io/crawlberg
+type: Playbook
+title: Crawlberg
+description: Crawl, scrape, and convert websites to Markdown using the local crawlberg CLI and its MCP server. Use when the user wants to fetch a page, follow links across a domain, enumerate URLs, or drive a real browser. Covers installation, the subcommands (scrape, crawl, map, interact, batch-scrape, batch-crawl, download, citations, version, mcp, serve), output formats (JSON + Markdown), browser fallback, and when to prefer the MCP server over shelling out.
+x-ai-rulez:
+  kind: skill
+  id: crawlberg
+  metadata:
+    license: MIT
+    metadata:
+      author: xberg-io
+      version: "0.1.0"
+      repository: https://github.com/xberg-io/crawlberg
+    name: crawlberg
 ---
 
 # Crawlberg
@@ -36,9 +35,6 @@ The plugin shells out to a `crawlberg` binary on `PATH`. Install one of:
 
 ```bash
 brew install xberg-io/tap/crawlberg
-# or run without a persistent install (the CLI proxy package self-installs the binary):
-npx @xberg-io/crawlberg-cli --help
-uvx --from crawlberg-cli crawlberg --help
 # or build from source:
 cargo install crawlberg-cli --features all
 ```
@@ -128,7 +124,7 @@ JSON output (default) carries the rendered Markdown, page metadata
 HTTP response metadata. Use Markdown output when piping into a file the user
 will read.
 
-See the `scraping-html-to-markdown` skill for the full flag surface.
+See the `crawlberg-scraping-html-to-markdown` skill for the full flag surface.
 
 ## Crawl a site
 
@@ -142,7 +138,7 @@ Crawling is BFS by default, bounded by `--depth`, `--max-pages`, and
 `--concurrent`. Per-domain politeness is enforced by `--rate-limit`
 (milliseconds between requests to the same origin).
 
-See the `crawling-a-site` skill for the recommended defaults and the full
+See the `crawlberg-crawling-a-site` skill for the recommended defaults and the full
 flag surface.
 
 ## Map URLs
@@ -167,7 +163,7 @@ crawlberg interact https://example.com \
 Action types are `click`, `type`, `press`, `scroll`, `wait`, `screenshot`,
 `executeJs`, and `scrape` (to wait for an element, use `wait` with a
 `selector` field). The result wraps the final HTML under
-`interaction.final_html`. See the `automating-the-browser` skill for the full
+`interaction.final_html`. See the `crawlberg-automating-the-browser` skill for the full
 action schema and limits.
 
 ## MCP server
@@ -221,7 +217,7 @@ of a stray Chrome launch is unacceptable.
 Point `--browser-endpoint ws://host:9222/devtools/browser/<id>` at an
 already-running Chrome to skip the local launch.
 
-See the `headless-fallback` skill for symptoms, costs, and external-CDP
+See the `crawlberg-headless-fallback` skill for symptoms, costs, and external-CDP
 patterns.
 
 ## Output formats
@@ -245,15 +241,15 @@ and read `result.markdown.content`.
 
 ## Cross-references
 
-- `skills/crawling-a-site/SKILL.md` — multi-page crawl with depth, page
+- `crawlberg-crawling-a-site` — multi-page crawl with depth, page
   caps, concurrency, rate limits, and domain scoping.
-- `skills/scraping-html-to-markdown/SKILL.md` — single-page rendering, the
+- `crawlberg-scraping-html-to-markdown` — single-page rendering, the
   Markdown output shape, and common pitfalls.
-- `skills/mapping-urls/SKILL.md` — `map`: sitemap + link URL discovery,
+- `crawlberg-mapping-urls` — `map`: sitemap + link URL discovery,
   filtering, and seeding a crawl.
-- `skills/automating-the-browser/SKILL.md` — `interact`: the full scripted
+- `crawlberg-automating-the-browser` — `interact`: the full scripted
   action schema, limits, and result shape.
-- `skills/serving-the-api/SKILL.md` — `serve`: the Firecrawl-v1-compatible
+- `crawlberg-serving-the-api` — `serve`: the Firecrawl-v1-compatible
   REST API server and its endpoints.
-- `skills/headless-fallback/SKILL.md` — when and how to force the browser
+- `crawlberg-headless-fallback` — when and how to force the browser
   backend.

@@ -1,13 +1,13 @@
-import { tool } from "@opencode-ai/plugin";
+import { registerBundledContent } from "../ai-rulez-content.js";
 import { spawn } from "node:child_process";
 
-const schema = tool.schema;
-
-const outputFormat = schema.enum(["json", "markdown"]).default("json").describe("CLI output format.");
-const browserMode = schema
-  .enum(["auto", "always", "never"])
-  .default("auto")
-  .describe("When to use headless browser fallback.");
+const outputFormat = { type: "string", enum: ["json", "markdown"], default: "json", description: "CLI output format." };
+const browserMode = {
+  type: "string",
+  enum: ["auto", "always", "never"],
+  default: "auto",
+  description: "When to use headless browser fallback.",
+};
 
 function hasValue(value) {
   return value !== undefined && value !== null && value !== "";
@@ -44,7 +44,7 @@ function runCli(args, context) {
     const child = spawn("crawlberg", args, {
       cwd: directory,
       env: process.env,
-      signal: context?.abort,
+      signal: context?.signal,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -57,7 +57,7 @@ function runCli(args, context) {
       if (error.code === "ENOENT") {
         resolve({
           title: "crawlberg CLI not found",
-          output:
+          content:
             "Install the crawlberg CLI with `brew install xberg-io/tap/crawlberg`, or run it via `npx @xberg-io/crawlberg-cli` / `uvx --from crawlberg-cli crawlberg`.",
           metadata: { exitCode: 127, command: "crawlberg", subcommand: args[0] },
         });
@@ -72,7 +72,7 @@ function runCli(args, context) {
 
       resolve({
         title: exitCode === 0 ? `crawlberg ${args[0]}` : `crawlberg ${args[0]} failed`,
-        output: output || "(no output)",
+        content: output || "(no output)",
         metadata: {
           exitCode,
           signal,
@@ -95,87 +95,145 @@ function pushSharedCrawlOptions(cliArgs, args) {
   pushOption(cliArgs, "--config", args.config);
 }
 
-export const CrawlbergPlugin = () => ({
-  tool: {
-    crawlberg_scrape: tool({
-      description: "Scrape one URL to JSON or Markdown with the crawlberg CLI.",
-      args: {
-        url: schema.string().url().describe("URL to scrape."),
-        format: outputFormat,
-        timeout: schema.number().int().positive().max(600000).default(30000).describe("Request timeout in ms."),
-        browser_mode: browserMode,
-        browser_endpoint: schema.string().url().optional().describe("Optional CDP WebSocket endpoint."),
-        user_agent: schema.string().min(1).optional().describe("Optional HTTP user agent."),
-        proxy: schema.string().url().optional().describe("Optional proxy URL."),
-        respect_robots_txt: schema.boolean().default(false).describe("Respect robots.txt."),
-        config: schema.string().min(2).optional().describe("Optional CrawlConfig JSON."),
-      },
-      async execute(args, context) {
-        validateJson(args.config, "config");
+export const CrawlbergPlugin = {
+  id: "crawlberg",
+  async setup(ctx) {
+    await registerBundledContent(ctx);
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "crawlberg_scrape",
+        description: "Scrape one URL to JSON or Markdown with the crawlberg CLI.",
+        input: {
+          type: "object",
+          properties: {
+            url: { type: "string", format: "uri", description: "URL to scrape." },
+            format: outputFormat,
+            timeout: {
+              type: "integer",
+              minimum: 1,
+              maximum: 600000,
+              default: 30000,
+              description: "Request timeout in ms.",
+            },
+            browser_mode: browserMode,
+            browser_endpoint: { type: "string", format: "uri", description: "Optional CDP WebSocket endpoint." },
+            user_agent: { type: "string", minLength: 1, description: "Optional HTTP user agent." },
+            proxy: { type: "string", format: "uri", description: "Optional proxy URL." },
+            respect_robots_txt: { type: "boolean", default: false, description: "Respect robots.txt." },
+            config: { type: "string", minLength: 2, description: "Optional CrawlConfig JSON." },
+          },
+          required: ["url"],
+          additionalProperties: false,
+        },
+        async execute(args, context) {
+          validateJson(args.config, "config");
 
-        const cliArgs = ["scrape", args.url];
-        pushSharedCrawlOptions(cliArgs, args);
-        return await runCli(cliArgs, context);
-      },
-    }),
-    crawlberg_crawl: tool({
-      description: "Crawl one or more seed URLs to JSON or Markdown with the crawlberg CLI.",
-      args: {
-        urls: schema.array(schema.string().url()).min(1).describe("Seed URLs to crawl."),
-        depth: schema.number().int().min(0).max(20).default(2).describe("Maximum crawl depth."),
-        max_pages: schema.number().int().positive().optional().describe("Maximum pages to crawl."),
-        concurrent: schema.number().int().positive().max(256).default(10).describe("Maximum concurrent requests."),
-        rate_limit: schema.number().int().min(0).default(200).describe("Delay between requests in ms."),
-        stay_on_domain: schema.boolean().default(false).describe("Restrict crawling to the seed domain."),
-        format: outputFormat,
-        timeout: schema.number().int().positive().max(600000).default(30000).describe("Request timeout in ms."),
-        browser_mode: browserMode,
-        browser_endpoint: schema.string().url().optional().describe("Optional CDP WebSocket endpoint."),
-        user_agent: schema.string().min(1).optional().describe("Optional HTTP user agent."),
-        proxy: schema.string().url().optional().describe("Optional proxy URL."),
-        respect_robots_txt: schema.boolean().default(false).describe("Respect robots.txt."),
-        config: schema.string().min(2).optional().describe("Optional CrawlConfig JSON."),
-      },
-      async execute(args, context) {
-        validateJson(args.config, "config");
+          const cliArgs = ["scrape", args.url];
+          pushSharedCrawlOptions(cliArgs, args);
+          return await runCli(cliArgs, { ...context, directory: ctx.location.directory });
+        },
+      });
+      editor.add({
+        name: "crawlberg_crawl",
+        description: "Crawl one or more seed URLs to JSON or Markdown with the crawlberg CLI.",
+        input: {
+          type: "object",
+          properties: {
+            urls: {
+              type: "array",
+              items: { type: "string", format: "uri" },
+              minItems: 1,
+              description: "Seed URLs to crawl.",
+            },
+            depth: { type: "integer", minimum: 0, maximum: 20, default: 2, description: "Maximum crawl depth." },
+            max_pages: { type: "integer", minimum: 1, description: "Maximum pages to crawl." },
+            concurrent: {
+              type: "integer",
+              minimum: 1,
+              maximum: 256,
+              default: 10,
+              description: "Maximum concurrent requests.",
+            },
+            rate_limit: { type: "integer", minimum: 0, default: 200, description: "Delay between requests in ms." },
+            stay_on_domain: { type: "boolean", default: false, description: "Restrict crawling to the seed domain." },
+            format: outputFormat,
+            timeout: {
+              type: "integer",
+              minimum: 1,
+              maximum: 600000,
+              default: 30000,
+              description: "Request timeout in ms.",
+            },
+            browser_mode: browserMode,
+            browser_endpoint: { type: "string", format: "uri", description: "Optional CDP WebSocket endpoint." },
+            user_agent: { type: "string", minLength: 1, description: "Optional HTTP user agent." },
+            proxy: { type: "string", format: "uri", description: "Optional proxy URL." },
+            respect_robots_txt: { type: "boolean", default: false, description: "Respect robots.txt." },
+            config: { type: "string", minLength: 2, description: "Optional CrawlConfig JSON." },
+          },
+          required: ["urls"],
+          additionalProperties: false,
+        },
+        async execute(args, context) {
+          validateJson(args.config, "config");
 
-        const cliArgs = ["crawl", ...args.urls, "--depth", String(args.depth), "--concurrent", String(args.concurrent)];
-        pushOption(cliArgs, "--max-pages", args.max_pages);
-        pushOption(cliArgs, "--rate-limit", args.rate_limit);
-        pushFlag(cliArgs, "--stay-on-domain", args.stay_on_domain);
-        pushSharedCrawlOptions(cliArgs, args);
-        return await runCli(cliArgs, context);
-      },
-    }),
-    crawlberg_map: tool({
-      description: "Enumerate URLs from sitemaps and link extraction with the crawlberg CLI.",
-      args: {
-        url: schema.string().url().describe("URL to map."),
-        limit: schema.number().int().positive().optional().describe("Maximum URLs to return."),
-        search: schema.string().min(1).optional().describe("Filter URLs by substring."),
-        format: outputFormat,
-        timeout: schema.number().int().positive().max(600000).default(30000).describe("Request timeout in ms."),
-        browser_mode: browserMode,
-        browser_endpoint: schema.string().url().optional().describe("Optional CDP WebSocket endpoint."),
-        respect_robots_txt: schema.boolean().default(false).describe("Respect robots.txt."),
-        config: schema.string().min(2).optional().describe("Optional CrawlConfig JSON."),
-      },
-      async execute(args, context) {
-        validateJson(args.config, "config");
+          const cliArgs = [
+            "crawl",
+            ...args.urls,
+            "--depth",
+            String(args.depth ?? 2),
+            "--concurrent",
+            String(args.concurrent ?? 10),
+          ];
+          pushOption(cliArgs, "--max-pages", args.max_pages);
+          pushOption(cliArgs, "--rate-limit", args.rate_limit);
+          pushFlag(cliArgs, "--stay-on-domain", args.stay_on_domain);
+          pushSharedCrawlOptions(cliArgs, args);
+          return await runCli(cliArgs, { ...context, directory: ctx.location.directory });
+        },
+      });
+      editor.add({
+        name: "crawlberg_map",
+        description: "Enumerate URLs from sitemaps and link extraction with the crawlberg CLI.",
+        input: {
+          type: "object",
+          properties: {
+            url: { type: "string", format: "uri", description: "URL to map." },
+            limit: { type: "integer", minimum: 1, description: "Maximum URLs to return." },
+            search: { type: "string", minLength: 1, description: "Filter URLs by substring." },
+            format: outputFormat,
+            timeout: {
+              type: "integer",
+              minimum: 1,
+              maximum: 600000,
+              default: 30000,
+              description: "Request timeout in ms.",
+            },
+            browser_mode: browserMode,
+            browser_endpoint: { type: "string", format: "uri", description: "Optional CDP WebSocket endpoint." },
+            respect_robots_txt: { type: "boolean", default: false, description: "Respect robots.txt." },
+            config: { type: "string", minLength: 2, description: "Optional CrawlConfig JSON." },
+          },
+          required: ["url"],
+          additionalProperties: false,
+        },
+        async execute(args, context) {
+          validateJson(args.config, "config");
 
-        const cliArgs = ["map", args.url];
-        pushOption(cliArgs, "--limit", args.limit);
-        pushOption(cliArgs, "--search", args.search);
-        pushOption(cliArgs, "--format", args.format);
-        pushOption(cliArgs, "--timeout", args.timeout);
-        pushOption(cliArgs, "--browser-mode", args.browser_mode);
-        pushOption(cliArgs, "--browser-endpoint", args.browser_endpoint);
-        pushFlag(cliArgs, "--respect-robots-txt", args.respect_robots_txt);
-        pushOption(cliArgs, "--config", args.config);
-        return await runCli(cliArgs, context);
-      },
-    }),
+          const cliArgs = ["map", args.url];
+          pushOption(cliArgs, "--limit", args.limit);
+          pushOption(cliArgs, "--search", args.search);
+          pushOption(cliArgs, "--format", args.format);
+          pushOption(cliArgs, "--timeout", args.timeout);
+          pushOption(cliArgs, "--browser-mode", args.browser_mode);
+          pushOption(cliArgs, "--browser-endpoint", args.browser_endpoint);
+          pushFlag(cliArgs, "--respect-robots-txt", args.respect_robots_txt);
+          pushOption(cliArgs, "--config", args.config);
+          return await runCli(cliArgs, { ...context, directory: ctx.location.directory });
+        },
+      });
+    });
   },
-});
+};
 
 export default CrawlbergPlugin;

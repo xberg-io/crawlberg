@@ -4,11 +4,11 @@
 # To verify freshness: alef verify
 
 [package]
+authors = ["Na'aman Hirschfeld <naaman@xberg.io>", "Tobias Perlstein <tobias@xberg.io>"]
 name = "crawlberg-wasm"
 version = "1.10.3"
 edition = "2024"
 license = "MIT"
-authors = ["Xberg Team"]
 description = "High-performance web crawling engine"
 repository = "https://github.com/xberg-io/crawlberg"
 keywords = ["crawl", "scrape", "web", "spider"]

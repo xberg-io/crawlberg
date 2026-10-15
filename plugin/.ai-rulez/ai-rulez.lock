@@ -1,0 +1,62 @@
+# ai-rulez.lock: pins remote includes, installed skills and authored content. Commit this file.
+# Refresh it with `ai-rulez lock`; `ai-rulez generate --locked` fails when it is stale.
+
+version = 1
+ai_rulez_version = '5.3.0'
+scope = 'all'
+outputs_pinned = true
+tree = 'sha256:b08b868c4737f180dfe87097e989d29514ef97a8f1e2d0105157c951631ba84c'
+
+[[item]]
+kind = 'command'
+id = 'crawlberg-crawl'
+path = 'commands/crawlberg-crawl.md'
+digest = 'sha256:d22621d845b1985435f45fc8c30045d0ea585a909a7be05f3bda8943bd97b568'
+
+[[item]]
+kind = 'command'
+id = 'crawlberg-scrape'
+path = 'commands/crawlberg-scrape.md'
+digest = 'sha256:473839abe2bf98875c746e51b8c60a1415d0166f40bc24b3be23972d38334645'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg'
+path = 'skills/crawlberg'
+digest = 'sha256:0930d15142d12d21b6d668256c313917f3e1e1f3f27000ce87bed70d5df47ea9'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-automating-the-browser'
+path = 'skills/crawlberg-automating-the-browser'
+digest = 'sha256:796f7681c39eaa26e148d989d3900098e45183100aeaadcfebb1f726af1df19e'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-crawling-a-site'
+path = 'skills/crawlberg-crawling-a-site'
+digest = 'sha256:849dad6d3875ad58e432783556bfca50d18ff67fa76112e2fbc0bf25c6e77b71'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-headless-fallback'
+path = 'skills/crawlberg-headless-fallback'
+digest = 'sha256:fee0b246112a68018b687e4a4b006939296722df30753505e2d584e71da479b8'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-mapping-urls'
+path = 'skills/crawlberg-mapping-urls'
+digest = 'sha256:66837dd8ddc4c703e4c6ef1382dc580c8f3d42ce943d39b51a31a9e6cf881590'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-scraping-html-to-markdown'
+path = 'skills/crawlberg-scraping-html-to-markdown'
+digest = 'sha256:28205b0ad9318718c07922a35fe36b7337d55511a0cb57d4c5e47d5451e2a7f6'
+
+[[item]]
+kind = 'skill'
+id = 'crawlberg-serving-the-api'
+path = 'skills/crawlberg-serving-the-api'
+digest = 'sha256:a7fa9878c53e5e5a20bc2ac161d428279f16dc4b3dd5a305fd24e115bfc0c4d2'

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "crawlberg",
+  "version": "1.10.3",
+  "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
+  "author": {
+    "name": "Kreuzberg, Inc.",
+    "email": "contact@xberg.io",
+    "url": "https://xberg.io"
+  },
+  "homepage": "https://xberg.io",
+  "repository": "https://github.com/xberg-io/crawlberg",
+  "license": "MIT",
+  "keywords": [
+    "web-scraping",
+    "crawling",
+    "html-to-markdown",
+    "headless-chrome"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "brandColor": "#7C3AED",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "category": "web-scraping",
+        "composerIcon": "./assets/icon.svg",
+        "defaultPrompt": [
+          "Crawl this site to markdown",
+          "Scrape a single page",
+          "Fall back to headless mode"
+        ],
+        "developerName": "Kreuzberg, Inc.",
+        "displayName": "Crawlberg",
+        "logo": "./assets/logo.png",
+        "longDescription": "Scrape single pages, crawl entire sites, or map a domain's URLs through the local crawlberg CLI. Every page is converted to clean Markdown via the built-in HTML→Markdown engine. WAF-blocked or JS-heavy pages transparently fall back to a headless Chrome backend.",
+        "privacyPolicyURL": "https://xberg.io/privacy",
+        "shortDescription": "Crawl and scrape sites to clean markdown",
+        "termsOfServiceURL": "https://xberg.io/terms",
+        "websiteURL": "https://xberg.io"
+      }
+    }
+  }
+}

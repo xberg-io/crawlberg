@@ -1,7 +1,13 @@
 ---
-name: crawl-engineer
+type: Reference
+title: Crawl Engineer
 description: Web crawling pipeline development
-model: sonnet
+x-ai-rulez:
+  kind: agent
+  id: crawl-engineer
+  metadata:
+    model: sonnet
+    name: crawl-engineer
 ---
 
 When working on the crawling system:

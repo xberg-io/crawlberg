@@ -3,3 +3,6 @@ version: "1.10.3"
 description: "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback."
 author: "Kreuzberg, Inc."
 kind: "standalone"
+python_dependencies:
+  - "mcp==1.28.1"
+  - "PyYAML==6.0.3"

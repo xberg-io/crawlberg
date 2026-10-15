@@ -2,10 +2,10 @@
 # alef:hash:2ea1a011ec370643da87f2357d85f100e48accf30a9b1aec6858c2c6269d6fcc
 
 [package]
+authors.workspace = true
 name = "crawlberg-jni"
 version.workspace = true
 edition = "2024"
-authors.workspace = true
 license.workspace = true
 description = "High-performance web crawling engine"
 readme.workspace = true

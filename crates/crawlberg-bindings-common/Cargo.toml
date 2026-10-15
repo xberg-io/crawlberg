@@ -1,4 +1,9 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+]
 name = "crawlberg-bindings-common"
 version.workspace = true
 edition.workspace = true

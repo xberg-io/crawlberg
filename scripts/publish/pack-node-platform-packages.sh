@@ -52,8 +52,8 @@ for dir in */; do
   echo "✓ Found .node binary: ${node_bins[0]}"
   echo "  File size: $(stat -f%z "${dir}${node_bins[0]}" 2>/dev/null || stat -c%s "${dir}${node_bins[0]}")"
 
-  echo "Running npm pack..."
-  if (cd "$dir" && npm pack && mv ./*.tgz ..); then
+  echo "Running pnpm pack..."
+  if (cd "$dir" && pnpm pack && mv ./*.tgz ..); then
     echo "✓ Successfully packed $dir"
     success_count=$((success_count + 1))
   else

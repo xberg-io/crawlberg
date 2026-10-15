@@ -329,10 +329,26 @@ poly.local.toml
 
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
 .ai-rulez/.generated-manifest.json
+.ai-rulez/.generated-manifest.local.json
+.ai-rulez/local/
+.github/agents/
+.github/prompts/build.prompt.md
+.github/prompts/fix.prompt.md
+.github/prompts/iterate.prompt.md
+.github/prompts/lint.prompt.md
+.github/prompts/parallelize.prompt.md
+.github/prompts/review.prompt.md
+.github/prompts/test.prompt.md
 .opencode/agents/
-.opencode/skills/
+.opencode/commands/
+.pi/agents/
+.pi/mcp.json
+.pi/prompts/
+opencode.json
 # END ai-rulez
 
 # Runtime log written and truncated by e2e/brew/run_tests.sh on every run.
 mock_server.stdout
 vendor/
+
+!test_apps/node/pnpm-lock.yaml

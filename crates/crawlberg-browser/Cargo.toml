@@ -1,4 +1,15 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+    "/NOTICE",
+    "/build.rs",
+    "/js/bootstrap.js",
+    "!/src/page/tests.rs",
+    "!/src/adapter/tests.rs",
+    "!/src/js/runtime/tests/**",
+]
 name = "crawlberg-browser"
 version.workspace = true
 edition.workspace = true

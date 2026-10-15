@@ -52,7 +52,7 @@ cargo install crawlberg-cli --features "api,mcp"
 <TabItem label="npm">
 
 ```bash
-npm install -g @xberg-io/crawlberg-cli
+pnpm add -g @xberg-io/crawlberg-cli
 ```
 
 Installs a thin proxy that downloads and runs the native `crawlberg` binary from GitHub releases. Requires Node.js 18+; no Rust toolchain needed.
@@ -137,7 +137,7 @@ Wheels are built for glibc Linux (`manylinux`), macOS, and Windows. There is no 
 Install the `@xberg-io/crawlberg` package:
 
 ```bash
-npm install @xberg-io/crawlberg
+pnpm add @xberg-io/crawlberg
 ```
 
 Or with pnpm:
@@ -280,7 +280,7 @@ The Elixir bindings use [Rustler](https://github.com/rusterlium/rustler) NIFs.
 For browser or Node.js environments via wasm-bindgen:
 
 ```bash
-npm install @xberg-io/crawlberg-wasm
+pnpm add @xberg-io/crawlberg-wasm
 ```
 
 ```typescript
@@ -396,7 +396,7 @@ Two consequences are worth knowing about, because neither announces itself:
   `@xberg-io/crawlberg-linux-x64-musl` and `@xberg-io/crawlberg-linux-arm64-musl` as optional
   dependencies. Those package names are registered but hold only a `0.0.1` placeholder, so npm
   skips them without an error and installs no native binary at all. The failure surfaces later,
-  when `require()` cannot find a native module. Do not read a clean `npm install` on Alpine as
+  when `require()` cannot find a native module. Do not read a clean `pnpm add` on Alpine as
   evidence that the package works there.
 - **pip finds no musl wheel and falls back to the sdist.** PyPI carries `manylinux` wheels
   only, so `pip install crawlberg` on Alpine attempts a source build and needs a full Rust

@@ -4,10 +4,10 @@
 # To verify freshness: alef verify
 
 [package]
+authors.workspace = true
 name = "crawlberg-php"
 version.workspace = true
 edition = "2024"
-authors.workspace = true
 license.workspace = true
 description = "High-performance web crawling engine"
 readme.workspace = true

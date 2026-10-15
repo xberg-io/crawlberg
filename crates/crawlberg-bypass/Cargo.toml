@@ -1,4 +1,10 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+    "/README.md",
+]
 name = "crawlberg-bypass"
 version.workspace = true
 edition.workspace = true

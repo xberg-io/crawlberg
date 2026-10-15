@@ -1,4 +1,14 @@
 {
+  "author": {
+    "name": "Na'aman Hirschfeld",
+    "email": "naaman@xberg.io"
+  },
+  "contributors": [
+    {
+      "name": "Tobias Perlstein",
+      "email": "tobias@xberg.io"
+    }
+  ],
   "name": "@xberg-io/crawlberg",
   "version": "1.10.3",
   "description": "High-performance web crawling engine",
@@ -16,7 +26,11 @@
       "default": "./index.js"
     }
   },
-  "files": ["index.js", "index.d.ts", "*.node"],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
   "optionalDependencies": {
     "@xberg-io/crawlberg-darwin-arm64": "1.10.3",
     "@xberg-io/crawlberg-darwin-x64": "1.10.3",
@@ -38,9 +52,9 @@
     ]
   },
   "scripts": {
-    "build": "npx --yes -p @napi-rs/cli@^3.7.3 napi build --platform --release",
-    "artifacts": "npx --yes -p @napi-rs/cli@^3.7.3 napi artifacts",
-    "prepublishOnly": "npx --yes -p @napi-rs/cli@^3.7.3 napi prepublish -t npm --skip-optional-publish"
+    "build": "pnpm --package @napi-rs/cli@^3.7.3 dlx napi build --platform --release",
+    "artifacts": "pnpm --package @napi-rs/cli@^3.7.3 dlx napi artifacts",
+    "prepublishOnly": "pnpm --package @napi-rs/cli@^3.7.3 dlx napi prepublish -t npm --skip-optional-publish"
   },
   "engines": {
     "node": ">= 22"
@@ -49,6 +63,7 @@
     "access": "public"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.9.0"
-  }
+    "@napi-rs/cli": "^3.10.8"
+  },
+  "packageManager": "pnpm@12.11.2"
 }

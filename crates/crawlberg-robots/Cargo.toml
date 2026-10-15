@@ -1,4 +1,9 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+]
 name = "crawlberg-robots"
 version.workspace = true
 edition.workspace = true

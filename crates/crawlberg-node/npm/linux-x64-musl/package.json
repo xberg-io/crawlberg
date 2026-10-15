@@ -1,4 +1,14 @@
 {
+  "author": {
+    "name": "Na'aman Hirschfeld",
+    "email": "naaman@xberg.io"
+  },
+  "contributors": [
+    {
+      "name": "Tobias Perlstein",
+      "email": "tobias@xberg.io"
+    }
+  ],
   "name": "@xberg-io/crawlberg-linux-x64-musl",
   "version": "1.10.3",
   "license": "MIT",
@@ -16,5 +26,6 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "packageManager": "pnpm@12.11.2"
 }

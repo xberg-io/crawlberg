@@ -1,4 +1,10 @@
 [package]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+]
+authors.workspace = true
 name = "crawlberg-cli"
 version.workspace = true
 edition.workspace = true

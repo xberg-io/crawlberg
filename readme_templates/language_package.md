@@ -51,14 +51,14 @@
 
 ## Agent plugin
 
-The `crawlberg` plugin is available via the `xberg-io/plugins` marketplace.
+The `crawlberg` plugin is available via the `xberg-io/crawlberg` marketplace.
 
 ```text
-/plugin marketplace add xberg-io/plugins
-/plugin install crawlberg@xberg
+/plugin marketplace add xberg-io/crawlberg
+/plugin install crawlberg@crawlberg
 ```
 
-Works with Claude Code, Codex, Cursor, Gemini CLI, Factory Droid, GitHub Copilot CLI, and opencode. See [the marketplace README](https://github.com/xberg-io/plugins) for harness-specific install instructions.
+See [the plugin guide](https://github.com/xberg-io/crawlberg/blob/main/plugin/README.md) for all supported runtimes, CLI prerequisites and standalone public skills.
 
 ## Quick Start
 

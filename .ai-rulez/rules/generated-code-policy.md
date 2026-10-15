@@ -1,5 +1,11 @@
 ---
-priority: critical
+type: Decision
+title: Generated Code Policy
+x-ai-rulez:
+  kind: rule
+  id: generated-code-policy
+  metadata:
+    priority: critical
 ---
 
 - Almost everything in e2e/ is generated — DO NOT EDIT. The generated files are the ones carrying an `alef:hash:` provenance line in their header; that marker, not the directory, is what identifies generator-owned content

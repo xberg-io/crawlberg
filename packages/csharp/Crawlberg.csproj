@@ -7,7 +7,7 @@
     <Description>High-performance web crawling engine</Description>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <RepositoryUrl>https://github.com/xberg-io/crawlberg</RepositoryUrl>
-    <Authors>Xberg Team</Authors>
+    <Authors>Na&apos;aman Hirschfeld &lt;naaman@xberg.io&gt;;Tobias Perlstein &lt;tobias@xberg.io&gt;</Authors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>

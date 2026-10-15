@@ -1,6 +1,5 @@
 {
   "name": "crawlberg",
-  "displayName": "Crawlberg",
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
   "version": "1.10.3",
   "author": {

@@ -1,7 +1,13 @@
 ---
-priority: high
-usage: "/lint"
-description: "Run linting and formatting checks via poly"
+type: Reference
+title: Lint
+description: Run linting and formatting checks via poly
+x-ai-rulez:
+  kind: command
+  id: lint
+  metadata:
+    priority: high
+    usage: /lint
 ---
 
 # Lint

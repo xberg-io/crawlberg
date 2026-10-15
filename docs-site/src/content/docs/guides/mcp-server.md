@@ -15,7 +15,7 @@ CLI, Factory Droid, GitHub Copilot CLI, or opencode, it registers an MCP server 
 `crawlberg` for you — no manual client config required.
 
 The plugin launches the server through its bundled `plugin/scripts/mcp-launch.sh`, which
-locates a `crawlberg` binary — a cached copy, one on `PATH`, `npx @xberg-io/crawlberg-cli`,
+locates a `crawlberg` binary — a cached copy, one on `PATH`, `pnpm dlx @xberg-io/crawlberg-cli`,
 `uvx --from crawlberg-cli`, Homebrew, or a release download — and runs `crawlberg mcp`.
 
 For non-agent Python workflows, the same capabilities ship as the **Hermes** plugin:
@@ -302,7 +302,7 @@ Add to your Windsurf MCP configuration:
 }
 ```
 
-### Published CLI (npx / uvx)
+### Published CLI (pnpm dlx / uvx)
 
 If you would rather not install the CLI globally, point the client at the published CLI
 package so it is fetched on demand. Both invoke the same `crawlberg mcp` stdio server.
