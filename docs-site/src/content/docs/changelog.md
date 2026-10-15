@@ -217,6 +217,11 @@ title: "Changelog"
 
 ### Fixed
 
+- A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
+  longer kills a browser whose page creation takes more than two seconds: the page's own fetch
+  timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
+  The browser pool shuts down at once while a page waits on Chrome, and a page request that its
+  timeout ends during the pool's connection leaves no connection on an external browser. (#705)
 - Owned Chrome teardown recognizes expected closure of its primary and child connections.
   Active and borrowed transport failures remain errors; successful profile retirement avoids
   a second process-family kill. Successful CLI commands await owned browser cleanup before the

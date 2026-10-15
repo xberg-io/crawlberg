@@ -1415,13 +1415,62 @@ struct BrowserState {
     /// The SSRF check every page of this browser runs under. It holds the other reference
     /// to `browser` until it is stopped.
     firewall: BrowserFirewall,
-    handler_handle: JoinHandle<()>,
+    handler_handle: OwnedHandler,
     /// Whether the handler has ended, which is when the pool replaces this browser.
     handler_end: HandlerEnd,
     user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
     /// Set once the pool has logged that this browser's sockets go unchecked.
-    remote_warned: std::sync::Once,
+    remote_warned: Arc<std::sync::Once>,
+}
+
+/// The task that runs the CDP handler of a browser of the pool, owned by the launch that
+/// started it and then by the browser's state. Dropping it aborts the task: the handler and its
+/// websocket drop, which disconnects an external Chrome and ends every session and the
+/// interception of that connection.
+///
+/// ~keep A `JoinHandle` dropped on its own detaches the task. A launch that a fetch deadline
+/// ~keep dropped while the firewall waited for Chrome's answer left its handler connected to a
+/// ~keep `browser.endpoint` Chrome with `Fetch.enable` on, and every later request of that Chrome
+/// ~keep paused for a handler that answered nothing (xberg-io/crawlberg#705). The ownership makes
+/// ~keep the close structural: there is no error path to forget it on.
+struct OwnedHandler(Option<JoinHandle<()>>);
+
+impl OwnedHandler {
+    fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.0
+            .as_ref()
+            .expect("the handler task is taken only once")
+            .abort_handle()
+    }
+
+    fn detach(&mut self) {
+        self.0.take();
+    }
+
+    /// The task, for a teardown that waits for the handler to end on its own before it aborts it.
+    fn take(mut self) -> JoinHandle<()> {
+        self.0.take().expect("the handler task is taken only once")
+    }
+}
+
+impl Drop for OwnedHandler {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// What a fetch needs of the running browser, cloned out from under the pool's state lock, so
+/// the lock is never held while the fetch waits on Chrome. ~keep
+struct BrowserHandles {
+    firewall: crate::ssrf_intercept::FirewallHandle,
+    // ~keep Read by `PooledPage`, which keeps it under the same features.
+    #[cfg(any(feature = "browser", test))]
+    handler_end: HandlerEnd,
+    pending_closes: PendingCloses,
+    remote_warned: Arc<std::sync::Once>,
 }
 
 /// How a browser left [`close_browser_within`]: under its own steam, or killed.
@@ -1441,6 +1490,21 @@ pub(crate) enum BrowserCloseOutcome {
 }
 
 impl BrowserState {
+    /// Whether this browser can still serve a page: its handler runs and its check has not failed.
+    fn is_alive(&self) -> bool {
+        !self.handler_end.has_ended() && !self.firewall.has_failed()
+    }
+
+    fn handles(&self) -> BrowserHandles {
+        BrowserHandles {
+            firewall: self.firewall.handle(),
+            #[cfg(any(feature = "browser", test))]
+            handler_end: self.handler_end.clone(),
+            pending_closes: Arc::clone(&self.pending_closes),
+            remote_warned: Arc::clone(&self.remote_warned),
+        }
+    }
+
     /// Stop the SSRF check, then close the browser, or disconnect from one crawlberg does not
     /// own, bounded by the handler shutdown timeout.
     async fn close(self) {
@@ -1451,8 +1515,10 @@ impl BrowserState {
         };
         // ~keep The stopped firewall held the only other reference, so this is the browser itself.
         match Arc::into_inner(self.browser) {
-            Some(browser) => release_browser(browser, self.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await,
-            None => self.handler_handle.abort(),
+            Some(browser) => {
+                release_browser(browser, self.handler_handle.take(), cleanup, HANDLER_SHUTDOWN_TIMEOUT).await
+            }
+            None => drop(self.handler_handle),
         }
         if let Some(user_data_dir) = self.user_data_dir {
             user_data_dir.teardown_and_wait().await;
@@ -1474,7 +1540,7 @@ impl BrowserState {
         };
         self.firewall.stop().await;
         let Some(mut browser) = Arc::into_inner(self.browser) else {
-            self.handler_handle.abort();
+            drop(self.handler_handle);
             return;
         };
         if completed
@@ -1484,17 +1550,17 @@ impl BrowserState {
             )
         {
             drop(browser);
-            stop_handler_after_close(self.handler_handle, BrowserCloseOutcome::Killed).await;
+            stop_handler_after_close(self.handler_handle.take(), BrowserCloseOutcome::Killed).await;
             return;
         }
         match profile {
             Some(profile) => {
-                kill_browser(browser, self.handler_handle, profile, HANDLER_SHUTDOWN_TIMEOUT).await;
+                kill_browser(browser, self.handler_handle.take(), profile, HANDLER_SHUTDOWN_TIMEOUT).await;
             }
             None => {
                 release_browser(
                     browser,
-                    self.handler_handle,
+                    self.handler_handle.take(),
                     ExternalTabCleanup {
                         pending_closes: Some(self.pending_closes),
                         ..ExternalTabCleanup::default()
@@ -2150,9 +2216,16 @@ async fn remove_profile_dir(dir: std::path::PathBuf) {
 pub struct BrowserPool {
     owner: u32,
     config: BrowserPoolConfig,
+    /// The running browser. The lock covers reading and replacing the state only: it is never
+    /// held across a wait on Chrome, so a shutdown and every fetch get it at once. ~keep
     state: Arc<Mutex<Option<BrowserState>>>,
+    /// Held across a launch, so one fetch launches and the others take its browser. A shutdown
+    /// never waits for it: it ends the launch instead. ~keep
+    launching: Mutex<()>,
     page_semaphore: Arc<Semaphore>,
-    shutdown: Arc<AtomicBool>,
+    /// Set by `shutdown`. Every launch and watch in progress waits on it and ends with the
+    /// pool's error when it is set. ~keep
+    shut_down: tokio::sync::watch::Sender<bool>,
     /// Lock-free health signal updated whenever browser state changes.
     healthy: Arc<AtomicBool>,
     next_generation: AtomicU64,
@@ -2179,8 +2252,9 @@ impl BrowserPool {
             owner: std::process::id(),
             config,
             state: Arc::new(Mutex::new(None)),
+            launching: Mutex::new(()),
             page_semaphore: semaphore,
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shut_down: tokio::sync::watch::Sender::new(false),
             healthy: Arc::new(AtomicBool::new(false)),
             next_generation: AtomicU64::new(1),
             #[cfg(test)]
@@ -2201,16 +2275,11 @@ impl BrowserPool {
 
     /// Eagerly launch the Chrome process so that the first
     /// [`acquire_page`](Self::acquire_page) call does not pay the startup
-    /// cost. Returns an error immediately if Chrome cannot be started.
+    /// cost. Returns an error immediately if Chrome cannot be started. A Chrome whose CDP
+    /// handler has ended, or whose request check has failed, is replaced, as a page request
+    /// replaces it.
     pub async fn warm(&self) -> Result<(), CrawlError> {
-        let mut guard = self.state.lock().await;
-        if guard.is_none() {
-            let bs = self.launch_browser().await?;
-            *guard = Some(bs);
-            self.healthy.store(true, Ordering::Release);
-            self.supervise_current(guard.as_ref().expect("browser state was just installed"));
-        }
-        Ok(())
+        self.until_shut_down(self.running_browser()).await.map(drop)
     }
 
     /// Acquire a new blank page from the pool.
@@ -2236,8 +2305,8 @@ impl BrowserPool {
         proxy: Option<&crate::proxy::ChromeProxy>,
         config: &crate::types::CrawlConfig,
     ) -> Result<PooledPage, CrawlError> {
-        if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::browser_error("pool is shut down"));
+        if self.is_shut_down() {
+            return Err(pool_shut_down());
         }
         let _ = crate::net::egress::socket_policy(
             &config.ssrf,
@@ -2252,21 +2321,20 @@ impl BrowserPool {
             .await
             .map_err(|_| CrawlError::browser_error("page semaphore closed"))?;
 
-        if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::browser_error("pool is shut down"));
-        }
-
-        let mut pooled = match self.try_new_page(proxy, config).await {
-            Ok(pooled) => pooled,
-            Err(first_err) => {
-                self.relaunch_browser().await?;
-                self.try_new_page(proxy, config).await.map_err(|e| {
-                    CrawlError::browser_error(format!(
-                        "failed to open page after relaunch: {e} (original: {first_err})"
-                    ))
-                })?
-            }
-        };
+        // ~keep A page that fails to open on a dead browser is tried once more: the second try
+        // ~keep replaces the browser. A page that fails on a live browser is tried on it again.
+        let mut pooled = self
+            .until_shut_down(async {
+                match self.try_new_page(proxy, config).await {
+                    Ok(pooled) => Ok(pooled),
+                    Err(first_err) => self.try_new_page(proxy, config).await.map_err(|e| {
+                        CrawlError::browser_error(format!(
+                            "failed to open page after relaunch: {e} (original: {first_err})"
+                        ))
+                    }),
+                }
+            })
+            .await?;
         pooled._permit = Some(permit);
         Ok(pooled)
     }
@@ -2276,19 +2344,42 @@ impl BrowserPool {
     /// This is a lock-free atomic read — safe for use in health probes and
     /// monitoring without risking contention.
     pub fn is_healthy(&self) -> bool {
-        self.healthy.load(Ordering::Acquire) && !self.shutdown.load(Ordering::Acquire)
+        self.healthy.load(Ordering::Acquire) && !self.is_shut_down()
+    }
+
+    pub(crate) fn is_shut_down(&self) -> bool {
+        *self.shut_down.borrow()
     }
 
     /// Gracefully shut the pool down. Safe to call multiple times.
+    ///
+    /// Every launch and watch in progress ends with the pool's error, and so no wait on Chrome
+    /// can hold the shutdown: it takes the state and closes the browser.
     pub async fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.shut_down.send_replace(true);
         self.healthy.store(false, Ordering::Release);
 
         self.page_semaphore.close();
 
-        let mut guard = self.state.lock().await;
-        if let Some(bs) = guard.take() {
-            bs.close().await;
+        let running = self.state.lock().await.take();
+        if let Some(running) = running {
+            running.close().await;
+        }
+    }
+
+    /// Run `work` until it ends or the pool is shut down, which ends it with the pool's error.
+    ///
+    /// ~keep The shutdown arm is polled first, so a shut-down pool hands out no page: the work
+    /// ~keep drops, and with it a launch in progress, whose handler task ends with it.
+    async fn until_shut_down<T>(
+        &self,
+        work: impl std::future::Future<Output = Result<T, CrawlError>>,
+    ) -> Result<T, CrawlError> {
+        let mut shut_down = self.shut_down.subscribe();
+        tokio::select! {
+            biased;
+            _ = shut_down.wait_for(|down| *down) => Err(pool_shut_down()),
+            result = work => result,
         }
     }
 
@@ -2303,8 +2394,7 @@ impl BrowserPool {
             .ok_or_else(|| CrawlError::browser_error("browser pool has no running browser"))
     }
 
-    /// Try to create a new page from the current browser. Takes the mutex
-    /// briefly, creates the page, and releases.
+    /// Try to create a new page from the running browser, after a launch when there is none.
     ///
     /// Returns a [`PooledPage`] that holds no permit yet: the caller adds the permit. The page
     /// carries the current browser's pending-close registry, so it can record a close its `Drop`
@@ -2314,70 +2404,73 @@ impl BrowserPool {
         proxy: Option<&crate::proxy::ChromeProxy>,
         config: &crate::types::CrawlConfig,
     ) -> Result<PooledPage, CrawlError> {
-        let mut guard = self.state.lock().await;
-        if guard.is_none()
-            || guard
-                .as_ref()
-                .is_some_and(|bs| bs.handler_end.has_ended() || bs.firewall.has_failed())
-        {
-            self.healthy.store(false, Ordering::Release);
-            if let Some(old) = guard.take() {
-                old.fail_closed().await;
-            }
-            let bs = self.launch_browser().await?;
-            *guard = Some(bs);
-            self.healthy.store(true, Ordering::Release);
-            self.supervise_current(guard.as_ref().expect("browser state was just installed"));
-        }
-
-        let bs = guard.as_ref().expect("browser state was just set above");
+        let browser = self.running_browser().await?;
         let sockets = crate::net::egress::socket_policy(
             &config.ssrf,
             self.config.browser_endpoint.as_deref(),
-            &bs.remote_warned,
+            &browser.remote_warned,
         )?;
-        let page = tokio::time::timeout(
-            PAGE_OPEN_TIMEOUT,
-            bs.firewall.handle().new_page_with_policy(proxy, sockets, &config.ssrf),
-        )
+        // ~keep The bound covers the page's arm as well as its creation: a Chrome that never
+        // ~keep answers the arm would otherwise hold an acquisition until someone shut the pool down.
+        let (page, watch) = tokio::time::timeout(PAGE_OPEN_TIMEOUT, async {
+            let page = browser
+                .firewall
+                .new_page_with_policy(proxy, sockets, &config.ssrf)
+                .await?;
+            let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
+            Ok::<_, CrawlError>((page, watch))
+        })
         .await
         .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
-        let watch = bs.firewall.handle().watch(&page, config, config.max_redirects).await?;
         Ok(PooledPage {
             #[cfg(any(feature = "browser", test))]
-            handler_end: bs.handler_end.clone(),
+            handler_end: browser.handler_end,
             page: Some(page),
             watch: Some(watch),
             _permit: None,
-            pending_closes: Some(Arc::clone(&bs.pending_closes)),
+            pending_closes: Some(browser.pending_closes),
         })
     }
 
-    /// Force-relaunch Chrome (used after a page-open failure).
-    async fn relaunch_browser(&self) -> Result<(), CrawlError> {
-        let mut guard = self.state.lock().await;
-
-        if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::browser_error("pool is shut down"));
+    /// The handles of the running browser. When there is none, or the current one has ended,
+    /// one fetch at a time launches a browser and installs it; the others take that one.
+    async fn running_browser(&self) -> Result<BrowserHandles, CrawlError> {
+        if let Some(browser) = self.current_browser().await {
+            return Ok(browser);
         }
-
-        if guard
-            .as_ref()
-            .is_some_and(|bs| !bs.handler_end.has_ended() && !bs.firewall.has_failed())
-        {
-            return Ok(());
+        let _launching = self.launching.lock().await;
+        if let Some(browser) = self.current_browser().await {
+            return Ok(browser);
         }
-
         self.healthy.store(false, Ordering::Release);
-        if let Some(old) = guard.take() {
-            old.close().await;
+        // ~keep A browser that ended is retired on a task of its own, as the supervisor retires
+        // ~keep it, so neither a shutdown nor a fetch deadline can cut its teardown short.
+        let ended = self.state.lock().await.take();
+        if let Some(ended) = ended {
+            tokio::spawn(ended.fail_closed());
         }
-
-        let bs = self.launch_browser().await?;
-        *guard = Some(bs);
+        let launched = self.launch_browser().await?;
+        let mut guard = self.state.lock().await;
+        // ~keep Checked under the state lock, which the shutdown takes after it sets the flag: a
+        // ~keep launch that finishes as the pool shuts down is dropped here, not installed.
+        if self.is_shut_down() {
+            return Err(pool_shut_down());
+        }
+        let browser = launched.handles();
+        self.supervise_current(&launched);
+        *guard = Some(launched);
         self.healthy.store(true, Ordering::Release);
-        self.supervise_current(guard.as_ref().expect("browser state was just installed"));
-        Ok(())
+        Ok(browser)
+    }
+
+    /// The handles of the running browser, when there is one and it is alive.
+    async fn current_browser(&self) -> Option<BrowserHandles> {
+        self.state
+            .lock()
+            .await
+            .as_ref()
+            .filter(|browser| browser.is_alive())
+            .map(BrowserState::handles)
     }
 
     /// Retire a browser as soon as either half of its security controller ends. The generation
@@ -2447,32 +2540,26 @@ impl BrowserPool {
                 let _ = hold.wait_for(|held| !*held).await;
             })
         };
+        // ~keep From here the launch owns the handler: a start of the check that fails, or a
+        // ~keep launch dropped while the check waits for Chrome, aborts the handler with the
+        // ~keep drop of this value. The connection closes; a launched Chrome goes with its
+        // ~keep `Browser` and its profile directory.
+        let handler_handle = OwnedHandler(Some(handler_handle));
         let browser = Arc::new(browser);
-        let firewall = match BrowserFirewall::start_supervised(
-            Arc::clone(&browser),
-            BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
-            PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
-            handler_handle.abort_handle(),
+        // ~keep Bounded by the launch timeout: a Chrome that never acknowledges the browser-wide
+        // ~keep arm ends the launch, whose drop aborts the handler, instead of holding `warm` and
+        // ~keep every fetch behind the launch lock until a shutdown.
+        let firewall = tokio::time::timeout(
+            self.config.launch_timeout,
+            BrowserFirewall::start_supervised(
+                Arc::clone(&browser),
+                BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+                PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
+                handler_handle.abort_handle(),
+            ),
         )
         .await
-        {
-            Ok(firewall) => firewall,
-            Err(error) => {
-                match Arc::into_inner(browser) {
-                    Some(browser) => {
-                        release_browser(
-                            browser,
-                            handler_handle,
-                            ExternalTabCleanup::default(),
-                            HANDLER_SHUTDOWN_TIMEOUT,
-                        )
-                        .await;
-                    }
-                    None => handler_handle.abort(),
-                }
-                return Err(error);
-            }
-        };
+        .map_err(|_| CrawlError::browser_error("timeout starting request interception"))??;
 
         Ok(BrowserState {
             generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
@@ -2482,27 +2569,37 @@ impl BrowserPool {
             handler_end,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
-            remote_warned: std::sync::Once::new(),
+            remote_warned: Arc::new(std::sync::Once::new()),
         })
     }
+}
+
+fn pool_shut_down() -> CrawlError {
+    CrawlError::browser_error("pool is shut down")
 }
 
 impl Drop for BrowserPool {
     fn drop(&mut self) {
         if self.owner == std::process::id()
-            && let Ok(state) = self.state.try_lock()
-            && let Some(state) = state.as_ref()
-            && !state.firewall.has_failed()
-            && !state.handler_end.has_ended()
+            && let Ok(mut state) = self.state.try_lock()
+            && let Some(state) = state.as_mut()
         {
-            state.browser.begin_owned_termination();
+            if !state.firewall.has_failed() && !state.handler_end.has_ended() {
+                state.browser.begin_owned_termination();
+            }
+            // ~keep The handler outlives the pool's state: the stopping firewall's listener still
+            // ~keep needs it to observe the owned browser's end. Aborting it here would turn that
+            // ~keep expected end into a controller failure.
+            state.handler_handle.detach();
         }
         if self.owner != std::process::id() {
             // ~keep A fork inherits Tokio wakers, not its running reactor. Retain the copied
             // ~keep resources so field drops cannot wake invalid I/O handles or tear down the
             // ~keep parent's Chrome. Only child memory is leaked; the parent keeps its cleanup.
             std::mem::forget(Arc::clone(&self.state));
+            std::mem::forget(std::mem::replace(&mut self.launching, Mutex::new(())));
             std::mem::forget(Arc::clone(&self.page_semaphore));
+            std::mem::forget(self.shut_down.clone());
             #[cfg(test)]
             std::mem::forget(self.hold_handler_end.clone());
         }
@@ -2514,7 +2611,7 @@ impl std::fmt::Debug for BrowserPool {
         f.debug_struct("BrowserPool")
             .field("config", &self.config)
             .field("healthy", &self.healthy.load(Ordering::Relaxed))
-            .field("shutdown", &self.shutdown.load(Ordering::Relaxed))
+            .field("shutdown", &self.is_shut_down())
             .finish()
     }
 }
