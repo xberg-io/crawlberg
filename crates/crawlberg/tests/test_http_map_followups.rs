@@ -1,4 +1,6 @@
 use crawlberg::{CrawlConfig, create_engine, scrape};
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -107,6 +109,44 @@ async fn map_requests_robots_and_three_advertised_sitemaps_with_configured_pacin
     site.verify().await;
 }
 
+#[derive(Clone, Default)]
+struct HostPacingCapture(std::sync::Arc<std::sync::Mutex<Vec<(String, f64)>>>);
+
+#[derive(Default)]
+struct HostPacingFields {
+    domain: Option<String>,
+    wait_ms: Option<f64>,
+}
+
+impl tracing::field::Visit for HostPacingFields {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "domain" {
+            self.domain = Some(value.to_owned());
+        }
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        if field.name() == "wait_ms" {
+            self.wait_ms = Some(value);
+        }
+    }
+
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for HostPacingCapture {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() != "crawlberg::rate_limiter" {
+            return;
+        }
+        let mut fields = HostPacingFields::default();
+        event.record(&mut fields);
+        if let (Some(domain), Some(wait_ms)) = (fields.domain, fields.wait_ms) {
+            self.0.lock().unwrap().push((domain, wait_ms));
+        }
+    }
+}
+
 #[tokio::test]
 async fn default_map_has_no_host_pacing_across_robots_and_three_sitemaps() {
     let site = MockServer::start().await;
@@ -135,16 +175,21 @@ async fn default_map_has_no_host_pacing_across_robots_and_three_sitemaps() {
         ..config()
     }))
     .unwrap();
-    let start = std::time::Instant::now();
-    let result = crawlberg::map_urls(&engine, &site.uri()).await.unwrap();
+    // ~keep With one live dispatcher, tracing caches interest from whichever test first reaches the callsite.
+    // ~keep Keep two scoped dispatchers alive so registration accounts for this capture on every thread.
+    let _uncaptured_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    let pacing = HostPacingCapture::default();
+    let subscriber = tracing_subscriber::registry().with(pacing.clone());
+    let result = crawlberg::map_urls(&engine, &site.uri())
+        .with_subscriber(subscriber)
+        .await
+        .unwrap();
     assert_eq!(result.urls.len(), 3);
     assert_eq!(site.received_requests().await.unwrap().len(), 4);
-    // ~keep Wrongly selecting the HTTP default adds three 200 ms waits. Allow ample loopback
-    // ~keep overhead below that 600 ms regression; the paused unit controls check exact delays.
-    assert!(
-        start.elapsed() < std::time::Duration::from_millis(400),
-        "default map paced its four requests: {:?}",
-        start.elapsed()
+    assert_eq!(
+        *pacing.0.lock().unwrap(),
+        vec![("127.0.0.1".to_owned(), 0.0); 4],
+        "each robots/sitemap request must select zero host pacing"
     );
     site.verify().await;
 }

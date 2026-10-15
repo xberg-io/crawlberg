@@ -107,11 +107,19 @@ async fn scrape_outcome(max_redirects: usize, url: &str, base: &str) -> (String,
     (result.final_url.trim_start_matches(base).to_owned(), result.html)
 }
 
-/// The address and the reason of a redirect failure, the address relative to `base`.
+/// The address and the message of a redirect failure, the address relative to `base`.
+///
+/// The message of the error is `<address> - <reason>`.
 fn redirect_failure(what: &str, error: &CrawlError, base: &str) -> (String, String) {
     match error {
-        CrawlError::SsrfPolicyViolation { url, reason, .. } => {
-            (url.trim_start_matches(base).to_owned(), reason.clone())
+        CrawlError::TooManyRedirects {
+            message,
+            source: Some(_),
+        } => {
+            let (address, reason) = message
+                .split_once(" - ")
+                .unwrap_or_else(|| panic!("{what}: the redirect error must carry the address: {message}"));
+            (address.trim_start_matches(base).to_owned(), reason.to_owned())
         }
         other => panic!("{what} must fail with the redirect error: {other:?}"),
     }

@@ -905,7 +905,7 @@ impl CrawlEngine {
             }
             Ok(Err((entry, error))) => {
                 retire_in_flight(drive.in_flight, &entry.url);
-                state.pages_failed += 1;
+                state.record_failed_fetch(&error);
                 self.report_fetch_error(&entry.url, &error, context).await;
                 Ok(false)
             }

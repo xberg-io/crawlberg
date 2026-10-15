@@ -133,11 +133,20 @@ pub(crate) struct BrowserPage {
     pub(crate) text: crate::tower::BodyText,
 }
 
+/// The engine's browsers that a fetch runs on.
+#[derive(Clone, Copy)]
+pub(crate) struct BrowserHandles<'a> {
+    /// The engine's pool: the pool the caller gave, else the one the engine owns.
+    pub(crate) pool: Option<&'a BrowserPool>,
+    /// The executor of the native backend.
+    #[cfg(feature = "browser-native")]
+    pub(crate) native_executor: Option<&'a crawlberg_browser::adapter::NativeBrowserExecutor>,
+}
+
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
-/// When `config.browser_pool` is set, acquires a page from the pool, uses it, and returns
-/// it on completion. Otherwise launches a one-shot browser instance and tears it down
-/// afterwards.
+/// With a pool in `browsers`, acquires a page from it, uses it, and returns it on completion.
+/// Otherwise launches a one-shot browser instance and tears it down afterwards.
 ///
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
 /// the redirects the browser followed to reach it. The page's status is handled the way
@@ -148,22 +157,21 @@ pub(crate) struct BrowserPage {
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
+    browsers: BrowserHandles<'_>,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
     want_screenshot: bool,
     rate_limiter: &dyn crate::traits::RateLimiter,
-    #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
     retry_browser_fetch(url, config, rate_limiter, |deadline| {
         Box::pin(browser_fetch_once(
             url,
             config,
+            browsers,
             prior_cookies,
             crawl_cookies,
             want_screenshot,
             deadline,
-            #[cfg(feature = "browser-native")]
-            native_executor,
         ))
     })
     .await
@@ -220,34 +228,27 @@ where
     Err(CrawlError::other("browser retry exhausted"))
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("the browser's CDP connection closed")]
-struct BrowserConnectionClosed {
-    #[source]
-    source: Option<crate::error::ErrorSource>,
-}
+use crate::error::BrowserConnectionClosed;
 
 fn browser_error_is_retryable(error: &CrawlError, config: &CrawlConfig) -> bool {
-    crate::http::should_retry_error(error, &config.retry_codes)
-        || matches!(error, CrawlError::BrowserError { source: Some(source), .. }
-            if std::error::Error::source(source).is_some_and(|cause| cause.is::<BrowserConnectionClosed>()))
+    crate::http::should_retry_error(error, &config.retry_codes) || error.browser_connection_closed()
 }
 
 async fn browser_fetch_once(
     url: &str,
     config: &CrawlConfig,
+    browsers: BrowserHandles<'_>,
     prior_cookies: Option<&[BrowserCookie]>,
     crawl_cookies: Option<&CrawlCookies>,
     want_screenshot: bool,
     deadline: tokio::time::Instant,
-    #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
-    let pool = config.browser_pool.as_deref();
     let page = match config.browser.backend {
         BrowserBackend::Chromiumoxide => {
             let given = crawl_cookies.map(CrawlCookies::given);
             let prior_cookies = given.as_deref().or(prior_cookies);
-            let page = chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot, deadline).await?;
+            let page =
+                chromiumoxide_fetch(url, config, prior_cookies, browsers.pool, want_screenshot, deadline).await?;
             if let (Some(crawl_cookies), Some(given)) = (crawl_cookies, &given) {
                 crawl_cookies.absorb(given, &page.cookies);
             }
@@ -265,10 +266,12 @@ async fn browser_fetch_once(
                 );
             }
             #[cfg(feature = "browser-native")]
-            let (response, refused, redirects, charset) =
-                tokio::time::timeout_at(deadline, native_fetch(url, config, prior_cookies, native_executor))
-                    .await
-                    .unwrap_or_else(|_| Err(overall_deadline_error(config.browser.overall_timeout)))?;
+            let (response, refused, redirects, charset) = tokio::time::timeout_at(
+                deadline,
+                native_fetch(url, config, prior_cookies, browsers.native_executor),
+            )
+            .await
+            .unwrap_or_else(|_| Err(overall_deadline_error(config.browser.overall_timeout)))?;
             #[cfg(not(feature = "browser-native"))]
             let (response, refused, redirects, charset) =
                 tokio::time::timeout_at(deadline, native_fetch(url, config, prior_cookies))
@@ -920,7 +923,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{BrowserPage, browser_fetch};
+    use super::{BrowserHandles, BrowserPage, browser_fetch};
     use crate::error::CrawlError;
     use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
 
@@ -941,11 +944,14 @@ mod tests {
         browser_fetch(
             &format!("{}{route}", site.uri()),
             &config,
+            BrowserHandles {
+                pool: None,
+                native_executor: Some(executor),
+            },
             None,
             None,
             false,
             &crate::defaults::NoopRateLimiter,
-            Some(executor),
         )
         .await
     }
@@ -1007,11 +1013,14 @@ mod tests {
         let fetched = browser_fetch(
             &format!("{}/slow", site.uri()),
             &config,
+            BrowserHandles {
+                pool: None,
+                native_executor: Some(&executor),
+            },
             None,
             None,
             false,
             &crate::defaults::NoopRateLimiter,
-            Some(&executor),
         )
         .await;
         let elapsed = started.elapsed();
@@ -1070,11 +1079,14 @@ mod tests {
         browser_fetch(
             &format!("{}/page", site.uri()),
             &config,
+            BrowserHandles {
+                pool: None,
+                native_executor: Some(&executor),
+            },
             None,
             None,
             false,
             &turns,
-            Some(&executor),
         )
         .await
         .expect("the page must load");

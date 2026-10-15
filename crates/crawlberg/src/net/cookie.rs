@@ -90,18 +90,25 @@ pub fn validate_cookie_domain(host: &str, domain_attr: &str) -> Result<Option<St
     Ok(Some(domain))
 }
 
-/// Whether a `Set-Cookie` attribute is a `Domain=` attribute. Attribute matching is
-/// case-insensitive per RFC 6265 §4.1.1.
-fn is_domain_attribute(attr: &str) -> bool {
-    attr.len() > 7 && attr[..7].eq_ignore_ascii_case("domain=")
+/// The value of an attribute that the cookie parser of reqwest's jar reads as `Domain`: the
+/// key before the first `=` matches case-insensitively once trimmed, and the value, trimmed,
+/// must be non-empty. ~keep The same reading as `cookie` 0.18's `parse_inner`, so admission
+/// sees the attribute the jar stores.
+fn domain_attribute_value(attr: &str) -> Option<&str> {
+    let (key, value) = attr.split_once('=')?;
+    let value = value.trim();
+    (key.trim().eq_ignore_ascii_case("domain") && !value.is_empty()).then_some(value)
 }
 
-/// Extract the `Domain=` attribute value from a raw `Set-Cookie` header string, if present.
+/// The `Domain` the jar takes from a raw `Set-Cookie` header: the last non-empty one, since
+/// each later attribute replaces the earlier (RFC 6265 section 5.2.3 and the `cookie` crate).
 fn domain_attribute(raw_set_cookie: &str) -> Option<String> {
-    raw_set_cookie.split(';').skip(1).find_map(|attr| {
-        let attr = attr.trim();
-        is_domain_attribute(attr).then(|| attr[7..].to_owned())
-    })
+    raw_set_cookie
+        .split(';')
+        .skip(1)
+        .filter_map(domain_attribute_value)
+        .last()
+        .map(str::to_owned)
 }
 
 /// The raw `Set-Cookie` header without its `Domain=` attributes: the header of the host-only
@@ -109,7 +116,7 @@ fn domain_attribute(raw_set_cookie: &str) -> Option<String> {
 fn without_domain_attribute(raw_set_cookie: &str) -> String {
     let mut parts = raw_set_cookie.split(';');
     let mut header = parts.next().unwrap_or_default().to_owned();
-    for attr in parts.filter(|attr| !is_domain_attribute(attr.trim())) {
+    for attr in parts.filter(|attr| domain_attribute_value(attr).is_none()) {
         header.push(';');
         header.push_str(attr);
     }
@@ -433,6 +440,80 @@ mod tests {
                 "{raw} set from {setter}, then a request to {other} carries {cookies:?}"
             );
         }
+    }
+
+    #[test]
+    fn policy_cookie_store_admits_the_domain_the_jar_would_use() {
+        // ~keep reqwest 0.13.5 / cookie 0.18.2 take the last non-empty Domain and trim the
+        // ~keep attribute key; admission must validate that one, not the first or an unspaced match.
+        for (setter, raw, other) in [
+            (
+                "http://a.onrender.com/",
+                "s=1; Domain=a.onrender.com; Domain=onrender.com",
+                "http://b.onrender.com/",
+            ),
+            (
+                "http://a.onrender.com/",
+                "s=2; Domain = onrender.com",
+                "http://b.onrender.com/",
+            ),
+            (
+                "http://a.onrender.com/",
+                "s=3; Domain=onrender.com; Domain=a.onrender.com; Domain=onrender.com",
+                "http://b.onrender.com/",
+            ),
+            (
+                "http://a.onrender.com/",
+                "s=4; Domain=evil.test; Domain=onrender.com",
+                "http://b.onrender.com/",
+            ),
+        ] {
+            let store = PolicyCookieStore::default();
+            let header = HeaderValue::from_str(raw).unwrap();
+            store.set_cookies(&mut std::iter::once(&header), &setter.parse::<url::Url>().unwrap());
+            assert_eq!(
+                store.cookies(&other.parse::<url::Url>().unwrap()),
+                None,
+                "{raw} set from {setter} reached {other}"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_cookie_store_stores_the_last_domain_in_either_order() {
+        let store = PolicyCookieStore::default();
+        let setter = "http://a.example.org/".parse::<url::Url>().unwrap();
+        let header = HeaderValue::from_static("s=1; Domain=evil.test; Domain=example.org");
+        store.set_cookies(&mut std::iter::once(&header), &setter);
+        let sent = store.cookies(&"http://b.example.org/".parse::<url::Url>().unwrap());
+        assert!(
+            sent.is_some_and(|value| value.to_str().is_ok_and(|v| v.contains("s=1"))),
+            "the last Domain, example.org, is the one the jar stores and sends"
+        );
+        let store = PolicyCookieStore::default();
+        let header = HeaderValue::from_static("s=2; Domain=example.org; Domain=evil.test");
+        store.set_cookies(&mut std::iter::once(&header), &setter);
+        assert_eq!(
+            store.cookies(&setter),
+            None,
+            "the last Domain, evil.test, does not match and the cookie is dropped"
+        );
+    }
+
+    #[test]
+    fn policy_cookie_store_agrees_with_the_result_metadata_on_a_repeated_domain() {
+        let host = "http://127.0.0.1/".parse::<url::Url>().unwrap();
+        let raw = "lastwins=16; Domain=other.test; Domain=127.0.0.1";
+        let store = PolicyCookieStore::default();
+        let header = HeaderValue::from_static(raw);
+        store.set_cookies(&mut std::iter::once(&header), &host);
+        let sent = store
+            .cookies(&host)
+            .expect("the jar stores the last Domain, the host itself");
+        assert!(sent.to_str().unwrap().contains("lastwins=16"), "sent {sent:?}");
+        let headers = std::collections::HashMap::from([("set-cookie".to_owned(), vec![raw.to_owned()])]);
+        let listed = crate::http::result_cookies_from_hashmap(host.as_str(), &headers);
+        assert_eq!(listed.len(), 1, "result metadata lists what the jar stored");
     }
 
     #[test]

@@ -403,6 +403,8 @@ struct CookieAttributes {
     /// The cookie's own `Domain` value, before any check against the request host.
     domain_attribute: Option<String>,
     path: String,
+    /// The path a `Path` attribute that does not start with `/` restores.
+    default_path: String,
     /// Whether a `Path` attribute that starts with `/` set `path`, rather than the default path.
     path_attribute: bool,
     secure: bool,
@@ -417,6 +419,7 @@ impl CookieAttributes {
             domain: url.host_str().unwrap_or("").to_lowercase(),
             domain_attribute: None,
             path: default_path(url),
+            default_path: default_path(url),
             path_attribute: false,
             secure: false,
             http_only: false,
@@ -444,13 +447,16 @@ impl CookieAttributes {
                 self.domain = ascii_domain(value.trim_start_matches('.'));
                 self.domain_attribute = Some(value.to_string());
             }
-            // ~keep A Path that does not start with `/` leaves the default path (RFC 6265bis
-            // ~keep section 5.6.4).
+            // ~keep A Path that does not start with `/` selects the default path (RFC 6265bis
+            // ~keep section 5.6.4), replacing an earlier valid Path as the last attribute wins.
             "path" if value.starts_with('/') => {
                 self.path = value.to_string();
                 self.path_attribute = true;
             }
-            "path" => {}
+            "path" => {
+                self.path = self.default_path.clone();
+                self.path_attribute = false;
+            }
             "expires" => {
                 if let Ok(timestamp) = parse_http_date(value) {
                     self.expires = Some(timestamp);
@@ -824,6 +830,19 @@ mod tests {
         jar.set_cookie("justaname; Path=/", &url);
         jar.set_cookie_from_js("justaname; Path=/", &url);
         assert_eq!(jar.snapshot().len(), 0);
+    }
+
+    #[test]
+    fn an_invalid_last_path_resets_an_earlier_valid_path_to_the_default() {
+        // ~keep RFC 6265 5.2.4 assigns the last Path attribute, valid or not, so a relative
+        // ~keep later Path restores the default path; the cookie crate behind the HTTP jar does the same.
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/a/b/c").unwrap();
+        jar.set_cookie("a=1; Path=/Folder; Path=relative", &url);
+        jar.set_cookie_from_js("b=2; Path=/Folder; Path=relative", &url);
+
+        let paths: Vec<String> = jar.snapshot().into_iter().map(|entry| entry.3).collect();
+        assert_eq!(paths, vec!["/a/b", "/a/b"]);
     }
 
     #[test]

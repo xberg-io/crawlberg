@@ -335,10 +335,11 @@ fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<St
             .skip(1)
             .filter_map(|attribute| {
                 let (name, value) = attribute.trim().split_once('=')?;
-                let value = value.trim();
-                (name.trim().eq_ignore_ascii_case("path") && value.starts_with('/')).then(|| value.to_owned())
+                name.trim().eq_ignore_ascii_case("path").then(|| value.trim())
             })
             .last()
+            .filter(|value| value.starts_with('/'))
+            .map(str::to_owned)
     });
     let headers = headers
         .iter()
@@ -435,6 +436,18 @@ mod tests {
         let cookies = native_header_cookies("https://example.com/", &headers);
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].path.as_deref(), Some("/Folder"));
+    }
+
+    #[test]
+    fn should_use_the_default_path_when_the_last_path_attribute_is_invalid() {
+        let headers =
+            std::collections::HashMap::from([("set-cookie".into(), "result=1; Path=/Folder; Path=relative".into())]);
+        let cookies = native_header_cookies("https://example.com/a/b/c", &headers);
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(
+            cookies[0].path, None,
+            "the later relative Path replaces /Folder with the default path"
+        );
     }
 
     #[test]

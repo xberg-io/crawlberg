@@ -223,3 +223,108 @@ async fn should_report_native_cookie_with_case_sensitive_path_once() {
     assert_eq!(pairs(&result), vec![("result".into(), "1".into())]);
     assert_eq!(result.cookies[0].path.as_deref(), Some("/Folder"));
 }
+
+async fn single_page(site: &MockServer, route: &str) -> CrawlResult {
+    let mut options = config(BrowserMode::Always, true);
+    options.max_pages = Some(1);
+    let engine = create_engine(Some(options)).expect("engine");
+    let result = crawl(&engine, &format!("{}{route}", site.uri())).await.expect("crawl");
+    assert_eq!(result.error, None);
+    assert_eq!(result.pages.len(), 1);
+    result
+}
+
+async fn assert_cookie_sent(site: &MockServer, route: &str, expected: &str) {
+    let requests = site.received_requests().await.expect("request recording");
+    let requests: Vec<_> = requests.iter().filter(|request| request.url.path() == route).collect();
+    assert_eq!(requests.len(), 1, "Chrome must visit {route} exactly once");
+    assert_eq!(
+        requests[0]
+            .headers
+            .get("cookie")
+            .and_then(|header| header.to_str().ok()),
+        Some(expected),
+        "Chrome must store and send the off-host cookie before the result is collected"
+    );
+}
+
+#[tokio::test]
+async fn should_exclude_third_party_resource_cookie_from_browser_results() {
+    let site = MockServer::start().await;
+    let resource = format!("http://localhost:{}/resource", site.address().port());
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "requested=1; Path=/")
+                .set_body_raw(
+                    format!("<html><body><iframe src='{resource}'></iframe></body></html>"),
+                    "text/html",
+                ),
+        )
+        .mount(&site)
+        .await;
+    // ~keep Partitioned cookies work without depending on Chrome's third-party-cookie policy.
+    Mock::given(method("GET"))
+        .and(path("/resource"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "resource=3; Path=/; Secure; SameSite=None; Partitioned")
+                .set_body_raw("<html><body><img src='/confirm'></body></html>", "text/html"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/confirm"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw("<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
+        )
+        .mount(&site)
+        .await;
+    let result = single_page(&site, "/").await;
+    assert_cookie_sent(&site, "/confirm", "resource=3").await;
+    assert_eq!(result.pages[0].final_url, format!("{}/", site.uri()));
+    assert_eq!(pairs(&result), vec![("requested".into(), "1".into())]);
+}
+
+#[tokio::test]
+async fn should_exclude_intermediate_redirect_host_cookie_from_browser_results() {
+    let site = MockServer::start().await;
+    let intermediate = format!("http://localhost:{}/intermediate", site.address().port());
+    for (route, location, cookie) in [
+        ("/start", intermediate, "requested=1; Path=/"),
+        ("/intermediate", "/leave".into(), "intermediate=3; Path=/"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .append_header("location", location)
+                    .append_header("set-cookie", cookie),
+            )
+            .mount(&site)
+            .await;
+    }
+    let final_url = format!("{}/final", site.uri());
+    Mock::given(method("GET"))
+        .and(path("/leave"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", &final_url))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "final=2; Path=/")
+                .set_body_raw("<html><body>final document</body></html>", "text/html"),
+        )
+        .mount(&site)
+        .await;
+    let result = single_page(&site, "/start").await;
+    assert_cookie_sent(&site, "/leave", "intermediate=3").await;
+    assert_eq!(result.pages[0].final_url, final_url);
+    assert_eq!(
+        pairs(&result),
+        vec![("final".into(), "2".into()), ("requested".into(), "1".into())]
+    );
+}

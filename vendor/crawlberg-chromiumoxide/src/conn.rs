@@ -164,10 +164,100 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
 /// A message that `serde_json` reads is returned as `serde_json` read it: the text is searched
 /// and parsed a second time only after a refusal.
 pub fn parse_message<M: serde::de::DeserializeOwned>(text: &str) -> serde_json::Result<M> {
-    serde_json::from_str(text).or_else(|error| match replace_unpaired_surrogate_escapes(text) {
-        Some(repaired) => serde_json::from_str(&repaired),
-        None => Err(error),
+    serde_json::from_str(text).or_else(|initial_error| {
+        let repaired = replace_unpaired_surrogate_escapes(text);
+        let text = repaired.as_deref().unwrap_or(text);
+        let error = if repaired.is_some() {
+            match serde_json::from_str(text) {
+                Ok(message) => return Ok(message),
+                Err(error) => error,
+            }
+        } else {
+            initial_error
+        };
+        match compatible_network_policy(text) {
+            Some(message) => serde_json::from_value(message),
+            None => Err(error),
+        }
     })
+}
+
+// ~keep Chrome 155 renamed this field with the same five policy values; the CDP 0.9.1 DTO
+// still requires its legacy name. Alias only failed request-extra-info messages, never invent a policy.
+fn compatible_network_policy(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<DuplicateGuard>(text).ok()?;
+    let mut message: serde_json::Value = serde_json::from_str(text).ok()?;
+    if message.get("method")?.as_str()? != "Network.requestWillBeSentExtraInfo" {
+        return None;
+    }
+    let state = message
+        .get_mut("params")?
+        .get_mut("clientSecurityState")?
+        .as_object_mut()?;
+    if state.contains_key("privateNetworkRequestPolicy") {
+        return None;
+    }
+    let policy = state.remove("localNetworkAccessRequestPolicy")?;
+    state.insert("privateNetworkRequestPolicy".to_owned(), policy);
+    Some(message)
+}
+
+// ~keep Value keeps the last duplicate key. Validate before aliasing so a typed refusal
+// cannot become acceptance after request or security metadata has been silently overwritten.
+struct DuplicateGuard;
+
+impl<'de> serde::Deserialize<'de> for DuplicateGuard {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        deserializer.deserialize_any(Self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for DuplicateGuard {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("JSON without duplicate object keys")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<Self, A::Error> {
+        let mut keys = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key) {
+                return Err(serde::de::Error::custom("duplicate JSON object key"));
+            }
+            map.next_value::<Self>()?;
+        }
+        Ok(self)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut sequence: A) -> std::result::Result<Self, A::Error> {
+        while sequence.next_element::<Self>()?.is_some() {}
+        Ok(self)
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_str<E>(self, _value: &str) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self, E> {
+        Ok(self)
+    }
 }
 
 /// The JSON `text` with every `\u` escape of an unpaired surrogate replaced by `�`, or
@@ -424,5 +514,252 @@ mod tests {
             unchanged > 2_000 && repaired > 2_000,
             "{unchanged} unchanged, {repaired} repaired"
         );
+    }
+
+    fn security_event(field: &str, policy: &str) -> serde_json::Value {
+        serde_json::json!({
+            "method": "Network.requestWillBeSentExtraInfo",
+            "sessionId": "probe-session",
+            "params": {
+                "requestId": "probe-request", "associatedCookies": [],
+                "headers": {"X-Probe": "value"}, "connectTiming": {"requestTime": 1.25},
+                "clientSecurityState": {
+                    "initiatorIsSecureContext": true, "initiatorIPAddressSpace": "Local", field: policy
+                },
+                "siteHasCookieInOtherPartition": true, "appliedNetworkConditionsId": "probe-conditions"
+            }
+        })
+    }
+
+    fn policy_cases() -> [(
+        &'static str,
+        chromiumoxide_cdp::cdp::browser_protocol::network::PrivateNetworkRequestPolicy,
+    ); 5] {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::PrivateNetworkRequestPolicy as Policy;
+        [
+            ("Allow", Policy::Allow),
+            ("BlockFromInsecureToMorePrivate", Policy::BlockFromInsecureToMorePrivate),
+            ("WarnFromInsecureToMorePrivate", Policy::WarnFromInsecureToMorePrivate),
+            ("PermissionBlock", Policy::PermissionBlock),
+            ("PermissionWarn", Policy::PermissionWarn),
+        ]
+    }
+
+    fn assert_security_event(
+        text: &str,
+        policy: chromiumoxide_cdp::cdp::browser_protocol::network::PrivateNetworkRequestPolicy,
+        header: &str,
+    ) {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::{ClientSecurityState, IpAddressSpace, RequestId};
+        use chromiumoxide_cdp::cdp::events::{CdpEvent, CdpEventMessage};
+        use chromiumoxide_types::Message;
+        let Message::Event(event) = parse_message::<Message<CdpEventMessage>>(text).expect("typed CDP event") else {
+            panic!("expected an event");
+        };
+        assert_eq!(event.method, "Network.requestWillBeSentExtraInfo");
+        assert_eq!(event.session_id.as_deref(), Some("probe-session"));
+        let CdpEvent::NetworkRequestWillBeSentExtraInfo(event) = event.params else {
+            panic!("expected request extra info");
+        };
+        assert_eq!(event.request_id, RequestId::from("probe-request".to_owned()));
+        assert_eq!(event.associated_cookies, Vec::new());
+        assert_eq!(
+            serde_json::to_value(event.headers).expect("headers"),
+            serde_json::json!({"X-Probe": header})
+        );
+        assert_eq!(event.connect_timing.request_time, 1.25);
+        assert_eq!(
+            event.client_security_state,
+            Some(ClientSecurityState::new(true, IpAddressSpace::Local, policy))
+        );
+        assert_eq!(event.site_has_cookie_in_other_partition, Some(true));
+        assert_eq!(event.applied_network_conditions_id.as_deref(), Some("probe-conditions"));
+    }
+
+    #[test]
+    fn should_preserve_all_five_modern_network_policy_values_and_event_metadata() {
+        for (wire, policy) in policy_cases() {
+            let text = security_event("localNetworkAccessRequestPolicy", wire).to_string();
+            assert_security_event(&text, policy, "value");
+        }
+    }
+
+    #[test]
+    fn should_preserve_all_five_legacy_network_policy_values() {
+        for (wire, policy) in policy_cases() {
+            let text = security_event("privateNetworkRequestPolicy", wire).to_string();
+            assert_security_event(&text, policy, "value");
+        }
+    }
+
+    #[test]
+    fn should_keep_legacy_policy_when_both_names_are_present() {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::PrivateNetworkRequestPolicy;
+        let mut event = security_event("privateNetworkRequestPolicy", "Allow");
+        event["params"]["clientSecurityState"]["localNetworkAccessRequestPolicy"] =
+            serde_json::json!("PermissionBlock");
+        assert_security_event(&event.to_string(), PrivateNetworkRequestPolicy::Allow, "value");
+    }
+
+    #[test]
+    fn should_reject_unknown_or_missing_network_policy_without_inventing_a_value() {
+        use chromiumoxide_cdp::cdp::events::CdpEventMessage;
+        use chromiumoxide_types::Message;
+        let mut missing = security_event("localNetworkAccessRequestPolicy", "Allow");
+        missing["params"]["clientSecurityState"]
+            .as_object_mut()
+            .expect("security state")
+            .remove("localNetworkAccessRequestPolicy");
+        let mut invalid_legacy = security_event("privateNetworkRequestPolicy", "UnknownPolicy");
+        invalid_legacy["params"]["clientSecurityState"]["localNetworkAccessRequestPolicy"] = serde_json::json!("Allow");
+        for event in [
+            security_event("localNetworkAccessRequestPolicy", "UnknownPolicy"),
+            missing,
+            invalid_legacy,
+        ] {
+            parse_message::<Message<CdpEventMessage>>(&event.to_string())
+                .expect_err("invalid policy must stay an error");
+        }
+    }
+
+    #[test]
+    fn should_leave_successful_messages_and_unrelated_security_objects_unchanged() {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::ClientSecurityState;
+        use chromiumoxide_cdp::cdp::events::{CdpEvent, CdpEventMessage};
+        use chromiumoxide_types::Message;
+        let mut event = security_event("localNetworkAccessRequestPolicy", "PermissionWarn");
+        let parsed: serde_json::Value = parse_message(&event.to_string()).expect("untyped JSON");
+        assert_eq!(parsed, event);
+        parse_message::<ClientSecurityState>(&event["params"]["clientSecurityState"].to_string())
+            .expect_err("standalone state is outside the event compatibility path");
+        event["method"] = serde_json::json!("Other.example");
+        let Message::Event(parsed) =
+            parse_message::<Message<CdpEventMessage>>(&event.to_string()).expect("unknown event")
+        else {
+            panic!("expected an event");
+        };
+        assert_eq!(parsed.method, "Other.example");
+        assert_eq!(parsed.params, CdpEvent::Other(event["params"].clone()));
+    }
+
+    #[test]
+    fn should_not_alias_a_failed_event_with_a_different_method() {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::ClientSecurityState;
+        #[derive(Debug, serde::Deserialize)]
+        struct OtherParams {
+            #[serde(rename = "clientSecurityState")]
+            _state: ClientSecurityState,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        struct OtherEvent {
+            #[serde(rename = "params")]
+            _params: OtherParams,
+        }
+        let mut event = security_event("localNetworkAccessRequestPolicy", "Allow");
+        event["method"] = serde_json::json!("Other.example");
+        parse_message::<OtherEvent>(&event.to_string()).expect_err("another method must retain its parse failure");
+    }
+
+    fn duplicated_event_fields(field: &str) -> Vec<String> {
+        let event = security_event(field, "Allow");
+        let text = event.to_string();
+        let state = event["params"]["clientSecurityState"].to_string();
+        vec![
+            text.replace(
+                r#""sessionId":"probe-session""#,
+                r#""sessionId":"first","sessionId":"probe-session""#,
+            ),
+            text.replace(
+                r#""requestId":"probe-request""#,
+                r#""requestId":"first","requestId":"probe-request""#,
+            ),
+            text.replace(
+                r#""requestId":"probe-request""#,
+                r#""requestId":"first","request\u0049d":"probe-request""#,
+            ),
+            text.replace(
+                &format!(r#""clientSecurityState":{state}"#),
+                &format!(r#""clientSecurityState":{state},"clientSecurityState":{state}"#),
+            ),
+            text.replace(
+                r#""initiatorIsSecureContext":true"#,
+                r#""initiatorIsSecureContext":false,"initiatorIsSecureContext":true"#,
+            ),
+            text.replace(
+                &format!(r#""{field}":"Allow""#),
+                &format!(r#""{field}":"PermissionBlock","{field}":"Allow""#),
+            ),
+        ]
+    }
+
+    #[test]
+    fn should_keep_known_duplicate_fields_rejected_when_aliasing_modern_policy() {
+        use chromiumoxide_cdp::cdp::events::CdpEventMessage;
+        use chromiumoxide_types::Message;
+        let modern = duplicated_event_fields("localNetworkAccessRequestPolicy");
+        let legacy = duplicated_event_fields("privateNetworkRequestPolicy");
+        assert_eq!(modern.len(), 6);
+        assert_eq!(legacy.len(), 6);
+        for (case, (modern, legacy)) in modern.iter().zip(&legacy).enumerate() {
+            let error = serde_json::from_str::<CdpEventMessage>(legacy).expect_err("legacy duplicate must fail");
+            assert!(error.to_string().contains("duplicate field"), "case {case}: {error}");
+            parse_message::<Message<CdpEventMessage>>(legacy).expect_err("legacy duplicate must remain refused");
+            let original =
+                serde_json::from_str::<Message<CdpEventMessage>>(modern).expect_err("unmodified modern message fails");
+            let refused = parse_message::<Message<CdpEventMessage>>(modern)
+                .expect_err("compatibility must not collapse duplicate fields");
+            assert_eq!(
+                refused.to_string(),
+                original.to_string(),
+                "case {case}: keep the original error"
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_nested_metadata_duplicates_in_policy_compatibility() {
+        use chromiumoxide_cdp::cdp::events::CdpEventMessage;
+        use chromiumoxide_types::Message;
+        let text = security_event("localNetworkAccessRequestPolicy", "Allow").to_string();
+        let cases = [
+            r#""headers":{"X-Probe":"first","X-Probe":"value"}"#,
+            r#""headers":{"X-Meta":{"key":1,"key":2},"X-Probe":"value"}"#,
+            r#""headers":{"X-Meta":[{"key":1,"k\u0065y":2}],"X-Probe":"value"}"#,
+        ];
+        for (case, headers) in cases.into_iter().enumerate() {
+            let text = text.replace(r#""headers":{"X-Probe":"value"}"#, headers);
+            serde_json::from_str::<Message<CdpEventMessage>>(&text).expect_err("modern field needs compatibility");
+            assert!(
+                parse_message::<Message<CdpEventMessage>>(&text).is_err(),
+                "case {case}: compatibility must reject duplicate metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn should_preserve_every_json_atom_in_duplicate_free_metadata() {
+        use chromiumoxide_cdp::cdp::events::{CdpEvent, CdpEventMessage};
+        use chromiumoxide_types::Message;
+        let mut event = security_event("localNetworkAccessRequestPolicy", "Allow");
+        let headers = serde_json::json!({"X-Meta": [null, true, false, -1, u64::MAX, 0.5, "text", {"child": []}]});
+        event["params"]["headers"] = headers.clone();
+        let Message::Event(parsed) =
+            parse_message::<Message<CdpEventMessage>>(&event.to_string()).expect("valid atoms")
+        else {
+            panic!("expected an event");
+        };
+        let CdpEvent::NetworkRequestWillBeSentExtraInfo(parsed) = parsed.params else {
+            panic!("expected extra info");
+        };
+        assert_eq!(serde_json::to_value(parsed.headers).expect("headers"), headers);
+    }
+
+    #[test]
+    fn should_apply_surrogate_repair_before_modern_network_policy_compatibility() {
+        use chromiumoxide_cdp::cdp::browser_protocol::network::PrivateNetworkRequestPolicy;
+        let text = security_event("localNetworkAccessRequestPolicy", "PermissionBlock")
+            .to_string()
+            .replace(r#""value""#, r#""\ud83d""#);
+        assert_security_event(&text, PrivateNetworkRequestPolicy::PermissionBlock, "\u{fffd}");
     }
 }

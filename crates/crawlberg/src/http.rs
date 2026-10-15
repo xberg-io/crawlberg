@@ -453,12 +453,13 @@ pub(crate) fn reject_redirect(target: &url::Url, unseen: bool, hop_left: bool) -
 }
 
 pub(crate) fn redirect_error(target: &url::Url, unseen: bool) -> CrawlError {
-    let message = if unseen {
+    let reason = if unseen {
         "redirect limit exceeded"
     } else {
         "redirect loop"
     };
-    CrawlError::too_many_redirects_with_source(message, crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target))
+    let source = crate::net::ssrf::SsrfError::TooManyRedirects.with_url(target);
+    CrawlError::too_many_redirects_with_source(format!("{} - {reason}", source.url), source)
 }
 
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
@@ -813,7 +814,9 @@ mod tests {
         let target = url::Url::parse("https://user:secret@example.com/hop").expect("valid target");
         for (unseen, hop_left, expected) in [(false, true, "redirect loop"), (true, false, "redirect limit exceeded")] {
             let error = reject_redirect(&target, unseen, hop_left).expect_err("must reject exhaustion");
-            assert!(matches!(&error, CrawlError::TooManyRedirects { message, .. } if message == expected));
+            assert!(
+                matches!(&error, CrawlError::TooManyRedirects { message, .. } if *message == format!("https://***:***@example.com/hop - {expected}"))
+            );
             let source = error
                 .source()
                 .and_then(|source| source.source())
@@ -1055,7 +1058,7 @@ mod tests {
             Ok(_) => panic!("must stop once the second hop exceeds max_redirects(1), got Ok"),
         };
         assert!(
-            matches!(err, CrawlError::TooManyRedirects { ref message, .. } if message == "redirect limit exceeded"),
+            matches!(err, CrawlError::TooManyRedirects { ref message, .. } if *message == format!("{}/hop2 - redirect limit exceeded", mock.uri())),
             "expected TooManyRedirects, got {err:?}"
         );
     }

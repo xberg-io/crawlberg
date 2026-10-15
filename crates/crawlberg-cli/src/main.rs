@@ -4,7 +4,7 @@ use clap::Parser;
 use crawlberg::{
     BatchCrawlResults, BatchScrapeResults, BrowserConfig, CrawlConfig, CrawlEngineHandle, CrawlPageResult, CrawlResult,
     PageAction, ProxyConfig, batch_crawl, batch_scrape, crawl, create_engine, generate_citations, interact, map_urls,
-    scrape,
+    scrape, shutdown_engine,
 };
 
 mod cli;
@@ -198,6 +198,8 @@ async fn run_scrape(args: ScrapeArgs) {
         }
         Err(e) => exit_with_error(&e),
     }
+    // ~keep Finish owned browser controllers while the CLI runtime can still drive them.
+    shutdown_engine(handle).await;
 }
 
 async fn run_crawl(args: CrawlArgs) {
@@ -229,6 +231,7 @@ async fn run_crawl(args: CrawlArgs) {
             Err(e) => exit_with_error(&e),
         }
     }
+    shutdown_engine(handle).await;
 }
 
 async fn run_map(args: MapArgs) {
@@ -256,6 +259,7 @@ async fn run_map(args: MapArgs) {
         }
         Err(e) => exit_with_error(&e),
     }
+    shutdown_engine(handle).await;
 }
 
 async fn run_interact(args: InteractArgs) {
@@ -303,6 +307,7 @@ async fn run_interact(args: InteractArgs) {
         }
         Err(e) => exit_with_error(&e),
     }
+    shutdown_engine(handle).await;
 }
 
 async fn run_batch_scrape(args: BatchScrapeArgs) {
@@ -323,6 +328,7 @@ async fn run_batch_scrape(args: BatchScrapeArgs) {
         Ok(results) => print_batch_scrape(&results, &args.format),
         Err(e) => exit_with_error(&e),
     }
+    shutdown_engine(handle).await;
 }
 
 async fn run_batch_crawl(args: BatchCrawlArgs) {
@@ -347,6 +353,7 @@ async fn run_batch_crawl(args: BatchCrawlArgs) {
         Ok(results) => print_batch_crawl(&results, &args.format),
         Err(e) => exit_with_error(&e),
     }
+    shutdown_engine(handle).await;
 }
 
 async fn run_download(args: DownloadArgs) {
@@ -384,6 +391,7 @@ async fn run_download(args: DownloadArgs) {
         }
         Err(e) => exit_with_error(&e),
     }
+    shutdown_engine(handle).await;
 }
 
 /// `raw` without its `user:pass@`, or `None` when it does not parse.
