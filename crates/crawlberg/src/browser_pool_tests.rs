@@ -1880,7 +1880,7 @@ fn a_failed_browser_releases_its_profile_before_cleanup_waits_on_a_paused_runtim
             .expect("an owned profile")
             .path()
             .to_path_buf();
-        state.handler_handle.abort();
+        state.handler_handle.abort_handle().abort();
         let mut pending = Box::pin(state.fail_closed());
         assert!(
             futures::poll!(pending.as_mut()).is_pending(),

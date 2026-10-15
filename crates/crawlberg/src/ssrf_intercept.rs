@@ -2062,6 +2062,13 @@ struct ChildDrain {
 /// The answer a root target's arm is waiting for.
 type RootWaiter = oneshot::Sender<Result<(), String>>;
 
+/// ~keep The waiter of a root whose page operation expired has lost its receiver. Chrome's later
+/// ~keep destroy or detach of that root is cleanup, not a failure of the controller, so only a
+/// ~keep waiter someone still awaits is taken.
+fn take_open_waiter(waiters: &mut HashMap<TargetId, RootWaiter>, target: &TargetId) -> Option<RootWaiter> {
+    waiters.remove(target).filter(|waiter| !waiter.is_closed())
+}
+
 /// A tab the controller holds until its page has proved its boundary. The controller never
 /// times the chain: a held tab runs nothing, and the fetch that needs its page bounds the wait
 /// with its own deadline and disposes the context when that passes (xberg-io/crawlberg#705). ~keep
@@ -2474,6 +2481,7 @@ where
                         let _ = done.send(Ok(()));
                         continue;
                     }
+                    root_waiters.retain(|_, waiter| !waiter.is_closed());
                     if child_capacity_used(
                         &pending,
                         &root_waiters,
@@ -2761,7 +2769,7 @@ where
                         });
                         armed_targets.remove(&target);
                         session_targets.retain(|_, attached| attached != &target);
-                        if let Some(waiter) = root_waiters.remove(&target) {
+                        if let Some(waiter) = take_open_waiter(&mut root_waiters, &target) {
                             let _ = waiter.send(Err("root target was destroyed before it was armed".to_owned()));
                             return child_fail(shared, "root_destroyed_before_arm");
                         }
@@ -2804,7 +2812,7 @@ where
                         });
                         if let Some(target) = session_targets.remove(session) {
                             armed_targets.remove(&target);
-                            if let Some(waiter) = root_waiters.remove(&target) {
+                            if let Some(waiter) = take_open_waiter(&mut root_waiters, &target) {
                                 let _ = waiter.send(Err(
                                     "root target detached before its boundary was acknowledged".to_owned(),
                                 ));
@@ -5236,6 +5244,66 @@ mod tests {
             answer_child_command(&mut socket, &root_arm).await;
             commands.send(super::ChildCommand::Stop).await.expect("stop");
             assert!(controller.await.expect("controller"));
+        }
+    }
+
+    /// A page operation that expired has dropped its receiver. The target events that follow
+    /// for its root are the browser's ordinary cleanup, not a failure of the controller.
+    #[tokio::test]
+    async fn an_expired_root_arm_leaves_the_controller_healthy_when_its_root_ends() {
+        for (ending, expired) in [
+            ("targetDestroyed", true),
+            ("detachedFromTarget", true),
+            ("targetDestroyed", false),
+            ("detachedFromTarget", false),
+        ] {
+            let page = watched("ROOT");
+            let shared = Arc::new(shared_with(&page, "OTHER"));
+            let owned = register_owned_context(&shared, &page);
+            let (mut socket, commands, controller) =
+                test_child_controller(Arc::clone(&shared), Duration::from_secs(10)).await;
+            let (root_done, root_armed) = oneshot::channel();
+            commands
+                .send(super::ChildCommand::Arm {
+                    root: page.root.clone(),
+                    done: root_done,
+                })
+                .await
+                .expect("wait for owned root arm");
+            let (done, enabled) = oneshot::channel();
+            commands
+                .send(super::ChildCommand::Enable { done })
+                .await
+                .expect("root command barrier");
+            enabled.await.expect("command barrier").expect("enabled");
+            let root_armed = (!expired).then_some(root_armed);
+            let params = if ending == "targetDestroyed" {
+                serde_json::json!({ "targetId": "ROOT" })
+            } else {
+                send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+                let root_arm = next_child_message(&mut socket).await;
+                assert_eq!(root_arm["sessionId"], "S-ROOT");
+                serde_json::json!({ "sessionId": "S-ROOT" })
+            };
+            socket
+                .send(async_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({ "method": format!("Target.{ending}"), "params": params })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("end the root of an expired arm");
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let _ = commands.send(super::ChildCommand::Stop).await;
+            let healthy = tokio::time::timeout(Duration::from_secs(5), controller)
+                .await
+                .expect("the controller stops")
+                .expect("controller");
+            assert_eq!(
+                healthy, expired,
+                "{ending} fails the controller exactly when a live operation waits on the root"
+            );
+            drop(root_armed);
         }
     }
 
@@ -9288,6 +9356,17 @@ mod race_tests {
         })
     }
 
+    fn pool_through_with_launch_timeout(
+        relay: String,
+        launch_timeout: Duration,
+    ) -> Arc<crate::browser_pool::BrowserPool> {
+        crate::browser_pool::BrowserPool::new(crate::browser_pool::BrowserPoolConfig {
+            browser_endpoint: Some(relay),
+            launch_timeout,
+            ..crate::browser_pool::BrowserPoolConfig::default()
+        })
+    }
+
     /// The configuration of a pooled page of these tests: the socket policy of an external
     /// browser is not what they measure.
     fn pooled_config() -> crate::types::CrawlConfig {
@@ -9343,6 +9422,62 @@ mod race_tests {
             error.contains("pool is shut down"),
             "the fetch ends with the pool's error, got: {error}"
         );
+        let chrome = Arc::get_mut(&mut owner).expect("the test holds the only reference to its browser");
+        let _ = chrome.kill().await;
+    }
+
+    /// A pool whose Chrome never answers the browser-wide arm ends `warm` at the launch bound,
+    /// with no call to `shutdown` (xberg-io/crawlberg#705).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn warm_ends_at_the_launch_bound_when_chrome_never_answers_the_browser_wide_arm() {
+        let test_name = "warm_ends_at_the_launch_bound_when_chrome_never_answers_the_browser_wide_arm";
+        let Some(mut owner) = launch(test_name).await else {
+            return;
+        };
+        let relay = arm_holding_relay(
+            owner.websocket_address().to_string(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        )
+        .await;
+        let pool = pool_through_with_launch_timeout(relay, Duration::from_secs(2));
+        let outcome = tokio::time::timeout(Duration::from_secs(10), pool.warm())
+            .await
+            .expect("warm must end at its launch bound without a shutdown");
+        assert!(outcome.is_err(), "a browser that never arms cannot be warm");
+        pool.shutdown().await;
+        let chrome = Arc::get_mut(&mut owner).expect("the test holds the only reference to its browser");
+        let _ = chrome.kill().await;
+    }
+
+    /// A page whose tab Chrome never arms ends its acquisition at the page bound, with no call
+    /// to `shutdown`, and a later page on the same pool opens (xberg-io/crawlberg#705).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn acquisition_ends_at_the_page_bound_when_chrome_never_arms_the_tab() {
+        let test_name = "acquisition_ends_at_the_page_bound_when_chrome_never_arms_the_tab";
+        let Some(mut owner) = launch(test_name).await else {
+            return;
+        };
+        let holding = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let relay = arm_holding_relay(
+            owner.websocket_address().to_string(),
+            Arc::clone(&holding),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+        let pool = pool_through(relay);
+        let outcome = tokio::time::timeout(Duration::from_secs(30), pool.acquire_page_with_config(&pooled_config()))
+            .await
+            .expect("acquisition must end at the page bound without a shutdown");
+        assert!(outcome.is_err(), "a tab that is never armed yields no page");
+
+        holding.store(false, Ordering::SeqCst);
+        let pooled = tokio::time::timeout(Duration::from_secs(15), pool.acquire_page_with_config(&pooled_config()))
+            .await
+            .expect("the next acquisition must end within 15 s")
+            .expect("the expired acquisition leaves the pool able to open a page");
+        pooled.close().await;
+        pool.shutdown().await;
         let chrome = Arc::get_mut(&mut owner).expect("the test holds the only reference to its browser");
         let _ = chrome.kill().await;
     }

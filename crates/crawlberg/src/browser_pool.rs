@@ -2371,13 +2371,18 @@ impl BrowserPool {
             self.config.browser_endpoint.as_deref(),
             &browser.remote_warned,
         )?;
-        let page = tokio::time::timeout(
-            PAGE_OPEN_TIMEOUT,
-            browser.firewall.new_page_with_policy(proxy, sockets, &config.ssrf),
-        )
+        // ~keep The bound covers the page's arm as well as its creation: a Chrome that never
+        // ~keep answers the arm would otherwise hold an acquisition until someone shut the pool down.
+        let (page, watch) = tokio::time::timeout(PAGE_OPEN_TIMEOUT, async {
+            let page = browser
+                .firewall
+                .new_page_with_policy(proxy, sockets, &config.ssrf)
+                .await?;
+            let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
+            Ok::<_, CrawlError>((page, watch))
+        })
         .await
         .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
-        let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
         Ok(PooledPage {
             #[cfg(any(feature = "browser", test))]
             handler_end: browser.handler_end,
@@ -2502,13 +2507,20 @@ impl BrowserPool {
         // ~keep `Browser` and its profile directory.
         let handler_handle = OwnedHandler(Some(handler_handle));
         let browser = Arc::new(browser);
-        let firewall = BrowserFirewall::start_supervised(
-            Arc::clone(&browser),
-            BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
-            PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
-            handler_handle.abort_handle(),
+        // ~keep Bounded by the launch timeout: a Chrome that never acknowledges the browser-wide
+        // ~keep arm ends the launch, whose drop aborts the handler, instead of holding `warm` and
+        // ~keep every fetch behind the launch lock until a shutdown.
+        let firewall = tokio::time::timeout(
+            self.config.launch_timeout,
+            BrowserFirewall::start_supervised(
+                Arc::clone(&browser),
+                BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+                PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
+                handler_handle.abort_handle(),
+            ),
         )
-        .await?;
+        .await
+        .map_err(|_| CrawlError::browser_error("timeout starting request interception"))??;
 
         Ok(BrowserState {
             generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
