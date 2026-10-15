@@ -27,8 +27,9 @@ pub(crate) struct RedirectOutcome {
     pub(crate) final_response: crate::tower::CrawlResponse,
     /// Number of redirect hops taken.
     pub(crate) redirect_count: usize,
-    /// `(host, response headers)` for each intermediate redirect hop, so cookie extraction
-    /// can validate each hop's `Set-Cookie` `Domain=` attribute against the host that sent it.
+    /// `(URL, response headers)` for each intermediate redirect hop, so cookie extraction
+    /// can validate each hop's `Set-Cookie` `Domain=` attribute against the host that sent it
+    /// and give a cookie with no `Path` the directory of that URL.
     pub(crate) intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)>,
     /// Whether headless-browser fetch was used for the final hop.
     pub(crate) browser_used: bool,
@@ -808,7 +809,7 @@ impl RedirectChain {
         if let Err(e) = validate_url(&target, ssrf).await {
             return Err(CrawlError::ssrf_violation(target, e.to_string()));
         }
-        self.intermediate_headers.push((url_host(&self.current_url), headers));
+        self.intermediate_headers.push((self.current_url.clone(), headers));
         self.seen.insert(target_key);
         self.redirect_count += hops;
         self.current_url = target.into();

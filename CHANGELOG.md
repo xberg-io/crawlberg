@@ -229,6 +229,35 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A crawl-result cookie has the same `domain` and `path` over HTTP and in the browser, so a
+  crawl that uses both lists it once (#753). The fields give the scope that the browser stores:
+  `domain` is the host for a host-only cookie and the domain with a leading dot for a domain
+  cookie; `path` is the default path of the page when `Set-Cookie` has no valid `Path`. A
+  `Path` keeps its case. Over HTTP a result cookie follows the RFC 6265 storage rules of the
+  cookie jar: a deleted cookie (`Max-Age=0` or an `Expires` in the past) is not listed, an IP
+  host accepts only its own address as `Domain` (`Domain=0.0.1` from `127.0.0.1` is dropped),
+  and of two `Domain` attributes the last decides. Over HTTP this changes the values: `domain`
+  was `None` with no `Domain` and `path` was `None` with no `Path`; `Domain=example.com` gave
+  `example.com`, now `.example.com`; a dotted IP or one-label `Domain` such as `.127.0.0.1` kept
+  its dot, now the bare host; an empty `Domain` gave `""`, now the host; a relative `Path` was
+  kept, now the default path; `Path=/X/` gave `/x/`, now `/X/`; `Domain = x` with spaces around
+  `=` was ignored, now it is read and checked against the host; a deleted cookie was listed, now
+  it is not; `Domain=0.0.1` from `127.0.0.1` was listed, now it is dropped;
+  `Domain=other.test; Domain=127.0.0.1` was dropped, now it is listed; and a cookie with an
+  empty name (`=1`) was listed, now it is not (the jar never stored it). In browser mode this
+  changes the values: a host-only cookie gave `domain` `None` in Chrome and in the native
+  browser, now the host; in the native browser a domain cookie gave `example.com`, now
+  `.example.com`, `Path=/A/b` gave `/a/b`, now `/A/b`, and an empty `Domain=` gave two rows
+  (`""` and `None`), now one with the host.
+- Over HTTP a cookie whose `Domain` is a public suffix of the Public Suffix List (`onrender.com`,
+  `co.il`) is not stored, not listed and not sent to another site under that suffix, as the
+  browser does; before, a fixed list of a few suffixes decided (#762). A `Domain` that is the
+  host's own public suffix gives a host-only cookie.
+- The HTTP cookie jar admits the `Domain` that the jar stores: the last non-empty one, with the
+  attribute key and value trimmed, so `Domain=a.onrender.com; Domain=onrender.com` and
+  `Domain = onrender.com` no longer reach the jar past the public-suffix check. In the native
+  browser a later `Path` that does not start with `/` replaces an earlier valid one with the
+  default path, as in the HTTP jar and Chrome.
 - A browser crawl on a slow machine no longer loses pages with no error. The request firewall no
   longer kills a browser whose page creation takes more than two seconds: the page's own fetch
   timeout bounds the wait. A page lost to a closed browser connection is now the crawl's error.
@@ -247,7 +276,6 @@ All notable changes to crawlberg are documented here.
 - Map tests verify selected host pacing delays instead of imposing a wall-time threshold (#752).
 - Browser cookie integration tests cover third-party resource and intermediate redirect cookies,
   including checks that Chrome stored and sent the excluded cookies (#754).
-
 - Browser crawls report newly stored or changed cookies, including JavaScript cookies, when
   `cookies_enabled` is set (#651). Chromiumoxide compares the store after request-cookie replay
   and before navigation with the final store; unchanged profile or external-browser cookies are

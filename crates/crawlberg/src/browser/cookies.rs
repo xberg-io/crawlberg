@@ -173,8 +173,9 @@ fn invalidated_cookie(url: &url::Url, raw: &str) -> Option<BrowserCookie> {
         };
         let value = value.trim();
         if key.eq_ignore_ascii_case("domain") && !value.trim_start_matches('.').is_empty() {
-            crate::net::cookie::validate_cookie_domain(host, value).ok()?;
-            params.domain = Some(format!(".{}", value.trim_start_matches('.').to_ascii_lowercase()));
+            params.domain = crate::net::cookie::validate_cookie_domain(host, value)
+                .ok()?
+                .map(|domain| format!(".{domain}"));
         } else if key.eq_ignore_ascii_case("path") && value.starts_with('/') {
             params.path = Some(value.to_owned());
         }
@@ -382,11 +383,14 @@ pub(super) fn result_cookie_delta(
                     host == &domain
                 }
             });
-            matches.then(|| crate::types::CookieInfo {
-                name: cookie.params.name.clone(),
-                value: cookie.params.value.clone(),
-                domain: cookie.params.domain.clone(),
-                path: cookie.params.path.clone(),
+            matches.then(|| {
+                crate::types::CookieInfo {
+                    name: cookie.params.name.clone(),
+                    value: cookie.params.value.clone(),
+                    domain: cookie.params.domain.clone(),
+                    path: cookie.params.path.clone(),
+                }
+                .with_stored_scope(&domain, "/")
             })
         })
         .collect()
@@ -436,6 +440,14 @@ mod tests {
         );
         assert_eq!(delta.len(), 1);
         assert_eq!(delta[0].domain.as_deref(), Some(".example.com"));
+    }
+
+    #[test]
+    fn a_host_only_result_cookie_has_its_host_as_domain() {
+        let host_only = browser_cookie(cookie("example.com", true, -1.0, None), 100.0).expect("host cookie");
+        let delta = result_cookie_delta(&[], &[host_only], "https://example.com/", "https://example.com/");
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta[0].domain.as_deref(), Some("example.com"));
     }
 
     #[test]

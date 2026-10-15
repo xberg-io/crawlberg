@@ -296,6 +296,7 @@ fn native_result_cookies(
         .filter_map(|url| url.host_str().map(str::to_owned))
         .collect();
     let header_cookies = native_header_cookies(final_url, headers);
+    let final_path = url::Url::parse(final_url).map_or_else(|_| "/".to_owned(), |url| url.path().to_owned());
     cookies
         .iter()
         .filter(|cookie| {
@@ -316,19 +317,17 @@ fn native_result_cookies(
         .map(|cookie| {
             let host_only = cookie.host_only;
             let mut result = cookie_info_from_native(cookie);
+            let host = result.domain.clone().unwrap_or_default();
             if host_only {
                 result.domain = None;
             }
-            result
+            result.with_stored_scope(host.trim_start_matches('.'), &final_path)
         })
         .collect()
 }
 
 fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<String, String>) -> Vec<CookieInfo> {
-    let Some(host) = url::Url::parse(final_url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_owned))
-    else {
+    let Ok(url) = url::Url::parse(final_url) else {
         return Vec::new();
     };
     let path = headers.get("set-cookie").and_then(|raw| {
@@ -336,16 +335,17 @@ fn native_header_cookies(final_url: &str, headers: &std::collections::HashMap<St
             .skip(1)
             .filter_map(|attribute| {
                 let (name, value) = attribute.trim().split_once('=')?;
-                let value = value.trim();
-                (name.trim().eq_ignore_ascii_case("path") && value.starts_with('/')).then(|| value.to_owned())
+                name.trim().eq_ignore_ascii_case("path").then(|| value.trim())
             })
             .last()
+            .filter(|value| value.starts_with('/'))
+            .map(str::to_owned)
     });
     let headers = headers
         .iter()
         .map(|(name, value)| (name.clone(), vec![value.clone()]))
         .collect();
-    let mut cookies = crate::http::extract_cookies_from_hashmap(&host, &headers);
+    let mut cookies = crate::http::extract_cookies_from_hashmap(&url, &headers);
     for cookie in &mut cookies {
         cookie.path = path.clone();
     }
@@ -424,7 +424,7 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "result");
-        assert_eq!(result[0].domain.as_deref(), Some("example.com"));
+        assert_eq!(result[0].domain.as_deref(), Some(".example.com"));
     }
 
     #[test]
@@ -436,6 +436,18 @@ mod tests {
         let cookies = native_header_cookies("https://example.com/", &headers);
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].path.as_deref(), Some("/Folder"));
+    }
+
+    #[test]
+    fn should_use_the_default_path_when_the_last_path_attribute_is_invalid() {
+        let headers =
+            std::collections::HashMap::from([("set-cookie".into(), "result=1; Path=/Folder; Path=relative".into())]);
+        let cookies = native_header_cookies("https://example.com/a/b/c", &headers);
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(
+            cookies[0].path, None,
+            "the later relative Path replaces /Folder with the default path"
+        );
     }
 
     #[test]
@@ -462,7 +474,7 @@ mod tests {
             (&result[0].name, &result[0].value),
             (&"script".to_owned(), &"2".to_owned())
         );
-        assert_eq!(result[0].domain, None);
+        assert_eq!(result[0].domain.as_deref(), Some("example.com"));
     }
 
     #[test]
