@@ -123,6 +123,9 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- A batch admits its URLs as slots free up: the first fetch of a large batch starts after the
+  first admission, not after every URL is admitted and queued. The scheduling of host waits
+  from #711 is unchanged. (#716)
 - An engine built with `CrawlEngine::builder()` in browser mode reuses one Chrome for all its
   pages, as the language bindings already did, instead of launching a Chrome for each page: for
   30 pages the peak Chrome memory (PSS) is about 0.47 of what it was (590 MB against 1240 MB,

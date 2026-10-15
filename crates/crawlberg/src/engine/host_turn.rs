@@ -289,7 +289,7 @@ mod tests {
                     ),
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
         (Arc::new(RecordingLimiter::default()), jobs)
     }
 
@@ -382,7 +382,7 @@ mod tests {
                 host: host.into(),
                 data: host,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let mut results = super::super::continuation::run_resumable_jobs(
             jobs,
             2,
@@ -396,7 +396,7 @@ mod tests {
             },
         )
         .await;
-        results.sort_by_key(|(id, _)| *id);
+        results.sort_by_key(|(context, _)| ["job refused", "job free"].iter().position(|c| c == context));
         assert_eq!(results.len(), 2);
         assert!(
             matches!(results[0].1.as_ref().unwrap_err(), CrawlError::Other { message, .. } if message == "custom admission refused")
@@ -417,7 +417,7 @@ mod tests {
                 host: if id == 0 { "refused".into() } else { format!("free{id}") },
                 data: id,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let mut results = super::super::continuation::run_resumable_jobs(
             jobs,
             4,
@@ -433,10 +433,10 @@ mod tests {
             },
         )
         .await;
-        results.sort_by_key(|(id, _)| *id);
+        results.sort_by_key(|(context, _)| context.trim_start_matches("input").parse::<usize>().unwrap());
         assert_eq!(results.len(), INPUTS);
-        for (expected, (id, result)) in results.iter().enumerate() {
-            assert_eq!(*id, expected);
+        for (expected, (context, result)) in results.iter().enumerate() {
+            assert_eq!(*context, format!("input{expected}"));
             let error = match expected {
                 0 => Some("other: custom admission refused"),
                 500 => Some("other: page operation refused"),
@@ -758,12 +758,12 @@ mod tests {
                 host: url_host(url),
                 data: RedirectCursor::new(url, 5),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let active = tokio::spawn(super::super::continuation::run_resumable_jobs(
             jobs,
             2,
             limiter.clone(),
-            |id| format!("job {id}"),
+            |cursor| cursor.url().to_owned(),
             move |cursor, grant| {
                 let mut engine = engine.clone();
                 engine.rate_limiter = grant.primary();
@@ -904,7 +904,7 @@ mod tests {
                 host: "same".into(),
                 data: id,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             super::super::continuation::run_resumable_jobs(
@@ -940,13 +940,13 @@ mod tests {
                 host: host.into(),
                 data: (id, host),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let observed = Arc::clone(&starts);
         let results = super::super::continuation::run_resumable_jobs(
             jobs,
             2,
             limiter,
-            |id| format!("job {id}"),
+            |(id, _)| format!("job {id}"),
             move |(id, host), limiter| {
                 let observed = Arc::clone(&observed);
                 let limiter = limiter.primary();

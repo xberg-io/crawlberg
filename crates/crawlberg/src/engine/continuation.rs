@@ -226,61 +226,61 @@ enum ResumableState<J, T> {
     Waiting(Waiting<Result<super::host_turn::HostStep<J, T>, CrawlError>>),
 }
 
+/// Run `jobs` with at most `concurrency` operations in flight, one host turn each.
+///
+/// `jobs` is pulled lazily: a job is admitted into the host backlog only when a slot is free
+/// and no admitted host is ready, so the first operation starts after the first job, not
+/// after the last one, and the admission of a large batch overlaps with its operations.
+/// A job whose host waits parks in the backlog without a slot, and the pull goes on past it,
+/// so a late ready host still starts before the second turn of a delayed host.
+///
+/// `context(&job)` names a job in its error messages and keys its result. The results are
+/// in completion order.
 pub(super) async fn run_resumable_jobs<J, T, F, Fut, C>(
-    jobs: Vec<super::host_turn::HostJob<J>>,
+    jobs: impl IntoIterator<Item = super::host_turn::HostJob<J>>,
     concurrency: usize,
     limiter: Arc<dyn RateLimiter>,
     context: C,
     operation: F,
-) -> Vec<(usize, Result<T, CrawlError>)>
+) -> Vec<(String, Result<T, CrawlError>)>
 where
     J: Send + 'static,
     T: Send + 'static,
     F: Fn(J, LimiterRouting) -> Fut + Send + Sync + 'static,
-    C: Fn(usize) -> String + Send,
+    C: Fn(&J) -> String + Send,
     Fut: Future<Output = Result<super::host_turn::HostStep<J, T>, CrawlError>> + Send + 'static,
 {
     use super::host_turn::{HostJob, HostStep, HostTurns};
     use futures::FutureExt;
     use tracing::{Instrument, instrument::WithSubscriber};
-    let mut turns = HostTurns::new(limiter);
-    for (id, job) in jobs.into_iter().enumerate() {
-        turns.push(
-            id,
-            HostJob {
-                host: job.host.clone(),
-                data: ResumableJob {
-                    context: context(id),
-                    state: ResumableState::Queued {
-                        host: job.host,
-                        data: job.data,
-                    },
-                },
-            },
-        );
-    }
+    let mut jobs = jobs.into_iter().enumerate();
+    let mut exhausted = false;
+    let mut turns: HostTurns<ResumableJob<J, T>> = HostTurns::new(limiter);
     let operation = Arc::new(operation);
     let mut active = tokio::task::JoinSet::new();
     let mut task_inputs = std::collections::HashMap::new();
-    let mut results = Vec::new();
-    while !active.is_empty() || !turns.is_empty() {
+    // ~keep Sized once: a result is about 2 KB, and a growing list copies every result again.
+    let mut results = Vec::with_capacity(jobs.size_hint().1.unwrap_or(0));
+    while !active.is_empty() || !turns.is_empty() || !exhausted {
         tokio::select! {
+            biased;
             turn = turns.next(), if active.len() < concurrency && !turns.is_empty() => {
                 let (id, job, grant) = turn.expect("a pending continuation host turn");
                 let operation = Arc::clone(&operation);
+                let context = job.context.clone();
                 let task = active.spawn(async move {
                     let context = job.context.clone();
                     let result = std::panic::AssertUnwindSafe(advance_job(job, grant, operation)).catch_unwind().await;
                     result.unwrap_or_else(|_| Err(TurnError::Panicked.into_error(&context)))
                 }.in_current_span().with_current_subscriber());
-                task_inputs.insert(task.id(), id);
+                task_inputs.insert(task.id(), (id, context));
             }
             completed = active.join_next_with_id(), if !active.is_empty() => {
                 let completed = completed.expect("an active continuation task");
                 let task_id = match &completed { Ok((task_id, _)) => *task_id, Err(error) => error.id() };
-                let id = task_inputs.remove(&task_id).expect("each spawned continuation retains its input");
+                let (id, context) = task_inputs.remove(&task_id).expect("each spawned continuation retains its input");
                 let result = completed.map(|(_, result)| result).unwrap_or_else(|error| {
-                    Err(CrawlError::other_with_source(format!("batch task failed while processing {}", context(id)), error))
+                    Err(CrawlError::other_with_source(format!("batch task failed while processing {context}"), error))
                 });
                 match result {
                     Ok(HostStep::Continue(job)) => {
@@ -294,9 +294,33 @@ where
                             turns.push(id, job);
                         }
                     }
-                    Ok(HostStep::Done(result)) => results.push((id, Ok(result))),
-                    Err(error) => results.push((id, Err(error))),
+                    Ok(HostStep::Done(result)) => results.push((context, Ok(result))),
+                    Err(error) => results.push((context, Err(error))),
                 }
+            }
+            // ~keep Last in the biased order: a job is admitted only when no admitted host is
+            // ready and no operation has completed, so the backlog grows past parked hosts
+            // and no further, and the pull never delays a ready turn. The iterator is pulled
+            // here, not in the condition: `select!` evaluates every condition before polling
+            // any branch, so a look-ahead there would run the batch filter ahead of a ready turn.
+            () = std::future::ready(()), if active.len() < concurrency && !exhausted => {
+                let Some((id, job)) = jobs.next() else {
+                    exhausted = true;
+                    continue;
+                };
+                turns.push(
+                    id,
+                    HostJob {
+                        host: job.host.clone(),
+                        data: ResumableJob {
+                            context: context(&job.data),
+                            state: ResumableState::Queued {
+                                host: job.host,
+                                data: job.data,
+                            },
+                        },
+                    },
+                );
             }
         }
     }
@@ -405,7 +429,7 @@ mod tests {
                 },
                 data: id,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let running = tokio::spawn(run_resumable_jobs(
             jobs,
             1,
@@ -429,6 +453,144 @@ mod tests {
         running.abort();
         assert!(running.await.unwrap_err().is_cancelled());
         assert_eq!(limiter.active.load(Ordering::SeqCst), 0);
+    }
+
+    /// A job is pulled into the backlog when a slot is free, not every job before the first
+    /// operation: a batch of 2,000 hosts started its first fetch after 2,000 admissions.
+    #[tokio::test]
+    async fn should_pull_a_job_only_when_a_slot_is_free() {
+        let admitted = Arc::new(AtomicUsize::new(0));
+        let first_started = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+        let count = admitted.clone();
+        let started = first_started.clone();
+        let release = release_first.clone();
+        let jobs = (0..3).map(|id| super::super::host_turn::HostJob {
+            host: format!("host{id}"),
+            data: id,
+        });
+        let running = tokio::spawn(run_resumable_jobs(
+            jobs,
+            1,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            move |id| {
+                count.fetch_add(1, Ordering::SeqCst);
+                format!("job {id}")
+            },
+            move |id, _| {
+                let started = started.clone();
+                let release = release.clone();
+                async move {
+                    if id == 0 {
+                        started.notify_one();
+                        release.notified().await;
+                    }
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        ));
+        first_started.notified().await;
+        assert_eq!(
+            admitted.load(Ordering::SeqCst),
+            1,
+            "the other jobs must wait for a free slot before they are admitted"
+        );
+        release_first.notify_one();
+        let results = running.await.expect("the batch joins");
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(admitted.load(Ordering::SeqCst), 3);
+    }
+
+    /// While every slot holds a running operation, the runner pulls at most `concurrency + 1`
+    /// jobs from the iterator: one job per slot, plus the one job that the look-ahead of the
+    /// pull holds before a slot is free for it.
+    #[tokio::test]
+    async fn should_pull_at_most_one_job_ahead_of_the_slots_from_the_iterator() {
+        const CONCURRENCY: usize = 2;
+        const JOBS: usize = 50;
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let count = pulled.clone();
+        let jobs = (0..JOBS)
+            .map(|id| super::super::host_turn::HostJob {
+                host: format!("host{id}"),
+                data: id,
+            })
+            .inspect(move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+            });
+        let gate = release.clone();
+        let running = tokio::spawn(run_resumable_jobs(
+            jobs,
+            CONCURRENCY,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            |id| format!("job {id}"),
+            move |id, _| {
+                let started = started.clone();
+                let gate = gate.clone();
+                async move {
+                    started.send(id).expect("the test waits for the starts");
+                    gate.acquire().await.expect("the gate stays open").forget();
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        ));
+        for _ in 0..CONCURRENCY {
+            starts.recv().await.expect("an operation starts");
+        }
+        let pulled_while_full = pulled.load(Ordering::SeqCst);
+        assert!(
+            pulled_while_full <= CONCURRENCY + 1,
+            "{pulled_while_full} of {JOBS} jobs pulled while {CONCURRENCY} slots run, at most {} allowed",
+            CONCURRENCY + 1
+        );
+        release.add_permits(JOBS);
+        let results = running.await.expect("the batch joins");
+        assert_eq!(results.len(), JOBS);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(pulled.load(Ordering::SeqCst), JOBS);
+    }
+
+    /// The first operation starts before the iterator is asked for the job after it: with one
+    /// valid job and a rejected tail, a look-ahead that pulls in a `select!` condition scans the
+    /// whole tail first. The iterator blocks on its second pull until the first operation has
+    /// started, so a look-ahead shows as a missed start rather than a timing difference.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn should_start_the_first_operation_before_pulling_the_job_after_it() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let started_before_second_pull = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = started_before_second_pull.clone();
+        let jobs = (0..5usize).filter_map(move |id| {
+            if id == 1 {
+                let seen = started_rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+                observed.store(seen, Ordering::SeqCst);
+            }
+            (id == 0).then(|| super::super::host_turn::HostJob {
+                host: "host".to_string(),
+                data: id,
+            })
+        });
+        let results = run_resumable_jobs(
+            jobs,
+            1,
+            Arc::new(crate::defaults::NoopRateLimiter),
+            |id| format!("job {id}"),
+            move |id, _| {
+                let started = started_tx.clone();
+                async move {
+                    let _ = started.send(());
+                    Ok(super::super::host_turn::HostStep::Done(id))
+                }
+            },
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert!(
+            started_before_second_pull.load(Ordering::SeqCst),
+            "the second job was pulled before the first operation started"
+        );
     }
 
     struct FailingSecondAdmission(AtomicUsize);
