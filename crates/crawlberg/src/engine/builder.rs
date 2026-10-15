@@ -272,7 +272,7 @@ impl CrawlEngineBuilder {
             config.browser_pool = Some(pool);
         }
         #[cfg(feature = "browser")]
-        let owned_browser_pool = owned_browser_pool(&mut config);
+        let owned_browser_pool = owned_browser_pool(&mut config)?;
 
         if let Some(provider) = self.proxy_provider {
             config.proxy_provider = Some(provider);
@@ -378,19 +378,33 @@ impl CrawlEngineBuilder {
 /// ~keep of every request from one Chrome with one budget of page permits. A configuration
 /// ~keep carries only a pool the caller gave; each engine built from it makes its own.
 #[cfg(feature = "browser")]
-fn owned_browser_pool(config: &mut CrawlConfig) -> Option<Arc<crate::browser_pool::BrowserPool>> {
+fn owned_browser_pool(config: &mut CrawlConfig) -> Result<Option<Arc<crate::browser_pool::BrowserPool>>, CrawlError> {
     if config.browser_pool.is_some()
         || config.browser.backend != crate::types::BrowserBackend::Chromiumoxide
         || config.browser_profile.is_some()
     {
-        return None;
+        return Ok(None);
+    }
+
+    // ~keep Semaphore::new panics above MAX_PERMITS, and CrawlConfig::validate (deferred past
+    // ~keep build) only rejects zero, so the pool's page budget is bounded here.
+    if config
+        .max_concurrent
+        .is_some_and(|n| n > tokio::sync::Semaphore::MAX_PERMITS)
+    {
+        return Err(CrawlError::invalid_config(format!(
+            "max_concurrent must be <= {}",
+            tokio::sync::Semaphore::MAX_PERMITS
+        )));
     }
 
     // ~keep A parked affinity page currently runs without an SSRF watch (#179), and it retains
     // ~keep a pool permit. Engine-made pools therefore reuse Chrome, but close each page as
     // ~keep the one-shot path did, until parked pages have safe lifecycle ownership.
     config.browser.session_affinity = false;
-    Some(crate::browser_pool::BrowserPool::new(owned_browser_pool_config(config)))
+    Ok(Some(crate::browser_pool::BrowserPool::new(owned_browser_pool_config(
+        config,
+    ))))
 }
 
 #[cfg(feature = "browser")]
@@ -674,6 +688,23 @@ mod owned_browser_pool_tests {
             "the engine's pool is engine state; a clone of its configuration must carry no pool"
         );
         assert!(!engine.config.browser.session_affinity);
+    }
+
+    #[test]
+    fn build_rejects_max_concurrent_beyond_the_semaphore_limit_instead_of_panicking() {
+        for excessive in [usize::MAX, tokio::sync::Semaphore::MAX_PERMITS + 1] {
+            let result = CrawlEngine::builder().config(browser_config(Some(excessive))).build();
+            let err = result
+                .err()
+                .expect("an excessive max_concurrent is a configuration error");
+            assert!(err.to_string().contains("max_concurrent"), "{err}");
+        }
+        assert!(
+            CrawlEngine::builder()
+                .config(browser_config(Some(tokio::sync::Semaphore::MAX_PERMITS)))
+                .build()
+                .is_ok()
+        );
     }
 
     /// The shape of the API server and the MCP endpoint: an engine for each request, built from
