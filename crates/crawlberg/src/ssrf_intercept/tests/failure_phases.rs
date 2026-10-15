@@ -362,3 +362,93 @@ async fn a_structural_deadline_during_requested_stop_reports_no_failure() {
         "a requested stop suppresses structural failure events"
     );
 }
+
+mod teardown_controls;
+
+#[cfg(unix)]
+mod owned_teardown;
+
+async fn reject_child_acknowledgement(close: bool) -> (bool, Vec<serde_json::Value>) {
+    captured_child_events(async {
+        let page = watched("ROOT-SENSITIVE-PAYLOAD");
+        let shared = Arc::new(shared_with(&page, "OTHER-SENSITIVE-PAYLOAD"));
+        let context = register_owned_context(&shared, &page);
+        if close {
+            begin_ending(&page);
+        }
+        let (mut socket, _commands, controller) = test_child_controller(shared, Duration::from_secs(2)).await;
+        send_attached_target_with_waiting(&mut socket, "S-TAB", "TAB", "tab", None, &context, true).await;
+        let tab_arm = next_child_message(&mut socket).await;
+        send_attached_target_from_parent(
+            &mut socket,
+            "S-CHILD-SENSITIVE-PAYLOAD",
+            "CHILD-SENSITIVE-PAYLOAD",
+            if close { "page" } else { "worker" },
+            Some("ROOT-SENSITIVE-PAYLOAD"),
+            &context,
+            false,
+            Some("S-TAB"),
+        )
+        .await;
+        let command = if close {
+            next_child_message(&mut socket).await
+        } else {
+            let recursive = next_child_message(&mut socket).await;
+            answer_child_command(&mut socket, &recursive).await;
+            next_child_message(&mut socket).await
+        };
+        assert_eq!(
+            command["method"],
+            if close {
+                "Target.closeTarget"
+            } else {
+                "Runtime.runIfWaitingForDebugger"
+            }
+        );
+        answer_child_command(&mut socket, &tab_arm).await;
+        reject_child_response(&mut socket, &command, controller).await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_rejected_child_acknowledgement_reports_only_kind_and_code() {
+    for close in [false, true] {
+        let (ended, events) = reject_child_acknowledgement(close).await;
+        assert!(!ended, "rejected acknowledgements must still fail closed");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["level"], "ERROR");
+        assert_eq!(
+            events[0]["fields"],
+            serde_json::json!({
+                "message": "browser child-target controller failed closed",
+                "phase": "child_target_controller",
+                "reason": "boundary_or_close_ack",
+                "browser_handler_task_id": "None",
+                "pending_command": if close { "close" } else { "boundary" },
+                "cdp_error_code": -32001,
+            })
+        );
+    }
+}
+
+async fn reject_child_response(
+    socket: &mut TestChildSocket,
+    command: &serde_json::Value,
+    controller: tokio::task::JoinHandle<bool>,
+) -> bool {
+    socket
+        .send(async_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({"id": command["id"], "error": {
+                "code": -32001, "message": "SENSITIVE-PAYLOAD session gone"
+            }})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("send rejected acknowledgement");
+    tokio::time::timeout(Duration::from_secs(2), controller)
+        .await
+        .expect("rejected acknowledgement must end controller")
+        .expect("controller task")
+}
