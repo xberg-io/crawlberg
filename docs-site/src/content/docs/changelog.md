@@ -10,6 +10,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Complete cleanup after confirmed browser-context disposal when a pending debugger command reports a missing session. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
 
 ## [1.11.2] - 2026-10-16

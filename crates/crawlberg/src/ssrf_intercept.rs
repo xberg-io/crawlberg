@@ -2575,6 +2575,16 @@ where
                     let command_context = command.context.clone();
                     let error = value.get("error").map(serde_json::Value::to_string);
                     let acknowledged = error.is_none() && value.get("result").is_some();
+                    // ~keep Context disposal can remove a session before the child-socket census
+                    // ~keep replies. Retain its resume obligation until that census proves absence.
+                    if value["error"]["code"].as_i64() == Some(-32001)
+                        && matches!(command.kind, ChildPendingKind::Boundary { .. })
+                        && command_context.as_ref().is_some_and(|context|
+                            child_context_retired(&lock(&shared.registry), context))
+                    {
+                        pending.insert(id, command);
+                        continue;
+                    }
                     // ~keep Chrome can return a removed session's error before either teardown event.
                     // ~keep Only explicit foreign ownership plus an authoritative absent-target census
                     // ~keep can retire it; an arbitrary command error never relaxes an owned boundary.
@@ -7842,6 +7852,7 @@ mod tests {
 
     mod external_failure;
     mod failure_phases;
+    mod retired_boundary;
 
     #[tokio::test]
     async fn a_cancelled_arm_caller_does_not_leave_a_pending_command() {
