@@ -139,6 +139,71 @@ async fn disposed_context_boundary_error_waits_for_authoritative_drain_census() 
 }
 
 #[tokio::test]
+async fn acknowledged_disposal_boundary_error_waits_for_primary_retirement_and_child_census() {
+    let mut cases = 0;
+    for origin in [BrowserOrigin::Launched, BrowserOrigin::Killed, BrowserOrigin::External] {
+        let mut fixture = Boundary::new(origin).await;
+        begin_ending(&fixture.page);
+        lock(&fixture.shared.registry)
+            .contexts
+            .get_mut(&fixture.context)
+            .expect("registered owned context")
+            .disposal_acknowledged = true;
+        assert!(lock(&fixture.shared.registry).contexts.contains_key(&fixture.context));
+        fixture.reject(-32001).await;
+        fixture.round_trip().await;
+        fixture.retire();
+        let (census, mut drained) = fixture.drain().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut drained)
+                .await
+                .is_err(),
+            "primary retirement cannot replace the independent child-target census"
+        );
+        fixture
+            .send(json!({"id": census["id"], "result": {"targetInfos": []}}))
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), drained)
+            .await
+            .expect("proved drain must finish")
+            .expect("drain acknowledged");
+        fixture
+            .commands
+            .send(ChildCommand::Stop)
+            .await
+            .expect("stop healthy controller");
+        assert!(fixture.controller.await.expect("controller task"));
+        cases += 1;
+    }
+    assert_eq!(cases, 3);
+}
+
+#[tokio::test]
+async fn a_disposal_ack_without_primary_retirement_cannot_authorize_a_drain() {
+    let mut fixture = Boundary::new(BrowserOrigin::Launched).await;
+    begin_ending(&fixture.page);
+    lock(&fixture.shared.registry)
+        .contexts
+        .get_mut(&fixture.context)
+        .expect("registered owned context")
+        .disposal_acknowledged = true;
+    fixture.reject(-32001).await;
+    let (done, drained) = oneshot::channel();
+    let sent = fixture
+        .commands
+        .send(ChildCommand::Drain {
+            context: fixture.context.clone(),
+            done,
+        })
+        .await;
+    fixture.assert_failed().await;
+    assert!(
+        sent.is_err() || drained.await.is_err(),
+        "an unretired context cannot finish a drain"
+    );
+}
+
+#[tokio::test]
 async fn active_ending_unknown_contexts_and_other_errors_still_fail_closed() {
     let mut cases = 0;
     for state in ["active", "ending", "unknown", "other-error"] {

@@ -2575,12 +2575,15 @@ where
                     let command_context = command.context.clone();
                     let error = value.get("error").map(serde_json::Value::to_string);
                     let acknowledged = error.is_none() && value.get("result").is_some();
-                    // ~keep Context disposal can remove a session before the child-socket census
-                    // ~keep replies. Retain its resume obligation until that census proves absence.
+                    // ~keep A disposal ACK can precede either socket's absence census. Keep the
+                    // ~keep resume obligation until primary retirement and the child census prove absence.
                     if value["error"]["code"].as_i64() == Some(-32001)
                         && matches!(command.kind, ChildPendingKind::Boundary { .. })
-                        && command_context.as_ref().is_some_and(|context|
-                            child_context_retired(&lock(&shared.registry), context))
+                        && command_context.as_ref().is_some_and(|context| {
+                            let registry = lock(&shared.registry);
+                            child_context_retired(&registry, context)
+                                || registry.contexts.get(context).is_some_and(|owner| owner.disposal_acknowledged)
+                        })
                     {
                         pending.insert(id, command);
                         continue;
