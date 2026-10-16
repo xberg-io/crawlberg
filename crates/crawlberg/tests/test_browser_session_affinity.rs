@@ -64,6 +64,20 @@ async fn the_first_fetch_that_keeps_its_page_returns_in_under_two_seconds() {
     let sessions = Arc::new(BrowserSessionPool::new());
     let engine = create_engine(Some(affinity_config(&pool, &sessions))).expect("engine must build");
 
+    // ~keep Time the first page and its parking, excluding only Chrome's process startup.
+    // ~keep warm() launches the browser without acquiring a page or populating the session pool.
+    if let Err(error) = pool.warm().await {
+        pool.shutdown().await;
+        match error {
+            CrawlError::BrowserError { message, .. } if is_missing_chrome_message(&message) => {
+                announce_chrome_skip(test_name, &message);
+                return;
+            }
+            error => panic!("{test_name}: Chrome must start before the first page: {error:?}"),
+        }
+    }
+    assert_eq!(sessions.size().await, 0, "{test_name}: warming must not keep a page");
+
     let started = Instant::now();
     let first = scrape(&engine, &mock.uri()).await;
     let elapsed = started.elapsed();
