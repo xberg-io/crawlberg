@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import itertools
 import os
 import re
 import subprocess
@@ -20,6 +22,36 @@ def release_condition(expression: str, values: dict[str, bool | str | None]) -> 
         source = source.replace(name, repr(value))
     source = re.sub(r"(?<!['\"])\b(true|false)\b(?!['\"])", lambda match: match[0].title(), source)
     return evaluate_condition(source, event="workflow_dispatch", plugins_only=False, ref="refs/heads/main")
+
+
+def resolve_checkout_ref(expression: str, values: dict[str, object]) -> object:
+    """Evaluate checkout fallback operands with their values, not boolean coercion."""
+    source = " ".join(expression.removeprefix("${{").removesuffix("}}").split())
+    source = source.replace("&&", "and").replace("||", "or")
+
+    def resolve(node: ast.expr) -> object:
+        if isinstance(node, ast.BoolOp):
+            result = resolve(node.values[0])
+            for value in node.values[1:]:
+                if isinstance(node.op, ast.And) and not result:
+                    return result
+                if isinstance(node.op, ast.Or) and result:
+                    return result
+                result = resolve(value)
+            return result
+        if isinstance(node, ast.Compare):
+            assert len(node.ops) == len(node.comparators) == 1
+            assert isinstance(node.ops[0], ast.Eq)
+            return resolve(node.left) == resolve(node.comparators[0])
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in ("true", "false"):
+            return node.id == "true"
+        if isinstance(node, ast.Attribute):
+            return values[ast.unparse(node)]
+        raise AssertionError(f"Unsupported checkout expression: {ast.dump(node)}")
+
+    return resolve(ast.parse(source, mode="eval").body)
 
 
 class ReleaseDryRunTests(unittest.TestCase):
@@ -96,6 +128,71 @@ class ReleaseDryRunTests(unittest.TestCase):
                     assert result.returncode == (0 if is_tag else 1), result.stderr
                     if not is_tag:
                         assert "is not a tag" in result.stderr
+
+    def test_initial_checkout_preserves_priorities_and_pins_dry_run_source(self) -> None:
+        checkout = [step for step in self.jobs["prepare"]["steps"] if step.get("name") == "Checkout"]
+        assert len(checkout) == 1
+        cases = list(
+            itertools.product(
+                (False, True),
+                (True, "true", False, "false", None),
+                (True, "true", False, "false", None),
+                (None, "", "release-candidate", "a" * 40),
+                (None, "", "v1.11.2"),
+                ("refs/heads/main", "refs/tags/v1.11.2"),
+            )
+        )
+        assert len(cases) == 1200
+        for republish, dry_run, payload_dry_run, requested_ref, tag, event_ref in cases:
+            with self.subTest(
+                republish=republish,
+                dry_run=dry_run,
+                payload_dry_run=payload_dry_run,
+                ref=requested_ref,
+                tag=tag,
+                event=event_ref,
+            ):
+                values = {
+                    "inputs.republish": republish,
+                    "inputs.ref": requested_ref,
+                    "inputs.tag": tag,
+                    "inputs.dry_run": dry_run,
+                    "github.event.client_payload.dry_run": payload_dry_run,
+                    "github.event.repository.default_branch": "main",
+                    "github.sha": "b" * 40,
+                    "github.ref": event_ref,
+                }
+                if republish:
+                    expected = requested_ref or "main"
+                elif requested_ref or tag:
+                    expected = requested_ref or tag
+                elif dry_run is True or dry_run == "true" or payload_dry_run is True or payload_dry_run == "true":
+                    expected = "b" * 40
+                else:
+                    expected = event_ref
+                assert resolve_checkout_ref(checkout[0]["with"]["ref"], values) == expected
+
+    def test_initial_checkout_negative_control_detects_moving_branch(self) -> None:
+        retired = (
+            "${{ (inputs.republish == true && (inputs.ref || github.event.repository.default_branch)) "
+            "|| inputs.ref || inputs.tag || github.ref }}"
+        )
+        values = {
+            "inputs.republish": False,
+            "inputs.ref": "",
+            "inputs.tag": "",
+            "inputs.dry_run": True,
+            "github.event.repository.default_branch": "main",
+            "github.sha": "b" * 40,
+            "github.ref": "refs/heads/main",
+        }
+        assert resolve_checkout_ref(retired, values) == "refs/heads/main"
+        rejected = False
+        try:
+            assert resolve_checkout_ref(retired, values) == values["github.sha"]
+        except AssertionError:
+            rejected = True
+        assert rejected
 
 
 if __name__ == "__main__":
