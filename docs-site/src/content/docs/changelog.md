@@ -8,6 +8,11 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
+  the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
+
 ### Fixed
 
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent

@@ -5441,3 +5441,27 @@ async fn a_page_parked_on_a_crashed_browser_is_not_used_for_the_next_fetch() {
 
 #[path = "browser_pool_tests/teardown_reliability.rs"]
 mod teardown_reliability;
+
+#[test]
+fn page_open_timeout_diagnostic_captures_both_safe_phases() {
+    for phase in [PageOpenPhase::CreatePage, PageOpenPhase::ArmWatch] {
+        let ((), fields) = crate::tracing_capture::capture_events(|| {
+            report_page_open_timeout(phase, 7, Duration::from_millis(5001));
+        });
+        let mut names = fields.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["elapsed_ms", "generation", "message", "phase", "timeout_ms"]);
+        for (name, value) in [
+            ("phase", format!("{:?}", phase.as_str())),
+            ("generation", "7".into()),
+            ("elapsed_ms", "5001".into()),
+            ("timeout_ms", "5000".into()),
+        ] {
+            assert!(
+                fields.contains(&(name.to_owned(), value)),
+                "captured fields: {fields:?}"
+            );
+        }
+        assert!(fields.iter().any(|(_, value)| value.contains("page open timed out")));
+    }
+}

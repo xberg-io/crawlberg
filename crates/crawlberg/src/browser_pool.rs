@@ -32,6 +32,32 @@ mod profile_confirmation;
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy)]
+enum PageOpenPhase {
+    CreatePage,
+    ArmWatch,
+}
+
+impl PageOpenPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CreatePage => "create_page",
+            Self::ArmWatch => "arm_watch",
+        }
+    }
+}
+
+fn report_page_open_timeout(phase: PageOpenPhase, generation: u64, elapsed: Duration) {
+    tracing::warn!(
+        target: "crawlberg::browser_pool::page_open",
+        phase = phase.as_str(),
+        generation,
+        elapsed_ms = elapsed.as_millis(),
+        timeout_ms = PAGE_OPEN_TIMEOUT.as_millis(),
+        "page open timed out"
+    );
+}
+
 /// Timeout for waiting on the CDP handler task during shutdown.
 const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -1465,6 +1491,7 @@ impl Drop for OwnedHandler {
 /// What a fetch needs of the running browser, cloned out from under the pool's state lock, so
 /// the lock is never held while the fetch waits on Chrome. ~keep
 struct BrowserHandles {
+    generation: u64,
     firewall: crate::ssrf_intercept::FirewallHandle,
     // ~keep Read by `PooledPage`, which keeps it under the same features.
     #[cfg(any(feature = "browser", test))]
@@ -1497,6 +1524,7 @@ impl BrowserState {
 
     fn handles(&self) -> BrowserHandles {
         BrowserHandles {
+            generation: self.generation,
             firewall: self.firewall.handle(),
             #[cfg(any(feature = "browser", test))]
             handler_end: self.handler_end.clone(),
@@ -2418,16 +2446,22 @@ impl BrowserPool {
         )?;
         // ~keep The bound covers the page's arm as well as its creation: a Chrome that never
         // ~keep answers the arm would otherwise hold an acquisition until someone shut the pool down.
+        let started = std::time::Instant::now();
+        let mut phase = PageOpenPhase::CreatePage;
         let (page, watch) = tokio::time::timeout(PAGE_OPEN_TIMEOUT, async {
             let page = browser
                 .firewall
                 .new_page_with_policy(proxy, sockets, &config.ssrf)
                 .await?;
+            phase = PageOpenPhase::ArmWatch;
             let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
             Ok::<_, CrawlError>((page, watch))
         })
         .await
-        .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
+        .map_err(|_| {
+            report_page_open_timeout(phase, browser.generation, started.elapsed());
+            CrawlError::browser_error("timeout opening page")
+        })??;
         Ok(PooledPage {
             #[cfg(any(feature = "browser", test))]
             handler_end: browser.handler_end,

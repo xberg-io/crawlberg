@@ -29,8 +29,8 @@
 
 #![cfg(feature = "browser")]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crawlberg::{
@@ -121,7 +121,7 @@ async fn pool_page_survives_sequential_fetches_without_being_closed_mid_navigati
 /// Chrome navigations. The test server below records the peak number of
 /// concurrently open connections it observed; with `max_pages: 1` that peak
 /// must never exceed 1.
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn pool_bounds_concurrent_navigations_to_max_pages() {
     let server = TestServer::start().await;
     let pool = BrowserPool::new(BrowserPoolConfig {
@@ -133,7 +133,16 @@ async fn pool_bounds_concurrent_navigations_to_max_pages() {
     let urls = (0..4)
         .map(|index| format!("{}/concurrent-{index}", server.base_url))
         .collect::<Vec<_>>();
-    let results = batch_scrape(&engine, urls).await.expect("batch_scrape must run");
+    let diagnostics = PageOpenDiagnostics::default();
+    let dispatch = diagnostics.subscriber();
+    // ~keep The current-thread runtime also polls spawned continuations under this scoped dispatcher.
+    let _guard = tracing::dispatcher::set_default(&dispatch);
+    let results = batch_scrape(&engine, urls).await.unwrap_or_else(|error| {
+        panic!(
+            "batch_scrape must run: {error}; page_open_diagnostics={}",
+            diagnostics.snapshot()
+        )
+    });
 
     if let Some(message) = results.results.iter().find_map(|entry| entry.error.as_deref())
         && is_missing_chrome_message(message)
@@ -142,20 +151,45 @@ async fn pool_bounds_concurrent_navigations_to_max_pages() {
         return;
     }
 
-    assert_eq!(results.total_count, 4, "all four URLs must have been attempted");
-    for entry in &results.results {
-        assert!(
-            entry.result.is_some() && entry.error.is_none(),
-            "url {}: expected success, got error {:?}",
-            entry.url,
-            entry.error
-        );
-    }
-
+    let outcomes = results
+        .results
+        .iter()
+        .map(|entry| {
+            let case_index = (0..4).find(|index| entry.url.ends_with(&format!("/concurrent-{index}")));
+            let has_marker = entry
+                .result
+                .as_ref()
+                .is_some_and(|result| result.html.contains("pool-lifecycle-marker"));
+            let error = entry
+                .error
+                .as_deref()
+                .unwrap_or("none")
+                .chars()
+                .take(256)
+                .collect::<String>();
+            format!(
+                "case_index={case_index:?} success={} body_marker={has_marker} error={error}",
+                entry.result.is_some() && entry.error.is_none()
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut paths = server.paths.lock().expect("request census must lock").clone();
+    paths.sort_unstable();
+    let expected_paths = (0..4).map(|index| format!("/concurrent-{index}")).collect::<Vec<_>>();
     let peak = server.max_in_flight.load(Ordering::SeqCst);
-    assert_eq!(
-        peak, 1,
-        "max_pages=1 must bound concurrent navigations to 1, but the server observed {peak} concurrent connections"
+    let all_succeeded = results.results.iter().all(|entry| {
+        entry.error.is_none()
+            && entry
+                .result
+                .as_ref()
+                .is_some_and(|result| result.html.contains("pool-lifecycle-marker"))
+    });
+    assert!(
+        results.total_count == 4 && results.results.len() == 4 && all_succeeded && paths == expected_paths && peak == 1,
+        "expected all four marker bodies, exactly four known GET paths and peak=1; total={} outcomes={outcomes:?} \
+         paths={paths:?} peak={peak} page_open_diagnostics={}",
+        results.total_count,
+        diagnostics.snapshot()
     );
 }
 
@@ -167,6 +201,7 @@ async fn pool_bounds_concurrent_navigations_to_max_pages() {
 struct TestServer {
     base_url: String,
     max_in_flight: Arc<AtomicUsize>,
+    paths: Arc<Mutex<Vec<String>>>,
 }
 
 impl TestServer {
@@ -175,6 +210,8 @@ impl TestServer {
         let addr = listener.local_addr().expect("test server should have local addr");
         let current = Arc::new(AtomicUsize::new(0));
         let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let paths = Arc::new(Mutex::new(Vec::new()));
+        let paths_for_task = paths.clone();
         let current_for_task = current.clone();
         let max_for_task = max_in_flight.clone();
 
@@ -185,6 +222,7 @@ impl TestServer {
                 };
                 let current = current_for_task.clone();
                 let max_in_flight = max_for_task.clone();
+                let paths = paths_for_task.clone();
                 tokio::spawn(async move {
                     let mut buffer = [0_u8; 1024];
                     let n = stream.read(&mut buffer).await.unwrap_or(0);
@@ -202,6 +240,15 @@ impl TestServer {
                         return;
                     }
 
+                    if let Some(path) = request_line
+                        .lines()
+                        .next()
+                        .and_then(|line| line.strip_prefix("GET "))
+                        .and_then(|line| line.split_whitespace().next())
+                        .filter(|path| (0..4).any(|index| *path == format!("/concurrent-{index}")))
+                    {
+                        paths.lock().expect("request census must lock").push(path.to_owned());
+                    }
                     let active = current.fetch_add(1, Ordering::SeqCst) + 1;
                     max_in_flight.fetch_max(active, Ordering::SeqCst);
 
@@ -225,6 +272,79 @@ impl TestServer {
         Self {
             base_url: format!("http://{addr}"),
             max_in_flight,
+            paths,
         }
+    }
+}
+
+#[derive(Clone, Default)]
+struct PageOpenDiagnostics(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for PageOpenDiagnostics {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("diagnostic sink must lock")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl PageOpenDiagnostics {
+    fn subscriber(&self) -> tracing::Dispatch {
+        let sink = self.clone();
+        tracing::Dispatch::new(
+            tracing_subscriber::fmt()
+                .with_env_filter("off,crawlberg::browser_pool::page_open=warn")
+                .with_ansi(false)
+                .without_time()
+                .with_target(false)
+                .with_writer(move || sink.clone())
+                .finish(),
+        )
+    }
+
+    fn snapshot(&self) -> String {
+        let bytes = self.0.lock().expect("diagnostic sink must lock");
+        String::from_utf8_lossy(&bytes).chars().take(4096).collect()
+    }
+}
+
+fn assert_known_timeout_capture(text: &str) {
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "expected exactly one captured diagnostic: {text}"
+    );
+    assert!(text.contains("phase=\"create_page\""), "expected known phase: {text}");
+    assert!(text.contains("generation=7"), "expected known generation: {text}");
+    assert!(text.contains("timeout_ms=5000"), "expected unchanged budget: {text}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn page_open_diagnostics_capture_spawned_tasks_and_reject_malformed_evidence() {
+    let capture = PageOpenDiagnostics::default();
+    let dispatch = capture.subscriber();
+    let _guard = tracing::dispatcher::set_default(&dispatch);
+    tokio::spawn(async {
+        tracing::warn!(target: "crawlberg::browser_pool::page_open", phase = "create_page", generation = 7,
+            elapsed_ms = 5001, timeout_ms = 5000, "page open timed out");
+        tracing::warn!(target: "unrelated_target", "must not capture endpoint/profile/content sentinel");
+    })
+    .await
+    .expect("diagnostic producer must finish");
+    let evidence = capture.snapshot();
+    assert_known_timeout_capture(&evidence);
+    assert!(!evidence.contains("sentinel"));
+    for invalid in [
+        String::new(),
+        evidence.replace("create_page", "unknown"),
+        evidence.repeat(2),
+    ] {
+        assert!(std::panic::catch_unwind(|| assert_known_timeout_capture(&invalid)).is_err());
     }
 }
