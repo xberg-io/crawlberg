@@ -345,21 +345,53 @@ async fn should_send_matching_client_hints_to_start_redirect_and_cross_host_scri
     }
 }
 
+struct HeldBrowserClock(tokio::task::JoinHandle<()>);
+
+impl HeldBrowserClock {
+    fn pause() -> Self {
+        let awake = tokio::spawn(async {
+            loop {
+                tokio::task::yield_now().await;
+            }
+        });
+        tokio::time::pause();
+        Self(awake)
+    }
+}
+
+impl Drop for HeldBrowserClock {
+    fn drop(&mut self) {
+        tokio::time::resume();
+        self.0.abort();
+    }
+}
+
+async fn wait_for_browser_progress(mut ready: impl FnMut() -> bool, phase: &str) {
+    let started = Instant::now();
+    while !ready() {
+        assert!(started.elapsed() < Duration::from_secs(20), "browser stalled {phase}");
+        tokio::task::yield_now().await;
+    }
+}
+
 #[tokio::test]
 async fn should_stop_real_browser_retries_at_one_overall_deadline() {
     const ATTEMPT_DELAY: Duration = Duration::from_secs(2);
-    const FETCH_BUDGET: Duration = Duration::from_secs(3);
+    const FETCH_BUDGET: Duration = Duration::from_secs(30);
     let site = MockServer::start().await;
     Mock::given(path("/warm"))
         .respond_with(ResponseTemplate::new(200).set_body_raw("<p>ready</p>", "text/html"))
         .mount(&site)
         .await;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = attempts.clone();
     Mock::given(path("/retry"))
-        .respond_with(
+        .respond_with(move |_: &wiremock::Request| {
+            let attempt = observed.fetch_add(1, Ordering::SeqCst);
             ResponseTemplate::new(429)
                 .set_body_raw("<p>retry</p>", "text/html")
-                .set_delay(ATTEMPT_DELAY),
-        )
+                .set_delay(if attempt == 0 { ATTEMPT_DELAY } else { FETCH_BUDGET * 2 })
+        })
         .mount(&site)
         .await;
     let mut settings = config();
@@ -386,9 +418,23 @@ async fn should_stop_real_browser_retries_at_one_overall_deadline() {
             .build()
             .expect("engine"),
     );
-    let started = Instant::now();
-    let outcome = scrape(&engine, &format!("{}/retry", site.uri())).await;
+    let started = tokio::time::Instant::now();
+    let url = format!("{}/retry", site.uri());
+    let fetch = tokio::spawn(async move { scrape(&engine, &url).await });
+    wait_for_browser_progress(|| attempts.load(Ordering::SeqCst) == 2, "before real retry").await;
+    assert!(
+        started.elapsed() < FETCH_BUDGET,
+        "setup exhausted the shared fetch budget"
+    );
+    assert!(!fetch.is_finished(), "the second real request must still be pending");
+    // ~keep Freeze only after real retry preparation; its CDP/grace timers must run normally.
+    let clock = HeldBrowserClock::pause();
+    let scheduling_margin = Duration::from_millis(100);
+    tokio::time::advance(FETCH_BUDGET - started.elapsed() + scheduling_margin).await;
+    wait_for_browser_progress(|| fetch.is_finished(), "at the shared deadline after two real requests").await;
+    let outcome = fetch.await.expect("browser fetch task");
     let elapsed = started.elapsed();
+    drop(clock);
     pool.shutdown().await;
     let retries = paths_the_page_asked_for(&site)
         .await
@@ -399,9 +445,10 @@ async fn should_stop_real_browser_retries_at_one_overall_deadline() {
         matches!(outcome, Err(crawlberg::CrawlError::BrowserTimeout { .. })),
         "{outcome:?}, {retries} requests in {elapsed:?}"
     );
-    assert!(
-        elapsed < ATTEMPT_DELAY * 2,
-        "fetch exceeded its shared budget: {elapsed:?}"
+    assert_eq!(
+        elapsed,
+        FETCH_BUDGET + scheduling_margin,
+        "all real retries must share the original deadline"
     );
     assert_eq!(retries, 2);
 }
