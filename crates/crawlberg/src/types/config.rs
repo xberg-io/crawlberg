@@ -203,7 +203,10 @@ pub struct CrawlConfig {
     /// Initial delay, in milliseconds, before the first retry. Doubled on each
     /// subsequent attempt (capped at `retry_max_delay_ms`). Defaults to 100ms.
     pub retry_initial_delay_ms: u64,
-    /// Upper bound, in milliseconds, on the exponential retry backoff. Defaults to 60s.
+    /// Upper bound, in milliseconds, on the exponential retry backoff. A 429 or 503 whose
+    /// `Retry-After` is longer than the backoff is waited out, but one that exceeds this bound
+    /// ends the retries with a warning instead (so `0` abandons the retry on any positive
+    /// `Retry-After`). Defaults to 60s.
     pub retry_max_delay_ms: u64,
     /// Fraction of the per-domain rate-limit delay to randomly jitter by, in `[0.0, 1.0]`.
     /// `0.0` (the default) applies no jitter and preserves the previous fixed-interval
