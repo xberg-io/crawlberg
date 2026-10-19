@@ -252,6 +252,11 @@ pub struct BrowserConfig {
     /// the network slower than about 100 ms per step, does not reach lists inside iframes or
     /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
     /// backend only.
+    // ~keep Not in the generated bindings: with alef 0.110.13 a new constructor argument still
+    // ~keep shifts the positional arguments after it (Python `BrowserConfig`; see
+    // ~keep packages/python/tests/released_constructor_calls.py). Remove the skip once alef keeps
+    // ~keep the released constructors.
+    #[cfg_attr(alef, alef(skip))]
     #[serde(default)]
     pub scroll_containers: bool,
 }
