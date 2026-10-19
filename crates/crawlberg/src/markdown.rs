@@ -391,6 +391,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_drop_text_below_an_explicit_max_depth_and_report_it() {
+        let config = ContentConfig {
+            max_depth: Some(10),
+            ..ContentConfig::default()
+        };
+        let result = convert_to_markdown(&nested_divs(20), None, &page(), &config)
+            .await
+            .expect("conversion succeeds");
+        assert!(
+            !result.content.contains("The paragraph survives."),
+            "an explicit max_depth of 10 must still cut a 20-deep page: {:?}",
+            result.content
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("DepthLimitExceeded")),
+            "the dropped content must be reported: {:?}",
+            result.warnings
+        );
+
+        let roomy = ContentConfig {
+            max_depth: Some(40),
+            ..ContentConfig::default()
+        };
+        let kept = convert_to_markdown(&nested_divs(20), None, &page(), &roomy)
+            .await
+            .expect("conversion succeeds");
+        assert_eq!(
+            kept.content.trim(),
+            "The paragraph survives.",
+            "the same page fits under a max_depth of 40"
+        );
+    }
+
+    #[tokio::test]
     async fn converts_heading() {
         let result = convert_to_markdown("<h1>Hello</h1>", None, &page(), &ContentConfig::default()).await;
         let result = result.expect("should produce markdown");
