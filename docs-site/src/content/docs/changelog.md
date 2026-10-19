@@ -15,6 +15,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A retry after a 429 or 503 waits for the response's `Retry-After` (delta-seconds or HTTP-date) when it is
+  longer than the backoff; a `Retry-After` beyond `retry_max_delay_ms` ends the retries with a warning (so `retry_max_delay_ms = 0` abandons the retry on any positive
+  `Retry-After`). (#774)
+- With `allow_subdomains`, `custom_headers` such as `Accept` now reach the admitted subdomains. Credential headers
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Amz-Security-Token`) and `auth` stay with the
+  seed host. (#771)
+- A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
