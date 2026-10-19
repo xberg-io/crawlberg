@@ -134,8 +134,15 @@ impl RetryPolicy for SimpleRetryPolicy {
                 if outcome.attempt >= self.max_retries || !should_retry_error(error, &self.retry_codes) {
                     RetryDirective::Stop
                 } else {
-                    let backoff = compute_backoff_ms(outcome.attempt, self.initial_backoff_ms, self.max_backoff_ms);
-                    RetryDirective::Retry { backoff_ms: backoff }
+                    match crate::http::retry_delay_ms(
+                        error,
+                        outcome.attempt,
+                        self.initial_backoff_ms,
+                        self.max_backoff_ms,
+                    ) {
+                        Some(backoff_ms) => RetryDirective::Retry { backoff_ms },
+                        None => RetryDirective::Stop,
+                    }
                 }
             }
             CrawlError::Dns { .. }

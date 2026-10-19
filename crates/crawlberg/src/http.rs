@@ -5,7 +5,7 @@ mod challenge;
 mod client;
 mod headers;
 mod retry;
-mod status;
+pub(crate) mod status;
 mod waf;
 
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::result_cookies_from_hashmap;
-pub(crate) use retry::{fetch_with_retry, should_retry_error};
+pub(crate) use retry::{fetch_with_retry, retry_delay_ms, should_retry_error};
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use status::{HttpStatus, error_status, refused_response, status_error_keeping_response};

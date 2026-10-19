@@ -1,5 +1,8 @@
 //! The one mapping from an HTTP response status to the error that ends the fetch.
 
+use std::collections::HashMap;
+use std::time::Duration;
+
 use crate::error::CrawlError;
 
 /// The status of the response an error was raised for, kept as that error's source.
@@ -11,10 +14,90 @@ use crate::error::CrawlError;
 #[error("HTTP status {0}")]
 pub(crate) struct HttpStatus(pub(crate) u16);
 
+/// An [`HttpStatus`] source that also carries the delay the server's `Retry-After` header asked for.
+///
+/// ~keep Its `source()` is the plain [`HttpStatus`], so [`error_status`] still finds the status
+/// by walking the chain; only [`error_retry_after`] looks for this wrapper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("HTTP status {}, retry after {:?}", .status.0, .delay)]
+pub(crate) struct StatusRetryAfter {
+    #[source]
+    status: HttpStatus,
+    delay: Duration,
+}
+
+/// Parse a `Retry-After` value (RFC 9110 section 10.2.3): delta-seconds, or an HTTP-date
+/// measured against `now`. A date in the past is a zero delay; an unparseable value is `None`.
+///
+/// ~keep Only the IMF-fixdate form (`Sun, 06 Nov 1994 08:49:37 GMT`) is parsed as a date; the
+/// obsolete RFC 850 and asctime forms are ignored, as servers have not sent them for decades.
+pub(crate) fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        // ~keep An all-digit value too large for u64 is an enormous wait, not a malformed one: it
+        // must land beyond any cap so the retry is abandoned instead of sent early.
+        return Some(value.parse::<u64>().map_or(Duration::MAX, Duration::from_secs));
+    }
+    let date = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    Some(
+        date.with_timezone(&chrono::Utc)
+            .signed_duration_since(now)
+            .to_std()
+            .unwrap_or(Duration::ZERO),
+    )
+}
+
+/// The delay a response's `Retry-After` header asks for, from a lowercase-keyed header map.
+pub(crate) fn retry_after_from_headers(headers: &HashMap<String, Vec<String>>) -> Option<Duration> {
+    let value = headers.get("retry-after")?.first()?;
+    parse_retry_after(value, chrono::Utc::now())
+}
+
+/// The `Retry-After` delay `error` carries, if it was raised for a response that sent one.
+pub(crate) fn error_retry_after(error: &CrawlError) -> Option<Duration> {
+    let mut cause = std::error::Error::source(error);
+    while let Some(current) = cause {
+        if let Some(StatusRetryAfter { delay, .. }) = current.downcast_ref::<StatusRetryAfter>() {
+            return Some(*delay);
+        }
+        cause = current.source();
+    }
+    None
+}
+
+/// [`status_error`] for a response whose headers are in hand: a 429 or 503 keeps its
+/// `Retry-After` delay so the retry policy can wait for it.
+pub(crate) fn status_error_with_headers(
+    status: u16,
+    url: &str,
+    headers: &HashMap<String, Vec<String>>,
+) -> Option<CrawlError> {
+    match matches!(status, 429 | 503)
+        .then(|| retry_after_from_headers(headers))
+        .flatten()
+    {
+        Some(delay) => map_status(
+            status,
+            url,
+            StatusRetryAfter {
+                status: HttpStatus(status),
+                delay,
+            },
+        ),
+        None => status_error(status, url),
+    }
+}
+
 /// The error a response status ends the fetch with, or `None` when the status is not an
 /// error by itself. 403 is not here: telling a WAF block from a plain 403 needs the body.
 pub(crate) fn status_error(status: u16, url: &str) -> Option<CrawlError> {
-    let source = HttpStatus(status);
+    map_status(status, url, HttpStatus(status))
+}
+
+fn map_status<S>(status: u16, url: &str, source: S) -> Option<CrawlError>
+where
+    S: std::error::Error + Send + Sync + 'static,
+{
     let message = || status_message(status, url);
     Some(match status {
         401 => CrawlError::unauthorized_with_source(message(), source),
@@ -102,6 +185,44 @@ pub(crate) fn error_status(error: &CrawlError) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_retry_after_reads_delta_seconds_and_http_dates() {
+        let now = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT")
+            .expect("date")
+            .with_timezone(&chrono::Utc);
+        assert_eq!(parse_retry_after("120", now), Some(Duration::from_secs(120)));
+        assert_eq!(parse_retry_after(" 0 ", now), Some(Duration::ZERO));
+        assert_eq!(
+            parse_retry_after("Sun, 06 Nov 1994 08:50:37 GMT", now),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            parse_retry_after("Sun, 06 Nov 1994 08:00:00 GMT", now),
+            Some(Duration::ZERO),
+            "a date in the past asks for no wait"
+        );
+        assert_eq!(
+            parse_retry_after("99999999999999999999999", now),
+            Some(Duration::MAX),
+            "an overflowing delay is beyond any cap"
+        );
+        for junk in ["", "soon", "-5", "1.5"] {
+            assert_eq!(parse_retry_after(junk, now), None, "{junk:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_429_or_503_keeps_its_retry_after_and_still_reports_its_status() {
+        let headers = HashMap::from([("retry-after".to_string(), vec!["7".to_string()])]);
+        for status in [429, 503] {
+            let error = status_error_with_headers(status, "https://example.com/", &headers).expect("error");
+            assert_eq!(error_retry_after(&error), Some(Duration::from_secs(7)));
+            assert_eq!(error_status(&error), Some(status));
+        }
+        let error = status_error_with_headers(500, "https://example.com/", &headers).expect("error");
+        assert_eq!(error_retry_after(&error), None);
+    }
 
     #[test]
     fn every_status_error_should_name_status_and_redacted_address() {

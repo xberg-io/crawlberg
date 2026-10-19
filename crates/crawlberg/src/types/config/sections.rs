@@ -71,7 +71,9 @@ pub struct ContentConfig {
     pub exclude_selectors: Vec<String>,
     /// Skip image elements in output. Default: `false`.
     pub skip_images: bool,
-    /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML.
+    /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML. Content nested
+    /// deeper is dropped and reported as a `DepthLimitExceeded` warning. `None` means 1024 in
+    /// crawlberg, not the converter's own default of 64.
     pub max_depth: Option<usize>,
     /// Enable line wrapping. Default: `false`.
     pub wrap: bool,
@@ -134,6 +136,31 @@ impl Default for ContentConfig {
 /// Browser fallback configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
+// ~keep The constructor of v1.10.3 (unchanged through v1.11.1): the generated bindings keep it, and
+// ~keep every field after it is optional there. Add a new field at the END of the struct and leave
+// ~keep this list alone. `private_pipe` is skipped, so it is not in the list.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "mode",
+        "backend",
+        "endpoint",
+        "timeout",
+        "overall_timeout",
+        "shutdown_timeout",
+        "wait",
+        "wait_selector",
+        "extra_wait",
+        "proxy",
+        "block_url_patterns",
+        "eval_script",
+        "robots_user_agent",
+        "capture_network_events",
+        "session_affinity",
+        "chrome_path",
+        "chrome_args"
+    ])
+)]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
     pub mode: BrowserMode,
@@ -238,6 +265,26 @@ pub struct BrowserConfig {
     // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
     #[cfg_attr(alef, alef(skip))]
     pub private_pipe: bool,
+    /// Scroll overflowing scroll containers (not only the window) and keep the items that a
+    /// virtualised list mounts as they pass through view, so the page that is read holds items
+    /// beyond the first screen. Default: `false`.
+    ///
+    /// Runs once after the page is ready and `extra_wait` has elapsed, bounded to 8 containers,
+    /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
+    /// and the items of its most repetitive child list are collected, keyed by `id`, `data-index`,
+    /// `data-key`, `data-id`, `aria-posinset` or `aria-rowindex` when present and otherwise by
+    /// text when it is unique among the rendered items, else by position and text. Only
+    /// containers whose child list repeats an element are considered, most repetitive first. The list is rewritten, in position order, only when items were unmounted
+    /// while scrolling and items beyond the first screen were seen; a list that keeps all its
+    /// items mounted is left as it is. Best effort: it does not follow lists that load data over
+    /// the network slower than about 100 ms per step, does not reach lists inside iframes or
+    /// shadow roots, and a rewrite replaces the element children of the list. Lists that recycle
+    /// their DOM nodes (reusing the same elements with new content) are not collected, and
+    /// scrolling can trigger infinite-scroll load-more requests. When the step, item or time
+    /// budget stops the scroll, the items collected so far are kept and a warning is logged.
+    /// Chromiumoxide backend only.
+    #[serde(default)]
+    pub scroll_containers: bool,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -272,6 +319,7 @@ impl std::fmt::Debug for BrowserConfig {
             chrome_path,
             chrome_args,
             private_pipe,
+            scroll_containers,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -298,6 +346,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("chrome_path", chrome_path)
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
             .field("private_pipe", private_pipe)
+            .field("scroll_containers", scroll_containers)
             .finish()
     }
 }
@@ -323,6 +372,7 @@ impl Default for BrowserConfig {
             chrome_path: None,
             chrome_args: Vec::new(),
             private_pipe: false,
+            scroll_containers: false,
         }
     }
 }

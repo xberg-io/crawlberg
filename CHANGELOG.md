@@ -6,11 +6,20 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
+  virtualised list mounts, so a list rendered by window returns every item. (#768)
 - Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
   the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
 
 ### Fixed
 
+- A retry after a 429 or 503 waits for the response's `Retry-After` (delta-seconds or HTTP-date) when it is
+  longer than the backoff; a `Retry-After` beyond `retry_max_delay_ms` ends the retries with a warning (so `retry_max_delay_ms = 0` abandons the retry on any positive
+  `Retry-After`). (#774)
+- With `allow_subdomains`, `custom_headers` such as `Accept` now reach the admitted subdomains. Credential headers
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Amz-Security-Token`) and `auth` stay with the
+  seed host. (#771)
+- A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
@@ -24,6 +33,7 @@ All notable changes to crawlberg are documented here.
 - With `soft_http_errors`, links on a 404 or 410 page are not followed. (#772)
 - `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
   event of its own. (#776)
+- Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
 
 ## [1.11.2] - 2026-10-16
 

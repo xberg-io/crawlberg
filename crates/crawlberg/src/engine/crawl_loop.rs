@@ -150,6 +150,7 @@ impl CrawlEngine {
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
         let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
+        policy.exempt_chain_start_from_exclude = true;
         // ~keep A stream dropped while the seed is still resolving abandons it here, so its
         // ~keep retries and redirect hops stop with it; the loop below watches the same drop.
         let seed = tokio::select! {
@@ -951,17 +952,20 @@ impl CrawlEngine {
         };
         let path = page_parsed.path();
 
-        // ~keep `include_paths` is exempt at depth 0 (the seed): the seed was not discovered
-        // through any filter, so requiring it to match its own include pattern would refuse
-        // crawls whose seed legitimately falls outside the pattern meant for its children.
-        if !crate::helpers::passes_path_patterns(
-            &page_parsed,
-            exclude_regexes,
-            include_regexes,
-            entry.depth > 0,
-            crate::helpers::PathPatternTarget::from_config(&self.config),
-            urls_filtered,
-        ) {
+        // ~keep `include_paths` and `exclude_paths` are both exempt at depth 0 (the seed): the
+        // ~keep seed was not discovered through any filter, so a pattern meant for its children
+        // ~keep must neither refuse a seed outside the include set nor silently drop one inside
+        // ~keep the exclude set (crawlberg#773).
+        if entry.depth > 0
+            && !crate::helpers::passes_path_patterns(
+                &page_parsed,
+                exclude_regexes,
+                include_regexes,
+                true,
+                crate::helpers::PathPatternTarget::from_config(&self.config),
+                urls_filtered,
+            )
+        {
             return false;
         }
         if !matches!(robots, RobotsOutcome::AllowAll) {
