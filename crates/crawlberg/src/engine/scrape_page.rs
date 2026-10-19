@@ -225,11 +225,14 @@ impl CrawlEngine {
                     if attempt < self.config.retry_count
                         && crate::http::should_retry_error(&error, &self.config.retry_codes) =>
                 {
-                    let delay = crate::defaults::dispatch::compute_backoff_ms(
+                    let Some(delay) = crate::http::retry_delay_ms(
+                        &error,
                         u32::try_from(attempt).unwrap_or(u32::MAX),
                         self.config.retry_initial_delay_ms,
                         self.config.retry_max_delay_ms,
-                    );
+                    ) else {
+                        return Err(error);
+                    };
                     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 }
                 outcome => return outcome,

@@ -106,6 +106,7 @@ fn is_soft_error_status(status: u16) -> bool {
 fn soft_error_status(err: &CrawlError) -> Option<u16> {
     match err {
         CrawlError::NotFound { .. } => Some(404),
+        CrawlError::Gone { .. } => Some(410),
         CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. } => Some(
             crate::http::error_status(err)
                 .filter(|status| is_soft_error_status(*status))
@@ -576,6 +577,15 @@ impl CrawlEngine {
     /// The soft error page `soft_http_errors` ends the fetch with in place of `err`, if any.
     fn soft_page(&self, err: &CrawlError) -> Option<LoopStep> {
         let status = soft_error_status(err).filter(|_| self.config.soft_http_errors)?;
+        if let Some(refused) = crate::http::refused_response(err).filter(|refused| !refused.body.is_empty()) {
+            let response = crate::tower::CrawlResponse::new(
+                status,
+                refused.content_type.clone(),
+                refused.headers.clone(),
+                crate::tower::ResponseBody::Bytes(refused.body.clone()),
+            );
+            return Some(LoopStep::Done(Ok((response, false))));
+        }
         Some(LoopStep::Done(Ok((Self::synthesise_status(status), false))))
     }
 

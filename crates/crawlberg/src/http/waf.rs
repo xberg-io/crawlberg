@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 use opentelemetry::KeyValue;
 
 use super::HttpResponse;
-use super::status::HttpStatus;
 use crate::error::CrawlError;
 use crate::types::{WafClassifier, WafClassifyError, WafSignal};
 use crate::waf::TomlClassifier;
@@ -105,9 +104,9 @@ pub(crate) fn record_waf_block(vendor: &str) {
 /// ~keep The status rides along as the error's source, as it does on every error
 /// `status_error` builds, so a custom retry policy reads the status of a refused response
 /// whether it was a 403, 429, 503 or 2xx (crawlberg#133).
-pub(super) fn waf_block(status: u16, vendor: String, message: String) -> CrawlError {
+pub(super) fn waf_block(status: u16, vendor: String, message: String, body: &str) -> CrawlError {
     record_waf_block(&vendor);
-    CrawlError::waf_blocked_with_source(vendor, message, HttpStatus(status))
+    CrawlError::waf_blocked_response(vendor, message, status, Some(body))
 }
 
 /// Largest 2xx body that can still be refused as a WAF interstitial rather than returned as content.
@@ -161,7 +160,8 @@ fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> Http
     if !in_2xx_decision(status, body_len, Some(WAF_2XX_MAX_BODY_LEN)) {
         return None;
     }
-    block_page_error(&response(), Some(WAF_2XX_MAX_BODY_LEN))
+    let response = response();
+    block_page_error(&response, Some(WAF_2XX_MAX_BODY_LEN), &response.body)
 }
 
 /// [`waf_2xx_error`] for a robots.txt fetch: the refusal a 2xx robots.txt gets when the text
@@ -183,7 +183,7 @@ pub(super) fn robots_2xx_error(
         return None;
     }
     let text = crate::robots::fingerprint_text(body);
-    block_page_error(&build_partial_response(status, &text, headers_map), None)
+    block_page_error(&build_partial_response(status, &text, headers_map), None, body)
 }
 
 /// [`waf_2xx_error`] for a sitemap fetch: `None` when the body is a sitemap document, else the
@@ -209,10 +209,10 @@ pub(super) fn sitemap_2xx_error(
 }
 
 /// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
-fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
+fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>, kept_body: &str) -> Option<CrawlError> {
     let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
     let message = format!("detected on 2xx ({}): {}", evidence.label(), signal.vendor);
-    Some(waf_block(response.status, signal.vendor, message))
+    Some(waf_block(response.status, signal.vendor, message, kept_body))
 }
 
 /// The WAF signal the engine hands its antibot strategy and retry policy for `response`.
@@ -446,6 +446,52 @@ mod tests {
                 "200, bare x-sucuri-id, ordinary page",
                 html(200, ordinary.clone()).append_header("x-sucuri-id", "18012"),
                 content.clone(),
+            ),
+            (
+                "200, prose naming the Sucuri Website Firewall",
+                html(
+                    200,
+                    "<html><body><h1>Hardening WordPress</h1><p>We put the Sucuri Website Firewall in front of the origin.</p></body></html>".to_owned(),
+                ),
+                content.clone(),
+            ),
+            (
+                "200, Sucuri block page, Access Denied title",
+                html(200, "<html><title>Sucuri WebSite Firewall - Access Denied</title><body>Block ID: bad-request</body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Sucuri block page, CloudProxy title",
+                html(200, "<html><title>Sucuri WebSite Firewall - CloudProxy - Access Denied</title></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Incapsula resource script",
+                html(200, "<html><body><script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script></body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Incapsula incident id",
+                html(200, "<html><body>Request unsuccessful. Incapsula incident ID: 123-456</body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, PerimeterX captcha global",
+                html(200, "<html><script>window._pxCaptcha = true;</script></html>".to_owned()),
+                Err("perimeterx".to_owned()),
+            ),
+            (
+                "200, PerimeterX captcha CDN",
+                html(200, "<html><script src=\"https://captcha.px-cdn.net/PX123/captcha.js\"></script></html>".to_owned()),
+                Err("perimeterx".to_owned()),
+            ),
+            (
+                "200, Sucuri cloudproxy JS cookie challenge, no headers",
+                html(
+                    200,
+                    "<html><title>You are being redirected...</title><noscript>Javascript is required</noscript><script>var s={};var sucuri_cloudproxy_js='';s='abc';document.cookie='sucuri_cloudproxy_uuid_1a2b3c=x;path=/';location.reload();</script></html>".to_owned(),
+                ),
+                Err("imperva".to_owned()),
             ),
             (
                 "200, server AkamaiGHost, 7 KB page",
