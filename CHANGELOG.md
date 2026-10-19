@@ -12,11 +12,11 @@ All notable changes to crawlberg are documented here.
 ### Fixed
 
 - The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
-  seconds), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
+  seconds, and never past `browser.timeout`), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
   `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
 - A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
   markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
-  `browser.timeout`, inside `browser.overall_timeout`. (#779)
+  `browser.timeout`, within what is left of `browser.overall_timeout`; when none is left the page fails with `browser_timeout`. (#779)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.

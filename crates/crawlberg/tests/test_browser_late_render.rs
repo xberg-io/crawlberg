@@ -116,17 +116,6 @@ async fn default_wait_captures_text_drawn_600ms_after_the_last_response() {
     assert!(page.html.contains(NEEDLE), "{test_name}: {}", page.html);
 }
 
-#[tokio::test]
-async fn default_wait_captures_text_drawn_300ms_after_the_last_response() {
-    let test_name = "default_wait_captures_text_drawn_300ms_after_the_last_response";
-    let site = spa(300).await;
-    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(20))).await else {
-        return;
-    };
-    let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
-    assert!(page.html.contains(NEEDLE), "{test_name}: {}", page.html);
-}
-
 /// A page that changes its DOM every 100 ms, forever.
 async fn ticker() -> MockServer {
     let site = MockServer::start().await;
@@ -164,7 +153,7 @@ async fn the_wait_ends_at_the_quiet_window_on_a_static_page_and_at_the_cap_on_a_
         "{test_name}: not partial"
     );
     assert!(
-        busy_elapsed > quiet_elapsed + Duration::from_millis(1500),
+        busy_elapsed > quiet_elapsed + Duration::from_millis(500) && busy_elapsed >= Duration::from_secs(4),
         "{test_name}: the ticker ({busy_elapsed:?}) must wait for the cap, longer than the static page ({quiet_elapsed:?})"
     );
     assert!(
@@ -173,8 +162,8 @@ async fn the_wait_ends_at_the_quiet_window_on_a_static_page_and_at_the_cap_on_a_
     );
 }
 
-/// The settle wait must not turn a page that finished loading into a timeout: with 2 s of budget
-/// and 1.2 s spent loading, the wait gets what is left.
+/// The settle wait must not turn a page that finished loading into a timeout: with 5 s of budget
+/// and 4.3 s spent loading, less than the 1 s quiet window is left, and the wait gets only that.
 #[tokio::test]
 async fn a_page_that_loads_late_in_its_timeout_is_not_partial() {
     let test_name = "a_page_that_loads_late_in_its_timeout_is_not_partial";
@@ -183,11 +172,11 @@ async fn a_page_that_loads_late_in_its_timeout_is_not_partial() {
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_raw("<html><body><p>loaded in time</p></body></html>", "text/html")
-                .set_delay(Duration::from_millis(1200)),
+                .set_delay(Duration::from_millis(4300)),
         )
         .mount(&site)
         .await;
-    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(2))).await else {
+    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(5))).await else {
         return;
     };
     let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));

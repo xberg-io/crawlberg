@@ -53,6 +53,9 @@ const DOM_QUIET_FALLBACK: Duration = Duration::from_millis(500);
 /// How long the read of a page that hit `browser.timeout` may take.
 const PARTIAL_READ_BUDGET: Duration = Duration::from_secs(5);
 
+/// What a read of a partial page leaves of the overall deadline for the fetch to return its result.
+const PARTIAL_READ_DEADLINE_MARGIN: Duration = Duration::from_millis(250);
+
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -128,7 +131,7 @@ pub(super) async fn page_fetch(
 ) -> Result<BrowserPage, CrawlError> {
     tokio::time::timeout_at(
         deadline,
-        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot),
+        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot, deadline),
     )
     .await
     .unwrap_or_else(|_| Err(super::overall_deadline_error(config.browser.overall_timeout)))
@@ -142,6 +145,7 @@ async fn fetch_in_turn(
     watch: &Watch,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
@@ -167,7 +171,7 @@ async fn fetch_in_turn(
         Vec::new()
     };
 
-    let rendered = render(url, config, page, watch, want_screenshot).await;
+    let rendered = render(url, config, page, watch, want_screenshot, deadline).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
     // ~keep of `extra_wait` is not missed while its DNS lookup runs.
     let refused = watch.refused_urls().await;
@@ -203,6 +207,7 @@ async fn render(
     page: &chromiumoxide::Page,
     watch: &Watch,
     want_screenshot: bool,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
     let navigation_started = tokio::time::Instant::now();
@@ -246,7 +251,7 @@ async fn render(
             && intercepted.stopped_response.is_none()
             && !selector_wait
         {
-            return partial_page(page, watch, config, error).await;
+            return partial_page(page, watch, config, error, deadline).await;
         }
         return Err(error);
     }
@@ -360,11 +365,21 @@ async fn partial_page(
     watch: &Watch,
     config: &CrawlConfig,
     timeout_error: CrawlError,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
-    // ~keep The read runs past `browser.timeout`, inside the fetch's overall deadline. When
-    // ~keep `overall_timeout` leaves less than this budget after `timeout`, the deadline ends the
-    // ~keep read first and the fetch fails with the overall-deadline timeout.
-    let budget = PARTIAL_READ_BUDGET.min(config.browser.timeout);
+    // ~keep The read runs past `browser.timeout`, inside the fetch's overall deadline, and is
+    // ~keep bounded by what is left of it so that the deadline never cuts it off: that would
+    // ~keep surface the generic overall-deadline error in place of the navigation timeout. A read
+    // ~keep the deadline leaves no room for keeps the navigation timeout as the outcome.
+    let normal_budget = PARTIAL_READ_BUDGET.min(config.browser.timeout);
+    let room = deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .saturating_sub(PARTIAL_READ_DEADLINE_MARGIN);
+    let budget = normal_budget.min(room);
+    if budget.is_zero() {
+        return Err(timeout_error);
+    }
+    let deadline_limited = budget < normal_budget;
     // ~keep No screenshot: the page is still loading, and a stalled capture would fail the read and
     // ~keep lose the HTML that is the point of a partial result.
     let mut read = match read_rendered(page, watch, config, false, budget).await {
@@ -374,11 +389,13 @@ async fn partial_page(
             tracing::debug!(error = %read_error, "no document could be read from the page at the timeout");
             // ~keep A read that itself timed out names what stalled (a saturated renderer), which
             // ~keep the navigation timeout does not.
-            return Err(if matches!(read_error, CrawlError::BrowserTimeout { .. }) {
-                read_error
-            } else {
-                timeout_error
-            });
+            return Err(
+                if !deadline_limited && matches!(read_error, CrawlError::BrowserTimeout { .. }) {
+                    read_error
+                } else {
+                    timeout_error
+                },
+            );
         }
     };
     tracing::warn!(
@@ -1030,6 +1047,23 @@ mod tests {
                     .mount(&site)
                     .await;
             }
+            Mock::given(method("GET"))
+                .and(path("/slow-image"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    "<html><body><p>text of a page still loading</p><img src=\"/slow.gif\"></body></html>",
+                    "text/html",
+                ))
+                .mount(&site)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/slow.gif"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(b"GIF89a".to_vec(), "image/gif")
+                        .set_delay(Duration::from_secs(60)),
+                )
+                .mount(&site)
+                .await;
             let base = site.uri().replace("127.0.0.1", "localhost");
             let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
             let builder = chromiumoxide::browser::BrowserConfig::builder()
@@ -1080,6 +1114,7 @@ mod tests {
                 &self.page,
                 &self.watch,
                 want_screenshot,
+                tokio::time::Instant::now() + Duration::from_secs(600),
             )
             .await
         }
@@ -1153,7 +1188,14 @@ mod tests {
         config.browser.wait = BrowserWait::Selector;
         config.browser.wait_selector = Some("[data-selector-ready='yes']".to_owned());
         let url = fixture.url("/one");
-        let rendered = render(&url, &config, &fixture.page, &fixture.watch, false);
+        let rendered = render(
+            &url,
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_secs(600),
+        );
         let (rendered, hook_runs) =
             crate::chrome_frame::with_after_selector_miss("document.body.dataset.selectorReady = 'yes'", rendered)
                 .await;
@@ -1162,6 +1204,37 @@ mod tests {
         let rendered = rendered.expect("the selector added after the first miss must be found");
         assert_eq!(hook_runs, 1, "the first confirmed miss must trigger the test hook once");
         assert!(rendered.response.body.contains("data-selector-ready=\"yes\""));
+    }
+
+    /// A page that timed out while loading, with an overall deadline too near for the read of what
+    /// it rendered, fails with the navigation timeout and not with the overall-deadline error.
+    /// Launches a real Chrome and skips when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_partial_read_the_overall_deadline_leaves_no_room_for_keeps_the_navigation_timeout() {
+        let test_name = "a_partial_read_the_overall_deadline_leaves_no_room_for_keeps_the_navigation_timeout";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let mut config = fixture.config.clone();
+        config.browser.timeout = Duration::from_secs(1);
+        let rendered = render(
+            &fixture.url("/slow-image"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_millis(1100),
+        )
+        .await;
+        fixture.stop().await;
+
+        let Err(CrawlError::BrowserTimeout { message, .. }) = rendered else {
+            panic!(
+                "{test_name}: expected the navigation timeout, got {:?}",
+                rendered.map(|_| "a page")
+            );
+        };
+        assert!(!message.contains("overall deadline"), "{test_name}: {message}");
     }
 
     /// A document committed between the render's read of the HTML and its read of the committed
