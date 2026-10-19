@@ -22,3 +22,6 @@ dev_dependencies:
   freezed: ^4.0.1
   build_runner: "^2.15.0"
   json_serializable: "^6.13.2"
+  # ~keep source_helper 1.4.0 adds extension members that json_serializable 6.15.0 also
+  # ~keep declares, so build_runner fails to compile. Lift once json_serializable reconciles.
+  source_helper: ">=1.3.10 <1.4.0"
