@@ -392,3 +392,77 @@ async fn should_send_custom_headers_but_no_credentials_to_an_admitted_subdomain(
         assert_eq!(header("/child", name), None, "{name} must never reach a subdomain");
     }
 }
+
+/// crawlberg#771 on a redirect hop: the seed redirects to an admitted subdomain, and that hop
+/// carries the non-credential custom headers but none of the seed host's credentials.
+#[tokio::test]
+async fn should_send_custom_headers_but_no_credentials_on_a_redirect_hop_to_an_admitted_subdomain() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(302).append_header("location", format!("http://sub.localhost:{port}/landing")),
+        )
+        .mount(&mock)
+        .await;
+    mount_html(&mock, "/landing", "<html><body>landed</body></html>").await;
+
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(0),
+            allow_subdomains: true,
+            respect_robots_txt: false,
+            auth: Some(crawlberg::AuthConfig::Bearer {
+                token: "seed-only-token".to_owned(),
+            }),
+            custom_headers: std::collections::HashMap::from([
+                ("X-Probe".to_owned(), "sent".to_owned()),
+                ("Cookie".to_owned(), "sid=secret".to_owned()),
+                ("X-Api-Key".to_owned(), "secret".to_owned()),
+            ]),
+            ..CrawlConfig::default()
+        },
+    ));
+
+    let result = engine
+        .crawl(&format!("http://localhost:{port}/start"))
+        .await
+        .expect("crawl must succeed");
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "the page the redirect lands on: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+
+    let requests = mock.received_requests().await.expect("the mock records requests");
+    let header = |at: &str, name: &str| {
+        requests
+            .iter()
+            .find(|request| request.url.path() == at)
+            .unwrap_or_else(|| panic!("{at} was never requested"))
+            .headers
+            .get(name)
+            .map(|value| value.to_str().expect("ascii header").to_owned())
+    };
+
+    assert_eq!(header("/start", "x-probe").as_deref(), Some("sent"));
+    assert_eq!(
+        header("/start", "authorization").as_deref(),
+        Some("Bearer seed-only-token")
+    );
+    assert_eq!(
+        header("/landing", "x-probe").as_deref(),
+        Some("sent"),
+        "the hop carries X-Probe"
+    );
+    for name in ["authorization", "cookie", "x-api-key"] {
+        assert_eq!(
+            header("/landing", name),
+            None,
+            "{name} must not follow a redirect onto a subdomain"
+        );
+    }
+}

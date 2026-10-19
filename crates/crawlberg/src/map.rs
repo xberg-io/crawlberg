@@ -1707,6 +1707,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_requests_an_excluded_seed_but_does_not_follow_its_forward_to_an_excluded_path() {
+        for forward in EVERY_FORWARD {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            mount_forward(&mock, "/s", "/private", forward).await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+            let config = CrawlConfig {
+                exclude_paths: vec!["^/(s|private)".to_owned()],
+                ..local_test_config()
+            };
+
+            let result = map(&format!("{base}/s"), &config).await;
+
+            assert_refused(&result, EXCLUDED, &format!("{forward:?}"));
+            assert_eq!(
+                request_count(&mock, "/s").await,
+                1,
+                "{forward:?}: the seed is exempt from exclude_paths and is requested"
+            );
+            assert_eq!(
+                request_count(&mock, "/private").await,
+                0,
+                "{forward:?}: the excluded hop is never requested"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn map_names_an_excluded_hop_without_its_credentials() {
         let mock = MockServer::start().await;
         let target = mock.uri().replace("http://", "http://user:hunter2@");

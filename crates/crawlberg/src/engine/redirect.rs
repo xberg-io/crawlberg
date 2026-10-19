@@ -1289,6 +1289,47 @@ mod tests {
         }
     }
 
+    /// crawlberg#773: only the policy that resolves the seed exempts its chain start from
+    /// `exclude_paths`; every other policy, and every redirect hop, is still filtered.
+    #[tokio::test]
+    async fn only_a_seed_policy_exempts_the_chain_start_from_exclude_paths() {
+        let config = crate::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .respect_robots_txt(false)
+            .build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+        let client = crate::http::build_client(&engine.config).expect("client builds");
+        let exclude = crate::helpers::compile_regexes(&["^/private".to_owned()]).expect("pattern compiles");
+        let url = "http://example.com/private/page";
+
+        let mut policy = RedirectPolicy::new(&engine, &client, &exclude, &[]);
+        assert!(
+            !policy.exempt_chain_start_from_exclude,
+            "a new policy is not a seed policy"
+        );
+        assert!(
+            matches!(
+                policy.admits(url, false).await,
+                Ok(Some(PolicyRefusal::Filtered { .. }))
+            ),
+            "an excluded link that is not the seed must be refused"
+        );
+
+        let mut policy = RedirectPolicy::new(&engine, &client, &exclude, &[]);
+        policy.exempt_chain_start_from_exclude = true;
+        assert!(
+            matches!(policy.admits(url, false).await, Ok(None)),
+            "the seed's chain start is exempt"
+        );
+        assert!(
+            matches!(
+                policy.admits("http://example.com/private/other", true).await,
+                Ok(Some(PolicyRefusal::Filtered { .. }))
+            ),
+            "a redirect hop is filtered even under a seed policy"
+        );
+    }
+
     #[test]
     fn a_refusal_is_the_forbidden_error_and_names_a_filtered_address_without_its_credential() {
         let blocked = PolicyRefusal::Blocked {

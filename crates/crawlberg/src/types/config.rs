@@ -171,13 +171,15 @@ pub struct CrawlConfig {
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
     /// Custom HTTP headers to send with each request to the seed URL's host. With
-    /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries them too,
-    /// except credential-bearing headers (`Authorization`, `Proxy-Authorization`, `Cookie`,
-    /// `X-Api-Key`, `X-Amz-Security-Token`, the header [`Self::auth`] names, and any header whose
-    /// name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`, `xsrf`,
-    /// `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`, `otp`,
-    /// `assertion`, `hmac`, `private`, `sso` or `sig`), which stay with the seed host. A request to
-    /// any other host does not carry them. Subdomain forwarding applies to the HTTP and
+    /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries the
+    /// non-credential headers too, whatever its scheme or port. Credential headers stay with the
+    /// seed host: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+    /// `X-Amz-Security-Token`, `Authentication-Info`, the header [`Self::auth`] names, and any
+    /// header whose name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`,
+    /// `xsrf`, `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`,
+    /// `otp`, `assertion`, `hmac`, `private`, `sso` or `sig`. A secret in a header whose name
+    /// matches none of these reaches subdomains, so name secret headers recognisably. A request
+    /// to any other host does not carry any of them. Subdomain forwarding applies to the HTTP and
     /// chromiumoxide backends; the native browser backend sends them to the seed host only.
     #[serde(default)]
     #[cfg_attr(alef, alef(sensitive))]
