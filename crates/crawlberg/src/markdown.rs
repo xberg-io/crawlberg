@@ -38,6 +38,11 @@ fn strong_em_symbol(symbol: &str) -> Result<char, ConversionError> {
     }
 }
 
+/// ~keep The converter's own default is 64 and drops everything below it silently (#775): a
+/// ~keep paragraph in 61 nested divs sits at depth 64 once html and body count. 1024 is the
+/// ~keep ceiling the converter clamps to; its walker stays within a 2 MiB blocking-task stack there.
+const DEFAULT_MAX_DEPTH: usize = 1024;
+
 fn conversion_options(
     config: &ContentConfig,
     document_url: &Url,
@@ -69,7 +74,7 @@ fn conversion_options(
         },
         skip_images: config.skip_images,
         inline_data_media: html_to_markdown_rs::options::InlineDataMedia::AltTextOnly,
-        max_depth: config.max_depth,
+        max_depth: Some(config.max_depth.unwrap_or(DEFAULT_MAX_DEPTH)),
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
@@ -311,6 +316,111 @@ mod tests {
         assert_eq!(
             ours.keep_inline_images_in, theirs.keep_inline_images_in,
             "keep_inline_images_in"
+        );
+    }
+
+    fn nested_divs(depth: usize) -> String {
+        format!(
+            "<html><body>{}<p>The paragraph survives.</p>{}</body></html>",
+            "<div>".repeat(depth),
+            "</div>".repeat(depth)
+        )
+    }
+
+    #[tokio::test]
+    async fn should_keep_the_paragraph_of_a_page_nested_past_the_converter_default_depth() {
+        for depth in [60, 61, 200, 1000] {
+            let result = convert_to_markdown(&nested_divs(depth), None, &page(), &ContentConfig::default())
+                .await
+                .expect("conversion succeeds");
+            assert_eq!(result.content.trim(), "The paragraph survives.", "depth {depth}");
+        }
+    }
+
+    #[test]
+    fn should_keep_the_innermost_text_of_every_kind_of_element_nested_a_thousand_deep() {
+        const ELEMENTS: usize = 1000;
+        const TWO_MIB: usize = 2 * 1024 * 1024;
+        // (name, opening markup, closing markup, elements per repetition, text is rendered)
+        let kinds: [(&str, &str, &str, usize, bool); 12] = [
+            ("div", "<div>", "</div>", 1, true),
+            ("list", "<ul><li>", "</li></ul>", 2, true),
+            ("blockquote", "<blockquote>", "</blockquote>", 1, true),
+            ("table", "<table><tr><td>", "</td></tr></table>", 4, true),
+            ("span", "<span>", "</span>", 1, true),
+            ("emphasis", "<em>", "</em>", 1, true),
+            ("bold", "<b>", "</b>", 1, true),
+            ("anchor", "<div><a href=\"/x\">", "</a></div>", 2, true),
+            ("pre", "<div><pre><code>", "</code></pre></div>", 3, true),
+            ("details", "<details>", "</details>", 1, true),
+            ("heading", "<div><h2>", "</h2></div>", 2, true),
+            ("svg", "<svg><g>", "</g></svg>", 2, false),
+        ];
+        for (kind, open, close, per, rendered) in kinds {
+            let repeat = ELEMENTS / per;
+            let html = format!(
+                "<html><body>{}innermost text{}</body></html>",
+                open.repeat(repeat),
+                close.repeat(repeat)
+            );
+            let content = std::thread::Builder::new()
+                .stack_size(TWO_MIB)
+                .spawn(move || {
+                    convert_html_to_markdown(&html, None, &page(), &ContentConfig::default())
+                        .map(|converted| converted.content)
+                })
+                .expect("spawn")
+                .join()
+                .unwrap_or_else(|_| panic!("{kind}: overflowed a 2 MiB stack"))
+                .expect("conversion succeeds");
+            if rendered {
+                assert!(content.contains("innermost text"), "{kind}: {content:.200}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_not_overflow_the_stack_on_a_page_nested_far_past_any_cap() {
+        let result = convert_to_markdown(&nested_divs(5000), None, &page(), &ContentConfig::default()).await;
+        let result = result.expect("conversion of a 5000-deep page must not crash");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("DepthLimitExceeded")),
+            "content dropped past the cap must be reported: {:?}",
+            result.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn should_drop_text_below_an_explicit_max_depth_and_report_it() {
+        let config = ContentConfig {
+            max_depth: Some(10),
+            ..ContentConfig::default()
+        };
+        let result = convert_to_markdown(&nested_divs(20), None, &page(), &config)
+            .await
+            .expect("conversion succeeds");
+        assert!(
+            !result.content.contains("The paragraph survives."),
+            "an explicit max_depth of 10 must still cut a 20-deep page: {:?}",
+            result.content
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("DepthLimitExceeded")),
+            "the dropped content must be reported: {:?}",
+            result.warnings
+        );
+
+        let roomy = ContentConfig {
+            max_depth: Some(40),
+            ..ContentConfig::default()
+        };
+        let kept = convert_to_markdown(&nested_divs(20), None, &page(), &roomy)
+            .await
+            .expect("conversion succeeds");
+        assert_eq!(
+            kept.content.trim(),
+            "The paragraph survives.",
+            "the same page fits under a max_depth of 40"
         );
     }
 

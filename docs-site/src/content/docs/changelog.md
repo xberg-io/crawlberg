@@ -25,6 +25,7 @@ All notable changes to crawlberg are documented here.
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
+- Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
 
 ## [1.11.2] - 2026-10-16
 

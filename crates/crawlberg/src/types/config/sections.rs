@@ -71,7 +71,9 @@ pub struct ContentConfig {
     pub exclude_selectors: Vec<String>,
     /// Skip image elements in output. Default: `false`.
     pub skip_images: bool,
-    /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML.
+    /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML. Content nested
+    /// deeper is dropped and reported as a `DepthLimitExceeded` warning. `None` means 1024 in
+    /// crawlberg, not the converter's own default of 64.
     pub max_depth: Option<usize>,
     /// Enable line wrapping. Default: `false`.
     pub wrap: bool,
