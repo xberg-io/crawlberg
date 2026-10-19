@@ -228,6 +228,9 @@ async fn render(
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
+    if config.browser.scroll_containers {
+        super::virtual_scroll::harvest_scroll_containers(page).await;
+    }
     watch.settle().await;
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));

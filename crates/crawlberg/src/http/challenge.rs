@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 
 use super::body::read_text_bounded;
-use super::status::{HttpStatus, status_error};
+use super::status::{HttpStatus, status_error_with_headers};
 use super::waf;
 use crate::error::{CrawlError, WAF_BODY_PREFIX_LEN};
 
-/// HTTP 403, the one challenge status [`status_error`] deliberately leaves unmapped.
+/// HTTP 403, the one challenge status [`super::status::status_error`] deliberately leaves unmapped.
 const FORBIDDEN_STATUS: u16 = 403;
 
 /// The statuses whose response is fingerprinted for a WAF before it is reduced to the error
@@ -102,7 +102,7 @@ pub(crate) fn challenge_body_error(
     // because telling a WAF block from a plain forbidden needs exactly the body just read and
     // rejected above. The status is attached here instead, so a custom retry policy reading
     // `AttemptOutcome::status` sees a 403 like any other response status (crawlberg#133).
-    status_error(status, url).unwrap_or_else(|| {
+    status_error_with_headers(status, url, headers).unwrap_or_else(|| {
         CrawlError::forbidden_with_source(super::status::status_message(status, url), HttpStatus(status))
     })
 }

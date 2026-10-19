@@ -150,6 +150,7 @@ impl CrawlEngine {
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
         let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
+        policy.exempt_chain_start_from_exclude = true;
         // ~keep A stream dropped while the seed is still resolving abandons it here, so its
         // ~keep retries and redirect hops stop with it; the loop below watches the same drop.
         let seed = tokio::select! {
@@ -427,7 +428,10 @@ impl CrawlEngine {
                     ));
                 }
                 state.redirect_count = outcome.redirect_count;
-                if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
+                if outcome.redirect_count > 0
+                    && redirected_status_error(&self.config, outcome.final_response.status, &outcome.final_url)
+                        .is_some()
+                {
                     state.error = Some(format!("HTTP {}", outcome.final_response.status));
                 }
                 Some(outcome)
@@ -948,17 +952,20 @@ impl CrawlEngine {
         };
         let path = page_parsed.path();
 
-        // ~keep `include_paths` is exempt at depth 0 (the seed): the seed was not discovered
-        // through any filter, so requiring it to match its own include pattern would refuse
-        // crawls whose seed legitimately falls outside the pattern meant for its children.
-        if !crate::helpers::passes_path_patterns(
-            &page_parsed,
-            exclude_regexes,
-            include_regexes,
-            entry.depth > 0,
-            crate::helpers::PathPatternTarget::from_config(&self.config),
-            urls_filtered,
-        ) {
+        // ~keep `include_paths` and `exclude_paths` are both exempt at depth 0 (the seed): the
+        // ~keep seed was not discovered through any filter, so a pattern meant for its children
+        // ~keep must neither refuse a seed outside the include set nor silently drop one inside
+        // ~keep the exclude set (crawlberg#773).
+        if entry.depth > 0
+            && !crate::helpers::passes_path_patterns(
+                &page_parsed,
+                exclude_regexes,
+                include_regexes,
+                true,
+                crate::helpers::PathPatternTarget::from_config(&self.config),
+                urls_filtered,
+            )
+        {
             return false;
         }
         if !matches!(robots, RobotsOutcome::AllowAll) {
@@ -1135,6 +1142,19 @@ async fn perform_hop(
     }
 }
 
+/// The error a redirect chain ending on `status` is a failed fetch with, if any.
+///
+/// ~keep Shared by the seed and linked pages. A 404 at the end of a chain reaches the crawl as a
+/// ~keep synthetic response, so the status has to be checked here. Only a status the direct fetch
+/// ~keep also refuses (`status_error`) counts: a 451 or 501 is a page either way. Under
+/// ~keep `soft_http_errors` the error page itself is wanted.
+fn redirected_status_error(config: &CrawlConfig, status: u16, url: &str) -> Option<CrawlError> {
+    if config.soft_http_errors {
+        return None;
+    }
+    crate::http::status_error(status, url)
+}
+
 async fn extract_outcome(
     engine: CrawlEngine,
     entry: FrontierEntry,
@@ -1148,6 +1168,11 @@ async fn extract_outcome(
         page_scan,
         ..
     } = outcome;
+    if redirect_count > 0
+        && let Some(error) = redirected_status_error(&engine.config, resp.status, &final_url)
+    {
+        return Err(Box::new((entry, error)));
+    }
     let body_text = resp.body_text().clone();
     let (ssrf_refused_urls, browser_result_cookies) = resp
         .landed

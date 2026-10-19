@@ -335,6 +335,10 @@ impl std::fmt::Display for AssetCategory {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CrawlEvent {
     /// A single page has been crawled.
+    ///
+    /// A link whose redirect lands on a URL the crawl already queued or visited gets no event of
+    /// its own: it is requested, then dropped as a duplicate of the destination, which is reported
+    /// once under its own URL. The request count can therefore exceed the event count.
     Page {
         /// The crawled page result.
         result: Box<CrawlPageResult>,
