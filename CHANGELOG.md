@@ -18,6 +18,8 @@ All notable changes to crawlberg are documented here.
   markdown, and a 410 no longer fails as `gone`. (#772)
 - A linked URL that redirects to an error status such as 404 is reported as an error event, as the
   same URL as seed is, instead of an empty page. (#777)
+- `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
+  event of its own. (#776)
 
 ## [1.11.2] - 2026-10-16
 

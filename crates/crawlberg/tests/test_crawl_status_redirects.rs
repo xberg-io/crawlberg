@@ -1,5 +1,6 @@
 //! Crawl handling of error statuses and redirects on linked pages: the body of a 404 or 410 under
-//! `soft_http_errors` (crawlberg#772) and a redirect that ends in a 404 (crawlberg#777).
+//! `soft_http_errors` (crawlberg#772), a redirect that ends in a 404 (crawlberg#777) and a
+//! redirect to a page the crawl already has (crawlberg#776).
 
 #![allow(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
 
@@ -160,4 +161,46 @@ async fn a_link_that_redirects_to_a_404_is_still_a_page_when_soft_errors_enabled
         .find(|page| page.0.ends_with("/moved"))
         .unwrap_or_else(|| panic!("a soft page for /moved, got {:?}", crawled.pages));
     assert_eq!(page.3, 404);
+}
+
+/// A link whose redirect lands on a URL the crawl already holds is requested but gets no event of
+/// its own: the destination page is the event, and it is reported once. Documented on
+/// `CrawlEvent::Page`.
+#[tokio::test]
+async fn a_link_that_redirects_to_a_queued_page_gives_no_event_and_the_destination_once() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/a", "/b", "/c"]).await;
+    serve(&mock, "/a", redirect("/c")).await;
+    serve(&mock, "/b", redirect("/c")).await;
+    serve(&mock, "/c", html(200, "<html><body><p>Page C text.</p></body></html>")).await;
+
+    let crawled = crawl(&engine(false), &format!("{}/", mock.uri())).await;
+    let requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("requests are recorded")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    for route in ["/a", "/b"] {
+        assert!(
+            requested.iter().any(|p| p == route),
+            "{route} was requested: {requested:?}"
+        );
+    }
+    assert!(
+        crawled.errors.is_empty(),
+        "a duplicate redirect is not an error: {:?}",
+        crawled.errors
+    );
+    let urls: Vec<&str> = crawled.pages.iter().map(|page| page.0.as_str()).collect();
+    assert_eq!(
+        urls.iter().filter(|url| url.ends_with("/c")).count(),
+        1,
+        "the destination is reported once: {urls:?}"
+    );
+    assert!(
+        !urls.iter().any(|url| url.ends_with("/a") || url.ends_with("/b")),
+        "the redirecting links give no event of their own: {urls:?}"
+    );
 }
