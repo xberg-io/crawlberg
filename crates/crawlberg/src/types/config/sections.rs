@@ -134,6 +134,31 @@ impl Default for ContentConfig {
 /// Browser fallback configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
+// ~keep The constructor of v1.10.3 (unchanged through v1.11.1): the generated bindings keep it, and
+// ~keep every field after it is optional there. Add a new field at the END of the struct and leave
+// ~keep this list alone. `private_pipe` is skipped, so it is not in the list.
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "mode",
+        "backend",
+        "endpoint",
+        "timeout",
+        "overall_timeout",
+        "shutdown_timeout",
+        "wait",
+        "wait_selector",
+        "extra_wait",
+        "proxy",
+        "block_url_patterns",
+        "eval_script",
+        "robots_user_agent",
+        "capture_network_events",
+        "session_affinity",
+        "chrome_path",
+        "chrome_args"
+    ])
+)]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
     pub mode: BrowserMode,
@@ -252,11 +277,6 @@ pub struct BrowserConfig {
     /// the network slower than about 100 ms per step, does not reach lists inside iframes or
     /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
     /// backend only.
-    // ~keep Not in the generated bindings: with alef 0.110.13 a new constructor argument still
-    // ~keep shifts the positional arguments after it (Python `BrowserConfig`; see
-    // ~keep packages/python/tests/released_constructor_calls.py). Remove the skip once alef keeps
-    // ~keep the released constructors.
-    #[cfg_attr(alef, alef(skip))]
     #[serde(default)]
     pub scroll_containers: bool,
 }
