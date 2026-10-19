@@ -2816,8 +2816,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 17)
-      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2836,6 +2836,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sessionAffinity: dco_decode_bool(arr[14]),
       chromePath: dco_decode_opt_String(arr[15]),
       chromeArgs: dco_decode_list_String(arr[16]),
+      scrollContainers: dco_decode_bool(arr[17]),
     );
   }
 
@@ -3019,6 +3020,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return CrawlError_WafBlocked(
           vendor: dco_decode_String(raw[1]),
           message: dco_decode_String(raw[2]),
+          status: dco_decode_i_64(raw[3]),
+          body: dco_decode_String(raw[4]),
         );
       case 4:
         return CrawlError_Timeout(message: dco_decode_String(raw[1]));
@@ -4288,6 +4291,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_sessionAffinity = sse_decode_bool(deserializer);
     var var_chromePath = sse_decode_opt_String(deserializer);
     var var_chromeArgs = sse_decode_list_String(deserializer);
+    var var_scrollContainers = sse_decode_bool(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4306,6 +4310,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sessionAffinity: var_sessionAffinity,
       chromePath: var_chromePath,
       chromeArgs: var_chromeArgs,
+      scrollContainers: var_scrollContainers,
     );
   }
 
@@ -4566,7 +4571,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         var var_vendor = sse_decode_String(deserializer);
         var var_message = sse_decode_String(deserializer);
-        return CrawlError_WafBlocked(vendor: var_vendor, message: var_message);
+        var var_status = sse_decode_i_64(deserializer);
+        var var_body = sse_decode_String(deserializer);
+        return CrawlError_WafBlocked(
+          vendor: var_vendor,
+          message: var_message,
+          status: var_status,
+          body: var_body,
+        );
       case 4:
         var var_message = sse_decode_String(deserializer);
         return CrawlError_Timeout(message: var_message);
@@ -6293,6 +6305,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.sessionAffinity, serializer);
     sse_encode_opt_String(self.chromePath, serializer);
     sse_encode_list_String(self.chromeArgs, serializer);
+    sse_encode_bool(self.scrollContainers, serializer);
   }
 
   @protected
@@ -6458,10 +6471,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case CrawlError_Forbidden(message: final message):
         sse_encode_i_32(2, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_WafBlocked(vendor: final vendor, message: final message):
+      case CrawlError_WafBlocked(
+        vendor: final vendor,
+        message: final message,
+        status: final status,
+        body: final body,
+      ):
         sse_encode_i_32(3, serializer);
         sse_encode_String(vendor, serializer);
         sse_encode_String(message, serializer);
+        sse_encode_i_64(status, serializer);
+        sse_encode_String(body, serializer);
       case CrawlError_Timeout(message: final message):
         sse_encode_i_32(4, serializer);
         sse_encode_String(message, serializer);

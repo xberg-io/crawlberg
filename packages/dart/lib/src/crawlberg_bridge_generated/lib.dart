@@ -605,6 +605,11 @@ class BrowserConfig {
   final String? waitSelector;
 
   /// Extra time to wait after the wait condition is met.
+  ///
+  /// The default `network_idle` wait returns once the page has loaded and its DOM has been
+  /// unchanged for one second (at most four seconds, and at most half of `timeout`). An app
+  /// that draws later than that after its last request, such as a single-page app that renders
+  /// its data on a slow pass, needs `extra_wait`; for example `3000` waits three more seconds.
   final PlatformInt64? extraWait;
 
   /// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.
@@ -657,6 +662,22 @@ class BrowserConfig {
   /// shared browser pool.
   final List<String> chromeArgs;
 
+  /// Scroll overflowing scroll containers (not only the window) and keep the items that a
+  /// virtualised list mounts as they pass through view, so the page that is read holds items
+  /// beyond the first screen. Default: `false`.
+  ///
+  /// Runs once after the page is ready and `extra_wait` has elapsed, bounded to 8 containers,
+  /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
+  /// and the items of its most repetitive child list are collected, keyed by `id`, `data-index`,
+  /// `data-key`, `data-id`, `aria-posinset` or `aria-rowindex` when present and otherwise by
+  /// position and text. The list is rewritten, in position order, only when items were unmounted
+  /// while scrolling and items beyond the first screen were seen; a list that keeps all its
+  /// items mounted is left as it is. Best effort: it does not follow lists that load data over
+  /// the network slower than about 100 ms per step, does not reach lists inside iframes or
+  /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
+  /// backend only.
+  final bool scrollContainers;
+
   const BrowserConfig({
     required this.mode,
     required this.backend,
@@ -675,6 +696,7 @@ class BrowserConfig {
     required this.sessionAffinity,
     this.chromePath,
     required this.chromeArgs,
+    this.scrollContainers = false,
   });
 
   @override
@@ -695,7 +717,8 @@ class BrowserConfig {
       captureNetworkEvents.hashCode ^
       sessionAffinity.hashCode ^
       chromePath.hashCode ^
-      chromeArgs.hashCode;
+      chromeArgs.hashCode ^
+      scrollContainers.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -718,7 +741,8 @@ class BrowserConfig {
           captureNetworkEvents == other.captureNetworkEvents &&
           sessionAffinity == other.sessionAffinity &&
           chromePath == other.chromePath &&
-          chromeArgs == other.chromeArgs;
+          chromeArgs == other.chromeArgs &&
+          scrollContainers == other.scrollContainers;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
@@ -1134,7 +1158,7 @@ class CrawlConfig {
   /// Regex patterns for paths to include during crawling.
   final List<String> includePaths;
 
-  /// Regex patterns for paths to exclude during crawling.
+  /// Regex patterns for paths to exclude during crawling. The seed URL is never excluded.
   final List<String> excludePaths;
 
   /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
@@ -1170,8 +1194,15 @@ class CrawlConfig {
   /// enabled.
   final List<String> trackingParams;
 
-  /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
-  /// does not carry them.
+  /// Custom HTTP headers to send with each request to the seed URL's host. With
+  /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries them too,
+  /// except credential-bearing headers (`Authorization`, `Proxy-Authorization`, `Cookie`,
+  /// `X-Api-Key`, `X-Amz-Security-Token`, the header [`Self::auth`] names, and any header whose
+  /// name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`, `xsrf`,
+  /// `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`, `otp`,
+  /// `assertion`, `hmac`, `private`, `sso` or `sig`), which stay with the seed host. A request to
+  /// any other host does not carry them. Subdomain forwarding applies to the HTTP and
+  /// chromiumoxide backends; the native browser backend sends them to the seed host only.
   final Map<String, String> customHeaders;
 
   /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -1549,6 +1580,8 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.wafBlocked({
     required String vendor,
     required String message,
+    required PlatformInt64 status,
+    required String body,
   }) = CrawlError_WafBlocked;
 
   /// The request timed out.
@@ -1626,6 +1659,10 @@ sealed class CrawlEvent with _$CrawlEvent {
   const CrawlEvent._();
 
   /// A single page has been crawled.
+  ///
+  /// A link whose redirect lands on a URL the crawl already queued or visited gets no event of
+  /// its own: it is requested, then dropped as a duplicate of the destination, which is reported
+  /// once under its own URL. The request count can therefore exceed the event count.
   const factory CrawlEvent.page({
     /// The crawled page result.
     required CrawlPageResult result,
