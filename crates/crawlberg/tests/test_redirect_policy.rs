@@ -257,6 +257,30 @@ async fn should_publish_each_origins_crawl_delay_before_its_own_request() {
     );
 }
 
+/// crawlberg#773 exempts the seed from `exclude_paths`, not the redirect targets it lands on.
+#[tokio::test]
+async fn should_request_a_seed_that_exclude_paths_names_but_never_its_excluded_redirect_target() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, ALLOW_ALL).await;
+    mount_redirect(&mock, "/private/start", "/private/target").await;
+    mount_page(&mock, "/private/target", "<html><body>target</body></html>").await;
+
+    let config = config().exclude_paths(vec!["^/private".to_owned()]).build();
+    let result = crawl_seed(config, &format!("{}/private/start", mock.uri())).await;
+
+    let log = request_log(&mock).await;
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "/private/start").count(),
+        1,
+        "the seed is exempt from exclude_paths and must be requested, got {log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry == "/private/target"),
+        "the excluded redirect target must never be requested, got {log:?}"
+    );
+    assert_eq!(result.pages.len(), 0, "an excluded redirect target yields no page");
+}
+
 #[tokio::test]
 async fn should_never_request_a_target_reached_through_an_excluded_intermediate_hop() {
     // ~keep Deliberate scope expansion: exclude_paths now judges every hop, not only the URL
