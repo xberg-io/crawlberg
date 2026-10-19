@@ -135,7 +135,7 @@ pub struct CrawlConfig {
     /// Regex patterns for paths to include during crawling.
     #[serde(default)]
     pub include_paths: Vec<String>,
-    /// Regex patterns for paths to exclude during crawling.
+    /// Regex patterns for paths to exclude during crawling. The seed URL is never excluded.
     #[serde(default)]
     pub exclude_paths: Vec<String>,
     /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
@@ -170,8 +170,17 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
-    /// does not carry them.
+    /// Custom HTTP headers to send with each request to the seed URL's host. With
+    /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries the
+    /// non-credential headers too, whatever its scheme or port. Credential headers stay with the
+    /// seed host: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+    /// `X-Amz-Security-Token`, `Authentication-Info`, the header [`Self::auth`] names, and any
+    /// header whose name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`,
+    /// `xsrf`, `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`,
+    /// `otp`, `assertion`, `hmac`, `private`, `sso` or `sig`. A secret in a header whose name
+    /// matches none of these reaches subdomains, so name secret headers recognisably. A request
+    /// to any other host does not carry any of them. Subdomain forwarding applies to the HTTP and
+    /// chromiumoxide backends; the native browser backend sends them to the seed host only.
     #[serde(default)]
     #[cfg_attr(alef, alef(sensitive))]
     pub custom_headers: HashMap<String, String>,
@@ -194,7 +203,10 @@ pub struct CrawlConfig {
     /// Initial delay, in milliseconds, before the first retry. Doubled on each
     /// subsequent attempt (capped at `retry_max_delay_ms`). Defaults to 100ms.
     pub retry_initial_delay_ms: u64,
-    /// Upper bound, in milliseconds, on the exponential retry backoff. Defaults to 60s.
+    /// Upper bound, in milliseconds, on the exponential retry backoff. A 429 or 503 whose
+    /// `Retry-After` is longer than the backoff is waited out, but one that exceeds this bound
+    /// ends the retries with a warning instead (so `0` abandons the retry on any positive
+    /// `Retry-After`). Defaults to 60s.
     pub retry_max_delay_ms: u64,
     /// Fraction of the per-domain rate-limit delay to randomly jitter by, in `[0.0, 1.0]`.
     /// `0.0` (the default) applies no jitter and preserves the previous fixed-interval

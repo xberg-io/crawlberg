@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::status::error_status;
+use super::status::{error_retry_after, error_status};
 use super::{Fetched, FetchedPage, HopPolicy, RefreshRedirects, fetch_as};
 use crate::defaults::dispatch::compute_backoff_ms;
 use crate::error::CrawlError;
@@ -23,6 +23,32 @@ pub(crate) fn should_retry_error(error: &CrawlError, retry_codes: &[u16]) -> boo
             | CrawlError::Timeout { .. }
     );
     retryable && (retry_codes.is_empty() || error_status(error).is_some_and(|status| retry_codes.contains(&status)))
+}
+
+/// The delay before retrying `error` after attempt `attempt` failed: the exponential backoff,
+/// raised to the server's `Retry-After` when that is longer, or `None` when `Retry-After`
+/// exceeds `max_delay_ms` and the retry must be abandoned rather than sent early.
+pub(crate) fn retry_delay_ms(
+    error: &CrawlError,
+    attempt: u32,
+    initial_delay_ms: u64,
+    max_delay_ms: u64,
+) -> Option<u64> {
+    let backoff_ms = compute_backoff_ms(attempt, initial_delay_ms, max_delay_ms);
+    let Some(retry_after) = error_retry_after(error) else {
+        return Some(backoff_ms);
+    };
+    let retry_after_ms = u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX);
+    if retry_after_ms > max_delay_ms {
+        tracing::warn!(
+            target: "crawlberg::retry",
+            retry_after_ms,
+            max_delay_ms,
+            "Retry-After exceeds retry_max_delay_ms; not retrying"
+        );
+        return None;
+    }
+    Some(backoff_ms.max(retry_after_ms))
 }
 
 /// Fetch a URL with retry logic based on configuration.
@@ -53,8 +79,14 @@ pub(crate) async fn fetch_with_retry(
                 let should_retry = should_retry_error(&e, &retry_codes);
                 if should_retry && attempt < retries {
                     let attempt_u32 = u32::try_from(attempt).unwrap_or(u32::MAX);
-                    let delay_ms =
-                        compute_backoff_ms(attempt_u32, config.retry_initial_delay_ms, config.retry_max_delay_ms);
+                    let Some(delay_ms) = retry_delay_ms(
+                        &e,
+                        attempt_u32,
+                        config.retry_initial_delay_ms,
+                        config.retry_max_delay_ms,
+                    ) else {
+                        return Err(e);
+                    };
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     last_err = Some(e);
                     continue;

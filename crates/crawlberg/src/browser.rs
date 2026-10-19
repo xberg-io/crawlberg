@@ -210,11 +210,14 @@ where
         }
         match fetch(deadline).await {
             Err(error) if attempt < config.retry_count && browser_error_is_retryable(&error, config) => {
-                let delay = crate::defaults::dispatch::compute_backoff_ms(
+                let Some(delay) = crate::http::retry_delay_ms(
+                    &error,
                     u32::try_from(attempt).unwrap_or(u32::MAX),
                     config.retry_initial_delay_ms,
                     config.retry_max_delay_ms,
-                );
+                ) else {
+                    return Err(error);
+                };
                 tracing::debug!(attempt, delay_ms = delay, "retrying browser fetch");
                 if tokio::time::timeout_at(deadline, tokio::time::sleep(Duration::from_millis(delay)))
                     .await
@@ -1309,6 +1312,63 @@ mod retry_policy_tests {
         .await;
         assert_eq!(start.elapsed(), std::time::Duration::from_secs(60));
         assert!(matches!(result, Err(CrawlError::BrowserTimeout { .. })), "{result:?}");
+    }
+
+    async fn browser_attempts_after_a_429_with_retry_after(
+        retry_after: &str,
+        max_delay_ms: u64,
+    ) -> (usize, std::time::Duration) {
+        let config = CrawlConfig {
+            retry_count: 2,
+            retry_initial_delay_ms: 0,
+            retry_max_delay_ms: max_delay_ms,
+            ..CrawlConfig::default()
+        };
+        let headers = std::collections::HashMap::from([("retry-after".to_string(), vec![retry_after.to_string()])]);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let start = tokio::time::Instant::now();
+        let result: Result<(), CrawlError> = super::retry_browser_fetch(
+            "https://example.com",
+            &config,
+            &crate::defaults::NoopRateLimiter,
+            |_| {
+                let attempt = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let headers = headers.clone();
+                Box::pin(async move {
+                    if attempt == 0 {
+                        Err(
+                            crate::http::status::status_error_with_headers(429, "https://example.com", &headers)
+                                .expect("429 is an error"),
+                        )
+                    } else {
+                        Ok(())
+                    }
+                })
+            },
+        )
+        .await;
+        assert_eq!(
+            result.is_ok(),
+            calls.load(std::sync::atomic::Ordering::SeqCst) == 2,
+            "{result:?}"
+        );
+        (calls.load(std::sync::atomic::Ordering::SeqCst), start.elapsed())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_wait_for_retry_after_before_retrying_a_browser_429() {
+        let (calls, elapsed) = browser_attempts_after_a_429_with_retry_after("5", 60_000).await;
+        assert_eq!(calls, 2);
+        assert!(
+            elapsed >= std::time::Duration::from_secs(5),
+            "retried after {elapsed:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_not_retry_a_browser_429_whose_retry_after_exceeds_the_cap() {
+        let (calls, _) = browser_attempts_after_a_429_with_retry_after("5", 1_000).await;
+        assert_eq!(calls, 1);
     }
 
     struct DelayedTurn {

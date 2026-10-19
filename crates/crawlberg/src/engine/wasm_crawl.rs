@@ -653,16 +653,17 @@ fn passes_path_filters(entry: &FrontierEntry, plan: &SequentialPlan, state: &mut
         return true;
     };
 
-    // ~keep `include_paths` is exempt at depth 0 (the seed), mirroring the native loop's
-    // `should_fetch_url`: the seed was not discovered through any filter.
-    crate::helpers::passes_path_patterns(
-        &parsed,
-        &plan.exclude_regexes,
-        &plan.include_regexes,
-        entry.depth > 0,
-        plan.target,
-        &mut state.urls_filtered,
-    )
+    // ~keep Both `include_paths` and `exclude_paths` are exempt at depth 0 (the seed),
+    // ~keep mirroring the native loop's `should_fetch_url` (crawlberg#773).
+    entry.depth == 0
+        || crate::helpers::passes_path_patterns(
+            &parsed,
+            &plan.exclude_regexes,
+            &plan.include_regexes,
+            true,
+            plan.target,
+            &mut state.urls_filtered,
+        )
 }
 
 /// Whether `robots` -- already judged for the agent this page's fetch will send -- admits
