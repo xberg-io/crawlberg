@@ -244,11 +244,14 @@ pub struct BrowserConfig {
     ///
     /// Runs once after the page is ready and `extra_wait` has elapsed, bounded to 8 containers,
     /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
-    /// and the items of its busiest child list are collected, de-duplicated by markup and ordered
-    /// by position; they are written back into that list before the page is read. Best effort:
-    /// it needs items with stable markup, does not follow lists that load data over the network
-    /// slower than about 100 ms per step, and does not reach lists inside
-    /// iframes or shadow roots. Chromiumoxide backend only.
+    /// and the items of its most repetitive child list are collected, keyed by `id`, `data-index`,
+    /// `data-key`, `data-id`, `aria-posinset` or `aria-rowindex` when present and otherwise by
+    /// position and text. The list is rewritten, in position order, only when items were unmounted
+    /// while scrolling and items beyond the first screen were seen; a list that keeps all its
+    /// items mounted is left as it is. Best effort: it does not follow lists that load data over
+    /// the network slower than about 100 ms per step, does not reach lists inside iframes or
+    /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
+    /// backend only.
     #[serde(default)]
     pub scroll_containers: bool,
 }
