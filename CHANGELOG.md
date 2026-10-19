@@ -11,6 +11,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
+  seconds), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
+  `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.

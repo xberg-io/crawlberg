@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
@@ -30,6 +31,21 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 /// and the content type reported for every rendered page.
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
+
+/// How long the DOM must stay unchanged after the load event before a `NetworkIdle` wait
+/// returns. A static page pays this once (it replaced a fixed 500 ms delay). A single-page app
+/// that draws within this window of its last response is captured; one that draws later needs
+/// `browser.extra_wait`.
+const DOM_QUIET_WINDOW: Duration = Duration::from_millis(1000);
+
+/// The longest the quiescence wait runs for a page that keeps mutating (a ticker, a carousel).
+const DOM_QUIET_CAP: Duration = Duration::from_secs(4);
+
+/// How often the quiescence wait looks for a response the navigation stopped on.
+const DOM_QUIET_STOP_POLL: Duration = Duration::from_millis(25);
+
+/// The settle delay used when the quiescence script cannot run.
+const DOM_QUIET_FALLBACK: Duration = Duration::from_millis(500);
 
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -192,7 +208,7 @@ async fn render(
         if watch.has_intentional_terminal_response() {
             return Ok(());
         }
-        wait_for_ready(page, config)
+        wait_for_ready(page, watch, config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
 
@@ -490,12 +506,15 @@ async fn capture_screenshot(
 /// Wait for the page to be ready based on the configured wait strategy.
 async fn wait_for_ready(
     page: &chromiumoxide::Page,
+    watch: &Watch,
     config: &CrawlConfig,
 ) -> Result<(), chromiumoxide::error::CdpError> {
     match config.browser.wait {
         BrowserWait::NetworkIdle => {
-            // ~keep `NetworkIdle` is a settle delay here, not true CDP zero-in-flight detection.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // ~keep `NetworkIdle` is a DOM-quiescence wait here, not true CDP zero-in-flight
+            // ~keep detection: the load event has fired, and a page that draws the result of its
+            // ~keep last request shortly after the response (crawlberg#769) mutates the DOM again.
+            wait_for_dom_quiet(page, watch, config.browser.timeout).await;
         }
         BrowserWait::Selector => {
             if let Some(ref selector) = config.browser.wait_selector {
@@ -509,6 +528,60 @@ async fn wait_for_ready(
         }
     }
     Ok(())
+}
+
+/// Wait until the document has had no DOM mutation for [`DOM_QUIET_WINDOW`], or [`DOM_QUIET_CAP`]
+/// (at most half of `timeout`) has passed, whichever comes first.
+///
+/// ~keep Failing to observe (a navigation destroyed the script's context, or Chrome did not
+/// ~keep answer) falls back to the fixed settle delay the wait used before: the page is still
+/// ~keep read, and the failure is not a reason to fail the fetch.
+async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, timeout: Duration) {
+    let cap = DOM_QUIET_CAP.min(timeout / 2);
+    let script = format!(
+        "new Promise(resolve => {{
+           const quiet = {quiet}, cap = {cap};
+           const start = performance.now();
+           let last = start;
+           const observer = new MutationObserver(() => {{ last = performance.now(); }});
+           observer.observe(document, {{ childList: true, subtree: true, characterData: true }});
+           const check = () => {{
+             const now = performance.now();
+             if (now - last >= quiet || now - start >= cap) {{ observer.disconnect(); resolve(true); }}
+             else {{ setTimeout(check, 25); }}
+           }};
+           setTimeout(check, 25);
+         }})",
+        quiet = DOM_QUIET_WINDOW.as_millis(),
+        cap = cap.as_millis(),
+    );
+    let params = match EvaluateParams::builder().expression(script).await_promise(true).build() {
+        Ok(params) => params,
+        Err(error) => {
+            tracing::debug!(
+                error,
+                "could not build the DOM quiescence script; using a fixed settle delay"
+            );
+            tokio::time::sleep(DOM_QUIET_FALLBACK).await;
+            return;
+        }
+    };
+    // ~keep A response Chrome does not commit (204, 304) leaves no document to observe, and the
+    // ~keep script then never runs; the stopped response ends the wait, as the navigation is over.
+    let stopped = async {
+        while !watch.has_stopped_response() {
+            tokio::time::sleep(DOM_QUIET_STOP_POLL).await;
+        }
+    };
+    tokio::select! {
+        observed = page.evaluate(params) => {
+            if let Err(error) = observed {
+                tracing::debug!(%error, "DOM quiescence wait failed; using a fixed settle delay");
+                tokio::time::sleep(DOM_QUIET_FALLBACK).await;
+            }
+        }
+        () = stopped => {}
+    }
 }
 
 /// Set the viewport (device metrics) via CDP Emulation.setDeviceMetricsOverride.

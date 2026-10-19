@@ -1702,6 +1702,15 @@ impl Watch {
             .is_some_and(|response| response.ready && response.terminal_intercepted)
     }
 
+    /// Whether the navigation stopped on a response that is ready to be taken.
+    #[cfg(feature = "browser")]
+    pub(crate) fn has_stopped_response(&self) -> bool {
+        lock(&self.page.outcome)
+            .stopped_response
+            .as_ref()
+            .is_some_and(|response| response.ready)
+    }
+
     pub(crate) fn take_stopped_response(&self) -> Option<StoppedResponse> {
         let mut outcome = lock(&self.page.outcome);
         if outcome.stopped_response.as_ref().is_some_and(|response| response.ready) {
