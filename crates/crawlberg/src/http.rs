@@ -693,8 +693,9 @@ async fn unfollowed_redirect_response(
 
 /// Apply HTTP mode's status handling to a page a browser rendered. A status the HTTP fetch
 /// raises as an error raises the same error here. Where HTTP mode reports the status as a
-/// page instead (a 404 or 403 under `soft_http_errors`, or a 404 at the end of a redirect),
-/// the page keeps its status and loses its body, as the HTTP fetch reports it.
+/// page instead, the page keeps its status, as the HTTP fetch reports it. A 404 or 410 under
+/// `soft_http_errors` also keeps its body; a 403 under it, or a 404 at the end of a redirect
+/// without it, loses the body.
 #[cfg(any(feature = "browser", feature = "browser-native"))]
 pub(crate) fn rendered_status_outcome(
     mut response: HttpResponse,
@@ -718,17 +719,20 @@ pub(crate) fn rendered_status_outcome(
     let Some(error) = error else {
         return Ok(response);
     };
+    let keeps_body = config.soft_http_errors && matches!(status, 404 | 410);
     let reported_as_page = match status {
         404 => config.soft_http_errors || redirected,
-        403 => config.soft_http_errors,
+        403 | 410 => config.soft_http_errors,
         _ => false,
     };
     if !reported_as_page {
         return Err(error);
     }
-    response.content_type.clear();
-    response.body.clear();
-    response.body_bytes.clear();
+    if !keeps_body {
+        response.content_type.clear();
+        response.body.clear();
+        response.body_bytes.clear();
+    }
     Ok(response)
 }
 
@@ -1575,6 +1579,49 @@ mod tests {
             status::error_status(&blocked),
             Some(403),
             "a fingerprinted rendered 403 must carry its status: {blocked:?}"
+        );
+    }
+
+    /// Under `soft_http_errors` a rendered 404 or 410 keeps its body, as the HTTP fetch's soft page
+    /// now does; a rendered 403 does not, and a 410 is still an error without the flag.
+    #[cfg(any(feature = "browser", feature = "browser-native"))]
+    #[test]
+    fn a_rendered_404_or_410_keeps_its_body_under_soft_http_errors() {
+        let rendered = |status: u16| HttpResponse {
+            status,
+            content_type: "text/html".to_owned(),
+            body: "<p>words</p>".to_owned(),
+            body_bytes: b"<p>words</p>".to_vec(),
+            headers: HashMap::new(),
+            browser_extras: None,
+            final_url: "https://example.com/page".to_owned(),
+            screenshot: None,
+        };
+        let soft = CrawlConfig {
+            soft_http_errors: true,
+            ..CrawlConfig::default()
+        };
+        for status in [404_u16, 410] {
+            let page = rendered_status_outcome(rendered(status), false, &soft).expect("a soft page");
+            assert_eq!(page.status, status);
+            assert_eq!(page.body, "<p>words</p>", "{status}: body kept");
+            assert!(!page.content_type.is_empty(), "{status}: content type kept");
+        }
+        let forbidden = rendered_status_outcome(rendered(403), false, &soft).expect("a soft page");
+        assert!(
+            forbidden.body.is_empty() && forbidden.body_bytes.is_empty(),
+            "403 body dropped"
+        );
+
+        let hard = CrawlConfig::default();
+        assert!(matches!(
+            rendered_status_outcome(rendered(410), false, &hard),
+            Err(CrawlError::Gone { .. })
+        ));
+        let redirected = rendered_status_outcome(rendered(404), true, &hard).expect("a redirected 404 is a page");
+        assert!(
+            redirected.body.is_empty(),
+            "a redirected 404 loses its body without the flag"
         );
     }
 
