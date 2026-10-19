@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 use opentelemetry::KeyValue;
 
 use super::HttpResponse;
-use super::status::HttpStatus;
 use crate::error::CrawlError;
 use crate::types::{WafClassifier, WafClassifyError, WafSignal};
 use crate::waf::TomlClassifier;
@@ -105,9 +104,9 @@ pub(crate) fn record_waf_block(vendor: &str) {
 /// ~keep The status rides along as the error's source, as it does on every error
 /// `status_error` builds, so a custom retry policy reads the status of a refused response
 /// whether it was a 403, 429, 503 or 2xx (crawlberg#133).
-pub(super) fn waf_block(status: u16, vendor: String, message: String) -> CrawlError {
+pub(super) fn waf_block(status: u16, vendor: String, message: String, body: &str) -> CrawlError {
     record_waf_block(&vendor);
-    CrawlError::waf_blocked_with_source(vendor, message, HttpStatus(status))
+    CrawlError::waf_blocked_response(vendor, message, status, Some(body))
 }
 
 /// Largest 2xx body that can still be refused as a WAF interstitial rather than returned as content.
@@ -212,7 +211,7 @@ pub(super) fn sitemap_2xx_error(
 fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
     let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
     let message = format!("detected on 2xx ({}): {}", evidence.label(), signal.vendor);
-    Some(waf_block(response.status, signal.vendor, message))
+    Some(waf_block(response.status, signal.vendor, message, &response.body))
 }
 
 /// The WAF signal the engine hands its antibot strategy and retry policy for `response`.

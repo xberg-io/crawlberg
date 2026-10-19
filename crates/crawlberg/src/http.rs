@@ -1596,7 +1596,59 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
             "expected a cloudflare WafBlocked, got {error:?}"
         );
-        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected: cloudflare");
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected on 403: cloudflare");
+    }
+
+    /// The error a WAF block raises carries the response status and the body, so a caller can
+    /// tell a 403 from a 429 or 503 challenge and read the challenge page (crawlberg#770).
+    #[tokio::test]
+    async fn http_fetch_waf_block_error_carries_status_and_body() {
+        let page = "<html><title>Just a moment...</title><script src=\"/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1\"></script></html>";
+        let cases: &[(u16, Option<(&str, &str)>)] = &[
+            (403, Some(("server", "cloudflare"))),
+            (403, Some(("x-datadome", "blocked"))),
+            (503, Some(("server", "cloudflare"))),
+        ];
+        for (status, header) in cases {
+            let mut template = ResponseTemplate::new(*status).set_body_string(page);
+            if let Some((name, value)) = header {
+                template = template.append_header(*name, *value);
+            }
+            let error = fetch_status(*status, template).await;
+            let CrawlError::WafBlocked {
+                status: got_status,
+                body,
+                ..
+            } = &error
+            else {
+                panic!("status {status} must be a WAF block, got {error:?}");
+            };
+            assert_eq!(*got_status, Some(*status), "{error:?}");
+            assert_eq!(body.as_deref(), Some(page), "{error:?}");
+            assert!(
+                error.to_string().contains(&format!("on {status}:")),
+                "the message must name the status, got: {error}"
+            );
+        }
+    }
+
+    /// The body kept on a WAF block error is a bounded prefix, cut on a character boundary.
+    #[tokio::test]
+    async fn http_fetch_waf_block_error_bounds_the_body() {
+        let body = format!("cf-chl- {}", "\u{e9}".repeat(50_000));
+        let error = fetch_status(403, ResponseTemplate::new(403).set_body_string(body.clone())).await;
+        let CrawlError::WafBlocked { body: kept, .. } = &error else {
+            panic!("expected a WAF block, got {error:?}");
+        };
+        let kept = kept.as_deref().expect("the body prefix must be kept");
+        assert!(body.starts_with(kept), "the kept body must be a prefix");
+        assert!(kept.starts_with("cf-chl- "), "{kept:.40}");
+        assert!(
+            kept.len() < body.len() && kept.len() <= crate::error::WAF_BODY_PREFIX_LEN,
+            "kept {} bytes of {}",
+            kept.len(),
+            body.len()
+        );
     }
 
     /// A 503 stamped by a WAF vendor header is a challenge, not a server fault, so it must

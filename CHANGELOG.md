@@ -11,6 +11,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.

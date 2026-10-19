@@ -471,3 +471,49 @@ async fn a_2xx_whose_only_waf_evidence_is_a_bare_sucuri_id_is_returned_as_conten
         page.html
     );
 }
+
+/// The error for a WAF block names the status and keeps the challenge page, on both `scrape`
+/// and the `error` string of a `crawl` result (crawlberg#770).
+#[tokio::test]
+async fn a_waf_block_error_carries_the_status_and_the_challenge_page() {
+    let page = "<html><head><title>Just a moment...</title></head><body><div id='cf-challenge'>Enable JavaScript</div>\
+                <script src='/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1'></script></body></html>";
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .append_header("server", "cloudflare")
+                .append_header("cf-mitigated", "challenge")
+                .set_body_string(page),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(no_browser_config())).expect("create_engine must succeed");
+
+    let scraped = scrape(&handle, &mock.uri()).await;
+    let Err(CrawlError::WafBlocked {
+        vendor, status, body, ..
+    }) = &scraped
+    else {
+        panic!("expected WafBlocked, got: {scraped:?}");
+    };
+    assert_eq!(vendor, "cloudflare");
+    assert_eq!(*status, Some(403));
+    assert_eq!(body.as_deref(), Some(page));
+    let message = scraped.as_ref().expect_err("scrape must fail").to_string();
+    assert!(
+        message.contains("403"),
+        "the message must carry the status, got: {message}"
+    );
+
+    let crawled = crawlberg::crawl(&handle, &mock.uri())
+        .await
+        .expect("a blocked seed is reported on the result, not raised");
+    let error = crawled.error.expect("the crawl result must carry the block");
+    assert!(
+        error.contains("403"),
+        "the crawl error must carry the status, got: {error}"
+    );
+}
