@@ -6,6 +6,8 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
+  virtualised list mounts, so a list rendered by window returns every item. (#768)
 - Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
   the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
 

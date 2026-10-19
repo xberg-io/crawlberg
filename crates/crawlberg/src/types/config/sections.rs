@@ -238,6 +238,19 @@ pub struct BrowserConfig {
     // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
     #[cfg_attr(alef, alef(skip))]
     pub private_pipe: bool,
+    /// Scroll overflowing scroll containers (not only the window) and keep the items that a
+    /// virtualised list mounts as they pass through view, so the page that is read holds items
+    /// beyond the first screen. Default: `false`.
+    ///
+    /// Runs once after the page is ready and `extra_wait` has elapsed, bounded to 8 containers,
+    /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
+    /// and the items of its busiest child list are collected, de-duplicated by markup and ordered
+    /// by position; they are written back into that list before the page is read. Best effort:
+    /// it needs items with stable markup, does not follow lists that load data over the network
+    /// slower than about 100 ms per step, and does not reach lists inside
+    /// iframes or shadow roots. Chromiumoxide backend only.
+    #[serde(default)]
+    pub scroll_containers: bool,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -272,6 +285,7 @@ impl std::fmt::Debug for BrowserConfig {
             chrome_path,
             chrome_args,
             private_pipe,
+            scroll_containers,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -298,6 +312,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("chrome_path", chrome_path)
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
             .field("private_pipe", private_pipe)
+            .field("scroll_containers", scroll_containers)
             .finish()
     }
 }
@@ -323,6 +338,7 @@ impl Default for BrowserConfig {
             chrome_path: None,
             chrome_args: Vec::new(),
             private_pipe: false,
+            scroll_containers: false,
         }
     }
 }
