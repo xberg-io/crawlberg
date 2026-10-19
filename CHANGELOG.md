@@ -11,6 +11,11 @@ All notable changes to crawlberg are documented here.
 - Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
   the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
 
+### Changed
+
+- The Python binding builds against PyO3 0.30 and the PHP extension against ext-php-rs 0.16.3; bindings are
+  regenerated with alef 0.111.0.
+
 ### Fixed
 
 - The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
@@ -42,6 +47,8 @@ All notable changes to crawlberg are documented here.
 - With `soft_http_errors`, links on a 404 or 410 page are not followed. (#772)
 - `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
   event of its own. (#776)
+- An image with alt text and an empty or missing source converts to `![alt](<>)` again rather than bare alt text
+  (html-to-markdown 3.18.4).
 - Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
 
 ## [1.11.2] - 2026-10-16
