@@ -32,11 +32,18 @@ pub(crate) async fn canonicalize_except_snap(path: PathBuf) -> std::io::Result<P
     let executable_cleaned: PathBuf = canonicalize(&path).await?;
 
     // Handle case where executable is provided by snap, ignore canonicalize result and only make path absolute
-    Ok(if executable_cleaned.to_str().unwrap().ends_with("/snap") {
-        absolute(path).unwrap()
+    // ~keep Since snapd 2.77 `/usr/bin/snap` is itself a link to `/usr/lib/snapd/snapd`, a
+    // ~keep multicall binary that picks its role from argv[0]; launching the resolved path
+    // ~keep starts the snapd daemon instead of the snap, so both names mean "keep the link".
+    Ok(if is_snap_launcher(&executable_cleaned) {
+        absolute(path)?
     } else {
         executable_cleaned
     })
+}
+
+fn is_snap_launcher(path: &Path) -> bool {
+    matches!(path.file_name().and_then(|name| name.to_str()), Some("snap" | "snapd"))
 }
 
 pub(crate) mod base64 {

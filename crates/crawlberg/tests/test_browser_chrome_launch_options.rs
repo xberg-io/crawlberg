@@ -116,6 +116,45 @@ fn an_ordinary_launcher_script_is_not_classified_as_snap() {
     assert!(!is_snap_executable(&launcher));
 }
 
+/// A snap entry point such as `/snap/bin/chromium` is launched as itself, not as the launcher it
+/// links to: since snapd 2.77 `/usr/bin/snap` links on to `/usr/lib/snapd/snapd`, which runs the
+/// snapd daemon when started under its own name. The fake launcher records the name it ran as.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_snap_entry_point_is_launched_through_its_link_when_the_launcher_links_to_snapd() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let root = dir.path();
+    let argv0_file = root.join("argv0");
+    for sub in ["usr/lib/snapd", "usr/bin", "snap/bin"] {
+        std::fs::create_dir_all(root.join(sub)).expect("the fake snap layout must be creatable");
+    }
+    let snapd = root.join("usr/lib/snapd/snapd");
+    std::fs::write(
+        &snapd,
+        format!("#!/bin/sh\nprintf '%s' \"$0\" > '{}'\nexit 1\n", argv0_file.display()),
+    )
+    .expect("the fake snapd must be writable");
+    std::fs::set_permissions(&snapd, std::fs::Permissions::from_mode(0o755))
+        .expect("the fake snapd must be chmod-able");
+    std::os::unix::fs::symlink("../lib/snapd/snapd", root.join("usr/bin/snap")).expect("the launcher link");
+    let entry = root.join("snap/bin/chromium");
+    std::os::unix::fs::symlink(root.join("usr/bin/snap"), &entry).expect("the entry point link");
+
+    let config = browser_config(Some(entry.clone()), Vec::new());
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = scrape(&engine, "http://127.0.0.1:9/").await;
+    let argv0 = std::fs::read_to_string(&argv0_file).unwrap_or_default();
+
+    assert!(result.is_err(), "the fake launcher starts no browser");
+    assert_eq!(
+        std::path::Path::new(&argv0).file_name(),
+        entry.file_name(),
+        "the entry point must be launched under its own name, not as {argv0:?}"
+    );
+}
+
 /// `chrome_path` names the binary crawlberg launches, and a `chrome_args` flag that names a
 /// crawlberg default replaces it on the real command line: a wrapper script records its own
 /// arguments and then runs the real Chrome, which must render the page.

@@ -22,6 +22,8 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Chrome installed as a snap launches again with snapd 2.77 and later, where `/usr/bin/snap` links to
+  `/usr/lib/snapd/snapd`; the launch resolved the link and started the snapd daemon instead of Chrome.
 - The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
   seconds, and never past `browser.timeout`), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
   `browser.extra_wait` remains the escape hatch for apps that render later. (#769)

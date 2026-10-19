@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep a snap entry point unresolved when `/usr/bin/snap` links to `/usr/lib/snapd/snapd` (snapd 2.77)
 - Accept current Chrome network-policy field names while preserving the legacy typed event API
 - Recognize terminal WebSocket and pipe closure after owned-process termination; preserve
   diagnostics for active, borrowed and nonterminal failures; child connections share the
