@@ -105,6 +105,7 @@ async fn warm(pool: &BrowserPool, events: &Events) -> std::path::PathBuf {
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_end_owned_browser_drop_and_shutdown_without_failure_logs() {
     for (explicit, private_pipe) in [
         (false, false),
@@ -155,6 +156,7 @@ fn assert_no_failures(events: &[(tracing::Level, String)], scenario: &str) {
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_consume_authoritative_profile_retirement_without_failure_logs_or_second_family_kill() {
     for private_pipe in [
         false,
@@ -224,6 +226,7 @@ async fn direct_browser_termination(kill: bool, private_pipe: bool) {
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_end_direct_owned_browser_close_and_kill_without_failure_logs() {
     for (kill, private_pipe) in [
         (false, false),
@@ -239,6 +242,7 @@ fn should_end_direct_owned_browser_close_and_kill_without_failure_logs() {
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_report_an_active_owned_browser_transport_failure() {
     for private_pipe in [
         false,
@@ -276,6 +280,7 @@ fn should_report_an_active_owned_browser_transport_failure() {
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_retire_an_owned_browser_with_a_live_page_without_controller_failure_logs() {
     for private_pipe in [
         false,
@@ -317,6 +322,7 @@ fn should_retire_an_owned_browser_with_a_live_page_without_controller_failure_lo
 }
 
 #[test]
+#[serial_test::serial(owned_browser_teardown)]
 fn should_mark_owned_kill_before_family_exit_without_polling_the_later_browser_kill() {
     let events = capture(|_| {
         runtime().block_on(async {
