@@ -1,5 +1,5 @@
 //! Crawl handling of error statuses and redirects on linked pages: the body of a 404 or 410 under
-//! `soft_http_errors` (crawlberg#772).
+//! `soft_http_errors` (crawlberg#772) and a redirect that ends in a 404 (crawlberg#777).
 
 #![allow(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
 
@@ -26,6 +26,10 @@ fn html(status: u16, body: &str) -> ResponseTemplate {
     ResponseTemplate::new(status)
         .insert_header("content-type", "text/html; charset=utf-8")
         .set_body_string(body.to_owned())
+}
+
+fn redirect(location: &str) -> ResponseTemplate {
+    ResponseTemplate::new(301).insert_header("location", location)
 }
 
 struct Crawled {
@@ -119,4 +123,41 @@ async fn a_410_stays_an_error_when_soft_errors_disabled() {
     serve(&mock, "/gone", html(410, ERROR_PAGE_BODY)).await;
     let result = scrape(&engine(false), &format!("{}/gone", mock.uri())).await;
     assert!(matches!(result, Err(CrawlError::Gone { .. })), "got {result:?}");
+}
+
+#[tokio::test]
+async fn a_link_that_redirects_to_a_404_is_an_error_event_not_a_page() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/moved"]).await;
+    serve(&mock, "/moved", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    let crawled = crawl(&engine(false), &format!("{}/", mock.uri())).await;
+    assert!(
+        !crawled.pages.iter().any(|page| page.0.ends_with("/moved")),
+        "a redirect to a 404 must not be a page, got {:?}",
+        crawled.pages
+    );
+    let error = crawled
+        .errors
+        .iter()
+        .find(|(url, _)| url.ends_with("/moved"))
+        .unwrap_or_else(|| panic!("an error event for /moved, got {:?}", crawled.errors));
+    assert!(error.1.contains("404"), "the error names the status, got {error:?}");
+}
+
+#[tokio::test]
+async fn a_link_that_redirects_to_a_404_is_still_a_page_when_soft_errors_enabled() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/moved"]).await;
+    serve(&mock, "/moved", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    let crawled = crawl(&engine(true), &format!("{}/", mock.uri())).await;
+    let page = crawled
+        .pages
+        .iter()
+        .find(|page| page.0.ends_with("/moved"))
+        .unwrap_or_else(|| panic!("a soft page for /moved, got {:?}", crawled.pages));
+    assert_eq!(page.3, 404);
 }

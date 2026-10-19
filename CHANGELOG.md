@@ -16,6 +16,8 @@ All notable changes to crawlberg are documented here.
 - Release dry runs leave Go module tags and republish tags unchanged.
 - With `soft_http_errors`, a 404 or 410 answering with a body comes back as a page with converted
   markdown, and a 410 no longer fails as `gone`. (#772)
+- A linked URL that redirects to an error status such as 404 is reported as an error event, as the
+  same URL as seed is, instead of an empty page. (#777)
 
 ## [1.11.2] - 2026-10-16
 

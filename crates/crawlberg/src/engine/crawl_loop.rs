@@ -1148,6 +1148,15 @@ async fn extract_outcome(
         page_scan,
         ..
     } = outcome;
+    // ~keep The seed's redirect chain ends in the same check (`resolve_initial_redirects`): a
+    // ~keep chain whose last hop answers with an error status is a failed fetch, not a page, unless
+    // ~keep `soft_http_errors` asks for the error page itself. A 404 at the end of a chain reaches
+    // ~keep here as a synthetic response, so without this a linked redirect-to-404 was a page.
+    if redirect_count > 0 && resp.status >= 400 && !engine.config.soft_http_errors {
+        let error = crate::http::status_error(resp.status, &final_url)
+            .unwrap_or_else(|| CrawlError::other(format!("HTTP {}", resp.status)));
+        return Err(Box::new((entry, error)));
+    }
     let body_text = resp.body_text().clone();
     let (ssrf_refused_urls, browser_result_cookies) = resp
         .landed
