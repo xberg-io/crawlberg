@@ -127,15 +127,73 @@ async fn default_wait_captures_text_drawn_300ms_after_the_last_response() {
     assert!(page.html.contains(NEEDLE), "{test_name}: {}", page.html);
 }
 
+/// A page that changes its DOM every 100 ms, forever.
+async fn ticker() -> MockServer {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>ticker</p><div id=\"t\"></div><script>\
+             setInterval(() => { document.getElementById('t').textContent = Date.now(); }, 100);</script></body></html>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    site
+}
+
+/// A quiet page returns on the quiet window and a page that never settles on the cap, which is
+/// longer and far below `browser.timeout`. Compared with each other so Chrome's launch time, which
+/// both include, cancels out.
 #[tokio::test]
-async fn default_wait_stays_short_on_a_static_page() {
-    let test_name = "default_wait_stays_short_on_a_static_page";
-    let site = spa(0).await;
-    let Some((result, elapsed)) = scrape_default(test_name, &site, config(Duration::from_secs(20))).await else {
+async fn the_wait_ends_at_the_quiet_window_on_a_static_page_and_at_the_cap_on_a_ticker() {
+    let test_name = "the_wait_ends_at_the_quiet_window_on_a_static_page_and_at_the_cap_on_a_ticker";
+    let timeout = Duration::from_secs(30);
+    let quiet_site = spa(0).await;
+    let Some((quiet, quiet_elapsed)) = scrape_default(test_name, &quiet_site, config(timeout)).await else {
         return;
     };
-    result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
-    assert!(elapsed < Duration::from_secs(10), "{test_name}: took {elapsed:?}");
+    let quiet = quiet.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(quiet.html.contains(NEEDLE), "{test_name}");
+    let busy_site = ticker().await;
+    let Some((busy, busy_elapsed)) = scrape_default(test_name, &busy_site, config(timeout)).await else {
+        return;
+    };
+    let busy = busy.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(
+        busy.markdown.is_some_and(|markdown| markdown.warnings.is_empty()),
+        "{test_name}: not partial"
+    );
+    assert!(
+        busy_elapsed > quiet_elapsed + Duration::from_millis(1500),
+        "{test_name}: the ticker ({busy_elapsed:?}) must wait for the cap, longer than the static page ({quiet_elapsed:?})"
+    );
+    assert!(
+        busy_elapsed < Duration::from_secs(20),
+        "{test_name}: the cap, not browser.timeout, ends the wait: {busy_elapsed:?}"
+    );
+}
+
+/// The settle wait must not turn a page that finished loading into a timeout: with 2 s of budget
+/// and 1.2 s spent loading, the wait gets what is left.
+#[tokio::test]
+async fn a_page_that_loads_late_in_its_timeout_is_not_partial() {
+    let test_name = "a_page_that_loads_late_in_its_timeout_is_not_partial";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<html><body><p>loaded in time</p></body></html>", "text/html")
+                .set_delay(Duration::from_millis(1200)),
+        )
+        .mount(&site)
+        .await;
+    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(2))).await else {
+        return;
+    };
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(page.html.contains("loaded in time"), "{test_name}");
+    let markdown = page.markdown.expect("markdown");
+    assert!(markdown.warnings.is_empty(), "{test_name}: {:?}", markdown.warnings);
 }
 
 #[tokio::test]

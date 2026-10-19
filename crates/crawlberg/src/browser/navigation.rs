@@ -44,6 +44,9 @@ const DOM_QUIET_CAP: Duration = Duration::from_secs(4);
 /// How often the quiescence wait looks for a response the navigation stopped on.
 const DOM_QUIET_STOP_POLL: Duration = Duration::from_millis(25);
 
+/// How long past its cap the quiescence script may take to answer.
+const DOM_QUIET_ANSWER_MARGIN: Duration = Duration::from_secs(1);
+
 /// The settle delay used when the quiescence script cannot run.
 const DOM_QUIET_FALLBACK: Duration = Duration::from_millis(500);
 
@@ -202,6 +205,7 @@ async fn render(
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
+    let navigation_started = tokio::time::Instant::now();
     let navigation = tokio::time::timeout(timeout, async {
         watch
             .goto(page, url)
@@ -211,7 +215,7 @@ async fn render(
         if watch.has_intentional_terminal_response() {
             return Ok(());
         }
-        wait_for_ready(page, watch, config)
+        wait_for_ready(page, config)
             .await
             .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
 
@@ -242,7 +246,7 @@ async fn render(
             && intercepted.stopped_response.is_none()
             && !selector_wait
         {
-            return partial_page(page, watch, config, want_screenshot, error).await;
+            return partial_page(page, watch, config, error).await;
         }
         return Err(error);
     }
@@ -253,6 +257,15 @@ async fn render(
         return Ok(stopped_browser_page(watch, stop));
     }
 
+    if config.browser.wait == BrowserWait::NetworkIdle {
+        // ~keep `NetworkIdle` is a DOM-quiescence wait, not true CDP zero-in-flight detection: the
+        // ~keep load event has fired, and a page that draws the result of its last request shortly
+        // ~keep after the response (crawlberg#769) mutates the DOM again. It runs outside the
+        // ~keep navigation timeout, on what is left of the budget, so a page that loaded is never
+        // ~keep reported partial because it was still settling.
+        let remaining = timeout.saturating_sub(navigation_started.elapsed());
+        wait_for_dom_quiet(page, watch, remaining).await;
+    }
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
@@ -346,11 +359,15 @@ async fn partial_page(
     page: &chromiumoxide::Page,
     watch: &Watch,
     config: &CrawlConfig,
-    want_screenshot: bool,
     timeout_error: CrawlError,
 ) -> Result<BrowserPage, CrawlError> {
+    // ~keep The read runs past `browser.timeout`, inside the fetch's overall deadline. When
+    // ~keep `overall_timeout` leaves less than this budget after `timeout`, the deadline ends the
+    // ~keep read first and the fetch fails with the overall-deadline timeout.
     let budget = PARTIAL_READ_BUDGET.min(config.browser.timeout);
-    let mut read = match read_rendered(page, watch, config, want_screenshot, budget).await {
+    // ~keep No screenshot: the page is still loading, and a stalled capture would fail the read and
+    // ~keep lose the HTML that is the point of a partial result.
+    let mut read = match read_rendered(page, watch, config, false, budget).await {
         Ok(read) if has_body_content(&read.response.body) => read,
         Ok(_) => return Err(timeout_error),
         Err(read_error) => {
@@ -376,10 +393,11 @@ async fn partial_page(
     Ok(read)
 }
 
-/// Whether `html` has something in its body: text, or an element.
+/// Whether `html` has visible content in its body: text outside script, style, noscript and
+/// template, or a content element. A shell of empty containers and scripts is not a page.
 fn has_body_content(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    let Some(start) = lower.find("<body") else {
+    let Some(start) = body_start(&lower) else {
         return false;
     };
     let Some(open_end) = lower[start..].find('>') else {
@@ -387,7 +405,50 @@ fn has_body_content(html: &str) -> bool {
     };
     let inner = &lower[start + open_end + 1..];
     let inner = inner.rfind("</body>").map_or(inner, |end| &inner[..end]);
-    !inner.trim().is_empty()
+    visible_content(inner)
+}
+
+/// The offset of the `<body` tag, matched at a tag boundary so `<bodyguard>` is not a body.
+fn body_start(lower: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = lower[from..].find("<body") {
+        let at = from + found;
+        match lower.as_bytes().get(at + "<body".len()) {
+            Some(b'>' | b'/') => return Some(at),
+            Some(byte) if byte.is_ascii_whitespace() => return Some(at),
+            _ => from = at + "<body".len(),
+        }
+    }
+    None
+}
+
+const CONTENT_ELEMENTS: [&str; 16] = [
+    "img", "a", "p", "h1", "h2", "h3", "h4", "h5", "h6", "table", "li", "pre", "video", "canvas", "svg", "picture",
+];
+const HIDDEN_ELEMENTS: [&str; 4] = ["script", "style", "noscript", "template"];
+
+fn visible_content(mut rest: &str) -> bool {
+    while let Some(open) = rest.find('<') {
+        if !rest[..open].trim().is_empty() {
+            return true;
+        }
+        let tag = &rest[open + 1..];
+        let name: String = tag.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        if let Some(hidden) = HIDDEN_ELEMENTS.iter().find(|hidden| **hidden == name) {
+            let close = format!("</{hidden}");
+            let Some(end) = tag.find(&close) else {
+                return false;
+            };
+            let after = &tag[end..];
+            rest = after.find('>').map_or("", |gt| &after[gt + 1..]);
+            continue;
+        }
+        if CONTENT_ELEMENTS.contains(&name.as_str()) {
+            return true;
+        }
+        rest = tag.find('>').map_or("", |gt| &tag[gt + 1..]);
+    }
+    !rest.trim().is_empty()
 }
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
@@ -587,16 +648,10 @@ async fn capture_screenshot(
 /// Wait for the page to be ready based on the configured wait strategy.
 async fn wait_for_ready(
     page: &chromiumoxide::Page,
-    watch: &Watch,
     config: &CrawlConfig,
 ) -> Result<(), chromiumoxide::error::CdpError> {
     match config.browser.wait {
-        BrowserWait::NetworkIdle => {
-            // ~keep `NetworkIdle` is a DOM-quiescence wait here, not true CDP zero-in-flight
-            // ~keep detection: the load event has fired, and a page that draws the result of its
-            // ~keep last request shortly after the response (crawlberg#769) mutates the DOM again.
-            wait_for_dom_quiet(page, watch, config.browser.timeout).await;
-        }
+        BrowserWait::NetworkIdle => {}
         BrowserWait::Selector => {
             if let Some(ref selector) = config.browser.wait_selector {
                 wait_for_selector(page, selector).await?;
@@ -612,13 +667,16 @@ async fn wait_for_ready(
 }
 
 /// Wait until the document has had no DOM mutation for [`DOM_QUIET_WINDOW`], or [`DOM_QUIET_CAP`]
-/// (at most half of `timeout`) has passed, whichever comes first.
+/// (at most `budget`) has passed, whichever comes first. It returns silently when the budget ends.
 ///
 /// ~keep Failing to observe (a navigation destroyed the script's context, or Chrome did not
 /// ~keep answer) falls back to the fixed settle delay the wait used before: the page is still
 /// ~keep read, and the failure is not a reason to fail the fetch.
-async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, timeout: Duration) {
-    let cap = DOM_QUIET_CAP.min(timeout / 2);
+async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, budget: Duration) {
+    let cap = DOM_QUIET_CAP.min(budget);
+    if cap.is_zero() {
+        return;
+    }
     let script = format!(
         "new Promise(resolve => {{
            const quiet = {quiet}, cap = {cap};
@@ -643,7 +701,7 @@ async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, timeout: 
                 error,
                 "could not build the DOM quiescence script; using a fixed settle delay"
             );
-            tokio::time::sleep(DOM_QUIET_FALLBACK).await;
+            tokio::time::sleep(DOM_QUIET_FALLBACK.min(cap)).await;
             return;
         }
     };
@@ -654,11 +712,14 @@ async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, timeout: 
             tokio::time::sleep(DOM_QUIET_STOP_POLL).await;
         }
     };
+    // ~keep The bound is the cap plus a margin for the round trip: a renderer too busy to run the
+    // ~keep script must not hold the fetch past the budget this wait was given.
+    let observe = tokio::time::timeout(cap + DOM_QUIET_ANSWER_MARGIN, page.evaluate(params));
     tokio::select! {
-        observed = page.evaluate(params) => {
-            if let Err(error) = observed {
+        observed = observe => {
+            if let Ok(Err(error)) = observed {
                 tracing::debug!(%error, "DOM quiescence wait failed; using a fixed settle delay");
-                tokio::time::sleep(DOM_QUIET_FALLBACK).await;
+                tokio::time::sleep(DOM_QUIET_FALLBACK.min(cap)).await;
             }
         }
         () = stopped => {}
@@ -788,6 +849,15 @@ mod tests {
             ("<html><head></head><body>  \n </body></html>", false),
             ("<html><head><title>t</title></head></html>", false),
             ("", false),
+            ("<body><div id=root></div><script src=app.js></script></body>", false),
+            ("<body><div id=root><div></div></div><style>p{}</style></body>", false),
+            ("<body><noscript><p>enable js</p></noscript></body>", false),
+            ("<body><script>var a = '<p>x</p>';</script></body>", false),
+            ("<body><template><p>x</p></template></body>", false),
+            ("<bodyguard><p>x</p></bodyguard>", false),
+            ("<body><script>1</script><div>text</div></body>", true),
+            ("<body><div><h1></h1></div></body>", true),
+            ("<body><div class=x></div><video src=a></video></body>", true),
         ] {
             assert_eq!(has_body_content(html), expected, "{html}");
         }
