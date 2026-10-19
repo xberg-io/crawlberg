@@ -427,7 +427,10 @@ impl CrawlEngine {
                     ));
                 }
                 state.redirect_count = outcome.redirect_count;
-                if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
+                if outcome.redirect_count > 0
+                    && redirected_status_error(&self.config, outcome.final_response.status, &outcome.final_url)
+                        .is_some()
+                {
                     state.error = Some(format!("HTTP {}", outcome.final_response.status));
                 }
                 Some(outcome)
@@ -1135,6 +1138,19 @@ async fn perform_hop(
     }
 }
 
+/// The error a redirect chain ending on `status` is a failed fetch with, if any.
+///
+/// ~keep Shared by the seed and linked pages. A 404 at the end of a chain reaches the crawl as a
+/// ~keep synthetic response, so the status has to be checked here. Only a status the direct fetch
+/// ~keep also refuses (`status_error`) counts: a 451 or 501 is a page either way. Under
+/// ~keep `soft_http_errors` the error page itself is wanted.
+fn redirected_status_error(config: &CrawlConfig, status: u16, url: &str) -> Option<CrawlError> {
+    if config.soft_http_errors {
+        return None;
+    }
+    crate::http::status_error(status, url)
+}
+
 async fn extract_outcome(
     engine: CrawlEngine,
     entry: FrontierEntry,
@@ -1148,13 +1164,9 @@ async fn extract_outcome(
         page_scan,
         ..
     } = outcome;
-    // ~keep The seed's redirect chain ends in the same check (`resolve_initial_redirects`): a
-    // ~keep chain whose last hop answers with an error status is a failed fetch, not a page, unless
-    // ~keep `soft_http_errors` asks for the error page itself. A 404 at the end of a chain reaches
-    // ~keep here as a synthetic response, so without this a linked redirect-to-404 was a page.
-    if redirect_count > 0 && resp.status >= 400 && !engine.config.soft_http_errors {
-        let error = crate::http::status_error(resp.status, &final_url)
-            .unwrap_or_else(|| CrawlError::other(format!("HTTP {}", resp.status)));
+    if redirect_count > 0
+        && let Some(error) = redirected_status_error(&engine.config, resp.status, &final_url)
+    {
         return Err(Box::new((entry, error)));
     }
     let body_text = resp.body_text().clone();

@@ -161,6 +161,64 @@ async fn a_link_that_redirects_to_a_404_is_still_a_page_when_soft_errors_enabled
         .find(|page| page.0.ends_with("/moved"))
         .unwrap_or_else(|| panic!("a soft page for /moved, got {:?}", crawled.pages));
     assert_eq!(page.3, 404);
+    assert!(
+        page.4.contains("real readable body text"),
+        "the redirected 404 keeps its body, got {:?}",
+        page.4
+    );
+}
+
+/// An error status the direct fetch accepts as a page stays a page behind a redirect.
+#[tokio::test]
+async fn a_link_that_redirects_to_a_418_or_451_page_stays_a_page() {
+    for status in [418_u16, 451] {
+        let mock = MockServer::start().await;
+        serve_root(&mock, &["/moved"]).await;
+        serve(&mock, "/moved", redirect("/blocked")).await;
+        serve(&mock, "/blocked", html(status, ERROR_PAGE_BODY)).await;
+
+        let crawled = crawl(&engine(false), &format!("{}/", mock.uri())).await;
+        assert!(
+            crawled.errors.is_empty(),
+            "{status}: no error events, got {:?}",
+            crawled.errors
+        );
+        let page = crawled
+            .pages
+            .iter()
+            .find(|page| page.0.ends_with("/moved"))
+            .unwrap_or_else(|| panic!("{status}: a page for /moved, got {:?}", crawled.pages));
+        assert_eq!(page.3, status);
+        assert!(page.4.contains("real readable body text"), "{status}: got {:?}", page.4);
+    }
+}
+
+/// A seed that redirects to a 404 is a page under `soft_http_errors`, as a linked one is.
+#[tokio::test]
+async fn a_seed_that_redirects_to_a_404_is_a_page_when_soft_errors_enabled() {
+    let mock = MockServer::start().await;
+    serve(&mock, "/moved", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    let crawled = crawl(&engine(true), &format!("{}/moved", mock.uri())).await;
+    assert!(crawled.errors.is_empty(), "no error events, got {:?}", crawled.errors);
+    let page = crawled
+        .pages
+        .first()
+        .unwrap_or_else(|| panic!("a page, got {:?}", crawled.pages));
+    assert_eq!(page.3, 404);
+    assert!(page.4.contains("real readable body text"), "got {:?}", page.4);
+}
+
+/// A seed that redirects to a 404 is an error without the flag, as before.
+#[tokio::test]
+async fn a_seed_that_redirects_to_a_404_is_an_error_when_soft_errors_disabled() {
+    let mock = MockServer::start().await;
+    serve(&mock, "/moved", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    let crawled = crawl(&engine(false), &format!("{}/moved", mock.uri())).await;
+    assert!(crawled.pages.is_empty(), "got {:?}", crawled.pages);
 }
 
 /// A link whose redirect lands on a URL the crawl already holds is requested but gets no event of
