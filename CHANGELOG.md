@@ -11,6 +11,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.

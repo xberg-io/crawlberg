@@ -72,6 +72,7 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     #[cfg(not(target_arch = "wasm32"))]
     {
         policy.robots_limiter = context.limiter;
+        policy.exempt_chain_start_from_exclude = true;
     }
     #[cfg(target_arch = "wasm32")]
     let policy = crate::http::AdmitEvery;
@@ -1818,7 +1819,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_does_not_request_an_excluded_seed() {
+    async fn map_requests_a_seed_that_matches_exclude_paths() {
         let mock = MockServer::start().await;
         let base = mock.uri();
         mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
@@ -1829,8 +1830,11 @@ mod tests {
 
         let result = map(&format!("{base}/private"), &config).await;
 
-        assert_refused(&result, EXCLUDED, "an excluded seed");
-        assert_eq!(request_count(&mock, "/private").await, 0, "the seed is never requested");
+        assert!(
+            result.is_ok(),
+            "the seed is exempt from exclude_paths, as in crawl(): {result:?}"
+        );
+        assert_eq!(request_count(&mock, "/private").await, 1, "the seed is requested");
     }
 
     #[tokio::test]

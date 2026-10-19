@@ -135,7 +135,7 @@ pub struct CrawlConfig {
     /// Regex patterns for paths to include during crawling.
     #[serde(default)]
     pub include_paths: Vec<String>,
-    /// Regex patterns for paths to exclude during crawling.
+    /// Regex patterns for paths to exclude during crawling. The seed URL is never excluded.
     #[serde(default)]
     pub exclude_paths: Vec<String>,
     /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
