@@ -15,9 +15,13 @@ const ERROR_PAGE_BODY: &str = "<html><head><title>T</title></head><body><h1>Head
 <p>This error page has real readable body text.</p></body></html>";
 
 fn engine(soft_http_errors: bool) -> CrawlEngineHandle {
+    engine_with_depth(soft_http_errors, 1)
+}
+
+fn engine_with_depth(soft_http_errors: bool, max_depth: usize) -> CrawlEngineHandle {
     let mut config = CrawlConfig::builder().allow_private_networks(true).build();
     config.soft_http_errors = soft_http_errors;
-    config.max_depth = Some(1);
+    config.max_depth = Some(max_depth);
     config.respect_robots_txt = false;
     config.browser.mode = BrowserMode::Never;
     create_engine(Some(config)).expect("engine build must not fail")
@@ -168,16 +172,16 @@ async fn a_link_that_redirects_to_a_404_is_still_a_page_when_soft_errors_enabled
     );
 }
 
-/// An error status the direct fetch accepts as a page stays a page behind a redirect.
+/// A seed redirecting to a status the direct fetch accepts as a page (418, 451) is a page, as a
+/// linked one is. Before this change any seed redirect to a status >= 400 was a crawl error.
 #[tokio::test]
-async fn a_link_that_redirects_to_a_418_or_451_page_stays_a_page() {
+async fn a_seed_that_redirects_to_a_418_or_451_page_is_a_page() {
     for status in [418_u16, 451] {
         let mock = MockServer::start().await;
-        serve_root(&mock, &["/moved"]).await;
         serve(&mock, "/moved", redirect("/blocked")).await;
         serve(&mock, "/blocked", html(status, ERROR_PAGE_BODY)).await;
 
-        let crawled = crawl(&engine(false), &format!("{}/", mock.uri())).await;
+        let crawled = crawl(&engine(false), &format!("{}/moved", mock.uri())).await;
         assert!(
             crawled.errors.is_empty(),
             "{status}: no error events, got {:?}",
@@ -185,12 +189,82 @@ async fn a_link_that_redirects_to_a_418_or_451_page_stays_a_page() {
         );
         let page = crawled
             .pages
-            .iter()
-            .find(|page| page.0.ends_with("/moved"))
-            .unwrap_or_else(|| panic!("{status}: a page for /moved, got {:?}", crawled.pages));
+            .first()
+            .unwrap_or_else(|| panic!("{status}: a page, got {:?}", crawled.pages));
         assert_eq!(page.3, status);
         assert!(page.4.contains("real readable body text"), "{status}: got {:?}", page.4);
     }
+}
+
+/// A redirect chain of several hops ending in a 404 is an error for a linked page and a seed alike.
+#[tokio::test]
+async fn a_multi_hop_redirect_chain_ending_in_a_404_is_an_error() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/first"]).await;
+    serve(&mock, "/first", redirect("/second")).await;
+    serve(&mock, "/second", redirect("/third")).await;
+    serve(&mock, "/third", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    let linked = crawl(&engine(false), &format!("{}/", mock.uri())).await;
+    assert!(
+        !linked.pages.iter().any(|page| page.0.ends_with("/first")),
+        "got {:?}",
+        linked.pages
+    );
+    let error = linked
+        .errors
+        .iter()
+        .find(|(url, _)| url.ends_with("/first"))
+        .unwrap_or_else(|| panic!("an error event for /first, got {:?}", linked.errors));
+    assert!(error.1.contains("404"), "got {error:?}");
+
+    let seed = crawl(&engine(false), &format!("{}/first", mock.uri())).await;
+    assert!(seed.pages.is_empty(), "got {:?}", seed.pages);
+    assert!(
+        seed.errors.iter().any(|(_, error)| error.contains("404")),
+        "a seed error event naming 404, got {:?}",
+        seed.errors
+    );
+}
+
+/// The body of a soft 404 is a real page now, but its navigation links are not followed.
+#[tokio::test]
+async fn a_soft_404_page_does_not_enqueue_its_links() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/missing"]).await;
+    let error_page =
+        "<html><body><p>Not found, real readable body text.</p><a href=\"/deeper\">deeper</a></body></html>";
+    serve(&mock, "/missing", html(404, error_page)).await;
+    serve(
+        &mock,
+        "/deeper",
+        html(200, "<html><body><p>Deeper text.</p></body></html>"),
+    )
+    .await;
+
+    let crawled = crawl(&engine_with_depth(true, 3), &format!("{}/", mock.uri())).await;
+    assert!(
+        crawled
+            .pages
+            .iter()
+            .any(|page| page.0.ends_with("/missing") && page.3 == 404),
+        "the 404 is still a page, got {:?}",
+        crawled.pages
+    );
+    assert!(
+        !crawled.pages.iter().any(|page| page.0.ends_with("/deeper")),
+        "a link on a soft 404 must not be followed, got {:?}",
+        crawled.pages
+    );
+    let requested: Vec<String> = mock
+        .received_requests()
+        .await
+        .expect("requests are recorded")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    assert!(!requested.iter().any(|p| p == "/deeper"), "requested: {requested:?}");
 }
 
 /// A seed that redirects to a 404 is a page under `soft_http_errors`, as a linked one is.
@@ -219,6 +293,11 @@ async fn a_seed_that_redirects_to_a_404_is_an_error_when_soft_errors_disabled() 
 
     let crawled = crawl(&engine(false), &format!("{}/moved", mock.uri())).await;
     assert!(crawled.pages.is_empty(), "got {:?}", crawled.pages);
+    assert!(
+        crawled.errors.iter().any(|(_, error)| error.contains("404")),
+        "an error event naming 404, got {:?}",
+        crawled.errors
+    );
 }
 
 /// A link whose redirect lands on a URL the crawl already holds is requested but gets no event of
