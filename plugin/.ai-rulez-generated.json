@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:7673f80fe7e0db685892dab3cadc6dce2da1c45d74a7a92bb17d5cd9f2b2ab1c",
+  "source_hash": "blake3:c646c26d88f919b6848be2422454cabae94e9cbdfefeef3d4beecb56021295a0",
   "outputs": {
     ".claude-plugin/plugin.json": {
       "content_hash": "blake3:125798f342db3d39254a88707189a80d1e7dc86d7050dff71192dc4a3214a014",
@@ -83,7 +83,7 @@
       "mode": "0644"
     },
     ".hermes/package/pyproject.toml": {
-      "content_hash": "blake3:c7065f62100700322a300f7580cbe0ff95071949ed7cbdb09032c9110a8d8c50",
+      "content_hash": "blake3:6b7debbb37a2b4e0ec50fd377cccdeb7cf0588946355d0b370e5ee119f461e0b",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/__init__.py": {
@@ -243,11 +243,11 @@
       "mode": "0644"
     },
     ".opencode/ai-rulez-bundle.json": {
-      "content_hash": "blake3:8d0607223ba8d732942b6e9f9de901da4ca24af200faf7f0b6aeedc5deab4435",
+      "content_hash": "blake3:2e298ac2f09184685990d1523eb7386ac60882308a61be489841acfb8636fbb5",
       "mode": "0644"
     },
     ".opencode/ai-rulez-content.js": {
-      "content_hash": "blake3:822c510deb007e4f72877ad42f29918d0499f210ae363e82d465a0f0331ab294",
+      "content_hash": "blake3:011ec20caa671eb4bd4e886b09e15f720a786de4bf747419efd0690889fc5549",
       "mode": "0644"
     },
     ".opencode/commands/crawlberg-crawl.md": {

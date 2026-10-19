@@ -6,7 +6,7 @@ name: crawlberg-scraping-html-to-markdown
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:224ebdcfa5f54c0f4fa72540ffcd0252493b48e6e1c78a8ad4649b7873c28432
-Source-Hash: blake3:7673f80fe7e0db685892dab3cadc6dce2da1c45d74a7a92bb17d5cd9f2b2ab1c
+Source-Hash: blake3:c646c26d88f919b6848be2422454cabae94e9cbdfefeef3d4beecb56021295a0
 Schema-Version: v1
 -->
 
