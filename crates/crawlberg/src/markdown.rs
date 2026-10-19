@@ -337,6 +337,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn should_keep_the_innermost_text_of_every_kind_of_element_nested_a_thousand_deep() {
+        const ELEMENTS: usize = 1000;
+        const TWO_MIB: usize = 2 * 1024 * 1024;
+        // (name, opening markup, closing markup, elements per repetition, text is rendered)
+        let kinds: [(&str, &str, &str, usize, bool); 12] = [
+            ("div", "<div>", "</div>", 1, true),
+            ("list", "<ul><li>", "</li></ul>", 2, true),
+            ("blockquote", "<blockquote>", "</blockquote>", 1, true),
+            ("table", "<table><tr><td>", "</td></tr></table>", 4, true),
+            ("span", "<span>", "</span>", 1, true),
+            ("emphasis", "<em>", "</em>", 1, true),
+            ("bold", "<b>", "</b>", 1, true),
+            ("anchor", "<div><a href=\"/x\">", "</a></div>", 2, true),
+            ("pre", "<div><pre><code>", "</code></pre></div>", 3, true),
+            ("details", "<details>", "</details>", 1, true),
+            ("heading", "<div><h2>", "</h2></div>", 2, true),
+            ("svg", "<svg><g>", "</g></svg>", 2, false),
+        ];
+        for (kind, open, close, per, rendered) in kinds {
+            let repeat = ELEMENTS / per;
+            let html = format!(
+                "<html><body>{}innermost text{}</body></html>",
+                open.repeat(repeat),
+                close.repeat(repeat)
+            );
+            let content = std::thread::Builder::new()
+                .stack_size(TWO_MIB)
+                .spawn(move || {
+                    convert_html_to_markdown(&html, None, &page(), &ContentConfig::default())
+                        .map(|converted| converted.content)
+                })
+                .expect("spawn")
+                .join()
+                .unwrap_or_else(|_| panic!("{kind}: overflowed a 2 MiB stack"))
+                .expect("conversion succeeds");
+            if rendered {
+                assert!(content.contains("innermost text"), "{kind}: {content:.200}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn should_not_overflow_the_stack_on_a_page_nested_far_past_any_cap() {
         let result = convert_to_markdown(&nested_divs(5000), None, &page(), &ContentConfig::default()).await;
