@@ -170,8 +170,15 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
-    /// does not carry them.
+    /// Custom HTTP headers to send with each request to the seed URL's host. With
+    /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries them too,
+    /// except credential-bearing headers (`Authorization`, `Proxy-Authorization`, `Cookie`,
+    /// `X-Api-Key`, `X-Amz-Security-Token`, the header [`Self::auth`] names, and any header whose
+    /// name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`, `xsrf`,
+    /// `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`, `otp`,
+    /// `assertion`, `hmac`, `private`, `sso` or `sig`), which stay with the seed host. A request to
+    /// any other host does not carry them. Subdomain forwarding applies to the HTTP and
+    /// chromiumoxide backends; the native browser backend sends them to the seed host only.
     #[serde(default)]
     #[cfg_attr(alef, alef(sensitive))]
     pub custom_headers: HashMap<String, String>,

@@ -1,7 +1,8 @@
 //! Credential scope: which host receives the caller's credentials, and which header carries them.
 //!
 //! The engine fixes the scope once, when it admits the seed URL, and every fetch asks
-//! [`seed_host_headers`] for the headers to send. Only a request to the seed's host gets any.
+//! [`seed_host_headers`] for the headers to send. Only a request to the seed's host gets any
+//! credential; with `allow_subdomains`, its subdomains get the non-credential custom headers.
 
 use base64::Engine as _;
 use url::Url;
@@ -50,6 +51,16 @@ impl CredentialScope {
         same_host(&self.seed, url)
     }
 
+    /// Whether `url` is on a proper subdomain of the scoped host (`docs.example.com` for a seed
+    /// on `example.com`), by the same suffix rule the link scope uses to admit it.
+    pub(crate) fn covers_subdomain(&self, url: &Url) -> bool {
+        let (Some(seed), Some(target)) = (self.seed.host_str(), url.host_str()) else {
+            return false;
+        };
+        let (seed, target) = (seed.to_ascii_lowercase(), target.to_ascii_lowercase());
+        target.len() > seed.len() + 1 && target.ends_with(&format!(".{seed}"))
+    }
+
     /// The scoped host.
     pub(crate) fn host(&self) -> &str {
         self.seed.host_str().unwrap_or_default()
@@ -84,7 +95,8 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
 
 /// The headers a request for `url` carries: the custom headers, then the credential
 /// header, which replaces a custom header of the same name. Empty unless `url` is on the
-/// seed's host.
+/// seed's host or, with `allow_subdomains`, one of its subdomains, which gets only the
+/// non-credential custom headers.
 ///
 /// ~keep A blank `user-agent` entry is dropped here, not just at the judging side
 /// (`crate::helpers::custom_user_agent_header`): every consumer of this function (the HTTP
@@ -93,7 +105,13 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
 /// caller who unset the header by emptying its value instead of removing the key
 /// (crawlberg#423).
 pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String, String)> {
-    if !config.credential_scope.as_ref().is_some_and(|scope| scope.covers(url)) {
+    let Some(scope) = config.credential_scope.as_ref() else {
+        return Vec::new();
+    };
+    if !scope.covers(url) {
+        if config.allow_subdomains && scope.covers_subdomain(url) {
+            return subdomain_headers(config);
+        }
         return Vec::new();
     }
     let credential = credential_header(config, url);
@@ -110,6 +128,63 @@ pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String,
         .collect();
     headers.extend(credential);
     headers
+}
+
+/// The custom headers an admitted subdomain of the seed host receives (crawlberg#771).
+///
+/// ~keep Content-negotiation headers (`Accept`, `Accept-Language`) belong to the crawl, so they
+/// follow it onto the subdomains `allow_subdomains` admits. Credentials stay with the seed host:
+/// a subdomain can be run by a different party (user pages, a vendor), so every header in
+/// `SENSITIVE_HEADERS` is withheld, and so is the header the configured `AuthConfig::Header`
+/// names, and `auth` itself never reaches `credential_header` for these hosts. So is any header
+/// whose name looks credential-bearing (`X-Auth-Token`, `Private-Token`, `X-Csrf-Token`): before
+/// crawlberg#771 every custom header was seed-host only, so a secret a caller put in an arbitrary
+/// header must not start leaking to subdomains. A host admitted any other way (a redirect
+/// off-site, an external link) is not a subdomain and gets nothing.
+fn subdomain_headers(config: &CrawlConfig) -> Vec<(String, String)> {
+    let auth_header = match &config.auth {
+        Some(AuthConfig::Header { name, .. }) => Some(name.as_str()),
+        _ => None,
+    };
+    config
+        .custom_headers
+        .iter()
+        .filter(|(name, value)| !crate::helpers::is_blank_user_agent_override(name, value))
+        .filter(|(name, _)| !super::redact::is_sensitive_header(name) && !looks_credential_bearing(name))
+        .filter(|(name, _)| auth_header.is_none_or(|own| !own.eq_ignore_ascii_case(name)))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+/// Name fragments that mark a header as carrying a secret, matched case-insensitively.
+const CREDENTIAL_NAME_FRAGMENTS: [&str; 22] = [
+    "auth",
+    "token",
+    "key",
+    "secret",
+    "session",
+    "cookie",
+    "csrf",
+    "xsrf",
+    "password",
+    "signature",
+    "credential",
+    "passwd",
+    "pwd",
+    "pass",
+    "jwt",
+    "bearer",
+    "otp",
+    "assertion",
+    "hmac",
+    "private",
+    "sso",
+    "sig",
+];
+
+fn looks_credential_bearing(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    CREDENTIAL_NAME_FRAGMENTS.iter().any(|fragment| name.contains(fragment))
 }
 
 /// The seed-host headers for the native browser, scoped to the seed's host.
@@ -298,5 +373,158 @@ mod tests {
         let rendered = format!("{:?}", url_scope().expect("scope must build"));
         assert!(!rendered.contains("pw"), "{rendered}");
         assert!(rendered.contains("example.com"), "{rendered}");
+    }
+
+    fn subdomain_config(allow_subdomains: bool, auth: Option<AuthConfig>) -> CrawlConfig {
+        CrawlConfig {
+            allow_subdomains,
+            custom_headers: std::collections::HashMap::from([
+                ("Accept".to_owned(), "text/html".to_owned()),
+                ("Authorization".to_owned(), "custom".to_owned()),
+                ("COOKIE".to_owned(), "sid=1".to_owned()),
+                ("Proxy-Authorization".to_owned(), "Basic x".to_owned()),
+                ("x-token".to_owned(), "tok".to_owned()),
+            ]),
+            ..config_with(CredentialScope::for_seed(&url("http://example.com/"), None), auth)
+        }
+    }
+
+    #[test]
+    fn a_subdomain_gets_the_non_credential_custom_headers_when_subdomains_are_allowed() {
+        let config = subdomain_config(
+            true,
+            Some(AuthConfig::Header {
+                name: "X-Token".to_owned(),
+                value: "tok".to_owned(),
+            }),
+        );
+        let mut headers = seed_host_headers(&config, &url("https://Docs.Example.com/a"));
+        headers.sort();
+        assert_eq!(headers, [("Accept".to_owned(), "text/html".to_owned())]);
+        assert_eq!(credential_header(&config, &url("http://docs.example.com/")), None);
+        assert!(!is_credentialed(&config, &url("http://docs.example.com/")));
+    }
+
+    #[test]
+    fn a_subdomain_gets_no_header_whose_name_looks_credential_bearing() {
+        let config = CrawlConfig {
+            custom_headers: std::collections::HashMap::from([
+                ("Accept-Language".to_owned(), "en".to_owned()),
+                ("X-Auth-Token".to_owned(), "a".to_owned()),
+                ("Private-Token".to_owned(), "b".to_owned()),
+                ("X-Goog-Api-Key".to_owned(), "c".to_owned()),
+                ("X-CSRF-Token".to_owned(), "d".to_owned()),
+                ("X-Session-Id".to_owned(), "e".to_owned()),
+                ("X-Client-Secret".to_owned(), "f".to_owned()),
+            ]),
+            ..subdomain_config(true, None)
+        };
+        assert_eq!(
+            seed_host_headers(&config, &url("http://docs.example.com/")),
+            [("Accept-Language".to_owned(), "en".to_owned())]
+        );
+        assert_eq!(seed_host_headers(&config, &url("http://example.com/")).len(), 7);
+    }
+
+    #[test]
+    fn credential_fragments_cover_more_names_and_spare_standard_headers() {
+        for name in [
+            "X-Credentials",
+            "X-Passwd",
+            "X-Pwd",
+            "X-Passcode",
+            "X-Jwt",
+            "X-Bearer",
+            "X-Otp",
+            "X-Saml-Assertion",
+            "X-Hmac",
+            "X-Private-Id",
+            "X-Sso-Id",
+            "X-Sig",
+        ] {
+            assert!(looks_credential_bearing(name), "{name} must be withheld");
+        }
+        for name in [
+            "Accept",
+            "Accept-Language",
+            "Accept-Encoding",
+            "Accept-Charset",
+            "Cache-Control",
+            "User-Agent",
+            "Referer",
+            "DNT",
+            "Origin",
+            "Pragma",
+            "Prefer",
+            "Content-Type",
+            "If-None-Match",
+            "If-Modified-Since",
+            "Range",
+            "Connection",
+            "Keep-Alive",
+            "Upgrade-Insecure-Requests",
+            "Sec-Fetch-Mode",
+            "Sec-CH-UA",
+            "Sec-GPC",
+            "Access-Control-Request-Method",
+            "X-Requested-With",
+            "X-Forwarded-For",
+            "X-Probe",
+        ] {
+            assert!(!looks_credential_bearing(name), "{name} must not be withheld");
+        }
+    }
+
+    #[test]
+    fn the_header_named_by_header_auth_is_withheld_from_a_subdomain_even_without_a_credential_name() {
+        let config = CrawlConfig {
+            custom_headers: std::collections::HashMap::from([
+                ("X-Tenant".to_owned(), "t".to_owned()),
+                ("Accept".to_owned(), "text/html".to_owned()),
+            ]),
+            ..subdomain_config(
+                true,
+                Some(AuthConfig::Header {
+                    name: "x-tenant".to_owned(),
+                    value: "t".to_owned(),
+                }),
+            )
+        };
+        assert!(!looks_credential_bearing("X-Tenant"));
+        assert_eq!(
+            seed_host_headers(&config, &url("http://docs.example.com/")),
+            [("Accept".to_owned(), "text/html".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_subdomain_gets_no_headers_unless_subdomains_are_allowed() {
+        let config = subdomain_config(false, None);
+        assert!(seed_host_headers(&config, &url("http://docs.example.com/")).is_empty());
+    }
+
+    #[test]
+    fn only_a_true_subdomain_of_the_seed_host_counts() {
+        let config = subdomain_config(true, None);
+        for other in [
+            "http://other.test/",
+            "http://example.com.evil.test/",
+            "http://notexample.com/",
+            "http://.example.com/",
+            "http://example.org/",
+        ] {
+            let Ok(parsed) = Url::parse(other) else { continue };
+            assert!(
+                seed_host_headers(&config, &parsed).is_empty(),
+                "{other} must get nothing"
+            );
+        }
+        let seed_on_subdomain = CrawlConfig {
+            credential_scope: CredentialScope::for_seed(&url("http://docs.example.com/"), None),
+            ..subdomain_config(true, None)
+        };
+        assert!(seed_host_headers(&seed_on_subdomain, &url("http://example.com/")).is_empty());
+        assert!(seed_host_headers(&seed_on_subdomain, &url("http://api.example.com/")).is_empty());
+        assert!(!seed_host_headers(&seed_on_subdomain, &url("http://a.docs.example.com/")).is_empty());
     }
 }
