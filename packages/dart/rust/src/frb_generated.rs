@@ -1907,6 +1907,7 @@ const _: fn() = || {
         let _: bool = BrowserConfig.session_affinity;
         let _: Option<String> = BrowserConfig.chrome_path;
         let _: Vec<String> = BrowserConfig.chrome_args;
+        let _: bool = BrowserConfig.scroll_containers;
     }
     {
         let BrowserExtras = None::<crate::BrowserExtras>.unwrap();
@@ -2023,9 +2024,16 @@ const _: fn() = || {
         crate::CrawlError::Forbidden { message } => {
             let _: String = message;
         }
-        crate::CrawlError::WafBlocked { vendor, message } => {
+        crate::CrawlError::WafBlocked {
+            vendor,
+            message,
+            status,
+            body,
+        } => {
             let _: String = vendor;
             let _: String = message;
+            let _: i64 = status;
+            let _: String = body;
         }
         crate::CrawlError::Timeout { message } => {
             let _: String = message;
@@ -2661,6 +2669,7 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_sessionAffinity = <bool>::sse_decode(deserializer);
         let mut var_chromePath = <Option<String>>::sse_decode(deserializer);
         let mut var_chromeArgs = <Vec<String>>::sse_decode(deserializer);
+        let mut var_scrollContainers = <bool>::sse_decode(deserializer);
         return crate::BrowserConfig {
             mode: var_mode,
             backend: var_backend,
@@ -2679,6 +2688,7 @@ impl SseDecode for crate::BrowserConfig {
             session_affinity: var_sessionAffinity,
             chrome_path: var_chromePath,
             chrome_args: var_chromeArgs,
+            scroll_containers: var_scrollContainers,
         };
     }
 }
@@ -2963,9 +2973,13 @@ impl SseDecode for crate::CrawlError {
             3 => {
                 let mut var_vendor = <String>::sse_decode(deserializer);
                 let mut var_message = <String>::sse_decode(deserializer);
+                let mut var_status = <i64>::sse_decode(deserializer);
+                let mut var_body = <String>::sse_decode(deserializer);
                 return crate::CrawlError::WafBlocked {
                     vendor: var_vendor,
                     message: var_message,
+                    status: var_status,
+                    body: var_body,
                 };
             }
             4 => {
@@ -4689,6 +4703,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.session_affinity.into_into_dart().into_dart(),
             self.0.chrome_path.into_into_dart().into_dart(),
             self.0.chrome_args.into_into_dart().into_dart(),
+            self.0.scroll_containers.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4933,10 +4948,17 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
             crate::CrawlError::Forbidden { message } => {
                 [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::WafBlocked { vendor, message } => [
+            crate::CrawlError::WafBlocked {
+                vendor,
+                message,
+                status,
+                body,
+            } => [
                 3.into_dart(),
                 vendor.into_into_dart().into_dart(),
                 message.into_into_dart().into_dart(),
+                status.into_into_dart().into_dart(),
+                body.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::CrawlError::Timeout { message } => [4.into_dart(), message.into_into_dart().into_dart()].into_dart(),
@@ -5913,6 +5935,7 @@ impl SseEncode for crate::BrowserConfig {
         <bool>::sse_encode(self.session_affinity, serializer);
         <Option<String>>::sse_encode(self.chrome_path, serializer);
         <Vec<String>>::sse_encode(self.chrome_args, serializer);
+        <bool>::sse_encode(self.scroll_containers, serializer);
     }
 }
 
@@ -6105,10 +6128,17 @@ impl SseEncode for crate::CrawlError {
                 <i32>::sse_encode(2, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::WafBlocked { vendor, message } => {
+            crate::CrawlError::WafBlocked {
+                vendor,
+                message,
+                status,
+                body,
+            } => {
                 <i32>::sse_encode(3, serializer);
                 <String>::sse_encode(vendor, serializer);
                 <String>::sse_encode(message, serializer);
+                <i64>::sse_encode(status, serializer);
+                <String>::sse_encode(body, serializer);
             }
             crate::CrawlError::Timeout { message } => {
                 <i32>::sse_encode(4, serializer);

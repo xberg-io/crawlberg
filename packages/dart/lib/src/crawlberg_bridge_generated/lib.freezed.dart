@@ -556,13 +556,13 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  conversionFailed,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String message)?  tooManyRedirects,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message,  PlatformInt64 status,  String body)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  conversionFailed,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String message)?  tooManyRedirects,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
 return unauthorized(_that.message);case CrawlError_Forbidden() when forbidden != null:
 return forbidden(_that.message);case CrawlError_WafBlocked() when wafBlocked != null:
-return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
+return wafBlocked(_that.vendor,_that.message,_that.status,_that.body);case CrawlError_Timeout() when timeout != null:
 return timeout(_that.message);case CrawlError_RateLimited() when rateLimited != null:
 return rateLimited(_that.message);case CrawlError_ServerError() when serverError != null:
 return serverError(_that.message);case CrawlError_BadGateway() when badGateway != null:
@@ -597,13 +597,13 @@ return other(_that.message);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  conversionFailed,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String message)  tooManyRedirects,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message,  PlatformInt64 status,  String body)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  conversionFailed,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String message)  tooManyRedirects,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound():
 return notFound(_that.message);case CrawlError_Unauthorized():
 return unauthorized(_that.message);case CrawlError_Forbidden():
 return forbidden(_that.message);case CrawlError_WafBlocked():
-return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout():
+return wafBlocked(_that.vendor,_that.message,_that.status,_that.body);case CrawlError_Timeout():
 return timeout(_that.message);case CrawlError_RateLimited():
 return rateLimited(_that.message);case CrawlError_ServerError():
 return serverError(_that.message);case CrawlError_BadGateway():
@@ -634,13 +634,13 @@ return other(_that.message);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  conversionFailed,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String message)?  tooManyRedirects,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message,  PlatformInt64 status,  String body)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  conversionFailed,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String message)?  tooManyRedirects,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
 return unauthorized(_that.message);case CrawlError_Forbidden() when forbidden != null:
 return forbidden(_that.message);case CrawlError_WafBlocked() when wafBlocked != null:
-return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
+return wafBlocked(_that.vendor,_that.message,_that.status,_that.body);case CrawlError_Timeout() when timeout != null:
 return timeout(_that.message);case CrawlError_RateLimited() when rateLimited != null:
 return rateLimited(_that.message);case CrawlError_ServerError() when serverError != null:
 return serverError(_that.message);case CrawlError_BadGateway() when badGateway != null:
@@ -873,11 +873,13 @@ as String,
 
 
 class CrawlError_WafBlocked extends CrawlError {
-  const CrawlError_WafBlocked({required this.vendor, required this.message}): super._();
+  const CrawlError_WafBlocked({required this.vendor, required this.message, required this.status, required this.body}): super._();
 
 
  final  String vendor;
  final  String message;
+ final  PlatformInt64 status;
+ final  String body;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -889,18 +891,18 @@ $CrawlError_WafBlockedCopyWith<CrawlError_WafBlocked> get copyWith => _$CrawlErr
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_WafBlocked&&(identical(other.vendor, vendor) || other.vendor == vendor)&&(identical(other.message, message) || other.message == message));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_WafBlocked&&(identical(other.vendor, vendor) || other.vendor == vendor)&&(identical(other.message, message) || other.message == message)&&(identical(other.status, status) || other.status == status)&&(identical(other.body, body) || other.body == body));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,vendor,message);
+    return Object.hash(runtimeType,vendor,message,status,body);
 }
 
 @override
 String toString() {
-    return 'CrawlError.wafBlocked(vendor: $vendor, message: $message)';
+    return 'CrawlError.wafBlocked(vendor: $vendor, message: $message, status: $status, body: $body)';
 }
 
 
@@ -911,7 +913,7 @@ abstract mixin class $CrawlError_WafBlockedCopyWith<$Res> implements $CrawlError
   factory $CrawlError_WafBlockedCopyWith(CrawlError_WafBlocked value, $Res Function(CrawlError_WafBlocked) _then) = _$CrawlError_WafBlockedCopyWithImpl;
 @useResult
 $Res call({
- String vendor, String message
+ String vendor, String message, PlatformInt64 status, String body
 });
 
 
@@ -928,10 +930,12 @@ class _$CrawlError_WafBlockedCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? vendor = null,Object? message = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? vendor = null,Object? message = null,Object? status = null,Object? body = null,}) {
   return _then(CrawlError_WafBlocked(
 vendor: null == vendor ? _self.vendor : vendor // ignore: cast_nullable_to_non_nullable
 as String,message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
+as PlatformInt64,body: null == body ? _self.body : body // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }

@@ -1016,6 +1016,13 @@ char *cberg_browser_config_chrome_path(CBERGAlefHandle handle);
 char *cberg_browser_config_chrome_args(CBERGAlefHandle handle);
 
 /**
+ * Get the `scroll_containers` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_browser_config_scroll_containers(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
