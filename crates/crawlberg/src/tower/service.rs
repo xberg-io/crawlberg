@@ -295,6 +295,20 @@ async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<Craw
         )
         .await);
     }
+    // ~keep Under `soft_http_errors` a 404 or 410 may end as a page, so its body is read before
+    // the error is raised; the error otherwise discards the response.
+    if config.soft_http_errors && matches!(status, 404 | 410) {
+        let (body, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
+            .await
+            .unwrap_or_default();
+        return Err(crate::http::status_error_keeping_response(
+            status,
+            &req.url,
+            content_type,
+            headers,
+            body,
+        ));
+    }
     if let Some(error) = crate::http::status_error(status, &req.url) {
         return Err(error);
     }

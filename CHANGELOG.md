@@ -14,6 +14,8 @@ All notable changes to crawlberg are documented here.
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
+- With `soft_http_errors`, a 404 or 410 answering with a body comes back as a page with converted
+  markdown, and a 410 no longer fails as `gone`. (#772)
 
 ## [1.11.2] - 2026-10-16
 

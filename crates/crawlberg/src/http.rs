@@ -32,7 +32,7 @@ pub(crate) use headers::result_cookies_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use status::{HttpStatus, error_status};
+pub(crate) use status::{HttpStatus, error_status, refused_response, status_error_keeping_response};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 

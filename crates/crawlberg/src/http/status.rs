@@ -30,6 +30,59 @@ pub(crate) fn status_error(status: u16, url: &str) -> Option<CrawlError> {
     })
 }
 
+/// The response a 404 or 410 error was raised for, kept as that error's source when
+/// `soft_http_errors` may still turn the error into a page.
+///
+/// ~keep Carried in the error's source chain, not in a new `CrawlError` field: the error type is
+/// part of the binding surface, and the retry and escalation machinery that sees the error first
+/// reads only its variant and [`HttpStatus`], which this reports through `source()` unchanged.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, thiserror::Error)]
+#[error("HTTP status {}", .status.0)]
+pub(crate) struct RefusedResponse {
+    #[source]
+    pub(crate) status: HttpStatus,
+    pub(crate) content_type: String,
+    pub(crate) headers: std::collections::HashMap<String, Vec<String>>,
+    pub(crate) body: Vec<u8>,
+}
+
+/// [`status_error`] for a 404 (or, for any other status, a 410) whose response is kept on the error.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn status_error_keeping_response(
+    status: u16,
+    url: &str,
+    content_type: String,
+    headers: std::collections::HashMap<String, Vec<String>>,
+    body: Vec<u8>,
+) -> CrawlError {
+    let source = RefusedResponse {
+        status: HttpStatus(status),
+        content_type,
+        headers,
+        body,
+    };
+    let message = status_message(status, url);
+    if status == 404 {
+        CrawlError::not_found_with_source(message, source)
+    } else {
+        CrawlError::gone_with_source(message, source)
+    }
+}
+
+/// The response `error` was raised for, when it kept one.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn refused_response(error: &CrawlError) -> Option<&RefusedResponse> {
+    let mut cause = std::error::Error::source(error);
+    while let Some(current) = cause {
+        if let Some(refused) = current.downcast_ref::<RefusedResponse>() {
+            return Some(refused);
+        }
+        cause = current.source();
+    }
+    None
+}
+
 pub(crate) fn status_message(status: u16, url: &str) -> String {
     format!("HTTP {status} for {}", crate::net::redact_url_credentials(url))
 }
