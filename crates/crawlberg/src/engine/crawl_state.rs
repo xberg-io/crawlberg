@@ -95,6 +95,8 @@ pub(super) struct FetchResult {
     /// The URLs the browser's SSRF check refused for requests the page sent.
     pub(super) ssrf_refused_urls: Vec<String>,
     pub(super) browser_result_cookies: Vec<CookieInfo>,
+    /// Set when the browser timed out and the body is the page as rendered at the timeout.
+    pub(super) partial: Option<String>,
     /// The extraction's read of `body`, taken by the markdown conversion so the page is read once.
     pub(super) page_scan: Option<PageScan>,
 }

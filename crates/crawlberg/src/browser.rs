@@ -132,6 +132,8 @@ pub(crate) struct BrowserPage {
     /// Whether the body of `response` is text the backend decoded, or the bytes of a response
     /// the navigation stopped on.
     pub(crate) text: crate::tower::BodyText,
+    /// Why `response` is only part of the page: the browser timed out before it finished loading.
+    pub(crate) partial: Option<String>,
 }
 
 /// The engine's browsers that a fetch runs on.
@@ -293,6 +295,7 @@ async fn browser_fetch_once(
                 result_cookies: Vec::new(),
                 // ~keep The native backend decoded the document, with the character set it reports.
                 text: crate::tower::BodyText::Decoded { charset },
+                partial: None,
             }
         }
     };
@@ -304,6 +307,7 @@ async fn browser_fetch_once(
         cookies: page.cookies,
         result_cookies: page.result_cookies,
         text: page.text,
+        partial: page.partial,
     })
 }
 

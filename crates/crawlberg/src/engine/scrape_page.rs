@@ -271,6 +271,7 @@ impl CrawlEngine {
                     extras: response.browser_extras,
                     result_cookies,
                     cookies: Vec::new(),
+                    partial: None,
                 })));
         Ok((crawl_resp, true))
     }

@@ -22,6 +22,12 @@ All notable changes to crawlberg are documented here.
 - A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
 - WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
 - A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)
+- The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
+  seconds), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
+  `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
+- A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
+  markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
+  `browser.timeout`, inside `browser.overall_timeout`. (#779)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.

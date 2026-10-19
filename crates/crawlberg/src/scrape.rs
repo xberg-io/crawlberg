@@ -129,6 +129,14 @@ pub(crate) async fn scrape_from_crawl_response<'a>(
         .await?
     };
 
+    let mut markdown = markdown;
+    if let (Some(partial), Some(markdown)) = (
+        resp.landed.as_ref().and_then(|landed| landed.partial.as_ref()),
+        &mut markdown,
+    ) {
+        markdown.warnings.push(partial.clone());
+    }
+
     Ok(ScrapeResult {
         status_code: resp.status,
         final_url: url.to_owned(),
