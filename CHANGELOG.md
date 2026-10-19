@@ -13,6 +13,9 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
+- **Source break (Rust):** `CrawlError::WafBlocked` gains `status` and `body` fields. Code that constructs it literally, or matches it without `..`, must be updated. The message also changed from `detected: <vendor>` to `detected on <status>: <vendor>`. (#770)
+- A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)
 - A retry after a 429 or 503 waits for the response's `Retry-After` (delta-seconds or HTTP-date) when it is
   longer than the backoff; a `Retry-After` beyond `retry_max_delay_ms` ends the retries with a warning (so `retry_max_delay_ms = 0` abandons the retry on any positive
   `Retry-After`). (#774)

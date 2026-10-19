@@ -354,3 +354,41 @@ fn no_header_a_mixed_builtin_fingerprint_needs_matches_on_its_own() {
         "the corpus must still hold fingerprints that mix header and body signals"
     );
 }
+
+/// A vendor name in ordinary 2xx prose is not a challenge (crawlberg#778), while the same
+/// words on a block status still fingerprint, and real challenge markup on a 2xx still does.
+#[test]
+fn a_bare_vendor_name_does_not_fingerprint_a_2xx_but_still_a_block_status() {
+    let c = TomlClassifier::builtin();
+    for (name, vendor) in [
+        ("Sucuri", "imperva"),
+        ("Incapsula", "imperva"),
+        ("PerimeterX", "perimeterx"),
+    ] {
+        let prose = format!("<html><body><p>We compare {name} and other firewalls.</p></body></html>");
+        let ok = c
+            .classify(&make_response(200, vec![], &prose))
+            .expect("classify must not fail");
+        assert!(ok.is_none(), "{name} in 2xx prose must not fingerprint, got {ok:?}");
+
+        let blocked = c
+            .classify(&make_response(403, vec![], &prose))
+            .expect("classify must not fail")
+            .unwrap_or_else(|| panic!("{name} on a 403 must still fingerprint"));
+        assert_eq!(blocked.vendor, vendor);
+    }
+
+    let challenge = make_response(200, vec![], "<html><div id=\"px-captcha\"></div></html>");
+    let signal = c.classify(&challenge).expect("classify must not fail");
+    assert_eq!(signal.map(|s| s.vendor), Some("perimeterx".to_owned()));
+
+    for page in [
+        "Sucuri WebSite Firewall - Access Denied\nBlock ID: GEO01\n",
+        "<html>Request unsuccessful. Incapsula incident ID: 123-456</html>",
+    ] {
+        let signal = c
+            .classify(&make_response(200, vec![], page))
+            .expect("classify must not fail");
+        assert_eq!(signal.map(|s| s.vendor), Some("imperva".to_owned()), "{page}");
+    }
+}

@@ -284,7 +284,7 @@ impl CrawlEngine {
         let source = crate::http::HttpStatus(status);
         match reason {
             EscalationReason::WafBlocked { vendor } => {
-                CrawlError::waf_blocked_with_source(vendor.clone(), format!("{vendor} detected at {url}"), source)
+                CrawlError::waf_blocked_response(vendor.clone(), format!("{vendor} detected at {url}"), status, None)
             }
             EscalationReason::SoftBlock => CrawlError::forbidden_with_source(format!("soft_block: {url}"), source),
             EscalationReason::RenderNeeded => {
@@ -293,10 +293,11 @@ impl CrawlEngine {
             EscalationReason::OriginUnreliable => {
                 CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
-            EscalationReason::AntibotEscalate => CrawlError::waf_blocked_with_source(
+            EscalationReason::AntibotEscalate => CrawlError::waf_blocked_response(
                 ANTIBOT_VENDOR,
                 format!("antibot strategy forced browser escalation at {url}"),
-                source,
+                status,
+                None,
             ),
         }
     }
