@@ -211,6 +211,7 @@ impl CrawlEngine {
         let cookies = page.cookies;
         let result_cookies = page.result_cookies;
         let text = page.text;
+        let partial = page.partial;
         let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
@@ -245,6 +246,7 @@ impl CrawlEngine {
                 extras: None,
                 result_cookies,
                 cookies,
+                partial,
             }),
         ));
         (response, extras)
@@ -476,6 +478,7 @@ mod tests {
             text: crate::tower::BodyText::Decoded {
                 charset: Some("windows-1252".to_owned()),
             },
+            partial: None,
         };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 

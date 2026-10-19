@@ -47,6 +47,9 @@ const DOM_QUIET_STOP_POLL: Duration = Duration::from_millis(25);
 /// The settle delay used when the quiescence script cannot run.
 const DOM_QUIET_FALLBACK: Duration = Duration::from_millis(500);
 
+/// How long the read of a page that hit `browser.timeout` may take.
+const PARTIAL_READ_BUDGET: Duration = Duration::from_secs(5);
+
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -232,6 +235,15 @@ async fn render(
         {
             return outcome;
         }
+        // ~keep A selector wait that timed out did not get the element the caller said the page is
+        // ~keep ready with, so a half-rendered page is not a result there.
+        let selector_wait = config.browser.wait == BrowserWait::Selector && config.browser.wait_selector.is_some();
+        if matches!(error, CrawlError::BrowserTimeout { .. })
+            && intercepted.stopped_response.is_none()
+            && !selector_wait
+        {
+            return partial_page(page, watch, config, want_screenshot, error).await;
+        }
         return Err(error);
     }
     if let Some(stop) = intercepted.stopped_response {
@@ -258,12 +270,24 @@ async fn render(
         return outcome;
     }
 
+    read_rendered(page, watch, config, want_screenshot, timeout).await
+}
+
+/// Read the committed document of `page` within `budget`, and the status and headers recorded for
+/// it.
+async fn read_rendered(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    config: &CrawlConfig,
+    want_screenshot: bool,
+    budget: Duration,
+) -> Result<BrowserPage, CrawlError> {
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
     // ~keep The character set is read inside the read too: it is the one Chrome decoded this
     // ~keep document with, and the HTML is that decoded text (crawlberg#606).
     let ((html, charset, screenshot), document) = read_one_document_within(
-        timeout,
+        budget,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
@@ -307,7 +331,63 @@ async fn render(
         cookies: Vec::new(),
         result_cookies: Vec::new(),
         text: BodyText::Decoded { charset },
+        partial: None,
     })
+}
+
+/// The page as it is when `browser.timeout` elapsed before the load finished, marked partial, or
+/// `timeout_error` when no usable document can be read from it.
+///
+/// ~keep A page whose image never finishes loading has its text from the start, so the timeout
+/// ~keep must not drop it (crawlberg#779). Usable means the main frame shows a real document with
+/// ~keep something in its body; Chrome's error page, a blank document and a failed read all keep
+/// ~keep the timeout as the outcome. `extra_wait` and the response checks are skipped: the time is spent.
+async fn partial_page(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    config: &CrawlConfig,
+    want_screenshot: bool,
+    timeout_error: CrawlError,
+) -> Result<BrowserPage, CrawlError> {
+    let budget = PARTIAL_READ_BUDGET.min(config.browser.timeout);
+    let mut read = match read_rendered(page, watch, config, want_screenshot, budget).await {
+        Ok(read) if has_body_content(&read.response.body) => read,
+        Ok(_) => return Err(timeout_error),
+        Err(read_error) => {
+            tracing::debug!(error = %read_error, "no document could be read from the page at the timeout");
+            // ~keep A read that itself timed out names what stalled (a saturated renderer), which
+            // ~keep the navigation timeout does not.
+            return Err(if matches!(read_error, CrawlError::BrowserTimeout { .. }) {
+                read_error
+            } else {
+                timeout_error
+            });
+        }
+    };
+    tracing::warn!(
+        url = %crate::net::redact_url_credentials(&read.response.final_url),
+        timeout = ?config.browser.timeout,
+        "browser timed out before the page finished loading; returning the content rendered so far"
+    );
+    read.partial = Some(format!(
+        "partial: the page did not finish loading within {:?}; this is the content rendered at the timeout",
+        config.browser.timeout
+    ));
+    Ok(read)
+}
+
+/// Whether `html` has something in its body: text, or an element.
+fn has_body_content(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    let Some(start) = lower.find("<body") else {
+        return false;
+    };
+    let Some(open_end) = lower[start..].find('>') else {
+        return false;
+    };
+    let inner = &lower[start + open_end + 1..];
+    let inner = inner.rfind("</body>").map_or(inner, |end| &inner[..end]);
+    !inner.trim().is_empty()
 }
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
@@ -326,6 +406,7 @@ fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> 
         cookies: Vec::new(),
         result_cookies: Vec::new(),
         text: BodyText::Undecoded,
+        partial: None,
     }
 }
 
@@ -696,6 +777,20 @@ mod tests {
             error.to_string().contains("navigation failed: boom"),
             "the original navigation error must be preserved, got: {error}"
         );
+    }
+
+    #[test]
+    fn only_a_document_with_something_in_its_body_is_partial_content() {
+        for (html, expected) in [
+            ("<html><head></head><body><p>text</p></body></html>", true),
+            ("<HTML><BODY class=\"a\"><img src=x></BODY></HTML>", true),
+            ("<html><head></head><body></body></html>", false),
+            ("<html><head></head><body>  \n </body></html>", false),
+            ("<html><head><title>t</title></head></html>", false),
+            ("", false),
+        ] {
+            assert_eq!(has_body_content(html), expected, "{html}");
+        }
     }
 
     #[test]

@@ -1149,10 +1149,9 @@ async fn extract_outcome(
         ..
     } = outcome;
     let body_text = resp.body_text().clone();
-    let (ssrf_refused_urls, browser_result_cookies) = resp
-        .landed
-        .map(|landed| (landed.refused, landed.result_cookies))
-        .unwrap_or_default();
+    let (ssrf_refused_urls, browser_result_cookies, partial) = resp.landed.map_or_else(Default::default, |landed| {
+        (landed.refused, landed.result_cookies, landed.partial)
+    });
     let status_code = resp.status;
     let content_type = resp.content_type;
     let headers = resp.headers;
@@ -1212,6 +1211,7 @@ async fn extract_outcome(
         browser_used,
         ssrf_refused_urls,
         browser_result_cookies,
+        partial,
     })))
 }
 
