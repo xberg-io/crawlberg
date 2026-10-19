@@ -17,6 +17,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
+  seconds, and never past `browser.timeout`), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
+  `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
+- A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
+  markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
+  `browser.timeout`, within what is left of `browser.overall_timeout`; when none is left the page fails with `browser_timeout`. (#779)
 - WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
 - **Source break (Rust):** `CrawlError::WafBlocked` gains `status` and `body` fields. Code that constructs it literally, or matches it without `..`, must be updated. The message also changed from `detected: <vendor>` to `detected on <status>: <vendor>`. (#770)
 - A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)

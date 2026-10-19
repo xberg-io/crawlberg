@@ -1449,6 +1449,7 @@ mod tests {
                 extras: None,
                 cookies: Vec::new(),
                 result_cookies: Vec::new(),
+                partial: None,
             }));
             landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };
@@ -1798,6 +1799,7 @@ mod tests {
                 extras: None,
                 cookies: Vec::new(),
                 result_cookies: Vec::new(),
+                partial: None,
             }));
             let sources = [
                 ("Location", response(302, &[("location", target_url)], "")),

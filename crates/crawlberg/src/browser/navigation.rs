@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
@@ -30,6 +31,30 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 /// and the content type reported for every rendered page.
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
+
+/// How long the DOM must stay unchanged after the load event before a `NetworkIdle` wait
+/// returns. A static page pays this once (it replaced a fixed 500 ms delay). A single-page app
+/// that draws within this window of its last response is captured; one that draws later needs
+/// `browser.extra_wait`.
+const DOM_QUIET_WINDOW: Duration = Duration::from_millis(1000);
+
+/// The longest the quiescence wait runs for a page that keeps mutating (a ticker, a carousel).
+const DOM_QUIET_CAP: Duration = Duration::from_secs(4);
+
+/// How often the quiescence wait looks for a response the navigation stopped on.
+const DOM_QUIET_STOP_POLL: Duration = Duration::from_millis(25);
+
+/// How long past its cap the quiescence script may take to answer.
+const DOM_QUIET_ANSWER_MARGIN: Duration = Duration::from_secs(1);
+
+/// The settle delay used when the quiescence script cannot run.
+const DOM_QUIET_FALLBACK: Duration = Duration::from_millis(500);
+
+/// How long the read of a page that hit `browser.timeout` may take.
+const PARTIAL_READ_BUDGET: Duration = Duration::from_secs(5);
+
+/// What a read of a partial page leaves of the overall deadline for the fetch to return its result.
+const PARTIAL_READ_DEADLINE_MARGIN: Duration = Duration::from_millis(250);
 
 /// How long a page screenshot may take before the page is reported without one.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -106,7 +131,7 @@ pub(super) async fn page_fetch(
 ) -> Result<BrowserPage, CrawlError> {
     tokio::time::timeout_at(
         deadline,
-        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot),
+        fetch_in_turn(url, config, page, watch, prior_cookies, want_screenshot, deadline),
     )
     .await
     .unwrap_or_else(|_| Err(super::overall_deadline_error(config.browser.overall_timeout)))
@@ -120,6 +145,7 @@ async fn fetch_in_turn(
     watch: &Watch,
     prior_cookies: Option<&[BrowserCookie]>,
     want_screenshot: bool,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
@@ -145,7 +171,7 @@ async fn fetch_in_turn(
         Vec::new()
     };
 
-    let rendered = render(url, config, page, watch, want_screenshot).await;
+    let rendered = render(url, config, page, watch, want_screenshot, deadline).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
     // ~keep of `extra_wait` is not missed while its DNS lookup runs.
     let refused = watch.refused_urls().await;
@@ -181,8 +207,10 @@ async fn render(
     page: &chromiumoxide::Page,
     watch: &Watch,
     want_screenshot: bool,
+    deadline: tokio::time::Instant,
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
+    let navigation_started = tokio::time::Instant::now();
     let navigation = tokio::time::timeout(timeout, async {
         watch
             .goto(page, url)
@@ -216,6 +244,15 @@ async fn render(
         {
             return outcome;
         }
+        // ~keep A selector wait that timed out did not get the element the caller said the page is
+        // ~keep ready with, so a half-rendered page is not a result there.
+        let selector_wait = config.browser.wait == BrowserWait::Selector && config.browser.wait_selector.is_some();
+        if matches!(error, CrawlError::BrowserTimeout { .. })
+            && intercepted.stopped_response.is_none()
+            && !selector_wait
+        {
+            return partial_page(page, watch, config, error, deadline).await;
+        }
         return Err(error);
     }
     if let Some(stop) = intercepted.stopped_response {
@@ -225,6 +262,15 @@ async fn render(
         return Ok(stopped_browser_page(watch, stop));
     }
 
+    if config.browser.wait == BrowserWait::NetworkIdle {
+        // ~keep `NetworkIdle` is a DOM-quiescence wait, not true CDP zero-in-flight detection: the
+        // ~keep load event has fired, and a page that draws the result of its last request shortly
+        // ~keep after the response (crawlberg#769) mutates the DOM again. It runs outside the
+        // ~keep navigation timeout, on what is left of the budget, so a page that loaded is never
+        // ~keep reported partial because it was still settling.
+        let remaining = timeout.saturating_sub(navigation_started.elapsed());
+        wait_for_dom_quiet(page, watch, remaining).await;
+    }
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
@@ -245,12 +291,24 @@ async fn render(
         return outcome;
     }
 
+    read_rendered(page, watch, config, want_screenshot, timeout).await
+}
+
+/// Read the committed document of `page` within `budget`, and the status and headers recorded for
+/// it.
+async fn read_rendered(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    config: &CrawlConfig,
+    want_screenshot: bool,
+    budget: Duration,
+) -> Result<BrowserPage, CrawlError> {
     // ~keep The screenshot is taken inside the read, so it is of the same committed document as
     // ~keep the HTML, the status and the final URL (crawlberg#318).
     // ~keep The character set is read inside the read too: it is the one Chrome decoded this
     // ~keep document with, and the HTML is that decoded text (crawlberg#606).
     let ((html, charset, screenshot), document) = read_one_document_within(
-        timeout,
+        budget,
         || committed_document(page),
         || async move {
             let html = page_content(page, "extract HTML").await?;
@@ -294,7 +352,123 @@ async fn render(
         cookies: Vec::new(),
         result_cookies: Vec::new(),
         text: BodyText::Decoded { charset },
+        partial: None,
     })
+}
+
+/// The page as it is when `browser.timeout` elapsed before the load finished, marked partial, or
+/// `timeout_error` when no usable document can be read from it.
+///
+/// ~keep A page whose image never finishes loading has its text from the start, so the timeout
+/// ~keep must not drop it (crawlberg#779). Usable means the main frame shows a real document with
+/// ~keep something in its body; Chrome's error page, a blank document and a failed read all keep
+/// ~keep the timeout as the outcome. `extra_wait` and the response checks are skipped: the time is spent.
+async fn partial_page(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    config: &CrawlConfig,
+    timeout_error: CrawlError,
+    deadline: tokio::time::Instant,
+) -> Result<BrowserPage, CrawlError> {
+    // ~keep The read runs past `browser.timeout`, inside the fetch's overall deadline, and is
+    // ~keep bounded by what is left of it so that the deadline never cuts it off: that would
+    // ~keep surface the generic overall-deadline error in place of the navigation timeout. A read
+    // ~keep the deadline leaves no room for keeps the navigation timeout as the outcome.
+    let normal_budget = PARTIAL_READ_BUDGET.min(config.browser.timeout);
+    let room = deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .saturating_sub(PARTIAL_READ_DEADLINE_MARGIN);
+    let budget = normal_budget.min(room);
+    if budget.is_zero() {
+        return Err(timeout_error);
+    }
+    let deadline_limited = budget < normal_budget;
+    // ~keep No screenshot: the page is still loading, and a stalled capture would fail the read and
+    // ~keep lose the HTML that is the point of a partial result.
+    let mut read = match read_rendered(page, watch, config, false, budget).await {
+        Ok(read) if has_body_content(&read.response.body) => read,
+        Ok(_) => return Err(timeout_error),
+        Err(read_error) => {
+            tracing::debug!(error = %read_error, "no document could be read from the page at the timeout");
+            // ~keep A read that itself timed out names what stalled (a saturated renderer), which
+            // ~keep the navigation timeout does not.
+            return Err(
+                if !deadline_limited && matches!(read_error, CrawlError::BrowserTimeout { .. }) {
+                    read_error
+                } else {
+                    timeout_error
+                },
+            );
+        }
+    };
+    tracing::warn!(
+        url = %crate::net::redact_url_credentials(&read.response.final_url),
+        timeout = ?config.browser.timeout,
+        "browser timed out before the page finished loading; returning the content rendered so far"
+    );
+    read.partial = Some(format!(
+        "partial: the page did not finish loading within {:?}; this is the content rendered at the timeout",
+        config.browser.timeout
+    ));
+    Ok(read)
+}
+
+/// Whether `html` has visible content in its body: text outside script, style, noscript and
+/// template, or a content element. A shell of empty containers and scripts is not a page.
+fn has_body_content(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    let Some(start) = body_start(&lower) else {
+        return false;
+    };
+    let Some(open_end) = lower[start..].find('>') else {
+        return false;
+    };
+    let inner = &lower[start + open_end + 1..];
+    let inner = inner.rfind("</body>").map_or(inner, |end| &inner[..end]);
+    visible_content(inner)
+}
+
+/// The offset of the `<body` tag, matched at a tag boundary so `<bodyguard>` is not a body.
+fn body_start(lower: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = lower[from..].find("<body") {
+        let at = from + found;
+        match lower.as_bytes().get(at + "<body".len()) {
+            Some(b'>' | b'/') => return Some(at),
+            Some(byte) if byte.is_ascii_whitespace() => return Some(at),
+            _ => from = at + "<body".len(),
+        }
+    }
+    None
+}
+
+const CONTENT_ELEMENTS: [&str; 16] = [
+    "img", "a", "p", "h1", "h2", "h3", "h4", "h5", "h6", "table", "li", "pre", "video", "canvas", "svg", "picture",
+];
+const HIDDEN_ELEMENTS: [&str; 4] = ["script", "style", "noscript", "template"];
+
+fn visible_content(mut rest: &str) -> bool {
+    while let Some(open) = rest.find('<') {
+        if !rest[..open].trim().is_empty() {
+            return true;
+        }
+        let tag = &rest[open + 1..];
+        let name: String = tag.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        if let Some(hidden) = HIDDEN_ELEMENTS.iter().find(|hidden| **hidden == name) {
+            let close = format!("</{hidden}");
+            let Some(end) = tag.find(&close) else {
+                return false;
+            };
+            let after = &tag[end..];
+            rest = after.find('>').map_or("", |gt| &after[gt + 1..]);
+            continue;
+        }
+        if CONTENT_ELEMENTS.contains(&name.as_str()) {
+            return true;
+        }
+        rest = tag.find('>').map_or("", |gt| &tag[gt + 1..]);
+    }
+    !rest.trim().is_empty()
 }
 
 fn stopped_browser_page(watch: &Watch, stop: StoppedResponse) -> BrowserPage {
@@ -313,6 +487,7 @@ fn undecoded_page(stop: StoppedResponse, redirects: usize, redirected: bool) -> 
         cookies: Vec::new(),
         result_cookies: Vec::new(),
         text: BodyText::Undecoded,
+        partial: None,
     }
 }
 
@@ -496,10 +671,7 @@ async fn wait_for_ready(
     config: &CrawlConfig,
 ) -> Result<(), chromiumoxide::error::CdpError> {
     match config.browser.wait {
-        BrowserWait::NetworkIdle => {
-            // ~keep `NetworkIdle` is a settle delay here, not true CDP zero-in-flight detection.
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        BrowserWait::NetworkIdle => {}
         BrowserWait::Selector => {
             if let Some(ref selector) = config.browser.wait_selector {
                 wait_for_selector(page, selector).await?;
@@ -512,6 +684,66 @@ async fn wait_for_ready(
         }
     }
     Ok(())
+}
+
+/// Wait until the document has had no DOM mutation for [`DOM_QUIET_WINDOW`], or [`DOM_QUIET_CAP`]
+/// (at most `budget`) has passed, whichever comes first. It returns silently when the budget ends.
+///
+/// ~keep Failing to observe (a navigation destroyed the script's context, or Chrome did not
+/// ~keep answer) falls back to the fixed settle delay the wait used before: the page is still
+/// ~keep read, and the failure is not a reason to fail the fetch.
+async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, budget: Duration) {
+    let cap = DOM_QUIET_CAP.min(budget);
+    if cap.is_zero() {
+        return;
+    }
+    let script = format!(
+        "new Promise(resolve => {{
+           const quiet = {quiet}, cap = {cap};
+           const start = performance.now();
+           let last = start;
+           const observer = new MutationObserver(() => {{ last = performance.now(); }});
+           observer.observe(document, {{ childList: true, subtree: true, characterData: true }});
+           const check = () => {{
+             const now = performance.now();
+             if (now - last >= quiet || now - start >= cap) {{ observer.disconnect(); resolve(true); }}
+             else {{ setTimeout(check, 25); }}
+           }};
+           setTimeout(check, 25);
+         }})",
+        quiet = DOM_QUIET_WINDOW.as_millis(),
+        cap = cap.as_millis(),
+    );
+    let params = match EvaluateParams::builder().expression(script).await_promise(true).build() {
+        Ok(params) => params,
+        Err(error) => {
+            tracing::debug!(
+                error,
+                "could not build the DOM quiescence script; using a fixed settle delay"
+            );
+            tokio::time::sleep(DOM_QUIET_FALLBACK.min(cap)).await;
+            return;
+        }
+    };
+    // ~keep A response Chrome does not commit (204, 304) leaves no document to observe, and the
+    // ~keep script then never runs; the stopped response ends the wait, as the navigation is over.
+    let stopped = async {
+        while !watch.has_stopped_response() {
+            tokio::time::sleep(DOM_QUIET_STOP_POLL).await;
+        }
+    };
+    // ~keep The bound is the cap plus a margin for the round trip: a renderer too busy to run the
+    // ~keep script must not hold the fetch past the budget this wait was given.
+    let observe = tokio::time::timeout(cap + DOM_QUIET_ANSWER_MARGIN, page.evaluate(params));
+    tokio::select! {
+        observed = observe => {
+            if let Ok(Err(error)) = observed {
+                tracing::debug!(%error, "DOM quiescence wait failed; using a fixed settle delay");
+                tokio::time::sleep(DOM_QUIET_FALLBACK.min(cap)).await;
+            }
+        }
+        () = stopped => {}
+    }
 }
 
 /// Set the viewport (device metrics) via CDP Emulation.setDeviceMetricsOverride.
@@ -626,6 +858,29 @@ mod tests {
             error.to_string().contains("navigation failed: boom"),
             "the original navigation error must be preserved, got: {error}"
         );
+    }
+
+    #[test]
+    fn only_a_document_with_something_in_its_body_is_partial_content() {
+        for (html, expected) in [
+            ("<html><head></head><body><p>text</p></body></html>", true),
+            ("<HTML><BODY class=\"a\"><img src=x></BODY></HTML>", true),
+            ("<html><head></head><body></body></html>", false),
+            ("<html><head></head><body>  \n </body></html>", false),
+            ("<html><head><title>t</title></head></html>", false),
+            ("", false),
+            ("<body><div id=root></div><script src=app.js></script></body>", false),
+            ("<body><div id=root><div></div></div><style>p{}</style></body>", false),
+            ("<body><noscript><p>enable js</p></noscript></body>", false),
+            ("<body><script>var a = '<p>x</p>';</script></body>", false),
+            ("<body><template><p>x</p></template></body>", false),
+            ("<bodyguard><p>x</p></bodyguard>", false),
+            ("<body><script>1</script><div>text</div></body>", true),
+            ("<body><div><h1></h1></div></body>", true),
+            ("<body><div class=x></div><video src=a></video></body>", true),
+        ] {
+            assert_eq!(has_body_content(html), expected, "{html}");
+        }
     }
 
     #[test]
@@ -795,6 +1050,23 @@ mod tests {
                     .mount(&site)
                     .await;
             }
+            Mock::given(method("GET"))
+                .and(path("/slow-image"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    "<html><body><p>text of a page still loading</p><img src=\"/slow.gif\"></body></html>",
+                    "text/html",
+                ))
+                .mount(&site)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/slow.gif"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(b"GIF89a".to_vec(), "image/gif")
+                        .set_delay(Duration::from_secs(60)),
+                )
+                .mount(&site)
+                .await;
             let base = site.uri().replace("127.0.0.1", "localhost");
             let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
             let builder = chromiumoxide::browser::BrowserConfig::builder()
@@ -845,6 +1117,7 @@ mod tests {
                 &self.page,
                 &self.watch,
                 want_screenshot,
+                tokio::time::Instant::now() + Duration::from_secs(600),
             )
             .await
         }
@@ -918,7 +1191,14 @@ mod tests {
         config.browser.wait = BrowserWait::Selector;
         config.browser.wait_selector = Some("[data-selector-ready='yes']".to_owned());
         let url = fixture.url("/one");
-        let rendered = render(&url, &config, &fixture.page, &fixture.watch, false);
+        let rendered = render(
+            &url,
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_secs(600),
+        );
         let (rendered, hook_runs) =
             crate::chrome_frame::with_after_selector_miss("document.body.dataset.selectorReady = 'yes'", rendered)
                 .await;
@@ -927,6 +1207,37 @@ mod tests {
         let rendered = rendered.expect("the selector added after the first miss must be found");
         assert_eq!(hook_runs, 1, "the first confirmed miss must trigger the test hook once");
         assert!(rendered.response.body.contains("data-selector-ready=\"yes\""));
+    }
+
+    /// A page that timed out while loading, with an overall deadline too near for the read of what
+    /// it rendered, fails with the navigation timeout and not with the overall-deadline error.
+    /// Launches a real Chrome and skips when none is found.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_partial_read_the_overall_deadline_leaves_no_room_for_keeps_the_navigation_timeout() {
+        let test_name = "a_partial_read_the_overall_deadline_leaves_no_room_for_keeps_the_navigation_timeout";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let mut config = fixture.config.clone();
+        config.browser.timeout = Duration::from_secs(1);
+        let rendered = render(
+            &fixture.url("/slow-image"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_millis(1100),
+        )
+        .await;
+        fixture.stop().await;
+
+        let Err(CrawlError::BrowserTimeout { message, .. }) = rendered else {
+            panic!(
+                "{test_name}: expected the navigation timeout, got {:?}",
+                rendered.map(|_| "a page")
+            );
+        };
+        assert!(!message.contains("overall deadline"), "{test_name}: {message}");
     }
 
     /// A document committed between the render's read of the HTML and its read of the committed

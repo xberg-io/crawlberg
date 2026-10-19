@@ -295,4 +295,7 @@ pub struct Landing {
     pub(crate) cookies: Vec<crate::types::BrowserCookie>,
     /// Cookies this browser fetch contributes to its crawl; separate from scrape jar extras. ~keep
     pub(crate) result_cookies: Vec<crate::types::CookieInfo>,
+    /// Why the page is only part of the document: the browser timed out before it finished
+    /// loading. Reported as a warning on the page's markdown.
+    pub partial: Option<String>,
 }

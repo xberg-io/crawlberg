@@ -199,6 +199,12 @@ pub struct BrowserConfig {
     /// CSS selector to wait for when `wait` is `Selector`.
     pub wait_selector: Option<String>,
     /// Extra time to wait after the wait condition is met.
+    ///
+    /// The default `network_idle` wait returns once the page has loaded and its DOM has been
+    /// unchanged for one second (at most four seconds, and never past `timeout`, counted from
+    /// the start of the navigation). An app that draws later than that after its last request,
+    /// such as a single-page app that renders its data on a slow pass, needs `extra_wait`; for
+    /// example `3000` waits three more seconds.
     #[serde(default, with = "option_duration_ms")]
     pub extra_wait: Option<Duration>,
     /// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.

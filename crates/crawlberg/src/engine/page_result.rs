@@ -56,7 +56,7 @@ impl CrawlEngine {
 
         // ~keep Before link discovery: a page that cannot be converted is a failed page, and a
         // ~keep failed page contributes no links, as a failed fetch does not.
-        let (downloaded_document, markdown) = match self
+        let (downloaded_document, mut markdown) = match self
             .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_scan, page_was_skipped)
             .await
         {
@@ -70,6 +70,9 @@ impl CrawlEngine {
                 return Ok(false);
             }
         };
+        if let (Some(partial), Some(markdown)) = (&fetch.partial, &mut markdown) {
+            markdown.warnings.push(partial.clone());
+        }
 
         self.discover_links_if_allowed(&fetch, &final_url, page_was_skipped, context, state)
             .await?;
