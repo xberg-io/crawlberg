@@ -38,6 +38,30 @@ pub(crate) fn is_challenge_status(status: u16) -> bool {
     CHALLENGE_STATUSES.contains(&status)
 }
 
+/// How long the body prefix of a header-identified block is awaited.
+///
+/// ~keep The headers already decided the verdict, so the body is only context for the error. A
+/// server that stalls after its headers must not hold the worker until the client timeout.
+#[cfg(not(target_arch = "wasm32"))]
+const BLOCK_PREFIX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Read at most `cap` bytes of a block body, or nothing when they do not arrive within `limit`.
+#[cfg(not(target_arch = "wasm32"))]
+async fn read_block_prefix(resp: reqwest::Response, cap: usize, limit: std::time::Duration) -> String {
+    tokio::time::timeout(limit, read_text_bounded(resp, Some(cap)))
+        .await
+        .unwrap_or_default()
+}
+
+/// wasm32 has no tokio timer; the browser's own fetch limits bound the read.
+#[cfg(target_arch = "wasm32")]
+const BLOCK_PREFIX_TIMEOUT: () = ();
+
+#[cfg(target_arch = "wasm32")]
+async fn read_block_prefix(resp: reqwest::Response, cap: usize, _limit: ()) -> String {
+    read_text_bounded(resp, Some(cap)).await
+}
+
 /// Classify a challenge status: a [`CrawlError::WafBlocked`] when the response fingerprints,
 /// otherwise the plain error the status carries on its own.
 ///
@@ -54,7 +78,7 @@ pub(crate) async fn challenge_status_error(
 ) -> CrawlError {
     if let Some(vendor) = waf::header_waf_vendor(status, headers) {
         let cap = max_body_size.map_or(WAF_BODY_PREFIX_LEN, |max| max.min(WAF_BODY_PREFIX_LEN));
-        let body = read_text_bounded(resp, Some(cap)).await;
+        let body = read_block_prefix(resp, cap, BLOCK_PREFIX_TIMEOUT).await;
         return waf_blocked(status, vendor, &body);
     }
     let body = read_text_bounded(resp, max_body_size).await;
@@ -165,5 +189,37 @@ mod tests {
             None,
             "a fingerprint needing a body signal must not fire on headers alone"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_header_identified_block_whose_body_stalls_is_still_reported() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            socket
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nx-datadome: blocked\r\ncontent-length: 4096\r\n\r\n")
+                .await
+                .expect("headers");
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+        let url = format!("http://{addr}/");
+        let resp = reqwest::get(&url).await.expect("headers must arrive");
+        let headers = HashMap::from([("x-datadome".to_string(), vec!["blocked".to_string()])]);
+        assert_eq!(resp.status().as_u16(), 403);
+        assert!(waf::header_waf_vendor(403, &headers).is_some());
+
+        let started = std::time::Instant::now();
+        let body = read_block_prefix(resp, 4096, std::time::Duration::from_millis(100)).await;
+        assert_eq!(body, "", "a stalled body yields no prefix");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the read must give up at the limit, not wait for the server"
+        );
+        server.abort();
     }
 }

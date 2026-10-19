@@ -187,7 +187,7 @@ pattern = "px-captcha"
 # only block statuses. On a 2xx the word is ordinary prose about the vendor, so a small page
 # that mentions one is content (crawlberg#778); a real 2xx interstitial still matches the
 # challenge markup and block-page phrase fingerprints (`px-captcha`, `_incap_ses_`,
-# `sucuri website firewall`, ...).
+# `sucuri website firewall - access denied`, ...).
 [[fingerprint]]
 id = "perimeterx_body_tag"
 vendor = "perimeterx"
@@ -214,13 +214,24 @@ weight = 1.0
 kind = "body_substring"
 pattern = "_incap_ses_"
 
+# ~keep Sucuri's block page titles itself "Sucuri WebSite Firewall - Access Denied" (or "... -
+# CloudProxy - Access Denied"). The bare product name is prose a blog post or Sucuri's own
+# marketing page uses on a 200, so only the block-page title forms decide any status.
 [[fingerprint]]
 id = "imperva_sucuri_firewall_page"
 vendor = "imperva"
 weight = 1.0
 [[fingerprint.signals]]
 kind = "body_substring"
-pattern = "sucuri website firewall"
+pattern = "sucuri website firewall - access denied"
+
+[[fingerprint]]
+id = "imperva_sucuri_firewall_cloudproxy_page"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "sucuri website firewall - cloudproxy"
 
 [[fingerprint]]
 id = "imperva_incapsula_incident"

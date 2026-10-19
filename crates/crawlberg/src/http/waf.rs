@@ -448,6 +448,44 @@ mod tests {
                 content.clone(),
             ),
             (
+                "200, prose naming the Sucuri Website Firewall",
+                html(
+                    200,
+                    "<html><body><h1>Hardening WordPress</h1><p>We put the Sucuri Website Firewall in front of the origin.</p></body></html>".to_owned(),
+                ),
+                content.clone(),
+            ),
+            (
+                "200, Sucuri block page, Access Denied title",
+                html(200, "<html><title>Sucuri WebSite Firewall - Access Denied</title><body>Block ID: bad-request</body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Sucuri block page, CloudProxy title",
+                html(200, "<html><title>Sucuri WebSite Firewall - CloudProxy - Access Denied</title></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Incapsula resource script",
+                html(200, "<html><body><script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script></body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, Incapsula incident id",
+                html(200, "<html><body>Request unsuccessful. Incapsula incident ID: 123-456</body></html>".to_owned()),
+                Err("imperva".to_owned()),
+            ),
+            (
+                "200, PerimeterX captcha global",
+                html(200, "<html><script>window._pxCaptcha = true;</script></html>".to_owned()),
+                Err("perimeterx".to_owned()),
+            ),
+            (
+                "200, PerimeterX captcha CDN",
+                html(200, "<html><script src=\"https://captcha.px-cdn.net/PX123/captcha.js\"></script></html>".to_owned()),
+                Err("perimeterx".to_owned()),
+            ),
+            (
                 "200, Sucuri cloudproxy JS cookie challenge, no headers",
                 html(
                     200,

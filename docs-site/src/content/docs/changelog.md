@@ -15,6 +15,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Source break (Rust):** `CrawlError::WafBlocked` gains `status` and `body` fields. Code that constructs it literally, or matches it without `..`, must be updated. The message also changed from `detected: <vendor>` to `detected on <status>: <vendor>`. (#770)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
