@@ -38,6 +38,11 @@ fn strong_em_symbol(symbol: &str) -> Result<char, ConversionError> {
     }
 }
 
+/// ~keep The converter's own default is 64 and drops everything below it silently (#775): a
+/// ~keep paragraph in 61 nested divs sits at depth 64 once html and body count. 1024 is the
+/// ~keep ceiling the converter clamps to; its walker stays within a 2 MiB blocking-task stack there.
+const DEFAULT_MAX_DEPTH: usize = 1024;
+
 fn conversion_options(
     config: &ContentConfig,
     document_url: &Url,
@@ -69,7 +74,7 @@ fn conversion_options(
         },
         skip_images: config.skip_images,
         inline_data_media: html_to_markdown_rs::options::InlineDataMedia::AltTextOnly,
-        max_depth: config.max_depth,
+        max_depth: Some(config.max_depth.unwrap_or(DEFAULT_MAX_DEPTH)),
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
@@ -311,6 +316,35 @@ mod tests {
         assert_eq!(
             ours.keep_inline_images_in, theirs.keep_inline_images_in,
             "keep_inline_images_in"
+        );
+    }
+
+    fn nested_divs(depth: usize) -> String {
+        format!(
+            "<html><body>{}<p>The paragraph survives.</p>{}</body></html>",
+            "<div>".repeat(depth),
+            "</div>".repeat(depth)
+        )
+    }
+
+    #[tokio::test]
+    async fn should_keep_the_paragraph_of_a_page_nested_past_the_converter_default_depth() {
+        for depth in [60, 61, 200, 1000] {
+            let result = convert_to_markdown(&nested_divs(depth), None, &page(), &ContentConfig::default())
+                .await
+                .expect("conversion succeeds");
+            assert_eq!(result.content.trim(), "The paragraph survives.", "depth {depth}");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_not_overflow_the_stack_on_a_page_nested_far_past_any_cap() {
+        let result = convert_to_markdown(&nested_divs(5000), None, &page(), &ContentConfig::default()).await;
+        let result = result.expect("conversion of a 5000-deep page must not crash");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("DepthLimitExceeded")),
+            "content dropped past the cap must be reported: {:?}",
+            result.warnings
         );
     }
 
