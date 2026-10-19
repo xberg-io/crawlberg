@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:2fb291f60784050b5993ed627070aa79f103ef9c1198aee94730a10a871ba894",
+  "source_hash": "blake3:7673f80fe7e0db685892dab3cadc6dce2da1c45d74a7a92bb17d5cd9f2b2ab1c",
   "outputs": {
     ".claude-plugin/plugin.json": {
-      "content_hash": "blake3:1a5c4f7737d571f530dbcf8dbb72a125056bba6ab7ef1e31a01eeca6c2083c61",
+      "content_hash": "blake3:125798f342db3d39254a88707189a80d1e7dc86d7050dff71192dc4a3214a014",
       "mode": "0644"
     },
     ".codex-plugin/plugin.json": {
-      "content_hash": "blake3:e5c722a8245a276d350356507794b1311f2e9332d9962c22e820b4c4c3828565",
+      "content_hash": "blake3:5739de4c5915d2ae45e31da0dff4373c3a89c88a8da7263c0695012db3c7b082",
       "mode": "0644"
     },
     ".cursor-plugin/commands/crawlberg-crawl.md": {
@@ -19,7 +19,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/plugin.json": {
-      "content_hash": "blake3:154f99b4602d3a3250d484601347722050d9a2723daa2d277657c21fdf08d96c",
+      "content_hash": "blake3:0b30fe5b3059ccc71addab768720a8ceae568cbb0df056d62facfeaa8164140b",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-automating-the-browser/SKILL.md": {
@@ -79,15 +79,15 @@
       "mode": "0644"
     },
     ".factory-plugin/plugin.json": {
-      "content_hash": "blake3:d1daa6db2ebb9c11f83767ef9f83e011546f2fd7848c56d561a74417aaff54ea",
+      "content_hash": "blake3:3909a0cab42a1942517f0c80ebb28acfc3bf07116a6ac4b3b9bf544ccd143fa8",
       "mode": "0644"
     },
     ".hermes/package/pyproject.toml": {
-      "content_hash": "blake3:2726b552888a57f359f8aaf67330e0d206826da860240de58cd45fe1719fe77c",
+      "content_hash": "blake3:c7065f62100700322a300f7580cbe0ff95071949ed7cbdb09032c9110a8d8c50",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/__init__.py": {
-      "content_hash": "blake3:87905020cfc8972130dd25b6eeafcf2730e037ca72eb7b9baaf4e12ded818fcf",
+      "content_hash": "blake3:0ad8fc041a14e9130a451146d1fe083e91e8a205c9fe2d37f9b9862580f64f58",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/commands/crawlberg-crawl.md": {
@@ -103,7 +103,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/plugin.yaml": {
-      "content_hash": "blake3:e8fb656b400f93687ee84b19a867278f13dca48d827305cbc7eb1b463a967882",
+      "content_hash": "blake3:0a41dc8b9bcd64e560dc79f08384480d736302988e7f010ec2b02d4d75972d14",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-automating-the-browser/SKILL.md": {
@@ -163,7 +163,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/__init__.py": {
-      "content_hash": "blake3:87905020cfc8972130dd25b6eeafcf2730e037ca72eb7b9baaf4e12ded818fcf",
+      "content_hash": "blake3:0ad8fc041a14e9130a451146d1fe083e91e8a205c9fe2d37f9b9862580f64f58",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/commands/crawlberg-crawl.md": {
@@ -179,7 +179,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/plugin.yaml": {
-      "content_hash": "blake3:e8fb656b400f93687ee84b19a867278f13dca48d827305cbc7eb1b463a967882",
+      "content_hash": "blake3:0a41dc8b9bcd64e560dc79f08384480d736302988e7f010ec2b02d4d75972d14",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-automating-the-browser/SKILL.md": {
@@ -243,11 +243,11 @@
       "mode": "0644"
     },
     ".opencode/ai-rulez-bundle.json": {
-      "content_hash": "blake3:2e298ac2f09184685990d1523eb7386ac60882308a61be489841acfb8636fbb5",
+      "content_hash": "blake3:8d0607223ba8d732942b6e9f9de901da4ca24af200faf7f0b6aeedc5deab4435",
       "mode": "0644"
     },
     ".opencode/ai-rulez-content.js": {
-      "content_hash": "blake3:011ec20caa671eb4bd4e886b09e15f720a786de4bf747419efd0690889fc5549",
+      "content_hash": "blake3:822c510deb007e4f72877ad42f29918d0499f210ae363e82d465a0f0331ab294",
       "mode": "0644"
     },
     ".opencode/commands/crawlberg-crawl.md": {
@@ -407,11 +407,11 @@
       "mode": "0644"
     },
     "gemini-extension.json": {
-      "content_hash": "blake3:287d5bb04273fb11297b6a88940907d12bc71fd09a099a7455b54f952206d719",
+      "content_hash": "blake3:51041dbf71bf28bc9ae26e8b30e37d8aab496c6b43ce0fe72182cf897123d8f4",
       "mode": "0644"
     },
     "kimi.plugin.json": {
-      "content_hash": "blake3:4c463f5bfe6274b3b35136305125212d168b7de526477ac47762a56ee67f70a9",
+      "content_hash": "blake3:1a818a376e02278e2a249f79c845b45a7cb8c3b2477ccb35890282e54ca810b7",
       "mode": "0644"
     },
     "mcp.json": {
@@ -419,11 +419,11 @@
       "mode": "0644"
     },
     "package.json": {
-      "content_hash": "blake3:11d0ef9c020e73e2bb2dc628a1834aa0d4c791f32d5fd6007b24a26e24615231",
+      "content_hash": "blake3:55b341d2abb0a26fad893d443a394d0d18c777562575dd97c872b4824640584d",
       "mode": "0644"
     },
     "plugin.json": {
-      "content_hash": "blake3:dd1d3b5e139d75bcd7804c1afee0d3052e4b8beb7d4d081a9edebad3f63570f0",
+      "content_hash": "blake3:0bb226c84192a9ed4515a1617a1b0b7bb36d490c2167cd6077fd26c003a6ae69",
       "mode": "0644"
     },
     "scripts/mcp-launch.sh": {

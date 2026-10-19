@@ -1,5 +1,4 @@
 {
-  "plugin": "crawlberg",
   "mcp": {
     "crawlberg": {
       "type": "local",

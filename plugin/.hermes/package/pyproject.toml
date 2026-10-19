@@ -4,16 +4,11 @@ build-backend = 'hatchling.build'
 
 [project]
 name = 'crawlberg-hermes-plugin'
-version = '1.11.2'
+version = '1.12.0'
 description = 'Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.'
-license = 'MIT'
 requires-python = '>=3.11'
 dependencies = ['mcp==1.28.1', 'PyYAML==6.0.3']
 keywords = ['web-scraping', 'crawling', 'html-to-markdown', 'headless-chrome']
-
-[project.readme]
-content-type = 'text/markdown'
-text = "# crawlberg Hermes plugin\n\nWeb crawling and scraping with HTML→Markdown and headless-Chrome fallback.\n\nInstall this package in the same Python environment as Hermes Agent:\n\n```sh\npython -m pip install crawlberg-hermes-plugin\n```\n\nEnable the plugin through Hermes Agent's plugin configuration. Available registrations depend on the plugin's authored Hermes adapter.\n"
 
 [project.entry-points]
 [project.entry-points.'hermes_agent.plugins']

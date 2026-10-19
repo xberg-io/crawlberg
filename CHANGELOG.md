@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-19
+
 ### Added
 
 - `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
@@ -18,6 +20,8 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Browser-backed pages wait for required Chrome startup acknowledgements before reporting readiness,
+  avoiding premature use and teardown.
 - Chrome installed as a snap launches again with snapd 2.77 and later, where `/usr/bin/snap` links to
   `/usr/lib/snapd/snapd`; the launch resolved the link and started the snapd daemon instead of Chrome.
 - The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
@@ -52,13 +56,6 @@ All notable changes to crawlberg are documented here.
 - An image with alt text and an empty or missing source converts to `![alt](<>)` again rather than bare alt text
   (html-to-markdown 3.18.4).
 - Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
-
-## [1.11.2] - 2026-10-16
-
-### Fixed
-
-- Browser-backed pages wait for required Chrome startup acknowledgements before reporting readiness,
-  avoiding premature use and teardown.
 
 ## [1.11.1] - 2026-10-16
 

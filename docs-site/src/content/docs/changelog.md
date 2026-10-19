@@ -8,55 +8,6 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-### Added
-
-- `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
-  virtualised list mounts, so a list rendered by window returns every item. (#768)
-- Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
-  the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
-
-### Changed
-
-- The Python binding builds against PyO3 0.30 and the PHP extension against ext-php-rs 0.16.3; bindings are
-  regenerated with alef 0.111.0.
-
-### Fixed
-
-- Chrome installed as a snap launches again with snapd 2.77 and later, where `/usr/bin/snap` links to
-  `/usr/lib/snapd/snapd`; the launch resolved the link and started the snapd daemon instead of Chrome.
-- The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
-  seconds, and never past `browser.timeout`), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
-  `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
-- A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
-  markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
-  `browser.timeout`, within what is left of `browser.overall_timeout`; when none is left the page fails with `browser_timeout`. (#779)
-- WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
-- **Source break (Rust):** `CrawlError::WafBlocked` gains `status` and `body` fields. Code that constructs it literally, or matches it without `..`, must be updated. The message also changed from `detected: <vendor>` to `detected on <status>: <vendor>`. (#770)
-- A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)
-- A retry after a 429 or 503 waits for the response's `Retry-After` (delta-seconds or HTTP-date) when it is
-  longer than the backoff; a `Retry-After` beyond `retry_max_delay_ms` ends the retries with a warning (so `retry_max_delay_ms = 0` abandons the retry on any positive
-  `Retry-After`). (#774)
-- With `allow_subdomains`, `custom_headers` such as `Accept` now reach the admitted subdomains. Credential headers
-  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Amz-Security-Token`) and `auth` stay with the
-  seed host. (#771)
-- A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
-- Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
-  confirmation that the context and its targets are gone. (#765)
-- Release dry runs leave Go module tags and republish tags unchanged.
-- With `soft_http_errors`, a 404 or 410 answering with a body comes back as a page with converted
-  markdown, and a 410 no longer fails as `gone`; browser-rendered 404 and 410 pages keep their
-  body likewise. (#772)
-- A linked URL that redirects to an error status such as 404 is reported as an error event, as the
-  same URL as seed is, instead of an empty page. (#777)
-- A seed that redirects to a 4xx status the fetch does not fail on, such as 418 or 451, is now
-  returned as a page, as a linked page is, instead of failing the crawl. (#777)
-- With `soft_http_errors`, links on a 404 or 410 page are not followed. (#772)
-- `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
-  event of its own. (#776)
-- An image with alt text and an empty or missing source converts to `![alt](<>)` again rather than bare alt text
-  (html-to-markdown 3.18.4).
-- Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
-
 ## [1.11.2] - 2026-10-16
 
 ### Fixed
