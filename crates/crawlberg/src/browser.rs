@@ -32,6 +32,7 @@ mod cookies;
 mod launch;
 mod navigation;
 mod user_agent;
+mod virtual_scroll;
 
 pub(crate) use self::cookies::CrawlCookies;
 

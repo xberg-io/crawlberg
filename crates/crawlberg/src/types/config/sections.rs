@@ -238,6 +238,27 @@ pub struct BrowserConfig {
     // ~keep the alef release that keeps the old constructors (xberg-io/alef#544).
     #[cfg_attr(alef, alef(skip))]
     pub private_pipe: bool,
+    /// Scroll overflowing scroll containers (not only the window) and keep the items that a
+    /// virtualised list mounts as they pass through view, so the page that is read holds items
+    /// beyond the first screen. Default: `false`.
+    ///
+    /// Runs once after the page is ready and `extra_wait` has elapsed, bounded to 8 containers,
+    /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
+    /// and the items of its most repetitive child list are collected, keyed by `id`, `data-index`,
+    /// `data-key`, `data-id`, `aria-posinset` or `aria-rowindex` when present and otherwise by
+    /// position and text. The list is rewritten, in position order, only when items were unmounted
+    /// while scrolling and items beyond the first screen were seen; a list that keeps all its
+    /// items mounted is left as it is. Best effort: it does not follow lists that load data over
+    /// the network slower than about 100 ms per step, does not reach lists inside iframes or
+    /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
+    /// backend only.
+    // ~keep Not in the generated bindings: with alef 0.110.13 a new constructor argument still
+    // ~keep shifts the positional arguments after it (Python `BrowserConfig`; see
+    // ~keep packages/python/tests/released_constructor_calls.py). Remove the skip once alef keeps
+    // ~keep the released constructors.
+    #[cfg_attr(alef, alef(skip))]
+    #[serde(default)]
+    pub scroll_containers: bool,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -272,6 +293,7 @@ impl std::fmt::Debug for BrowserConfig {
             chrome_path,
             chrome_args,
             private_pipe,
+            scroll_containers,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -298,6 +320,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("chrome_path", chrome_path)
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
             .field("private_pipe", private_pipe)
+            .field("scroll_containers", scroll_containers)
             .finish()
     }
 }
@@ -323,6 +346,7 @@ impl Default for BrowserConfig {
             chrome_path: None,
             chrome_args: Vec::new(),
             private_pipe: false,
+            scroll_containers: false,
         }
     }
 }
