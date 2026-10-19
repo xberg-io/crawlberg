@@ -310,3 +310,85 @@ async fn should_reject_a_cross_host_document_link_when_stay_on_domain_is_true() 
 
     drop(mock);
 }
+
+/// crawlberg#771: with `allow_subdomains`, `custom_headers` reach an admitted subdomain too, but
+/// credentials never do: neither the configured `auth` nor a credential-bearing custom header.
+#[tokio::test]
+async fn should_send_custom_headers_but_no_credentials_to_an_admitted_subdomain() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(
+            r#"<html><body><a href="http://sub.localhost:{port}/child">sub</a>
+               <a href="http://localhost:{port}/same">same</a></body></html>"#
+        ),
+    )
+    .await;
+    mount_html(&mock, "/child", "<html><body>sub</body></html>").await;
+    mount_html(&mock, "/same", "<html><body>same</body></html>").await;
+
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            allow_subdomains: true,
+            respect_robots_txt: false,
+            auth: Some(crawlberg::AuthConfig::Bearer {
+                token: "seed-only-token".to_owned(),
+            }),
+            custom_headers: std::collections::HashMap::from([
+                ("X-Probe".to_owned(), "sent".to_owned()),
+                ("Accept".to_owned(), "text/html,probe/accept".to_owned()),
+                ("Cookie".to_owned(), "sid=secret".to_owned()),
+                ("Proxy-Authorization".to_owned(), "Basic c2VjcmV0".to_owned()),
+                ("X-Api-Key".to_owned(), "secret".to_owned()),
+            ]),
+            ..CrawlConfig::default()
+        },
+    ));
+
+    let result = engine
+        .crawl(&format!("http://localhost:{port}"))
+        .await
+        .expect("crawl must succeed");
+    assert_eq!(
+        result.pages.len(),
+        3,
+        "seed, subdomain and same-host pages: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+
+    let requests = mock.received_requests().await.expect("the mock records requests");
+    let header = |at: &str, name: &str| {
+        requests
+            .iter()
+            .find(|request| request.url.path() == at)
+            .unwrap_or_else(|| panic!("{at} was never requested"))
+            .headers
+            .get(name)
+            .map(|value| value.to_str().expect("ascii header").to_owned())
+    };
+
+    for at in ["/", "/same", "/child"] {
+        assert_eq!(
+            header(at, "x-probe").as_deref(),
+            Some("sent"),
+            "{at} must carry X-Probe"
+        );
+        assert_eq!(
+            header(at, "accept").as_deref(),
+            Some("text/html,probe/accept"),
+            "{at} must carry Accept"
+        );
+    }
+    assert_eq!(
+        header("/same", "authorization").as_deref(),
+        Some("Bearer seed-only-token")
+    );
+    assert_eq!(header("/same", "cookie").as_deref(), Some("sid=secret"));
+    for name in ["authorization", "cookie", "proxy-authorization", "x-api-key"] {
+        assert_eq!(header("/child", name), None, "{name} must never reach a subdomain");
+    }
+}

@@ -106,6 +106,52 @@ async fn should_not_apply_include_paths_to_the_seed_url() {
     );
 }
 
+/// The seed URL is exempt from `exclude_paths` as it is from `include_paths` (crawlberg#773):
+/// it was named by the caller, not discovered, and must not be silently dropped.
+#[tokio::test]
+async fn should_not_apply_exclude_paths_to_the_seed_url() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/docs/a"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"<html><body><a href="/docs/b">b</a></body></html>"#)
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/docs/b"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>b</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let base = CrawlConfig::builder().allow_private_networks(true).build();
+    let config = CrawlConfig {
+        max_depth: Some(1),
+        exclude_paths: vec!["^/docs/".to_owned()],
+        respect_robots_txt: false,
+        ..base
+    };
+    let handle = create_engine(Some(config)).unwrap();
+
+    let result = crawl(&handle, &format!("{}/docs/a", mock.uri())).await.unwrap();
+
+    let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+    assert_eq!(
+        urls.len(),
+        1,
+        "the seed matches exclude_paths but must be fetched; its excluded child must not be: {urls:?}"
+    );
+    assert!(urls[0].ends_with("/docs/a"), "got: {urls:?}");
+}
+
 /// A path that matches only `exclude_paths` (and no `include_paths` is configured) is
 /// filtered out, while unrelated paths pass through unfiltered.
 #[tokio::test]

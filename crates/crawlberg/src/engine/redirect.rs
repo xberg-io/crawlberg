@@ -142,6 +142,10 @@ pub(crate) struct RedirectPolicy<'a> {
     /// claimed.
     chain: ChainClaim,
     pub(crate) robots_limiter: Option<&'a dyn crate::traits::RateLimiter>,
+    /// ~keep Set only on the policy that resolves the crawl's seed: the seed was named by the
+    /// ~keep caller, not discovered, so `exclude_paths` does not apply to the chain's starting
+    /// ~keep URL (crawlberg#773). Redirect targets it lands on are still filtered.
+    pub(crate) exempt_chain_start_from_exclude: bool,
 }
 
 #[derive(Default)]
@@ -172,6 +176,7 @@ impl<'a> RedirectPolicy<'a> {
             pending_user_agent: None,
             chain: ChainClaim::default(),
             robots_limiter: None,
+            exempt_chain_start_from_exclude: false,
         }
     }
 
@@ -204,6 +209,7 @@ impl<'a> RedirectPolicy<'a> {
             pending_user_agent: state.pending_user_agent,
             chain: state.chain,
             robots_limiter: None,
+            exempt_chain_start_from_exclude: false,
         }
     }
 
@@ -344,9 +350,14 @@ impl<'a> RedirectPolicy<'a> {
 
     /// Whether `url` is filtered by `exclude_paths`/`include_paths`, as [`PolicyRefusal::Filtered`].
     fn filtered_by_path_patterns(&mut self, url: &str, parsed: &Url, is_redirect_hop: bool) -> Option<PolicyRefusal> {
+        let exclude_regexes = if is_redirect_hop || !self.exempt_chain_start_from_exclude {
+            self.exclude_regexes
+        } else {
+            &[]
+        };
         let admitted = crate::helpers::passes_path_patterns(
             parsed,
-            self.exclude_regexes,
+            exclude_regexes,
             self.include_regexes,
             is_redirect_hop,
             self.target,
