@@ -239,6 +239,30 @@ kind = "body_substring"
 pattern = "/_incapsula_resource"
 
 [[fingerprint]]
+id = "imperva_sucuri_cloudproxy"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "sucuri_cloudproxy"
+
+[[fingerprint]]
+id = "perimeterx_pxcaptcha_global"
+vendor = "perimeterx"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "_pxcaptcha"
+
+[[fingerprint]]
+id = "perimeterx_captcha_cdn"
+vendor = "perimeterx"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "captcha.px-cdn.net"
+
+[[fingerprint]]
 id = "imperva_incapsula_body"
 vendor = "imperva"
 weight = 0.9

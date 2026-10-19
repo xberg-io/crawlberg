@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::body::read_text_bounded;
 use super::status::{HttpStatus, status_error};
 use super::waf;
-use crate::error::CrawlError;
+use crate::error::{CrawlError, WAF_BODY_PREFIX_LEN};
 
 /// HTTP 403, the one challenge status [`status_error`] deliberately leaves unmapped.
 const FORBIDDEN_STATUS: u16 = 403;
@@ -41,8 +41,10 @@ pub(crate) fn is_challenge_status(status: u16) -> bool {
 /// Classify a challenge status: a [`CrawlError::WafBlocked`] when the response fingerprints,
 /// otherwise the plain error the status carries on its own.
 ///
-/// The body is always read, capped by `max_body_size` (the cap the ordinary content path uses),
-/// so a block error can carry a prefix of the challenge page (crawlberg#770).
+/// The body is read capped by `max_body_size` (the cap the ordinary content path uses) when the
+/// body has to be fingerprinted. When the headers already name the vendor, only about
+/// [`WAF_BODY_PREFIX_LEN`] bytes are read, so a slow or huge block body cannot hold the worker;
+/// either way the block error carries a prefix of the challenge page (crawlberg#770).
 pub(crate) async fn challenge_status_error(
     status: u16,
     url: &str,
@@ -50,10 +52,12 @@ pub(crate) async fn challenge_status_error(
     resp: reqwest::Response,
     max_body_size: Option<usize>,
 ) -> CrawlError {
-    let body = read_text_bounded(resp, max_body_size).await;
     if let Some(vendor) = waf::header_waf_vendor(status, headers) {
+        let cap = max_body_size.map_or(WAF_BODY_PREFIX_LEN, |max| max.min(WAF_BODY_PREFIX_LEN));
+        let body = read_text_bounded(resp, Some(cap)).await;
         return waf_blocked(status, vendor, &body);
     }
+    let body = read_text_bounded(resp, max_body_size).await;
     challenge_body_error(status, url, &body, headers)
 }
 

@@ -1635,7 +1635,7 @@ mod tests {
     /// The body kept on a WAF block error is a bounded prefix, cut on a character boundary.
     #[tokio::test]
     async fn http_fetch_waf_block_error_bounds_the_body() {
-        let body = format!("cf-chl- {}", "\u{e9}".repeat(50_000));
+        let body = format!("cf-chl- {}", "\u{20ac}".repeat(50_000));
         let error = fetch_status(403, ResponseTemplate::new(403).set_body_string(body.clone())).await;
         let CrawlError::WafBlocked { body: kept, .. } = &error else {
             panic!("expected a WAF block, got {error:?}");
@@ -1649,6 +1649,41 @@ mod tests {
             kept.len(),
             body.len()
         );
+    }
+
+    /// A header-identified block reads only a prefix of the body: a server that stalls after
+    /// the prefix does not hold the fetch.
+    #[tokio::test]
+    async fn http_fetch_header_identified_block_does_not_wait_for_the_rest_of_the_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 2048];
+            let _ = socket.read(&mut request).await;
+            let head = "HTTP/1.1 403 Forbidden\r\nx-datadome: protected\r\ncontent-length: 10000000\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.expect("head");
+            socket.write_all(&[b'x'; 8192]).await.expect("prefix");
+            socket.flush().await.expect("flush");
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://{addr}/probe");
+        let fetched = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            http_fetch(&url, &config, &HashMap::new(), &client),
+        )
+        .await
+        .expect("the fetch must not wait for the rest of the body");
+        server.abort();
+        let error = fetched.map(|_| ()).expect_err("a 403 must be an error");
+        let CrawlError::WafBlocked { body: kept, .. } = &error else {
+            panic!("expected a WAF block, got {error:?}");
+        };
+        assert_eq!(kept.as_deref().map(str::len), Some(crate::error::WAF_BODY_PREFIX_LEN));
     }
 
     /// A 503 stamped by a WAF vendor header is a challenge, not a server fault, so it must
