@@ -23,6 +23,16 @@ All notable changes to crawlberg are documented here.
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
+- With `soft_http_errors`, a 404 or 410 answering with a body comes back as a page with converted
+  markdown, and a 410 no longer fails as `gone`; browser-rendered 404 and 410 pages keep their
+  body likewise. (#772)
+- A linked URL that redirects to an error status such as 404 is reported as an error event, as the
+  same URL as seed is, instead of an empty page. (#777)
+- A seed that redirects to a 4xx status the fetch does not fail on, such as 418 or 451, is now
+  returned as a page, as a linked page is, instead of failing the crawl. (#777)
+- With `soft_http_errors`, links on a 404 or 410 page are not followed. (#772)
+- `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
+  event of its own. (#776)
 - Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
 
 ## [1.11.2] - 2026-10-16

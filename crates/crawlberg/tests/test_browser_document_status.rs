@@ -48,6 +48,7 @@ async fn site() -> MockServer {
         ("/ok", 200, "<p>fine</p>"),
         ("/missing", 404, "<p>no such page</p>"),
         ("/broken", 500, "<p>server trouble</p>"),
+        ("/gone", 410, "<p>no longer here</p>"),
     ];
     for (route, status, body) in routes {
         Mock::given(method("GET"))
@@ -149,8 +150,8 @@ async fn native_scrape_reports_the_document_status_as_http_mode_does() {
     .await;
 }
 
-/// With `soft_http_errors`, a 404 or 403 page is a page with its status and no body in both
-/// modes.
+/// With `soft_http_errors`, a 404 or 410 page is a page with its status and its body text, and a
+/// 403 WAF page one with no body, in both modes.
 #[tokio::test]
 async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does() {
     let test_name = "chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does";
@@ -161,7 +162,11 @@ async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_do
     };
     let http = create_engine(Some(soft(BrowserMode::Never))).expect("engine must build");
     let browser = create_engine(Some(soft(BrowserMode::Always))).expect("engine must build");
-    for (route, status) in [("/missing", 404), ("/waf", 403)] {
+    for (route, status, text) in [
+        ("/missing", 404, Some("no such page")),
+        ("/gone", 410, Some("no longer here")),
+        ("/waf", 403, None),
+    ] {
         let url = format!("{}{route}", site.uri());
         let expected = scrape(&http, &url)
             .await
@@ -173,10 +178,23 @@ async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_do
             Err(error) => panic!("{test_name}: a soft {route} is a page: {error:?}"),
         };
         assert_eq!(
-            (result.status_code, result.html.as_str()),
-            (expected.status_code, expected.html.as_str()),
-            "{test_name}: browser mode for {route}"
+            result.status_code, expected.status_code,
+            "{test_name}: browser status for {route}"
         );
+        match text {
+            // ~keep The browser serialises the DOM, so the markup differs from the wire bytes;
+            // ~keep the body text is what both modes must keep.
+            Some(text) => {
+                for (mode, page) in [("HTTP", &expected), ("browser", &result)] {
+                    let markdown = page.markdown.as_ref().map(|m| m.content.as_str()).unwrap_or_default();
+                    assert!(
+                        markdown.contains(text),
+                        "{test_name}: {mode} mode keeps {route}'s body: {markdown:?}"
+                    );
+                }
+            }
+            None => assert_eq!(result.html, expected.html, "{test_name}: browser mode for {route}"),
+        }
     }
 }
 

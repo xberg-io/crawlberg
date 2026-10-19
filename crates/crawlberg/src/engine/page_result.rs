@@ -13,6 +13,9 @@ use crate::types::*;
 /// Lowest status code treated as a server-side failure rather than a page.
 const SERVER_ERROR_STATUS_FLOOR: u16 = 500;
 
+/// Lowest status code that is an error status.
+const CLIENT_ERROR_STATUS_FLOOR: u16 = 400;
+
 impl CrawlEngine {
     /// Process a completed fetch: extract data, discover links, build page result.
     ///
@@ -134,7 +137,10 @@ impl CrawlEngine {
         state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
         let in_document_context = fetch.entry.doc_depth > 0;
-        let should_discover = (!page_was_skipped || in_document_context)
+        // ~keep A soft error page now carries its real body, whose navigation links are not content.
+        let is_soft_error_page = self.config.soft_http_errors && fetch.status_code >= CLIENT_ERROR_STATUS_FLOOR;
+        let should_discover = !is_soft_error_page
+            && (!page_was_skipped || in_document_context)
             && (self.config.follow_document_urls || !in_document_context)
             && fetch.entry.depth < context.max_depth
             && !(self.config.respect_robots_txt && fetch.robots.nofollow);
