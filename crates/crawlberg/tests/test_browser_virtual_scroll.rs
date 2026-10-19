@@ -213,3 +213,153 @@ async fn overflowing_static_list_is_unchanged_by_scroll_containers() {
     assert_eq!(off.html, on.html);
     assert_eq!(markdown(&off), markdown(&on));
 }
+
+/// A long list whose every redraw is slow, so scrolling it to the end cannot finish inside the
+/// script's time budget.
+const SLOW_LONG_LIST: &str = r##"<!doctype html><html><head><title>Slow</title><style>
+html,body{margin:0;height:100%}
+#list{height:100vh;overflow-y:auto;position:relative}
+#inner{position:relative}
+.item{position:absolute;left:0;height:40px;line-height:40px}
+</style></head><body><main><h1>Docs</h1>
+<nav id="list"><div id="inner"></div></nav></main>
+<script>
+const N = 4000, H = 40;
+const list = document.getElementById("list"), inner = document.getElementById("inner");
+inner.style.height = (N * H) + "px";
+function draw() {
+  const t = performance.now();
+  while (performance.now() - t < 150) {}
+  inner.textContent = "";
+  const first = Math.floor(list.scrollTop / H);
+  const last = Math.min(N, first + Math.ceil(list.clientHeight / H) + 1);
+  for (let i = first; i < last; i++) {
+    const a = document.createElement("a");
+    a.className = "item"; a.style.top = (i * H) + "px"; a.href = "#i" + (i + 1);
+    a.textContent = "Item " + (i + 1);
+    inner.appendChild(a);
+  }
+}
+list.addEventListener("scroll", draw);
+draw();
+</script></body></html>"##;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_that_outlasts_the_time_budget_still_returns_the_items_collected() {
+    let name = "list_that_outlasts_the_time_budget_still_returns_the_items_collected";
+    let Some(result) = scrape_page(name, SLOW_LONG_LIST, true).await else {
+        return;
+    };
+    let text = markdown(&result);
+    let count = text.matches("](#i").count() + text.matches("/#i").count();
+    assert!(
+        count > 40,
+        "items beyond the first screen must be kept ({count}): {text}"
+    );
+    assert!(
+        !text.contains("[Item 4000]"),
+        "the fixture must outlast the budget: {text}"
+    );
+    assert_eq!(text.matches("[Item 1]").count(), 1, "no duplicates: {text}");
+}
+
+/// Nine scrollable elements with a single child each precede the real list.
+const DECOYS_BEFORE_LIST: &str = r##"<!doctype html><html><head><title>Decoys</title><style>
+html,body{margin:0}
+.decoy{height:30px;overflow-y:auto}
+.decoy div{height:200px}
+#list{height:300px;overflow-y:auto;position:relative}
+#inner{position:relative}
+.item{position:absolute;left:0;height:40px;line-height:40px}
+</style></head><body><main><h1>Docs</h1>
+<div class="decoy"><div>a</div></div><div class="decoy"><div>b</div></div>
+<div class="decoy"><div>c</div></div><div class="decoy"><div>d</div></div>
+<div class="decoy"><div>e</div></div><div class="decoy"><div>f</div></div>
+<div class="decoy"><div>g</div></div><div class="decoy"><div>h</div></div>
+<div class="decoy"><div>i</div></div><div class="decoy"><div>j</div></div>
+<nav id="list"><div id="inner"></div></nav></main>
+<script>
+const N = 40, H = 40;
+const list = document.getElementById("list"), inner = document.getElementById("inner");
+inner.style.height = (N * H) + "px";
+function draw() {
+  inner.textContent = "";
+  const first = Math.floor(list.scrollTop / H);
+  const last = Math.min(N, first + Math.ceil(list.clientHeight / H) + 1);
+  for (let i = first; i < last; i++) {
+    const a = document.createElement("a");
+    a.className = "item"; a.style.top = (i * H) + "px"; a.href = "#i" + (i + 1);
+    a.textContent = "Item " + (i + 1);
+    inner.appendChild(a);
+  }
+}
+list.addEventListener("scroll", draw);
+draw();
+</script></body></html>"##;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn decoy_scrollables_before_the_list_do_not_starve_it() {
+    let name = "decoy_scrollables_before_the_list_do_not_starve_it";
+    let Some(result) = scrape_page(name, DECOYS_BEFORE_LIST, true).await else {
+        return;
+    };
+    assert_all_items_in_order(markdown(&result));
+}
+
+/// Items are laid out in flow after a spacer sized from an estimated row height; a row takes its real
+/// height only from its second mount, so the positions of rows seen earlier shift between harvests.
+const DYNAMIC_HEIGHT_LIST: &str = r##"<!doctype html><html><head><title>Dynamic</title><style>
+html,body{margin:0}
+#list{height:300px;overflow-y:auto;overflow-anchor:none}
+.item{display:block}
+</style></head><body><main><h1>Docs</h1>
+<nav id="list"><div id="top"></div><div id="rows"></div><div id="bottom"></div></nav></main>
+<script>
+const N = 40, EST = 40;
+const real = (i) => 30 + (i % 4) * 15;
+const measured = new Map(), draws = new Map();
+const list = document.getElementById("list");
+const head = document.getElementById("top"), rows = document.getElementById("rows"), bottom = document.getElementById("bottom");
+function offsetOf(i) {
+  let y = 0;
+  for (let k = 0; k < i; k++) y += measured.has(k) ? measured.get(k) : EST;
+  return y;
+}
+function draw() {
+  let first = 0;
+  while (first < N - 1 && offsetOf(first + 1) <= list.scrollTop) first++;
+  const last = Math.min(N, first + 9);
+  rows.textContent = "";
+  for (let i = first; i < last; i++) {
+    const a = document.createElement("a");
+    a.className = "item"; a.href = "#i" + (i + 1); a.textContent = "Item " + (i + 1);
+    const seen = (draws.get(i) || 0) + 1;
+    draws.set(i, seen);
+    const height = seen >= 2 ? real(i) : EST;
+    a.style.height = height + "px";
+    rows.appendChild(a);
+    measured.set(i, height);
+  }
+  head.style.height = offsetOf(first) + "px";
+  bottom.style.height = (offsetOf(N) - offsetOf(last)) + "px";
+}
+list.addEventListener("scroll", draw);
+draw();
+</script></body></html>"##;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dynamic_height_list_has_no_duplicated_items() {
+    let name = "dynamic_height_list_has_no_duplicated_items";
+    let Some(result) = scrape_page(name, DYNAMIC_HEIGHT_LIST, true).await else {
+        return;
+    };
+    let text = markdown(&result);
+    assert_all_items_in_order(text);
+    for n in 1..=40 {
+        assert_eq!(
+            text.matches(&format!("[Item {n}]")).count(),
+            1,
+            "item {n} duplicated: {text}"
+        );
+    }
+}

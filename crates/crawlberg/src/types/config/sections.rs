@@ -271,12 +271,16 @@ pub struct BrowserConfig {
     /// 200 steps and 5 seconds in total. Each container is scrolled by 80% of its height per step
     /// and the items of its most repetitive child list are collected, keyed by `id`, `data-index`,
     /// `data-key`, `data-id`, `aria-posinset` or `aria-rowindex` when present and otherwise by
-    /// position and text. The list is rewritten, in position order, only when items were unmounted
+    /// text when it is unique among the rendered items, else by position and text. Only
+    /// containers whose child list repeats an element are considered, most repetitive first. The list is rewritten, in position order, only when items were unmounted
     /// while scrolling and items beyond the first screen were seen; a list that keeps all its
     /// items mounted is left as it is. Best effort: it does not follow lists that load data over
     /// the network slower than about 100 ms per step, does not reach lists inside iframes or
-    /// shadow roots, and a rewrite replaces the element children of the list. Chromiumoxide
-    /// backend only.
+    /// shadow roots, and a rewrite replaces the element children of the list. Lists that recycle
+    /// their DOM nodes (reusing the same elements with new content) are not collected, and
+    /// scrolling can trigger infinite-scroll load-more requests. When the step, item or time
+    /// budget stops the scroll, the items collected so far are kept and a warning is logged.
+    /// Chromiumoxide backend only.
     #[serde(default)]
     pub scroll_containers: bool,
 }

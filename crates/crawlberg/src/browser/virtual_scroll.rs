@@ -47,7 +47,12 @@ const SCRIPT: &str = r#"(async (maxMs) => {
     }
     return best;
   };
-  const containers = Array.from(document.querySelectorAll('*')).filter(scrollable).slice(0, MAX_CONTAINERS);
+  const containers = Array.from(document.querySelectorAll('*')).filter(scrollable)
+    .map((el) => ({ el, count: repetition(busiestList(el)) }))
+    .filter((c) => c.count >= 2)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, MAX_CONTAINERS)
+    .map((c) => c.el);
   const stats = { containers: containers.length, steps: 0, items: 0, truncated: false, rewritten: 0 };
   for (const container of containers) {
     if (!container.isConnected) continue;
@@ -61,19 +66,23 @@ const SCRIPT: &str = r#"(async (maxMs) => {
       const seen = new Map();
       const initialKeys = new Set();
       let sequence = 0;
-      const keyOf = (child, position) => {
+      const keyOf = (child, position, texts) => {
         for (const name of KEY_ATTRIBUTES) {
           const value = child.getAttribute(name);
           if (value) return name + '=' + value;
         }
-        return Math.round(position) + '|' + child.textContent;
+        const text = child.textContent;
+        if (text && texts.get(text) === 1) return 'text=' + text;
+        return Math.round(position) + '|' + text;
       };
       const harvest = (initial) => {
         if (!list.isConnected) list = busiestList(container);
         const box = container.getBoundingClientRect();
+        const texts = new Map();
+        for (const child of list.children) texts.set(child.textContent, (texts.get(child.textContent) || 0) + 1);
         for (const child of list.children) {
           const position = child.getBoundingClientRect().top - box.top + container.scrollTop;
-          const key = keyOf(child, position);
+          const key = keyOf(child, position, texts);
           if (initial) initialKeys.add(key);
           const entry = seen.get(key);
           if (entry) { entry.element = child; continue; }
@@ -98,7 +107,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
       const gained = Array.from(seen.keys()).some((k) => !initialKeys.has(k));
       container.scrollTop = originalTop;
       await settle();
-      if (virtualised && gained && !outOfTime() && container.isConnected && list.isConnected) {
+      if (virtualised && gained && !window.__crawlbergScrollAbort && container.isConnected && list.isConnected) {
         entries.sort((a, b) => a.position - b.position || a.sequence - b.sequence);
         for (const child of Array.from(list.children)) child.remove();
         list.insertAdjacentHTML('beforeend', entries.map((e) => e.html).join(''));
@@ -116,12 +125,20 @@ const SCRIPT: &str = r#"(async (maxMs) => {
 
 /// Scroll the overflowing containers of `page` and write the items they mounted back into their
 /// lists. Never fails the page: a script error or timeout is logged and the page is read as it is.
+/// A list the budget stopped part-way is still written back with the items collected so far.
 pub(super) async fn harvest_scroll_containers(page: &chromiumoxide::Page) {
     let expression = format!("{SCRIPT}({})", SCRIPT_BUDGET.as_millis());
     match tokio::time::timeout(SCRIPT_BUDGET + ROUND_TRIP_SLACK, page.evaluate(expression)).await {
         Ok(Ok(result)) => {
             let stats: serde_json::Value = result.into_value().unwrap_or_default();
             tracing::debug!(%stats, "scrolled containers for virtualised content");
+            if stats
+                .get("truncated")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                tracing::warn!(%stats, "scrolling containers hit its step, item or time budget; the page holds the items collected so far");
+            }
         }
         Ok(Err(error)) => tracing::warn!(%error, "scrolling containers failed; reading the page as it is"),
         Err(_) => {
