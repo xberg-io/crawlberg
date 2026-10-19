@@ -1796,6 +1796,28 @@ mod tests {
         );
     }
 
+    /// A small 2xx page that merely names a WAF vendor in prose is content, not a block
+    /// (crawlberg#778). Real challenge markup on a 2xx still blocks.
+    #[tokio::test]
+    async fn http_fetch_returns_a_small_2xx_that_only_names_a_waf_vendor_as_content() {
+        for vendor in ["Sucuri", "Incapsula", "PerimeterX"] {
+            let mock = MockServer::start().await;
+            let page = format!("<html><body><p>We compare {vendor} and other firewalls.</p></body></html>");
+            Mock::given(method("GET"))
+                .and(path("/probe"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(page.clone()))
+                .mount(&mock)
+                .await;
+
+            let config = permissive_config();
+            let client = build_client(&config).expect("client must build");
+            let response = http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|error| panic!("a 2xx naming {vendor} in prose must succeed, got {error:?}"));
+            assert_eq!(response.body, page);
+        }
+    }
+
     /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
     /// `http_fetch`, the decision asset fetches get and sitemap fetches fall back to
     /// (crawlberg#231).

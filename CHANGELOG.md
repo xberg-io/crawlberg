@@ -12,6 +12,7 @@ All notable changes to crawlberg are documented here.
 ### Fixed
 
 - WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
+- A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)
 - Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
   confirmation that the context and its targets are gone. (#765)
 - Release dry runs leave Go module tags and republish tags unchanged.
