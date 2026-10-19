@@ -176,6 +176,11 @@ pub enum CrawlError {
         vendor: String,
         /// Freeform description / context for logs.
         message: String,
+        /// HTTP status of the blocked response, when a response caused the block.
+        status: Option<u16>,
+        /// Prefix of the blocked response body (at most [`WAF_BODY_PREFIX_LEN`] bytes), when
+        /// it was read. Not part of the display string.
+        body: Option<String>,
         /// The error this was built from, when one was available.
         #[cfg_attr(alef, alef(skip))]
         #[source]
@@ -382,6 +387,17 @@ message_constructors! {
     Other => (other, other_with_source),
 }
 
+/// Most bytes of a blocked response body that a [`CrawlError::WafBlocked`] keeps.
+pub const WAF_BODY_PREFIX_LEN: usize = 4096;
+
+fn waf_body_prefix(body: &str) -> String {
+    let mut end = body.len().min(WAF_BODY_PREFIX_LEN);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    body[..end].to_owned()
+}
+
 impl CrawlError {
     /// Build a [`CrawlError::WafBlocked`] with no underlying error.
     ///
@@ -393,6 +409,8 @@ impl CrawlError {
         Self::WafBlocked {
             vendor: vendor.into(),
             message: message.into(),
+            status: None,
+            body: None,
             source: None,
         }
     }
@@ -406,7 +424,29 @@ impl CrawlError {
         Self::WafBlocked {
             vendor: vendor.into(),
             message: message.into(),
+            status: None,
+            body: None,
             source: source_of(source),
+        }
+    }
+
+    /// Build a [`CrawlError::WafBlocked`] for a refused response, recording its `status` and a
+    /// bounded prefix of its `body` (crawlberg#770).
+    ///
+    /// ~keep The status is also attached as the error source so a retry policy reading
+    /// `AttemptOutcome::status` sees it, as on every other status-bearing error (crawlberg#133).
+    pub fn waf_blocked_response(
+        vendor: impl Into<String>,
+        message: impl Into<String>,
+        status: u16,
+        body: Option<&str>,
+    ) -> Self {
+        Self::WafBlocked {
+            vendor: vendor.into(),
+            message: message.into(),
+            status: Some(status),
+            body: body.map(waf_body_prefix),
+            source: source_of(crate::http::HttpStatus(status)),
         }
     }
 }

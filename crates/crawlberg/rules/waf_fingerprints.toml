@@ -183,10 +183,16 @@ weight = 1.0
 kind = "body_substring"
 pattern = "px-captcha"
 
+# ~keep The bare vendor-name body fingerprints below (`perimeterx`, `incapsula`, `sucuri`) decide
+# only block statuses. On a 2xx the word is ordinary prose about the vendor, so a small page
+# that mentions one is content (crawlberg#778); a real 2xx interstitial still matches the
+# challenge markup and block-page phrase fingerprints (`px-captcha`, `_incap_ses_`,
+# `sucuri website firewall`, ...).
 [[fingerprint]]
 id = "perimeterx_body_tag"
 vendor = "perimeterx"
 weight = 0.9
+statuses = [403, 429, 503]
 [[fingerprint.signals]]
 kind = "body_substring"
 pattern = "perimeterx"
@@ -209,9 +215,58 @@ kind = "body_substring"
 pattern = "_incap_ses_"
 
 [[fingerprint]]
+id = "imperva_sucuri_firewall_page"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "sucuri website firewall"
+
+[[fingerprint]]
+id = "imperva_incapsula_incident"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "incapsula incident id"
+
+[[fingerprint]]
+id = "imperva_incapsula_resource"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "/_incapsula_resource"
+
+[[fingerprint]]
+id = "imperva_sucuri_cloudproxy"
+vendor = "imperva"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "sucuri_cloudproxy"
+
+[[fingerprint]]
+id = "perimeterx_pxcaptcha_global"
+vendor = "perimeterx"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "_pxcaptcha"
+
+[[fingerprint]]
+id = "perimeterx_captcha_cdn"
+vendor = "perimeterx"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "captcha.px-cdn.net"
+
+[[fingerprint]]
 id = "imperva_incapsula_body"
 vendor = "imperva"
 weight = 0.9
+statuses = [403, 429, 503]
 [[fingerprint.signals]]
 kind = "body_substring"
 pattern = "incapsula"
@@ -220,6 +275,7 @@ pattern = "incapsula"
 id = "imperva_sucuri_body"
 vendor = "imperva"
 weight = 0.9
+statuses = [403, 429, 503]
 [[fingerprint.signals]]
 kind = "body_substring"
 pattern = "sucuri"

@@ -30,9 +30,9 @@ pub(crate) use headers::extract_response_meta_from_hashmap;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::result_cookies_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, retry_delay_ms, should_retry_error};
-pub(crate) use status::status_error;
+pub(crate) use status::{HttpStatus, status_error};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use status::{HttpStatus, error_status, refused_response, status_error_keeping_response};
+pub(crate) use status::{error_status, refused_response, status_error_keeping_response};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
@@ -1643,7 +1643,94 @@ mod tests {
             matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
             "expected a cloudflare WafBlocked, got {error:?}"
         );
-        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected: cloudflare");
+        assert_eq!(error.to_string(), "forbidden: waf/blocked: detected on 403: cloudflare");
+    }
+
+    /// The error a WAF block raises carries the response status and the body, so a caller can
+    /// tell a 403 from a 429 or 503 challenge and read the challenge page (crawlberg#770).
+    #[tokio::test]
+    async fn http_fetch_waf_block_error_carries_status_and_body() {
+        let page = "<html><title>Just a moment...</title><script src=\"/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1\"></script></html>";
+        let cases: &[(u16, Option<(&str, &str)>)] = &[
+            (403, Some(("server", "cloudflare"))),
+            (403, Some(("x-datadome", "blocked"))),
+            (503, Some(("server", "cloudflare"))),
+        ];
+        for (status, header) in cases {
+            let mut template = ResponseTemplate::new(*status).set_body_string(page);
+            if let Some((name, value)) = header {
+                template = template.append_header(*name, *value);
+            }
+            let error = fetch_status(*status, template).await;
+            let CrawlError::WafBlocked {
+                status: got_status,
+                body,
+                ..
+            } = &error
+            else {
+                panic!("status {status} must be a WAF block, got {error:?}");
+            };
+            assert_eq!(*got_status, Some(*status), "{error:?}");
+            assert_eq!(body.as_deref(), Some(page), "{error:?}");
+            assert!(
+                error.to_string().contains(&format!("on {status}:")),
+                "the message must name the status, got: {error}"
+            );
+        }
+    }
+
+    /// The body kept on a WAF block error is a bounded prefix, cut on a character boundary.
+    #[tokio::test]
+    async fn http_fetch_waf_block_error_bounds_the_body() {
+        let body = format!("cf-chl- {}", "\u{20ac}".repeat(50_000));
+        let error = fetch_status(403, ResponseTemplate::new(403).set_body_string(body.clone())).await;
+        let CrawlError::WafBlocked { body: kept, .. } = &error else {
+            panic!("expected a WAF block, got {error:?}");
+        };
+        let kept = kept.as_deref().expect("the body prefix must be kept");
+        assert!(body.starts_with(kept), "the kept body must be a prefix");
+        assert!(kept.starts_with("cf-chl- "), "{kept:.40}");
+        assert!(
+            kept.len() < body.len() && kept.len() <= crate::error::WAF_BODY_PREFIX_LEN,
+            "kept {} bytes of {}",
+            kept.len(),
+            body.len()
+        );
+    }
+
+    /// A header-identified block reads only a prefix of the body: a server that stalls after
+    /// the prefix does not hold the fetch.
+    #[tokio::test]
+    async fn http_fetch_header_identified_block_does_not_wait_for_the_rest_of_the_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 2048];
+            let _ = socket.read(&mut request).await;
+            let head = "HTTP/1.1 403 Forbidden\r\nx-datadome: protected\r\ncontent-length: 10000000\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.expect("head");
+            socket.write_all(&[b'x'; 8192]).await.expect("prefix");
+            socket.flush().await.expect("flush");
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://{addr}/probe");
+        let fetched = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            http_fetch(&url, &config, &HashMap::new(), &client),
+        )
+        .await
+        .expect("the fetch must not wait for the rest of the body");
+        server.abort();
+        let error = fetched.map(|_| ()).expect_err("a 403 must be an error");
+        let CrawlError::WafBlocked { body: kept, .. } = &error else {
+            panic!("expected a WAF block, got {error:?}");
+        };
+        assert_eq!(kept.as_deref().map(str::len), Some(crate::error::WAF_BODY_PREFIX_LEN));
     }
 
     /// A 503 stamped by a WAF vendor header is a challenge, not a server fault, so it must
@@ -1789,6 +1876,28 @@ mod tests {
             error.to_string(),
             "forbidden: waf/blocked: detected on 2xx (body): cloudflare"
         );
+    }
+
+    /// A small 2xx page that merely names a WAF vendor in prose is content, not a block
+    /// (crawlberg#778). Real challenge markup on a 2xx still blocks.
+    #[tokio::test]
+    async fn http_fetch_returns_a_small_2xx_that_only_names_a_waf_vendor_as_content() {
+        for vendor in ["Sucuri", "Incapsula", "PerimeterX"] {
+            let mock = MockServer::start().await;
+            let page = format!("<html><body><p>We compare {vendor} and other firewalls.</p></body></html>");
+            Mock::given(method("GET"))
+                .and(path("/probe"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(page.clone()))
+                .mount(&mock)
+                .await;
+
+            let config = permissive_config();
+            let client = build_client(&config).expect("client must build");
+            let response = http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|error| panic!("a 2xx naming {vendor} in prose must succeed, got {error:?}"));
+            assert_eq!(response.body, page);
+        }
     }
 
     /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
