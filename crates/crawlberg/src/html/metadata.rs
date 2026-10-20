@@ -1,7 +1,10 @@
 //! Metadata extraction from HTML documents.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 
+use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{BufferQueue, StartTag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
 use tl::VDom;
 use url::Url;
 
@@ -168,7 +171,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
     let title = dom.query_selector(SEL_TITLE).and_then(|mut iter| {
         iter.next()
             .and_then(|h| h.get(parser))
-            .map(|node| node.inner_text(parser).to_string())
+            .map(|node| decode_title_text(&node.inner_text(parser)))
     });
 
     let canonical_url = dom.query_selector(SEL_LINK_REL).and_then(|iter| {
@@ -208,6 +211,38 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
     let mut md = accumulator.finish();
     apply_raw_meta_fallback(&mut md, raw_body);
     md
+}
+
+fn decode_title_text(raw: &str) -> String {
+    if !raw.bytes().any(|byte| matches!(byte, b'&' | b'\r' | b'\0')) {
+        return raw.to_owned();
+    }
+    let input = BufferQueue::default();
+    input.push_back(StrTendril::from(format!("<title>{raw}</title>")));
+    let tokenizer = Tokenizer::new(TitleText::default(), TokenizerOpts::default());
+    let _ = tokenizer.feed(&input);
+    tokenizer.end();
+    tokenizer.sink.0.into_inner()
+}
+
+#[derive(Default)]
+struct TitleText(RefCell<String>);
+
+impl TokenSink for TitleText {
+    type Handle = ();
+
+    fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
+        match token {
+            Token::TagToken(tag) if tag.kind == StartTag && &*tag.name == "title" => {
+                // ~keep Title character references use RCDATA rules; attribute decoding treats
+                // ~keep semicolonless references followed by letters or '=' differently.
+                return TokenSinkResult::RawData(html5ever::tokenizer::states::Rcdata);
+            }
+            Token::CharacterTokens(text) => self.0.borrow_mut().push_str(&text),
+            _ => {}
+        }
+        TokenSinkResult::Continue
+    }
 }
 
 /// The `content` of every robots meta tag whose directives address this crawler.
@@ -397,6 +432,21 @@ mod tests {
         assert_eq!(md.canonical_url.as_deref(), Some("https://example.com/x"));
         assert_eq!(md.html_lang.as_deref(), Some("en-GB"));
         assert_eq!(md.html_dir.as_deref(), Some("rtl"));
+    }
+
+    #[test]
+    fn title_character_references_are_decoded_once_in_text_context() {
+        for (source, expected) in [
+            ("AT&amp;T &lt;b&gt; &#8211; caf&eacute;", "AT&T <b> – café"),
+            ("&amp;lt;b&amp;gt;", "&lt;b&gt;"),
+            ("&notit; &amp= &#x80; &#0;", "¬it; &= € \u{FFFD}"),
+            ("plain &unknown; title", "plain &unknown; title"),
+        ] {
+            assert_eq!(
+                parse(&format!("<title>{source}</title>")).title.as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
