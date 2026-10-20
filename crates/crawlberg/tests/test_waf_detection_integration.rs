@@ -517,3 +517,33 @@ async fn a_waf_block_error_carries_the_status_and_the_challenge_page() {
         "the crawl error must carry the status, got: {error}"
     );
 }
+
+#[tokio::test]
+async fn vendor_names_in_successful_pages_are_not_waf_blocks() {
+    let mock = MockServer::start().await;
+    let handle = create_engine(Some(no_browser_config())).expect("engine must build");
+    for (index, text) in [
+        "We compare DataDome and other firewalls.",
+        "The BigIPServer cookie name is documented here.",
+        "The x-amzn-waf header is documented here.",
+        "DataDome dd.js integration is documented here.",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let route = format!("/{index}");
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(format!("<html><body><p>{text}</p></body></html>"), "text/html"),
+            )
+            .mount(&mock)
+            .await;
+        let page = scrape(&handle, &format!("{}{route}", mock.uri()))
+            .await
+            .expect("vendor documentation must be a page");
+        assert_eq!(page.status_code, 200);
+        assert!(page.markdown.expect("Markdown must be present").content.contains(text));
+    }
+}

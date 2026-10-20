@@ -116,6 +116,14 @@ kind = "response_header"
 name = "x-datadome"
 
 [[fingerprint]]
+id = "datadome_blocked_body"
+vendor = "datadome"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "blocked by datadome"
+
+[[fingerprint]]
 id = "datadome_js_tag"
 vendor = "datadome"
 weight = 1.0
@@ -133,6 +141,7 @@ pattern = "captcha-delivery.com"
 
 [[fingerprint]]
 id = "datadome_dd_js"
+statuses = [403, 429, 503]
 vendor = "datadome"
 weight = 1.0
 [[fingerprint.signals]]
@@ -152,6 +161,7 @@ pattern = "ddjskey"
 
 [[fingerprint]]
 id = "datadome_body_tag"
+statuses = [403, 429, 503]
 vendor = "datadome"
 weight = 0.9
 [[fingerprint.signals]]
@@ -321,6 +331,7 @@ pattern = "awswaf.com/token"
 
 [[fingerprint]]
 id = "aws_waf_body_tag"
+statuses = [403, 429, 503]
 vendor = "aws-waf"
 weight = 0.9
 [[fingerprint.signals]]
@@ -361,6 +372,7 @@ value_contains = "big-ip"
 
 [[fingerprint]]
 id = "f5_bigipserver_body"
+statuses = [403, 429, 503]
 vendor = "f5"
 weight = 0.9
 [[fingerprint.signals]]
