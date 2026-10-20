@@ -136,11 +136,11 @@ jobs:
       # `freezed: ^4.0.1`, and freezed 4.x now requires SDK >=3.13.0, so resolution died
       # with "Because crawlberg depends on freezed >=4.0.0 which requires SDK version
       # >=3.13.0 <4.0.0, version solving failed" — 264 of the job's 528 session-prep
-      # Errors. 3.13.3 keeps the analysis-server fix and clears freezed's floor. ~keep
+      # Errors. 3.13.6 keeps the analysis-server fix and clears freezed's floor. ~keep
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:
-          sdk: "3.13.3"
+          sdk: "3.13.6"
 
       - name: Setup Zig
         uses: xberg-io/actions/setup-zig@v1

@@ -2,7 +2,7 @@
 edition = "2024"
 rust-version = "1.85"
 name = "crawlberg-chromiumoxide"
-version = "0.9.3"
+version = "0.9.4"
 authors = ["Matthias Seitz <matthias.seitz@outlook.de>"]
 build = false
 autolib = false
@@ -45,14 +45,14 @@ features = [
 ]
 
 [target."cfg(unix)".dependencies.libc]
-version = "=0.2.189"
+version = "0.2.191"
 
 [dependencies.async-tungstenite]
 version = "0.35"
 features = ["tokio-runtime"]
 
 [dependencies.base64]
-version = "0.22"
+version = "0.23"
 
 [dependencies.bytes]
 version = "1"
@@ -113,7 +113,7 @@ version = "2"
 version = "8"
 
 [dev-dependencies.chrono]
-version = "0.4.1"
+version = "0.4.45"
 
 [dev-dependencies.proc-macro2]
 version = "1"

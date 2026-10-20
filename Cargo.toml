@@ -55,7 +55,7 @@ base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
 chardetng = "1.0.0"
-chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.3", default-features = false }
+chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.4", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
@@ -89,8 +89,7 @@ icu_normalizer = { version = "2.3", default-features = false, features = ["compi
 idna = "1"
 ipnet = "2"
 itertools = "0.15"
-# ~keep Released sysinfo 0.39 uses Mach APIs on iOS that libc 0.2.190 made macOS-only.
-libc = "=0.2.189"
+libc = "0.2.191"
 liter-llm = { version = "2.3", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
