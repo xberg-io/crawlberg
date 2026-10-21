@@ -53,6 +53,10 @@ fn config(private_pipe: bool) -> BrowserPoolConfig {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "Record the temporary real-browser CI recovery receipt"
+)]
 fn capture(f: impl FnOnce(&Events)) -> Vec<(tracing::Level, String)> {
     let events = Events(Arc::default());
     // ~keep Retain a second dispatcher so concurrent no-subscriber calls cannot cache Never.
@@ -60,6 +64,14 @@ fn capture(f: impl FnOnce(&Events)) -> Vec<(tracing::Level, String)> {
     let _subscriber = tracing::subscriber::set_default(events.clone());
     f(&events);
     let captured = events.0.lock().expect("events").clone();
+    for (level, message) in &captured {
+        if *level == tracing::Level::INFO
+            && (message.contains("test proved unowned child-target retirement")
+                || message.contains("test proved unowned structural-target retirement"))
+        {
+            eprintln!("{message}");
+        }
+    }
     assert!(
         captured
             .iter()

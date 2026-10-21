@@ -75,6 +75,15 @@ on:
   #     - "scripts/ci/check-alef-generated.sh"
   #     - "scripts/ci/rust/prepare-chrome.sh"
   workflow_dispatch:
+    inputs:
+      windows_chrome:
+        description: "Run the focused Windows Chrome comparison"
+        type: boolean
+        default: true
+      linux_child_attach:
+        description: "Run Linux ARM child-attach diagnostics"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-rust-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
@@ -95,7 +104,7 @@ permissions:
 jobs:
   rust:
     name: Rust (${{ matrix.os }})
-    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    if: github.event_name != 'workflow_dispatch' && github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -226,10 +235,12 @@ jobs:
         shell: bash
 
   windows-browser:
-    name: Windows browser lifecycle
-    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    name: Windows Chrome 155 versus 156 diagnostics
+    if: github.repository == 'xberg-io/crawlberg' && github.event_name == 'workflow_dispatch' && inputs.windows_chrome
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    env:
+      CRAWLBERG_DIAGNOSTICS_DIR: ${{ github.workspace }}/_diagnostics/windows-chrome766-focused
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Setup Rust
@@ -238,15 +249,34 @@ jobs:
           cache-key-prefix: windows-browser
       - name: Install Task
         uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
-      - name: Setup Chrome
-        id: chrome
+      - name: Setup Chrome 155
+        id: chrome155
         uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
-      - name: Run Windows browser tests
-        run: task rust:test:windows-browser
-        shell: bash
+        with:
+          chrome-version: "155.0.8059.84"
+      - name: Setup Chrome 156
+        id: chrome156
+        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        with:
+          chrome-version: "156.0.8078.47"
+      - name: Verify diagnostic harness controls
+        run: task -t .task/diagnostics/windows-chrome766.yml self-test
+      - name: Compile the existing Windows lifecycle test once
+        run: task -t .task/diagnostics/windows-chrome766.yml build
+        timeout-minutes: 30
+      - name: Compare pinned Chrome versions with identical executable bytes
+        run: task -t .task/diagnostics/windows-chrome766.yml probe
+        timeout-minutes: 10
         env:
-          CHROME: ${{ steps.chrome.outputs.chrome-path }}
-          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_155_PATH: ${{ steps.chrome155.outputs.chrome-path }}
+          CHROME_156_PATH: ${{ steps.chrome156.outputs.chrome-path }}
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-chrome-766-focused-${{ github.run_id }}
+          path: ${{ github.workspace }}/_diagnostics/windows-chrome766-focused
+          if-no-files-found: error
 
   # ~keep Every feature-configuration bug this workflow has accumulated a step for was the
   # ~keep same bug: a configuration nothing compiled. --all-features forces `browser` on,
@@ -256,7 +286,7 @@ jobs:
   # ~keep green CI. This generalises those one-off steps instead of adding another.
   feature-combinations:
     name: Feature combinations
-    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    if: github.event_name != 'workflow_dispatch' && github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
@@ -307,7 +337,7 @@ jobs:
 
   validate-rust:
     name: Validate Rust
-    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    if: github.event_name != 'workflow_dispatch' && github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
@@ -375,3 +405,59 @@ jobs:
       - name: Validate vendored C headers match canonical
         shell: bash
         run: ./scripts/ci/check-vendored-headers.sh
+
+  linux-child-attach:
+    name: Linux ARM context proof verification
+    if: github.repository == 'xberg-io/crawlberg' && github.event_name == 'workflow_dispatch' && inputs.linux_child_attach
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      CRAWLBERG_LINUX_DIAGNOSTICS_DIR: ${{ github.workspace }}/_diagnostics/linux-child-attach
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+      - name: Free disk space
+        uses: xberg-io/actions/free-disk-space-linux@4158d3a1335241235c074ddd41bb2242189187b7
+        with:
+          show-initial: "false"
+          show-final: "true"
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@4158d3a1335241235c074ddd41bb2242189187b7
+        with:
+          cache-key-prefix: rust-ubuntu-24.04-arm
+          use-sccache: "true"
+      - name: Install Task
+        uses: xberg-io/actions/install-task@4158d3a1335241235c074ddd41bb2242189187b7
+      - name: Test Chromium runtime preparation
+        run: task ci:chrome:runtime:test
+      - name: Prepare Chromium snap runtime
+        run: task ci:chrome:runtime
+      - name: Setup Chrome
+        id: chrome
+        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+      - name: Preserve the prepared Chrome path
+        id: prepared_chrome
+        run: task rust:chrome:prepare
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Verify diagnostic harness controls
+        run: task -t .task/diagnostics/linux-child-attach.yml self-test
+      - name: Compile the all-feature core library test once
+        run: task -t .task/diagnostics/linux-child-attach.yml build
+        timeout-minutes: 20
+      - name: Verify full library and 120 alternating browser lifecycle replays
+        run: task -t .task/diagnostics/linux-child-attach.yml probe
+        timeout-minutes: 20
+        env:
+          CHROME: ${{ steps.prepared_chrome.outputs.chrome-path }}
+          CRAWLBERG_TEST_CHROME_PATH: ${{ steps.prepared_chrome.outputs.chrome-path }}
+          RUST_BACKTRACE: full
+          RUST_TEST_THREADS: "1"
+      - name: Preserve Linux diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: linux-child-attach-${{ github.run_id }}
+          path: ${{ github.workspace }}/_diagnostics/linux-child-attach
+          if-no-files-found: error

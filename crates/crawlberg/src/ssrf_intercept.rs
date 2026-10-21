@@ -2157,6 +2157,33 @@ enum ChildPendingKind {
 struct UnownedArmProof {
     target_generation: Arc<()>,
     context_generation: Arc<()>,
+    #[cfg(test)]
+    target_type: String,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct StructuralProofObservation {
+    independent: bool,
+    waiting: bool,
+    opener: bool,
+    opener_frame: bool,
+    parent_frame: bool,
+    registry_is_unowned: bool,
+    context_present: bool,
+    context_registered: bool,
+    context_retired: bool,
+    shared: bool,
+    default_owner: bool,
+    target_ownership: bool,
+    target_other: bool,
+    registry_target_entry: bool,
+    target_generation: bool,
+    target_context_mapping: bool,
+    target_opened: bool,
+    context_targets: usize,
+    context_opened: usize,
+    related_owned_frames: usize,
 }
 
 #[derive(Clone)]
@@ -2219,6 +2246,10 @@ struct StructuralTarget {
     arm_acknowledged: bool,
     child_boundary_acknowledged: bool,
     unowned: Option<UnownedStructuralProof>,
+    #[cfg(test)]
+    parent_session_present: bool,
+    #[cfg(test)]
+    proof_observation: StructuralProofObservation,
 }
 
 #[derive(serde::Deserialize)]
@@ -2451,12 +2482,62 @@ fn unowned_structural_proof(
     info: &TargetInfo,
     independent: bool,
     waiting: bool,
+    #[cfg(test)] observation: &mut StructuralProofObservation,
 ) -> Option<UnownedStructuralProof> {
     let mut registry = lock(&shared.registry);
     registry.invalidate_unowned_structural(&info.target_id);
     registry
         .unowned_structural_observers
         .retain(|_, token| token.strong_count() != 0);
+    #[cfg(test)]
+    {
+        *observation = StructuralProofObservation {
+            independent,
+            waiting,
+            opener: info.opener_id.is_some(),
+            opener_frame: info.opener_frame_id.is_some(),
+            parent_frame: info.parent_frame_id.is_some(),
+            registry_is_unowned: unowned_structural_registry_is_unowned(
+                &registry,
+                info.browser_context_id.as_ref(),
+                &info.target_id,
+            ),
+            context_present: info.browser_context_id.is_some(),
+            context_registered: info
+                .browser_context_id
+                .as_ref()
+                .is_some_and(|context| registry.contexts.contains_key(context)),
+            context_retired: info
+                .browser_context_id
+                .as_ref()
+                .is_some_and(|context| registry.retired_contexts.contains(context)),
+            shared: registry.shared_context,
+            default_owner: registry.default_context_owner.is_some(),
+            target_ownership: registry.ownership.contains_key(&info.target_id),
+            target_other: registry.others.contains(&info.target_id),
+            registry_target_entry: registry.targets.iter().any(|(target, _)| *target == info.target_id),
+            target_generation: registry.target_generations.contains_key(&info.target_id),
+            target_context_mapping: registry.context_targets.contains_key(&info.target_id),
+            target_opened: registry.opened.contains_key(&info.target_id),
+            context_targets: registry
+                .context_targets
+                .values()
+                .filter(|context| Some(*context) == info.browser_context_id.as_ref())
+                .count(),
+            context_opened: registry
+                .opened
+                .values()
+                .filter(|context| context.as_ref() == info.browser_context_id.as_ref())
+                .count(),
+            related_owned_frames: registry
+                .frames
+                .iter()
+                .filter(|(id, frame)| {
+                    (frame.source == info.target_id || id.inner() == info.target_id.inner()) && frame.owner.is_some()
+                })
+                .count(),
+        };
+    }
     if shared.origin != BrowserOrigin::Launched
         || !independent
         || waiting
@@ -2642,6 +2723,7 @@ fn trace_rejected_recursive_arm(
     target: &TargetId,
     root_waiter: bool,
     cdp_error_code: Option<i64>,
+    proof: Option<&UnownedArmProof>,
 ) {
     let registry = lock(&shared.registry);
     let ownership = match registry.ownership.get(target) {
@@ -2655,6 +2737,11 @@ fn trace_rejected_recursive_arm(
     };
     tracing::info!(
         cdp_error_code,
+        unowned_proof_present = proof.is_some(),
+        unowned_target_generation_matches = proof.is_some_and(|proof| registry.target_generations.get(target)
+            .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))),
+        unowned_context_generation_matches = proof.is_some_and(|proof|
+            context.is_some_and(|context| registry.unowned_context_matches(context, &proof.context_generation))),
         context_present = context.is_some(),
         context_registered = context.is_some_and(|context| registry.contexts.contains_key(context)),
         context_retired = context.is_some_and(|context| child_context_retired(&registry, context)),
@@ -3002,9 +3089,47 @@ where
                             session,
                             waiting_for_debugger,
                             structural_parent,
-                            unowned: _,
+                            unowned: _unowned,
                         } => {
                             if !acknowledged {
+                                #[cfg(test)]
+                                {
+                                    let registry = lock(&shared.registry);
+                                    tracing::info!(
+                                        target_type = _unowned.as_ref().map(|proof| proof.target_type.as_str()).unwrap_or("unrecorded"),
+                                        structural_parent = structural_parent.is_some(),
+                                        registry_matches = _unowned.as_ref().is_some_and(|proof|
+                                            unowned_arm_registry_matches(&registry, command_context.as_ref(), &target, proof)),
+                                        independent = unowned_arm_is_independent(&target, &session, &pending, &root_waiters,
+                                            &armed_targets, &session_targets, &structural_sessions),
+                                        related_drain = unowned_context_is_draining(&pending, command_context.as_ref()),
+                                        session_mapping_present = session_targets.contains_key(&session),
+                                        session_mapping_matches = session_targets.get(&session) == Some(&target),
+                                        target_session_count = session_targets.values().filter(|other| **other == target).count(),
+                                        armed_target = armed_targets.contains_key(&target),
+                                        resume_reference_count = armed_targets.values().filter(|required| required.contains(&session)).count(),
+                                        structural_reference_count = structural_sessions.values()
+                                            .filter(|entry| entry.target == target || entry.session == session).count(),
+                                        pending_reference_count = pending.values().filter(|command| match &command.kind {
+                                            ChildPendingKind::RecursiveArm { target: other, session: armed, structural_parent, .. } =>
+                                                *other == target || *armed == session || structural_parent.as_deref() == Some(session.as_str()),
+                                            ChildPendingKind::StructuralArm { session: armed }
+                                            | ChildPendingKind::Boundary { session: armed } => *armed == session,
+                                            ChildPendingKind::ForeignRetirementCensus { target: other, session: armed }
+                                            | ChildPendingKind::UnownedRetirementCensus { target: other, session: armed, .. }
+                                            | ChildPendingKind::UnownedStructuralCensus { target: other, session: armed, .. } =>
+                                                *other == target || *armed == session,
+                                            _ => false,
+                                        }).count(),
+                                        shared_context = registry.shared_context,
+                                        default_owner = registry.default_context_owner.is_some(),
+                                        target_opened = registry.opened.contains_key(&target),
+                                        context_mapped = registry.context_targets.contains_key(&target),
+                                        registry_target_present = registry.targets.iter().any(|(other, _)| *other == target),
+                                        frame_owner = registry.frames.values().any(|frame| frame.source == target && frame.owner.is_some()),
+                                        "test recursive retirement guard rejection"
+                                    );
+                                }
                                 #[cfg(test)]
                                 trace_rejected_recursive_arm(
                                     shared,
@@ -3012,6 +3137,7 @@ where
                                     &target,
                                     root_waiters.get(&target).is_some_and(|waiter| !waiter.is_closed()),
                                     value["error"]["code"].as_i64(),
+                                    _unowned.as_ref(),
                                 );
                                 if let Some(waiter) = root_waiters.remove(&target) {
                                     let _ = waiter.send(Err(format!(
@@ -3154,6 +3280,8 @@ where
                             pending.remove(&arm_id);
                             structural_sessions.remove(&session);
                             registry.unowned_structural_observers.remove(&target);
+                            #[cfg(test)]
+                            tracing::info!(origin = ?shared.origin, "test proved unowned structural-target retirement");
                         }
                         ChildPendingKind::UnownedRetirementCensus { target, session, proof } => {
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
@@ -3168,6 +3296,8 @@ where
                                 return child_fail(shared, "unowned_retirement_unproved");
                             }
                             session_targets.remove(&session);
+                            #[cfg(test)]
+                            tracing::info!(origin = ?shared.origin, "test proved unowned child-target retirement");
                         }
                         ChildPendingKind::ForeignRetirementCensus { target, session } => {
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
@@ -3310,6 +3440,107 @@ where
                                 continue;
                             }
                             if !foreign {
+                                #[cfg(test)]
+                                {
+                                    let registry = lock(&shared.registry);
+                                    let arm_id = pending.iter().find_map(|(id, command)|
+                                        matches!(&command.kind, ChildPendingKind::StructuralArm { session: armed } if armed == session).then_some(*id));
+                                    let observed_token = registry.unowned_structural_observers.get(&structural.target).and_then(|token| token.upgrade());
+                                    tracing::info!(
+                                        proof_present = structural.unowned.is_some(),
+                                        target_token_true = structural.unowned.as_ref().is_some_and(|proof| proof.target_generation.load(Ordering::Acquire)),
+                                        target_token_map_exists = observed_token.is_some(),
+                                        target_token_pointer_matches = structural.unowned.as_ref().is_some_and(|proof|
+                                            observed_token.as_ref().is_some_and(|token| Arc::ptr_eq(token, &proof.target_generation))),
+                                        context_epoch_matches = structural.unowned.as_ref().is_some_and(|proof|
+                                            structural.context.as_ref().is_some_and(|context| registry.unowned_context_matches(context, &proof.context_generation))),
+                                        registry_is_unowned = unowned_structural_registry_is_unowned(&registry, structural.context.as_ref(), &structural.target),
+                                        target_other = registry.others.contains(&structural.target),
+                                        registry_target_entry = registry.targets.iter().any(|(target, _)| *target == structural.target),
+                                        registry_matches = structural.unowned.as_ref().is_some_and(|proof|
+                                            unowned_structural_registry_matches(&registry, structural.context.as_ref(), &structural.target, proof)),
+                                        independence = arm_id.is_some_and(|arm_id|
+                                            unowned_structural_is_independent((&structural.target, session, arm_id, structural.context.as_ref(), None),
+                                                &pending, &root_waiters, &armed_targets, &session_targets, &structural_sessions)),
+                                        context_target_count = registry.context_targets.values().filter(|context| Some(*context) == structural.context.as_ref()).count(),
+                                        context_opened_count = registry.opened.values().filter(|context| context.as_ref() == structural.context.as_ref()).count(),
+                                        related_owned_frame_count = registry.frames.iter().filter(|(id, frame)|
+                                            (frame.source == structural.target || id.inner() == structural.target.inner()) && frame.owner.is_some()).count(),
+                                        same_context_pending_count = pending.iter().filter(|(id, command)| Some(**id) != arm_id
+                                            && command.context.as_ref() == structural.context.as_ref()).count(),
+                                        same_context_structural_count = structural_sessions.iter().filter(|(other, entry)|
+                                            other.as_str() != session && entry.context == structural.context).count(),
+                                        same_target_structural_count = structural_sessions.iter().filter(|(other, entry)|
+                                            other.as_str() != session && entry.target == structural.target).count(),
+                                        "test structural retirement guard rejection"
+                                    );
+                                    let observation = &structural.proof_observation;
+                                    tracing::info!(
+                                        independent = observation.independent,
+                                        waiting = observation.waiting,
+                                        opener = observation.opener,
+                                        opener_frame = observation.opener_frame,
+                                        parent_frame = observation.parent_frame,
+                                        registry_is_unowned = observation.registry_is_unowned,
+                                        context_present = observation.context_present,
+                                        context_registered = observation.context_registered,
+                                        context_retired = observation.context_retired,
+                                        shared = observation.shared,
+                                        default_owner = observation.default_owner,
+                                        target_ownership = observation.target_ownership,
+                                        target_other = observation.target_other,
+                                        registry_target_entry = observation.registry_target_entry,
+                                        target_generation = observation.target_generation,
+                                        target_context_mapping = observation.target_context_mapping,
+                                        target_opened = observation.target_opened,
+                                        context_targets = observation.context_targets,
+                                        context_opened = observation.context_opened,
+                                        related_owned_frames = observation.related_owned_frames,
+                                        "test structural proof capture"
+                                    );
+                                    tracing::info!(
+                                    context_present = structural.context.is_some(),
+                                    context_registered = structural.context.as_ref()
+                                        .is_some_and(|context| registry.contexts.contains_key(context)),
+                                    context_retired = structural.context.as_ref()
+                                        .is_some_and(|context| child_context_retired(&registry, context)),
+                                    ownership = match registry.ownership.get(&structural.target) {
+                                        Some(TargetOwnership::Watched(page)) if page.ending.load(Ordering::Acquire) => "ending_watch",
+                                        Some(TargetOwnership::Watched(_)) => "active_watch",
+                                        Some(TargetOwnership::PendingContext(_)) => "pending_context",
+                                        Some(TargetOwnership::PendingShared) => "pending_shared",
+                                        Some(TargetOwnership::Other) => "other",
+                                        Some(TargetOwnership::Quarantined) => "quarantined",
+                                        None => "missing",
+                                    },
+                                    target_generation_present = registry.target_generations.contains_key(&structural.target),
+                                    target_opened = registry.opened.contains_key(&structural.target),
+                                    target_context_owned = registry.context_targets.contains_key(&structural.target),
+                                    shared_context = registry.shared_context,
+                                    default_owner_present = registry.default_context_owner.is_some(),
+                                    authorized = structural.authorized,
+                                    arm_acknowledged = structural.arm_acknowledged,
+                                    child_boundary_acknowledged = structural.child_boundary_acknowledged,
+                                    waiting_for_debugger = structural.waiting_for_debugger,
+                                    parent_session_present = structural.parent_session_present,
+                                    root_waiter = root_waiters.contains_key(&structural.target),
+                                    context_root_waiters = root_waiters.keys().filter(|root|
+                                        registry.context_targets.get(*root) == structural.context.as_ref()).count(),
+                                    target_sessions = session_targets.values().filter(|target| **target == structural.target).count(),
+                                    detached_session_mapped = session_targets.contains_key(session),
+                                    armed_target = armed_targets.contains_key(&structural.target),
+                                    resume_references = armed_targets.values().filter(|required| required.contains(session)).count(),
+                                    pending_structural_arms = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::StructuralArm { session: armed } if armed == session)).count(),
+                                    pending_child_arms = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::RecursiveArm { structural_parent, .. }
+                                            if structural_parent.as_deref() == Some(session))).count(),
+                                    pending_session_resumes = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::Boundary { session: armed } if armed == session)).count(),
+                                    origin = ?shared.origin,
+                                    "test rejected structural child-target detach"
+                                    );
+                                }
                                 return child_fail(shared, "nonforeign_structural_detach");
                             }
                             let registry = lock(&shared.registry);
@@ -3416,8 +3647,14 @@ where
                     return child_fail(shared, "capacity_exceeded");
                 }
                 if attached.target_info.r#type == "tab" {
+                    #[cfg(not(test))]
                     let unowned = unowned_structural_proof(shared, &attached.target_info,
                         parent_session.is_none(), attached.waiting_for_debugger);
+                    #[cfg(test)]
+                    let mut proof_observation = StructuralProofObservation::default();
+                    #[cfg(test)]
+                    let unowned = unowned_structural_proof(shared, &attached.target_info,
+                        parent_session.is_none(), attached.waiting_for_debugger, &mut proof_observation);
                     // ~keep A tab is never recorded as a target: it holds no document and sends no
                     // ~keep request, and `Target.closeTarget` on it closes its page, so a park that
                     // ~keep owned the tab closed the page it was keeping. The tab resumes when a
@@ -3431,6 +3668,10 @@ where
                         arm_acknowledged: false,
                         child_boundary_acknowledged: false,
                         unowned,
+                        #[cfg(test)]
+                        parent_session_present: parent_session.is_some(),
+                        #[cfg(test)]
+                        proof_observation,
                     };
                     if structural_sessions
                         .insert(attached.session_id.clone(), structural)
@@ -3543,6 +3784,8 @@ where
                         let proof = UnownedArmProof {
                             target_generation: generation,
                             context_generation: registry.observe_unowned_context(context)?,
+                            #[cfg(test)]
+                            target_type: attached.target_info.r#type.clone(),
                         };
                         unowned_arm_registry_matches(&registry, attached.target_info.browser_context_id.as_ref(), &target, &proof)
                             .then_some(proof)
