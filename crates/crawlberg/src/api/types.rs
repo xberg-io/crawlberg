@@ -132,6 +132,15 @@ pub struct ErrorBody {
     /// Human-readable error message.
     #[schema(example = "url is required")]
     pub message: String,
+    /// WAF vendor, when the upstream response was blocked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
+    /// Original upstream HTTP status, including a block served with status 200.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    /// Bounded prefix of the upstream block page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_prefix: Option<String>,
 }
 
 /// Generic API response wrapper.
@@ -167,6 +176,9 @@ impl ApiResponse<()> {
             error: Some(ErrorBody {
                 code,
                 message: message.into(),
+                vendor: None,
+                status: None,
+                body_prefix: None,
             }),
         }
     }

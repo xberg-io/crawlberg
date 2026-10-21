@@ -1940,3 +1940,78 @@ async fn sequential_crawl_keeps_soft_error_body_without_following_its_links() {
     assert_eq!(result.pages[0].status_code, 500);
     assert!(result.pages[0].html.contains("Unavailable"));
 }
+
+#[tokio::test]
+async fn sequential_crawl_preserves_waf_details_for_a_blocked_seed() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-datadome", "blocked")
+                .set_body_string("seed block body"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig {
+        browser: BrowserConfig {
+            mode: BrowserMode::Never,
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    let result = crawl_admitted(&engine, &mock.uri()).await.expect("crawl completes");
+    assert_eq!(result.pages.len(), 0);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("waf/blocked"))
+    );
+    let details = result.waf_block.expect("seed WAF details retained");
+    assert_eq!(details.vendor, "datadome");
+    assert_eq!(details.status, Some(403));
+    assert_eq!(details.body_prefix.as_deref(), Some("seed block body"));
+}
+
+#[tokio::test]
+async fn sequential_crawl_preserves_first_linked_waf_details_without_a_seed_error() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        "<html><body><a href='/first'>first</a><a href='/second'>second</a></body></html>",
+    )
+    .await;
+    for (route, status, header, body) in [
+        ("/first", 403, "x-datadome", "first block body"),
+        ("/second", 429, "x-px-block", "second block body"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .insert_header(header, "blocked")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+    }
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        browser: BrowserConfig {
+            mode: BrowserMode::Never,
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    let result = crawl_admitted(&engine, &mock.uri()).await.expect("crawl completes");
+    assert_eq!(result.pages.len(), 1);
+    assert_eq!(result.error, None);
+    let details = result.waf_block.expect("first linked WAF details retained");
+    assert_eq!(details.vendor, "datadome");
+    assert_eq!(details.status, Some(403));
+    assert_eq!(details.body_prefix.as_deref(), Some("first block body"));
+}

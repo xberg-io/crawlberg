@@ -18,6 +18,12 @@ pub struct ApiError {
     pub code: &'static str,
     /// Human-readable error message.
     pub message: String,
+    /// WAF vendor associated with this error.
+    pub vendor: Option<String>,
+    /// Original upstream status associated with a WAF block.
+    pub origin_status: Option<u16>,
+    /// Bounded prefix of an upstream block page.
+    pub body_prefix: Option<String>,
 }
 
 impl ApiError {
@@ -27,6 +33,9 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            vendor: None,
+            origin_status: None,
+            body_prefix: None,
         }
     }
 
@@ -60,7 +69,12 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = ApiResponse::<()>::err(self.code, &self.message);
+        let mut body = ApiResponse::<()>::err(self.code, &self.message);
+        if let Some(error) = body.error.as_mut() {
+            error.vendor = self.vendor;
+            error.status = self.origin_status;
+            error.body_prefix = self.body_prefix;
+        }
         (self.status, Json(body)).into_response()
     }
 }
@@ -71,7 +85,13 @@ impl From<CrawlError> for ApiError {
             CrawlError::NotFound { .. } => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             CrawlError::Unauthorized { .. } => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
             CrawlError::Forbidden { .. } => (StatusCode::FORBIDDEN, "FORBIDDEN"),
-            CrawlError::WafBlocked { .. } => (StatusCode::FORBIDDEN, "WAF_BLOCKED"),
+            CrawlError::WafBlocked { status, .. } => (
+                status
+                    .filter(|status| (400..600).contains(status))
+                    .and_then(|status| StatusCode::from_u16(status).ok())
+                    .unwrap_or(StatusCode::FORBIDDEN),
+                "WAF_BLOCKED",
+            ),
             CrawlError::Timeout { .. } | CrawlError::BrowserTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "TIMEOUT"),
             CrawlError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED"),
             CrawlError::ServerError { .. } => (StatusCode::BAD_GATEWAY, "SERVER_ERROR"),
@@ -90,11 +110,17 @@ impl From<CrawlError> for ApiError {
             CrawlError::Other { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_ERROR"),
         };
 
-        Self {
-            status,
-            code,
-            message: error.to_string(),
+        let message = error.to_string();
+        let mut result = Self::new(status, code, message);
+        if let CrawlError::WafBlocked {
+            vendor, status, body, ..
+        } = error
+        {
+            result.vendor = Some(vendor);
+            result.origin_status = status;
+            result.body_prefix = body;
         }
+        result
     }
 }
 
@@ -120,5 +146,26 @@ mod tests {
         assert_eq!(api_error.status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(api_error.code, "CONVERSION_FAILED");
         assert_eq!(api_error.message, text);
+    }
+    #[tokio::test]
+    async fn waf_response_preserves_origin_status_and_structured_details() {
+        for status in [200_u16, 403, 429, 503] {
+            let error = ApiError::from(CrawlError::waf_blocked_response(
+                "datadome",
+                "blocked",
+                status,
+                Some("challenge body"),
+            ));
+            let response = error.into_response();
+            assert_eq!(response.status().as_u16(), if status == 200 { 403 } else { status });
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .expect("response body must be readable");
+            let body: serde_json::Value = serde_json::from_slice(&bytes).expect("response must be JSON");
+            assert_eq!(body["error"]["code"], "WAF_BLOCKED");
+            assert_eq!(body["error"]["vendor"], "datadome");
+            assert_eq!(body["error"]["status"], status);
+            assert_eq!(body["error"]["body_prefix"], "challenge body");
+        }
     }
 }
