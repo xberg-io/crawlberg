@@ -479,7 +479,11 @@ impl ExternalChrome {
         std::fs::create_dir_all(&parent).expect("external Chrome profile parent");
         let profile = parent.join(format!("crawlberg-cli-borrowed-{}-{nonce}", std::process::id()));
         std::fs::create_dir(&profile).expect("external Chrome profile");
-        let child = Command::new(chrome)
+        let mut command = Command::new(chrome);
+        // ~keep Headless cookie initialization must not wait for interactive macOS keychain access.
+        #[cfg(target_os = "macos")]
+        command.arg("--use-mock-keychain");
+        let child = command
             .args([
                 "--headless=new",
                 "--no-sandbox",
