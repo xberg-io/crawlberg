@@ -10,7 +10,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `try_convert_asset_category_from_core`, `try_convert_auth_config_from_core`, `try_convert_browser_backend_from_core`, `try_convert_browser_mode_from_core`, `try_convert_browser_wait_from_core`, `try_convert_content_filter_kind_from_core`, `try_convert_crawl_event_from_core`, `try_convert_crawl_strategy_kind_from_core`, `try_convert_document_content_encoding_from_core`, `try_convert_feed_type_from_core`, `try_convert_host_matcher_from_core`, `try_convert_image_source_from_core`, `try_convert_link_type_from_core`, `try_convert_page_action_from_core`, `try_convert_scroll_direction_from_core`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `try_from`, `try_from`
 
 /// Convert markdown links to numbered citations.
 ///
@@ -102,6 +102,9 @@ Future<ScrapeResult> createScrapeResultFromJson({required String json}) =>
 
 Future<CrawlPageResult> createCrawlPageResultFromJson({required String json}) =>
     RustLib.instance.api.crateCreateCrawlPageResultFromJson(json: json);
+
+Future<WafBlockDetails> createWafBlockDetailsFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateWafBlockDetailsFromJson(json: json);
 
 Future<CrawlResult> createCrawlResultFromJson({required String json}) =>
     RustLib.instance.api.crateCreateCrawlResultFromJson(json: json);
@@ -285,6 +288,20 @@ class ActionResult {
           success == other.success &&
           data == other.data &&
           error == other.error;
+}
+
+@freezed
+sealed class AlefBridgeErrorWire with _$AlefBridgeErrorWire {
+  const AlefBridgeErrorWire._();
+
+  const factory AlefBridgeErrorWire.crawlError({required CrawlError error}) =
+      AlefBridgeErrorWire_CrawlError;
+  const factory AlefBridgeErrorWire.ssrfError({required SsrfError error}) =
+      AlefBridgeErrorWire_SsrfError;
+  const factory AlefBridgeErrorWire.invalidInput({required String message}) =
+      AlefBridgeErrorWire_InvalidInput;
+  const factory AlefBridgeErrorWire.nativeFailure({required String message}) =
+      AlefBridgeErrorWire_NativeFailure;
 }
 
 /// Article metadata extracted from `article:*` Open Graph tags.
@@ -607,9 +624,9 @@ class BrowserConfig {
   /// Extra time to wait after the wait condition is met.
   ///
   /// The default `network_idle` wait returns once the page has loaded and its DOM has been
-  /// unchanged for one second (at most four seconds, and never past `timeout`, counted from
-  /// the start of the navigation). An app that draws later than that after its last request,
-  /// such as a single-page app that renders its data on a slow pass, needs `extra_wait`; for
+  /// unchanged for `dom_quiet_window` (at most four seconds, and never past `timeout`, counted
+  /// from the start of the navigation). An app that draws after a longer quiet period needs
+  /// a larger `dom_quiet_window` or `extra_wait`; for
   /// example `3000` waits three more seconds.
   final PlatformInt64? extraWait;
 
@@ -683,6 +700,13 @@ class BrowserConfig {
   /// Chromiumoxide backend only.
   final bool scrollContainers;
 
+  /// How long the DOM must stay unchanged after page load for `network_idle` to return,
+  /// in milliseconds when serialized. Default: 150 ms. Every mutation restarts this window;
+  /// the whole wait stays bounded to four seconds and the remaining navigation timeout.
+  /// A page whose first delayed render follows a longer quiet gap needs a larger value
+  /// or `extra_wait`. Chromiumoxide backend only.
+  final PlatformInt64 domQuietWindow;
+
   const BrowserConfig({
     required this.mode,
     required this.backend,
@@ -702,6 +726,7 @@ class BrowserConfig {
     this.chromePath,
     required this.chromeArgs,
     this.scrollContainers = false,
+    this.domQuietWindow = 150,
   });
 
   @override
@@ -723,7 +748,8 @@ class BrowserConfig {
       sessionAffinity.hashCode ^
       chromePath.hashCode ^
       chromeArgs.hashCode ^
-      scrollContainers.hashCode;
+      scrollContainers.hashCode ^
+      domQuietWindow.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -747,7 +773,8 @@ class BrowserConfig {
           sessionAffinity == other.sessionAffinity &&
           chromePath == other.chromePath &&
           chromeArgs == other.chromeArgs &&
-          scrollContainers == other.scrollContainers;
+          scrollContainers == other.scrollContainers &&
+          domQuietWindow == other.domQuietWindow;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
@@ -1133,15 +1160,11 @@ class CrawlConfig {
   /// `noindex_detected`.
   final bool respectRobotsTxt;
 
-  /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
-  /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-  /// than raised as `CrawlError`. A WAF block reports the status of the refused
-  /// response when it is a 4xx or 5xx, and 403 when the block page came with a
-  /// 2xx status. Default `false` preserves the historical
-  /// throw-on-error contract for direct fetches. Independently of this flag,
-  /// 404s reached at the end of a redirect chain are *always* surfaced softly —
-  /// the user opted into redirect-following, so receiving a 404 there is part of
-  /// the normal flow rather than an unexpected error.
+  /// When true, readable HTTP error responses (4xx and 5xx) are surfaced as
+  /// `ScrapeResult` records with their status and body rather than raised as errors.
+  /// WAF blocks report their original 4xx/5xx status, or 403 for a block served as 2xx.
+  /// Default `false` raises errors for recognized error statuses in both `scrape`
+  /// and `crawl`, including a 404 reached through redirects.
   final bool softHttpErrors;
 
   /// Custom user-agent string.
@@ -1386,6 +1409,13 @@ class CrawlConfig {
   /// and the environment variable is not consulted for this config.
   final bool? ssrfDenyPrivateExplicit;
 
+  /// Accept invalid TLS certificates for page and robots.txt requests.
+  /// Defaults to false. Enable only for sites whose certificates you explicitly trust.
+  /// The browser backends also apply this setting before navigation.
+  /// On WebAssembly, enabling this setting returns `Unsupported`: the host's Fetch
+  /// implementation controls certificate validation.
+  final bool dangerAcceptInvalidCerts;
+
   const CrawlConfig({
     this.maxDepth,
     this.maxPages,
@@ -1442,6 +1472,7 @@ class CrawlConfig {
     required this.saveBrowserProfile,
     required this.ssrf,
     this.ssrfDenyPrivateExplicit,
+    this.dangerAcceptInvalidCerts = false,
   });
 
   @override
@@ -1500,7 +1531,8 @@ class CrawlConfig {
       browserProfile.hashCode ^
       saveBrowserProfile.hashCode ^
       ssrf.hashCode ^
-      ssrfDenyPrivateExplicit.hashCode;
+      ssrfDenyPrivateExplicit.hashCode ^
+      dangerAcceptInvalidCerts.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1561,7 +1593,8 @@ class CrawlConfig {
           browserProfile == other.browserProfile &&
           saveBrowserProfile == other.saveBrowserProfile &&
           ssrf == other.ssrf &&
-          ssrfDenyPrivateExplicit == other.ssrfDenyPrivateExplicit;
+          ssrfDenyPrivateExplicit == other.ssrfDenyPrivateExplicit &&
+          dangerAcceptInvalidCerts == other.dangerAcceptInvalidCerts;
 }
 
 @freezed
@@ -1592,8 +1625,8 @@ sealed class CrawlError with _$CrawlError {
   const factory CrawlError.wafBlocked({
     required String vendor,
     required String message,
-    required PlatformInt64 status,
-    required String body,
+    PlatformInt64? status,
+    String? body,
   }) = CrawlError_WafBlocked;
 
   /// The request timed out.
@@ -1905,6 +1938,9 @@ class CrawlResult {
   /// Whether the browser fallback was used for any page in this crawl.
   final bool browserUsed;
 
+  /// Details of the first WAF block encountered during the crawl. <!-- -->
+  final WafBlockDetails? wafBlock;
+
   const CrawlResult({
     required this.pages,
     required this.finalUrl,
@@ -1914,6 +1950,7 @@ class CrawlResult {
     required this.cookies,
     required this.stayedOnDomain,
     required this.browserUsed,
+    this.wafBlock = null,
   });
 
   @override
@@ -1925,7 +1962,8 @@ class CrawlResult {
       error.hashCode ^
       cookies.hashCode ^
       stayedOnDomain.hashCode ^
-      browserUsed.hashCode;
+      browserUsed.hashCode ^
+      wafBlock.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1939,7 +1977,8 @@ class CrawlResult {
           error == other.error &&
           cookies == other.cookies &&
           stayedOnDomain == other.stayedOnDomain &&
-          browserUsed == other.browserUsed;
+          browserUsed == other.browserUsed &&
+          wafBlock == other.wafBlock;
 }
 
 /// Traversal order for a crawl.
@@ -2616,19 +2655,19 @@ sealed class PageAction with _$PageAction {
     required ScrollDirection direction,
 
     /// Optional CSS selector for a scrollable element. Scrolls the page if absent.
-    required String selector,
+    String? selector,
 
     /// Optional pixel amount to scroll. Uses a default if absent.
-    required PlatformInt64 amount,
+    PlatformInt64? amount,
   }) = PageAction_Scroll;
 
   /// Wait for a duration or for an element to appear.
   const factory PageAction.wait({
     /// Milliseconds to wait. Ignored if `selector` is provided.
-    required PlatformInt64 milliseconds,
+    PlatformInt64? milliseconds,
 
     /// CSS selector to wait for.
-    required String selector,
+    String? selector,
   }) = PageAction_Wait;
 
   /// Take a screenshot of the current page.
@@ -2638,7 +2677,7 @@ sealed class PageAction with _$PageAction {
     /// Accepts both the canonical `fullPage` (camelCase) form and the
     /// `full_page` (snake_case) alias so language bindings and fixtures can
     /// use either convention without error.
-    required bool fullPage,
+    bool? fullPage,
   }) = PageAction_Screenshot;
 
   /// Execute arbitrary JavaScript in the page context.
@@ -3356,4 +3395,30 @@ class SsrfPolicy {
           denylist == other.denylist &&
           maxRedirects == other.maxRedirects &&
           schemeAllowlist == other.schemeAllowlist;
+}
+
+/// Structured context for a WAF-blocked response. <!-- -->
+class WafBlockDetails {
+  /// Lowercase WAF vendor identifier. <!-- -->
+  final String vendor;
+
+  /// Origin HTTP status, when a response caused the block. <!-- -->
+  final PlatformInt64? status;
+
+  /// At most 4 KiB of the blocked response body, when it was read. <!-- -->
+  final String? bodyPrefix;
+
+  const WafBlockDetails({required this.vendor, this.status, this.bodyPrefix});
+
+  @override
+  int get hashCode => vendor.hashCode ^ status.hashCode ^ bodyPrefix.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is WafBlockDetails &&
+          runtimeType == other.runtimeType &&
+          vendor == other.vendor &&
+          status == other.status &&
+          bodyPrefix == other.bodyPrefix;
 }

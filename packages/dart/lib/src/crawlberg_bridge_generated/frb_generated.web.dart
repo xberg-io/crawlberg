@@ -42,6 +42,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Object
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
+    dynamic raw,
+  );
+
+  @protected
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
 
   @protected
@@ -58,6 +64,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActionResult dco_decode_action_result(dynamic raw);
+
+  @protected
+  AlefBridgeErrorWire dco_decode_alef_bridge_error_wire(dynamic raw);
 
   @protected
   ArticleMetadata dco_decode_article_metadata(dynamic raw);
@@ -110,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrawlConfig dco_decode_box_autoadd_crawl_config(dynamic raw);
 
   @protected
+  CrawlError dco_decode_box_autoadd_crawl_error(dynamic raw);
+
+  @protected
   CrawlPageResult dco_decode_box_autoadd_crawl_page_result(dynamic raw);
 
   @protected
@@ -146,6 +158,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ScrapeResult dco_decode_box_autoadd_scrape_result(dynamic raw);
+
+  @protected
+  SsrfError dco_decode_box_autoadd_ssrf_error(dynamic raw);
+
+  @protected
+  WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw);
 
   @protected
   BrowserBackend dco_decode_browser_backend(dynamic raw);
@@ -388,6 +406,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ScrapeResult? dco_decode_opt_box_autoadd_scrape_result(dynamic raw);
 
   @protected
+  WafBlockDetails? dco_decode_opt_box_autoadd_waf_block_details(dynamic raw);
+
+  @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
 
   @protected
@@ -439,6 +460,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_usize(dynamic raw);
 
   @protected
+  WafBlockDetails dco_decode_waf_block_details(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
@@ -450,6 +474,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CrawlEngineHandle
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Object
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
     SseDeserializer deserializer,
   );
 
@@ -474,6 +504,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ActionResult sse_decode_action_result(SseDeserializer deserializer);
+
+  @protected
+  AlefBridgeErrorWire sse_decode_alef_bridge_error_wire(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ArticleMetadata sse_decode_article_metadata(SseDeserializer deserializer);
@@ -540,6 +575,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrawlConfig sse_decode_box_autoadd_crawl_config(SseDeserializer deserializer);
 
   @protected
+  CrawlError sse_decode_box_autoadd_crawl_error(SseDeserializer deserializer);
+
+  @protected
   CrawlPageResult sse_decode_box_autoadd_crawl_page_result(
     SseDeserializer deserializer,
   );
@@ -588,6 +626,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ScrapeResult sse_decode_box_autoadd_scrape_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SsrfError sse_decode_box_autoadd_ssrf_error(SseDeserializer deserializer);
+
+  @protected
+  WafBlockDetails sse_decode_box_autoadd_waf_block_details(
     SseDeserializer deserializer,
   );
 
@@ -882,6 +928,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  WafBlockDetails? sse_decode_opt_box_autoadd_waf_block_details(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
   @protected
@@ -941,6 +992,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_usize(SseDeserializer deserializer);
 
   @protected
+  WafBlockDetails sse_decode_waf_block_details(SseDeserializer deserializer);
+
+  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -957,6 +1011,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
     CrawlEngineHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
+    Object self,
     SseSerializer serializer,
   );
 
@@ -984,6 +1045,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_action_result(ActionResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_alef_bridge_error_wire(
+    AlefBridgeErrorWire self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_article_metadata(
@@ -1070,6 +1137,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_crawl_error(
+    CrawlError self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_crawl_page_result(
     CrawlPageResult self,
     SseSerializer serializer,
@@ -1135,6 +1208,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_scrape_result(
     ScrapeResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_ssrf_error(
+    SsrfError self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_waf_block_details(
+    WafBlockDetails self,
     SseSerializer serializer,
   );
 
@@ -1514,6 +1599,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_waf_block_details(
+    WafBlockDetails? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
   @protected
@@ -1578,6 +1669,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_waf_block_details(
+    WafBlockDetails self,
+    SseSerializer serializer,
+  );
 }
 
 // Section: wire_class

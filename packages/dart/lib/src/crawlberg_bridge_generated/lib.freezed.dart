@@ -13,6 +13,468 @@ part of 'lib.dart';
 // dart format off
 T _$identity<T>(T value) => value;
 /// @nodoc
+mixin _$AlefBridgeErrorWire {
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefBridgeErrorWire);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'AlefBridgeErrorWire()';
+}
+
+
+}
+
+/// @nodoc
+class $AlefBridgeErrorWireCopyWith<$Res>  {
+$AlefBridgeErrorWireCopyWith(AlefBridgeErrorWire _, $Res Function(AlefBridgeErrorWire) __);
+}
+
+
+/// Adds pattern-matching-related methods to [AlefBridgeErrorWire].
+extension AlefBridgeErrorWirePatterns on AlefBridgeErrorWire {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( AlefBridgeErrorWire_CrawlError value)?  crawlError,TResult Function( AlefBridgeErrorWire_SsrfError value)?  ssrfError,TResult Function( AlefBridgeErrorWire_InvalidInput value)?  invalidInput,TResult Function( AlefBridgeErrorWire_NativeFailure value)?  nativeFailure,required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError() when crawlError != null:
+return crawlError(_that);case AlefBridgeErrorWire_SsrfError() when ssrfError != null:
+return ssrfError(_that);case AlefBridgeErrorWire_InvalidInput() when invalidInput != null:
+return invalidInput(_that);case AlefBridgeErrorWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( AlefBridgeErrorWire_CrawlError value)  crawlError,required TResult Function( AlefBridgeErrorWire_SsrfError value)  ssrfError,required TResult Function( AlefBridgeErrorWire_InvalidInput value)  invalidInput,required TResult Function( AlefBridgeErrorWire_NativeFailure value)  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError():
+return crawlError(_that);case AlefBridgeErrorWire_SsrfError():
+return ssrfError(_that);case AlefBridgeErrorWire_InvalidInput():
+return invalidInput(_that);case AlefBridgeErrorWire_NativeFailure():
+return nativeFailure(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( AlefBridgeErrorWire_CrawlError value)?  crawlError,TResult? Function( AlefBridgeErrorWire_SsrfError value)?  ssrfError,TResult? Function( AlefBridgeErrorWire_InvalidInput value)?  invalidInput,TResult? Function( AlefBridgeErrorWire_NativeFailure value)?  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError() when crawlError != null:
+return crawlError(_that);case AlefBridgeErrorWire_SsrfError() when ssrfError != null:
+return ssrfError(_that);case AlefBridgeErrorWire_InvalidInput() when invalidInput != null:
+return invalidInput(_that);case AlefBridgeErrorWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( CrawlError error)?  crawlError,TResult Function( SsrfError error)?  ssrfError,TResult Function( String message)?  invalidInput,TResult Function( String message)?  nativeFailure,required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError() when crawlError != null:
+return crawlError(_that.error);case AlefBridgeErrorWire_SsrfError() when ssrfError != null:
+return ssrfError(_that.error);case AlefBridgeErrorWire_InvalidInput() when invalidInput != null:
+return invalidInput(_that.message);case AlefBridgeErrorWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( CrawlError error)  crawlError,required TResult Function( SsrfError error)  ssrfError,required TResult Function( String message)  invalidInput,required TResult Function( String message)  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError():
+return crawlError(_that.error);case AlefBridgeErrorWire_SsrfError():
+return ssrfError(_that.error);case AlefBridgeErrorWire_InvalidInput():
+return invalidInput(_that.message);case AlefBridgeErrorWire_NativeFailure():
+return nativeFailure(_that.message);}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( CrawlError error)?  crawlError,TResult? Function( SsrfError error)?  ssrfError,TResult? Function( String message)?  invalidInput,TResult? Function( String message)?  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefBridgeErrorWire_CrawlError() when crawlError != null:
+return crawlError(_that.error);case AlefBridgeErrorWire_SsrfError() when ssrfError != null:
+return ssrfError(_that.error);case AlefBridgeErrorWire_InvalidInput() when invalidInput != null:
+return invalidInput(_that.message);case AlefBridgeErrorWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+
+
+class AlefBridgeErrorWire_CrawlError extends AlefBridgeErrorWire {
+  const AlefBridgeErrorWire_CrawlError({required this.error}): super._();
+
+
+ final  CrawlError error;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefBridgeErrorWire_CrawlErrorCopyWith<AlefBridgeErrorWire_CrawlError> get copyWith => _$AlefBridgeErrorWire_CrawlErrorCopyWithImpl<AlefBridgeErrorWire_CrawlError>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefBridgeErrorWire_CrawlError&&(identical(other.error, error) || other.error == error));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,error);
+}
+
+@override
+String toString() {
+    return 'AlefBridgeErrorWire.crawlError(error: $error)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefBridgeErrorWire_CrawlErrorCopyWith<$Res> implements $AlefBridgeErrorWireCopyWith<$Res> {
+  factory $AlefBridgeErrorWire_CrawlErrorCopyWith(AlefBridgeErrorWire_CrawlError value, $Res Function(AlefBridgeErrorWire_CrawlError) _then) = _$AlefBridgeErrorWire_CrawlErrorCopyWithImpl;
+@useResult
+$Res call({
+ CrawlError error
+});
+
+
+$CrawlErrorCopyWith<$Res> get error;
+
+}
+/// @nodoc
+class _$AlefBridgeErrorWire_CrawlErrorCopyWithImpl<$Res>
+    implements $AlefBridgeErrorWire_CrawlErrorCopyWith<$Res> {
+  _$AlefBridgeErrorWire_CrawlErrorCopyWithImpl(this._self, this._then);
+
+  final AlefBridgeErrorWire_CrawlError _self;
+  final $Res Function(AlefBridgeErrorWire_CrawlError) _then;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? error = null,}) {
+  return _then(AlefBridgeErrorWire_CrawlError(
+error: null == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as CrawlError,
+  ));
+}
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$CrawlErrorCopyWith<$Res> get error {
+
+  return $CrawlErrorCopyWith<$Res>(_self.error, (value) {
+    return _then(_self.copyWith(error: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefBridgeErrorWire_SsrfError extends AlefBridgeErrorWire {
+  const AlefBridgeErrorWire_SsrfError({required this.error}): super._();
+
+
+ final  SsrfError error;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefBridgeErrorWire_SsrfErrorCopyWith<AlefBridgeErrorWire_SsrfError> get copyWith => _$AlefBridgeErrorWire_SsrfErrorCopyWithImpl<AlefBridgeErrorWire_SsrfError>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefBridgeErrorWire_SsrfError&&(identical(other.error, error) || other.error == error));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,error);
+}
+
+@override
+String toString() {
+    return 'AlefBridgeErrorWire.ssrfError(error: $error)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefBridgeErrorWire_SsrfErrorCopyWith<$Res> implements $AlefBridgeErrorWireCopyWith<$Res> {
+  factory $AlefBridgeErrorWire_SsrfErrorCopyWith(AlefBridgeErrorWire_SsrfError value, $Res Function(AlefBridgeErrorWire_SsrfError) _then) = _$AlefBridgeErrorWire_SsrfErrorCopyWithImpl;
+@useResult
+$Res call({
+ SsrfError error
+});
+
+
+$SsrfErrorCopyWith<$Res> get error;
+
+}
+/// @nodoc
+class _$AlefBridgeErrorWire_SsrfErrorCopyWithImpl<$Res>
+    implements $AlefBridgeErrorWire_SsrfErrorCopyWith<$Res> {
+  _$AlefBridgeErrorWire_SsrfErrorCopyWithImpl(this._self, this._then);
+
+  final AlefBridgeErrorWire_SsrfError _self;
+  final $Res Function(AlefBridgeErrorWire_SsrfError) _then;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? error = null,}) {
+  return _then(AlefBridgeErrorWire_SsrfError(
+error: null == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as SsrfError,
+  ));
+}
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SsrfErrorCopyWith<$Res> get error {
+
+  return $SsrfErrorCopyWith<$Res>(_self.error, (value) {
+    return _then(_self.copyWith(error: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefBridgeErrorWire_InvalidInput extends AlefBridgeErrorWire {
+  const AlefBridgeErrorWire_InvalidInput({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefBridgeErrorWire_InvalidInputCopyWith<AlefBridgeErrorWire_InvalidInput> get copyWith => _$AlefBridgeErrorWire_InvalidInputCopyWithImpl<AlefBridgeErrorWire_InvalidInput>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefBridgeErrorWire_InvalidInput&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'AlefBridgeErrorWire.invalidInput(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefBridgeErrorWire_InvalidInputCopyWith<$Res> implements $AlefBridgeErrorWireCopyWith<$Res> {
+  factory $AlefBridgeErrorWire_InvalidInputCopyWith(AlefBridgeErrorWire_InvalidInput value, $Res Function(AlefBridgeErrorWire_InvalidInput) _then) = _$AlefBridgeErrorWire_InvalidInputCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$AlefBridgeErrorWire_InvalidInputCopyWithImpl<$Res>
+    implements $AlefBridgeErrorWire_InvalidInputCopyWith<$Res> {
+  _$AlefBridgeErrorWire_InvalidInputCopyWithImpl(this._self, this._then);
+
+  final AlefBridgeErrorWire_InvalidInput _self;
+  final $Res Function(AlefBridgeErrorWire_InvalidInput) _then;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(AlefBridgeErrorWire_InvalidInput(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class AlefBridgeErrorWire_NativeFailure extends AlefBridgeErrorWire {
+  const AlefBridgeErrorWire_NativeFailure({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefBridgeErrorWire_NativeFailureCopyWith<AlefBridgeErrorWire_NativeFailure> get copyWith => _$AlefBridgeErrorWire_NativeFailureCopyWithImpl<AlefBridgeErrorWire_NativeFailure>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefBridgeErrorWire_NativeFailure&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'AlefBridgeErrorWire.nativeFailure(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefBridgeErrorWire_NativeFailureCopyWith<$Res> implements $AlefBridgeErrorWireCopyWith<$Res> {
+  factory $AlefBridgeErrorWire_NativeFailureCopyWith(AlefBridgeErrorWire_NativeFailure value, $Res Function(AlefBridgeErrorWire_NativeFailure) _then) = _$AlefBridgeErrorWire_NativeFailureCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$AlefBridgeErrorWire_NativeFailureCopyWithImpl<$Res>
+    implements $AlefBridgeErrorWire_NativeFailureCopyWith<$Res> {
+  _$AlefBridgeErrorWire_NativeFailureCopyWithImpl(this._self, this._then);
+
+  final AlefBridgeErrorWire_NativeFailure _self;
+  final $Res Function(AlefBridgeErrorWire_NativeFailure) _then;
+
+/// Create a copy of AlefBridgeErrorWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(AlefBridgeErrorWire_NativeFailure(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
 mixin _$AuthConfig {
 
 
@@ -556,7 +1018,7 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message,  PlatformInt64 status,  String body)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  conversionFailed,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String message)?  tooManyRedirects,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message,  PlatformInt64? status,  String? body)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  conversionFailed,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String message)?  tooManyRedirects,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
@@ -597,7 +1059,7 @@ return other(_that.message);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message,  PlatformInt64 status,  String body)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  conversionFailed,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String message)  tooManyRedirects,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message,  PlatformInt64? status,  String? body)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  conversionFailed,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String message)  tooManyRedirects,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound():
 return notFound(_that.message);case CrawlError_Unauthorized():
@@ -634,7 +1096,7 @@ return other(_that.message);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message,  PlatformInt64 status,  String body)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  conversionFailed,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String message)?  tooManyRedirects,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message,  PlatformInt64? status,  String? body)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  conversionFailed,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String message)?  tooManyRedirects,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
 return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
@@ -873,13 +1335,13 @@ as String,
 
 
 class CrawlError_WafBlocked extends CrawlError {
-  const CrawlError_WafBlocked({required this.vendor, required this.message, required this.status, required this.body}): super._();
+  const CrawlError_WafBlocked({required this.vendor, required this.message, this.status, this.body}): super._();
 
 
  final  String vendor;
  final  String message;
- final  PlatformInt64 status;
- final  String body;
+ final  PlatformInt64? status;
+ final  String? body;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -913,7 +1375,7 @@ abstract mixin class $CrawlError_WafBlockedCopyWith<$Res> implements $CrawlError
   factory $CrawlError_WafBlockedCopyWith(CrawlError_WafBlocked value, $Res Function(CrawlError_WafBlocked) _then) = _$CrawlError_WafBlockedCopyWithImpl;
 @useResult
 $Res call({
- String vendor, String message, PlatformInt64 status, String body
+ String vendor, String message, PlatformInt64? status, String? body
 });
 
 
@@ -930,13 +1392,13 @@ class _$CrawlError_WafBlockedCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? vendor = null,Object? message = null,Object? status = null,Object? body = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? vendor = null,Object? message = null,Object? status = freezed,Object? body = freezed,}) {
   return _then(CrawlError_WafBlocked(
 vendor: null == vendor ? _self.vendor : vendor // ignore: cast_nullable_to_non_nullable
 as String,message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
-as String,status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
-as PlatformInt64,body: null == body ? _self.body : body // ignore: cast_nullable_to_non_nullable
-as String,
+as String,status: freezed == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
+as PlatformInt64?,body: freezed == body ? _self.body : body // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 
@@ -3014,7 +3476,7 @@ return scrape(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String selector)?  click,TResult Function( String selector,  String text)?  typeText,TResult Function( String key)?  press,TResult Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)?  scroll,TResult Function( PlatformInt64 milliseconds,  String selector)?  wait,TResult Function( bool fullPage)?  screenshot,TResult Function( String script)?  executeJs,TResult Function()?  scrape,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String selector)?  click,TResult Function( String selector,  String text)?  typeText,TResult Function( String key)?  press,TResult Function( ScrollDirection direction,  String? selector,  PlatformInt64? amount)?  scroll,TResult Function( PlatformInt64? milliseconds,  String? selector)?  wait,TResult Function( bool? fullPage)?  screenshot,TResult Function( String script)?  executeJs,TResult Function()?  scrape,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case PageAction_Click() when click != null:
 return click(_that.selector);case PageAction_TypeText() when typeText != null:
@@ -3042,7 +3504,7 @@ return scrape();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String selector)  click,required TResult Function( String selector,  String text)  typeText,required TResult Function( String key)  press,required TResult Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)  scroll,required TResult Function( PlatformInt64 milliseconds,  String selector)  wait,required TResult Function( bool fullPage)  screenshot,required TResult Function( String script)  executeJs,required TResult Function()  scrape,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String selector)  click,required TResult Function( String selector,  String text)  typeText,required TResult Function( String key)  press,required TResult Function( ScrollDirection direction,  String? selector,  PlatformInt64? amount)  scroll,required TResult Function( PlatformInt64? milliseconds,  String? selector)  wait,required TResult Function( bool? fullPage)  screenshot,required TResult Function( String script)  executeJs,required TResult Function()  scrape,}) {final _that = this;
 switch (_that) {
 case PageAction_Click():
 return click(_that.selector);case PageAction_TypeText():
@@ -3066,7 +3528,7 @@ return scrape();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String selector)?  click,TResult? Function( String selector,  String text)?  typeText,TResult? Function( String key)?  press,TResult? Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)?  scroll,TResult? Function( PlatformInt64 milliseconds,  String selector)?  wait,TResult? Function( bool fullPage)?  screenshot,TResult? Function( String script)?  executeJs,TResult? Function()?  scrape,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String selector)?  click,TResult? Function( String selector,  String text)?  typeText,TResult? Function( String key)?  press,TResult? Function( ScrollDirection direction,  String? selector,  PlatformInt64? amount)?  scroll,TResult? Function( PlatformInt64? milliseconds,  String? selector)?  wait,TResult? Function( bool? fullPage)?  screenshot,TResult? Function( String script)?  executeJs,TResult? Function()?  scrape,}) {final _that = this;
 switch (_that) {
 case PageAction_Click() when click != null:
 return click(_that.selector);case PageAction_TypeText() when typeText != null:
@@ -3298,15 +3760,15 @@ as String,
 
 
 class PageAction_Scroll extends PageAction {
-  const PageAction_Scroll({required this.direction, required this.selector, required this.amount}): super._();
+  const PageAction_Scroll({required this.direction, this.selector, this.amount}): super._();
 
 
 /// Direction to scroll.
  final  ScrollDirection direction;
 /// Optional CSS selector for a scrollable element. Scrolls the page if absent.
- final  String selector;
+ final  String? selector;
 /// Optional pixel amount to scroll. Uses a default if absent.
- final  PlatformInt64 amount;
+ final  PlatformInt64? amount;
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
@@ -3340,7 +3802,7 @@ abstract mixin class $PageAction_ScrollCopyWith<$Res> implements $PageActionCopy
   factory $PageAction_ScrollCopyWith(PageAction_Scroll value, $Res Function(PageAction_Scroll) _then) = _$PageAction_ScrollCopyWithImpl;
 @useResult
 $Res call({
- ScrollDirection direction, String selector, PlatformInt64 amount
+ ScrollDirection direction, String? selector, PlatformInt64? amount
 });
 
 
@@ -3357,12 +3819,12 @@ class _$PageAction_ScrollCopyWithImpl<$Res>
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? direction = null,Object? selector = null,Object? amount = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? direction = null,Object? selector = freezed,Object? amount = freezed,}) {
   return _then(PageAction_Scroll(
 direction: null == direction ? _self.direction : direction // ignore: cast_nullable_to_non_nullable
-as ScrollDirection,selector: null == selector ? _self.selector : selector // ignore: cast_nullable_to_non_nullable
-as String,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
-as PlatformInt64,
+as ScrollDirection,selector: freezed == selector ? _self.selector : selector // ignore: cast_nullable_to_non_nullable
+as String?,amount: freezed == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
+as PlatformInt64?,
   ));
 }
 
@@ -3373,13 +3835,13 @@ as PlatformInt64,
 
 
 class PageAction_Wait extends PageAction {
-  const PageAction_Wait({required this.milliseconds, required this.selector}): super._();
+  const PageAction_Wait({this.milliseconds, this.selector}): super._();
 
 
 /// Milliseconds to wait. Ignored if `selector` is provided.
- final  PlatformInt64 milliseconds;
+ final  PlatformInt64? milliseconds;
 /// CSS selector to wait for.
- final  String selector;
+ final  String? selector;
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
@@ -3413,7 +3875,7 @@ abstract mixin class $PageAction_WaitCopyWith<$Res> implements $PageActionCopyWi
   factory $PageAction_WaitCopyWith(PageAction_Wait value, $Res Function(PageAction_Wait) _then) = _$PageAction_WaitCopyWithImpl;
 @useResult
 $Res call({
- PlatformInt64 milliseconds, String selector
+ PlatformInt64? milliseconds, String? selector
 });
 
 
@@ -3430,11 +3892,11 @@ class _$PageAction_WaitCopyWithImpl<$Res>
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? milliseconds = null,Object? selector = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? milliseconds = freezed,Object? selector = freezed,}) {
   return _then(PageAction_Wait(
-milliseconds: null == milliseconds ? _self.milliseconds : milliseconds // ignore: cast_nullable_to_non_nullable
-as PlatformInt64,selector: null == selector ? _self.selector : selector // ignore: cast_nullable_to_non_nullable
-as String,
+milliseconds: freezed == milliseconds ? _self.milliseconds : milliseconds // ignore: cast_nullable_to_non_nullable
+as PlatformInt64?,selector: freezed == selector ? _self.selector : selector // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 
@@ -3445,7 +3907,7 @@ as String,
 
 
 class PageAction_Screenshot extends PageAction {
-  const PageAction_Screenshot({required this.fullPage}): super._();
+  const PageAction_Screenshot({this.fullPage}): super._();
 
 
 /// Whether to capture the full scrollable page. Defaults to viewport only.
@@ -3453,7 +3915,7 @@ class PageAction_Screenshot extends PageAction {
 /// Accepts both the canonical `fullPage` (camelCase) form and the
 /// `full_page` (snake_case) alias so language bindings and fixtures can
 /// use either convention without error.
- final  bool fullPage;
+ final  bool? fullPage;
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
@@ -3487,7 +3949,7 @@ abstract mixin class $PageAction_ScreenshotCopyWith<$Res> implements $PageAction
   factory $PageAction_ScreenshotCopyWith(PageAction_Screenshot value, $Res Function(PageAction_Screenshot) _then) = _$PageAction_ScreenshotCopyWithImpl;
 @useResult
 $Res call({
- bool fullPage
+ bool? fullPage
 });
 
 
@@ -3504,10 +3966,10 @@ class _$PageAction_ScreenshotCopyWithImpl<$Res>
 
 /// Create a copy of PageAction
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? fullPage = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? fullPage = freezed,}) {
   return _then(PageAction_Screenshot(
-fullPage: null == fullPage ? _self.fullPage : fullPage // ignore: cast_nullable_to_non_nullable
-as bool,
+fullPage: freezed == fullPage ? _self.fullPage : fullPage // ignore: cast_nullable_to_non_nullable
+as bool?,
   ));
 }
 

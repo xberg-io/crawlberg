@@ -348,6 +348,9 @@ public func sitemapUrlFromJson<GenericIntoRustString: IntoRustString>(_ json: Ge
 public func ssrfPolicyFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> SsrfPolicy {
     try { let val = __swift_bridge__$ssrf_policy_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return SsrfPolicy(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
+public func wafBlockDetailsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> WafBlockDetails {
+    try { let val = __swift_bridge__$waf_block_details_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return WafBlockDetails(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func assetCategoryFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> AssetCategory {
     try { let val = __swift_bridge__$asset_category_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AssetCategory(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -494,6 +497,9 @@ public func __alef_phantom_vec_sitemap_url() -> RustVec<SitemapUrl> {
 }
 public func __alef_phantom_vec_ssrf_policy() -> RustVec<SsrfPolicy> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_ssrf_policy())
+}
+public func __alef_phantom_vec_waf_block_details() -> RustVec<WafBlockDetails> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_waf_block_details())
 }
 public func __alef_phantom_vec_asset_category() -> RustVec<AssetCategory> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_asset_category())
@@ -1233,8 +1239,8 @@ extension BrowserConfig {
     }
 }
 extension BrowserConfig {
-    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ mode: BrowserMode, _ backend: BrowserBackend, _ endpoint: Optional<GenericIntoRustString>, _ timeout: UInt64, _ overall_timeout: UInt64, _ shutdown_timeout: UInt64, _ wait: BrowserWait, _ wait_selector: Optional<GenericIntoRustString>, _ extra_wait: Optional<UInt64>, _ proxy: Optional<ProxyConfig>, _ block_url_patterns: RustVec<GenericIntoRustString>, _ eval_script: Optional<GenericIntoRustString>, _ robots_user_agent: Optional<GenericIntoRustString>, _ capture_network_events: Bool, _ session_affinity: Bool, _ chrome_path: Optional<GenericIntoRustString>, _ chrome_args: RustVec<GenericIntoRustString>, _ scroll_containers: Bool) -> BrowserConfig {
-        BrowserConfig(ptr: __swift_bridge__$BrowserConfig$new_with_fields({mode.isOwned = false; return mode.ptr;}(), {backend.isOwned = false; return backend.ptr;}(), { if let rustString = optionalStringIntoRustString(endpoint) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), timeout, overall_timeout, shutdown_timeout, {wait.isOwned = false; return wait.ptr;}(), { if let rustString = optionalStringIntoRustString(wait_selector) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), extra_wait.intoFfiRepr(), { if let val = proxy { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = block_url_patterns; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(eval_script) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(robots_user_agent) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), capture_network_events, session_affinity, { if let rustString = optionalStringIntoRustString(chrome_path) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { let val = chrome_args; val.isOwned = false; return val.ptr }(), scroll_containers))
+    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ mode: BrowserMode, _ backend: BrowserBackend, _ endpoint: Optional<GenericIntoRustString>, _ timeout: UInt64, _ overall_timeout: UInt64, _ shutdown_timeout: UInt64, _ wait: BrowserWait, _ wait_selector: Optional<GenericIntoRustString>, _ extra_wait: Optional<UInt64>, _ proxy: Optional<ProxyConfig>, _ block_url_patterns: RustVec<GenericIntoRustString>, _ eval_script: Optional<GenericIntoRustString>, _ robots_user_agent: Optional<GenericIntoRustString>, _ capture_network_events: Bool, _ session_affinity: Bool, _ chrome_path: Optional<GenericIntoRustString>, _ chrome_args: RustVec<GenericIntoRustString>, _ scroll_containers: Bool, _ dom_quiet_window: UInt64) -> BrowserConfig {
+        BrowserConfig(ptr: __swift_bridge__$BrowserConfig$new_with_fields({mode.isOwned = false; return mode.ptr;}(), {backend.isOwned = false; return backend.ptr;}(), { if let rustString = optionalStringIntoRustString(endpoint) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), timeout, overall_timeout, shutdown_timeout, {wait.isOwned = false; return wait.ptr;}(), { if let rustString = optionalStringIntoRustString(wait_selector) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), extra_wait.intoFfiRepr(), { if let val = proxy { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = block_url_patterns; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(eval_script) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(robots_user_agent) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), capture_network_events, session_affinity, { if let rustString = optionalStringIntoRustString(chrome_path) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { let val = chrome_args; val.isOwned = false; return val.ptr }(), scroll_containers, dom_quiet_window))
     }
 }
 public class BrowserConfigRefMut: BrowserConfigRef {
@@ -1320,6 +1326,10 @@ extension BrowserConfigRef {
 
     public func scrollContainers() -> Bool {
         __swift_bridge__$BrowserConfig$scroll_containers(ptr)
+    }
+
+    public func domQuietWindow() -> UInt64 {
+        __swift_bridge__$BrowserConfig$dom_quiet_window(ptr)
     }
 }
 extension BrowserConfig: Vectorizable {
@@ -2155,6 +2165,10 @@ extension CrawlConfigRef {
     public func ssrfDenyPrivateExplicit() -> Optional<Bool> {
         __swift_bridge__$CrawlConfig$ssrf_deny_private_explicit(ptr).intoSwiftRepr()
     }
+
+    public func dangerAcceptInvalidCerts() -> Bool {
+        __swift_bridge__$CrawlConfig$danger_accept_invalid_certs(ptr)
+    }
 }
 extension CrawlConfig: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
@@ -2418,6 +2432,11 @@ extension CrawlResult {
         self.init(ptr: __swift_bridge__$CrawlResult$new({ let val = pages; val.isOwned = false; return val.ptr }(), { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), redirect_count, was_skipped, { if let rustString = optionalStringIntoRustString(error) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { let val = cookies; val.isOwned = false; return val.ptr }(), stayed_on_domain, browser_used))
     }
 }
+extension CrawlResult {
+    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ pages: RustVec<CrawlPageResult>, _ final_url: GenericIntoRustString, _ redirect_count: UInt, _ was_skipped: Bool, _ error: Optional<GenericIntoRustString>, _ cookies: RustVec<CookieInfo>, _ stayed_on_domain: Bool, _ browser_used: Bool, _ waf_block: Optional<WafBlockDetails>) -> CrawlResult {
+        CrawlResult(ptr: __swift_bridge__$CrawlResult$new_with_fields({ let val = pages; val.isOwned = false; return val.ptr }(), { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), redirect_count, was_skipped, { if let rustString = optionalStringIntoRustString(error) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { let val = cookies; val.isOwned = false; return val.ptr }(), stayed_on_domain, browser_used, { if let val = waf_block { val.isOwned = false; return val.ptr } else { return nil } }()))
+    }
+}
 public class CrawlResultRefMut: CrawlResultRef {
     public override init(ptr: UnsafeMutableRawPointer) {
         super.init(ptr: ptr)
@@ -2461,6 +2480,10 @@ extension CrawlResultRef {
 
     public func browserUsed() -> Bool {
         __swift_bridge__$CrawlResult$browser_used(ptr)
+    }
+
+    public func wafBlock() -> Optional<WafBlockDetails> {
+        { let val = __swift_bridge__$CrawlResult$waf_block(ptr); if val != nil { return WafBlockDetails(ptr: val!) } else { return nil } }()
     }
 }
 extension CrawlResult: Vectorizable {
@@ -4724,6 +4747,99 @@ extension SsrfPolicy: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_SsrfPolicy$len(vecPtr)
+    }
+}
+
+
+public class WafBlockDetails: WafBlockDetailsRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$WafBlockDetails$_free(ptr)
+        }
+    }
+}
+extension WafBlockDetails {
+    public convenience init<GenericIntoRustString: IntoRustString>(_ vendor: GenericIntoRustString, _ status: Optional<UInt16>, _ body_prefix: Optional<GenericIntoRustString>) {
+        self.init(ptr: __swift_bridge__$WafBlockDetails$new({ let rustString = vendor.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), status.intoFfiRepr(), { if let rustString = optionalStringIntoRustString(body_prefix) { rustString.isOwned = false; return rustString.ptr } else { return nil } }()))
+    }
+}
+public class WafBlockDetailsRefMut: WafBlockDetailsRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class WafBlockDetailsRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension WafBlockDetailsRef {
+    public func vendor() -> RustString {
+        RustString(ptr: __swift_bridge__$WafBlockDetails$vendor(ptr))
+    }
+
+    public func status() -> Optional<UInt16> {
+        __swift_bridge__$WafBlockDetails$status(ptr).intoSwiftRepr()
+    }
+
+    public func bodyPrefix() -> Optional<RustString> {
+        { let val = __swift_bridge__$WafBlockDetails$body_prefix(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+}
+extension WafBlockDetails: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_WafBlockDetails$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_WafBlockDetails$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: WafBlockDetails) {
+        __swift_bridge__$Vec_WafBlockDetails$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_WafBlockDetails$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (WafBlockDetails(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<WafBlockDetailsRef> {
+        let pointer = __swift_bridge__$Vec_WafBlockDetails$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return WafBlockDetailsRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<WafBlockDetailsRefMut> {
+        let pointer = __swift_bridge__$Vec_WafBlockDetails$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return WafBlockDetailsRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<WafBlockDetailsRef> {
+        UnsafePointer<WafBlockDetailsRef>(OpaquePointer(__swift_bridge__$Vec_WafBlockDetails$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_WafBlockDetails$len(vecPtr)
     }
 }
 
