@@ -2070,6 +2070,8 @@ enum ChildPendingKind {
         session: String,
         waiting_for_debugger: bool,
         structural_parent: Option<String>,
+        #[cfg(test)]
+        target_type: String,
     },
     StructuralArm {
         session: String,
@@ -2350,6 +2352,8 @@ fn trace_rejected_recursive_arm(
     target: &TargetId,
     root_waiter: bool,
     cdp_error_code: Option<i64>,
+    target_type: &str,
+    structural_parent: bool,
 ) {
     let registry = lock(&shared.registry);
     let ownership = match registry.ownership.get(target) {
@@ -2363,6 +2367,8 @@ fn trace_rejected_recursive_arm(
     };
     tracing::info!(
         cdp_error_code,
+        target_type,
+        structural_parent,
         context_present = context.is_some(),
         context_registered = context.is_some_and(|context| registry.contexts.contains_key(context)),
         context_retired = context.is_some_and(|context| child_context_retired(&registry, context)),
@@ -2669,6 +2675,8 @@ where
                             session,
                             waiting_for_debugger,
                             structural_parent,
+                            #[cfg(test)]
+                            target_type,
                         } => {
                             if !acknowledged {
                                 #[cfg(test)]
@@ -2678,6 +2686,8 @@ where
                                     &target,
                                     root_waiters.get(&target).is_some_and(|waiter| !waiter.is_closed()),
                                     value["error"]["code"].as_i64(),
+                                    &target_type,
+                                    structural_parent.is_some(),
                                 );
                                 if let Some(waiter) = root_waiters.remove(&target) {
                                     let _ = waiter.send(Err(format!(
@@ -3149,6 +3159,8 @@ where
                             session: attached.session_id,
                             waiting_for_debugger: attached.waiting_for_debugger,
                             structural_parent,
+                            #[cfg(test)]
+                            target_type: attached.target_info.r#type.clone(),
                         },
                         attached.target_info.browser_context_id,
                     ),

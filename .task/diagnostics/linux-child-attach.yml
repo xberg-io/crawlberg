@@ -1,0 +1,14 @@
+version: "3"
+tasks:
+  build:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - python3 scripts/ci/linux-child-attach.py --mode build
+  probe:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - python3 scripts/ci/linux-child-attach.py --mode probe
+  self-test:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - python3 scripts/ci/linux-child-attach.py --mode self-test
