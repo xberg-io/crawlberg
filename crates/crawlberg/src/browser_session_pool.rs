@@ -104,6 +104,7 @@ enum PolicyNamespace {
 struct PoolEntryKey {
     session: SessionKey,
     policy: PolicyNamespace,
+    accept_invalid_certs: bool,
 }
 
 impl PoolEntryKey {
@@ -111,13 +112,15 @@ impl PoolEntryKey {
         Self {
             session,
             policy: PolicyNamespace::Public,
+            accept_invalid_certs: false,
         }
     }
 
-    fn with_policy(session: SessionKey, policy: &SsrfPolicy) -> Self {
+    fn with_policy(session: SessionKey, policy: &SsrfPolicy, accept_invalid_certs: bool) -> Self {
         Self {
             session,
             policy: PolicyNamespace::Protected(policy.into()),
+            accept_invalid_certs,
         }
     }
 }
@@ -214,12 +217,14 @@ impl BrowserSessionPool {
         &self,
         key: &SessionKey,
         policy: &SsrfPolicy,
+        accept_invalid_certs: bool,
     ) -> Option<(
         chromiumoxide::Page,
         Option<OwnedSemaphorePermit>,
         Option<crate::browser_pool::HandlerEnd>,
     )> {
-        self.acquire_entry(PoolEntryKey::with_policy(key.clone(), policy)).await
+        self.acquire_entry(PoolEntryKey::with_policy(key.clone(), policy, accept_invalid_certs))
+            .await
     }
 
     async fn acquire_entry(
@@ -249,12 +254,18 @@ impl BrowserSessionPool {
         &self,
         key: SessionKey,
         policy: &SsrfPolicy,
+        accept_invalid_certs: bool,
         page: chromiumoxide::Page,
         permit: Option<OwnedSemaphorePermit>,
         handler_end: Option<crate::browser_pool::HandlerEnd>,
     ) {
-        self.insert_entry(PoolEntryKey::with_policy(key, policy), page, permit, handler_end)
-            .await;
+        self.insert_entry(
+            PoolEntryKey::with_policy(key, policy, accept_invalid_certs),
+            page,
+            permit,
+            handler_end,
+        )
+        .await;
     }
 
     async fn insert_entry(
@@ -420,8 +431,8 @@ mod tests {
         permissive.deny_private = false;
 
         let session = SessionKey::from_url("https://example.com/path", None).unwrap();
-        let strict_key = PoolEntryKey::with_policy(session.clone(), &strict);
-        let permissive_key = PoolEntryKey::with_policy(session, &permissive);
+        let strict_key = PoolEntryKey::with_policy(session.clone(), &strict, false);
+        let permissive_key = PoolEntryKey::with_policy(session, &permissive, false);
 
         assert_ne!(strict_key, permissive_key);
     }
@@ -430,7 +441,7 @@ mod tests {
     fn should_include_every_effective_ssrf_policy_field_in_the_session_key() {
         let baseline = crate::net::ssrf::SsrfPolicy::default();
         let session = SessionKey::from_url("https://example.com/path", None).unwrap();
-        let baseline_key = PoolEntryKey::with_policy(session.clone(), &baseline);
+        let baseline_key = PoolEntryKey::with_policy(session.clone(), &baseline, false);
 
         let mut policies = Vec::new();
 
@@ -455,7 +466,7 @@ mod tests {
         policies.push(schemes);
 
         for policy in policies {
-            let key = PoolEntryKey::with_policy(session.clone(), &policy);
+            let key = PoolEntryKey::with_policy(session.clone(), &policy, false);
             assert_ne!(baseline_key, key);
         }
     }
@@ -464,9 +475,18 @@ mod tests {
     fn should_isolate_the_source_compatible_public_pool_namespace_from_policy_aware_entries() {
         let session = SessionKey::from_url("https://example.com/path", None).unwrap();
         let public_key = PoolEntryKey::public(session.clone());
-        let protected_key = PoolEntryKey::with_policy(session, &crate::net::ssrf::SsrfPolicy::default());
+        let protected_key = PoolEntryKey::with_policy(session, &crate::net::ssrf::SsrfPolicy::default(), false);
 
         assert_ne!(public_key, protected_key);
+    }
+
+    #[test]
+    fn should_not_reuse_a_session_across_different_tls_policies() {
+        let policy = crate::net::ssrf::SsrfPolicy::default();
+        let session = SessionKey::from_url("https://example.com/path", None).expect("URL");
+        let strict = PoolEntryKey::with_policy(session.clone(), &policy, false);
+        let bypass = PoolEntryKey::with_policy(session, &policy, true);
+        assert_ne!(strict, bypass);
     }
 
     #[test]

@@ -403,6 +403,7 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
+#[cfg(test)]
 fn build_request_client(
     proxy: Option<&crate::net::proxy::UpstreamProxy>,
     ssrf: &Arc<dyn SsrfValidator>,
@@ -411,14 +412,27 @@ fn build_request_client(
     build_request_client_with_selector(proxy, ssrf, url, &EnvironmentSystemProxySelector)
 }
 
+#[cfg(test)]
 fn build_request_client_with_selector(
     proxy: Option<&crate::net::proxy::UpstreamProxy>,
     ssrf: &Arc<dyn SsrfValidator>,
     url: &url::Url,
     selector: &dyn SystemProxySelector,
 ) -> Result<reqwest::Client, String> {
+    build_request_client_with_tls(proxy, ssrf, url, selector, false)
+}
+
+fn build_request_client_with_tls(
+    proxy: Option<&crate::net::proxy::UpstreamProxy>,
+    ssrf: &Arc<dyn SsrfValidator>,
+    url: &url::Url,
+    selector: &dyn SystemProxySelector,
+    danger_accept_invalid_certs: bool,
+) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
-    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    let builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(danger_accept_invalid_certs);
     let (builder, route) = reqwest_builder_and_route_for_url(builder, url, proxy, selector, ssrf)
         .map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
     if route.resolves_target_remotely() {
@@ -486,8 +500,14 @@ async fn op_fetch_url(
 
     if cors.needs_preflight(&mode) {
         let parsed_url = url::Url::parse(&url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
-        let client = build_request_client(context.proxy.as_ref(), &ssrf, &parsed_url)
-            .map_err(deno_error::JsErrorBox::generic)?;
+        let client = build_request_client_with_tls(
+            context.proxy.as_ref(),
+            &ssrf,
+            &parsed_url,
+            &EnvironmentSystemProxySelector,
+            context.danger_accept_invalid_certs,
+        )
+        .map_err(deno_error::JsErrorBox::generic)?;
         send_preflight(&client, &url, &method, &cors).await?;
     }
 
@@ -573,6 +593,7 @@ struct FetchContext {
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
     proxy: Option<crate::net::proxy::UpstreamProxy>,
     origin_headers: Option<OriginHeaders>,
+    danger_accept_invalid_certs: bool,
 }
 
 /// `None` when `url` matches one of the page's blocked-URL patterns.
@@ -608,6 +629,10 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
         intercept,
         proxy: gs.http_client.as_ref().and_then(|c| c.proxy().cloned()),
         origin_headers: gs.origin_headers(),
+        danger_accept_invalid_certs: gs
+            .http_client
+            .as_ref()
+            .is_some_and(|client| client.danger_accept_invalid_certs),
     })
 }
 
@@ -847,8 +872,14 @@ async fn send_one_hop(
     system_proxy_selector: &dyn SystemProxySelector,
 ) -> Result<reqwest::Response, deno_error::JsErrorBox> {
     let parsed = url::Url::parse(current_url).map_err(|e| deno_error::JsErrorBox::type_error(e.to_string()))?;
-    let client = build_request_client_with_selector(context.proxy.as_ref(), ssrf, &parsed, system_proxy_selector)
-        .map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client_with_tls(
+        context.proxy.as_ref(),
+        ssrf,
+        &parsed,
+        system_proxy_selector,
+        context.danger_accept_invalid_certs,
+    )
+    .map_err(deno_error::JsErrorBox::generic)?;
     let mut req = client.request(method.clone(), current_url);
 
     if cors.is_cross_origin {
@@ -1151,6 +1182,7 @@ mod tests {
             intercept: None,
             proxy: None,
             origin_headers: None,
+            danger_accept_invalid_certs: false,
         };
         let cors = CorsContext::new("http://origin.test/start", "http://origin.test", "GET", "{}");
 

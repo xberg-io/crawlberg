@@ -130,6 +130,10 @@ impl ModuleLoader for BrowserModuleLoader {
             return ModuleLoadResponse::Sync(Err(io_err(format!("Module {} refused: page state is busy", url))));
         };
         let origin_headers = state.origin_headers();
+        let danger_accept_invalid_certs = state
+            .http_client
+            .as_ref()
+            .is_some_and(|client| client.danger_accept_invalid_certs);
         let block_patterns = state.intercept_block_patterns.clone();
         let user_agent = state.user_agent.clone();
         let cookie_jar = state.cookie_jar.clone();
@@ -151,7 +155,9 @@ impl ModuleLoader for BrowserModuleLoader {
                 }
                 // ~keep Build per hop: a redirect can cross a `NO_PROXY` boundary, and the
                 // resolver must follow the selected route for that hop.
-                let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+                let builder = reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .danger_accept_invalid_certs(danger_accept_invalid_certs);
                 let (builder, route) = reqwest_builder_and_route_for_url(
                     builder,
                     &current,

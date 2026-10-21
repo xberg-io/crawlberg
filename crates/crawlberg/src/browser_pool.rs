@@ -1331,6 +1331,7 @@ fn build_pool_launch_builder(
     config: &BrowserPoolConfig,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = BrowserConfig::builder()
+        .respect_https_errors()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
@@ -2451,7 +2452,7 @@ impl BrowserPool {
         let (page, watch) = tokio::time::timeout(PAGE_OPEN_TIMEOUT, async {
             let page = browser
                 .firewall
-                .new_page_with_policy(proxy, sockets, &config.ssrf)
+                .new_page_with_policy(proxy, sockets, &config.ssrf, config.danger_accept_invalid_certs)
                 .await?;
             phase = PageOpenPhase::ArmWatch;
             let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;

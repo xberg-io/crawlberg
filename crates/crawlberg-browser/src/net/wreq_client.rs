@@ -36,6 +36,7 @@ const MAX_ENVIRONMENT_PROXY_CLIENTS: usize = 64;
 pub struct StealthHttpClient {
     client: wreq::Client,
     explicit_proxy: bool,
+    danger_accept_invalid_certs: bool,
     environment_clients: std::sync::Mutex<HashMap<SystemProxyIdentity, wreq::Client>>,
     system_proxy_selector: Arc<dyn SystemProxySelector>,
     /// SSRF policy applied to the initial URL and every redirect hop.
@@ -55,6 +56,7 @@ impl StealthHttpClient {
             None,
             Arc::new(DefaultSsrfValidator::from_env()),
             Arc::new(EnvironmentSystemProxySelector),
+            false,
         )
     }
 
@@ -77,12 +79,22 @@ impl StealthHttpClient {
         proxy: Option<&crate::net::proxy::UpstreamProxy>,
         ssrf: Arc<dyn SsrfValidator>,
     ) -> Result<Self, NetError> {
+        Self::with_ssrf_and_tls(cookie_jar, proxy, ssrf, false)
+    }
+
+    pub(crate) fn with_ssrf_and_tls(
+        cookie_jar: Arc<CookieJar>,
+        proxy: Option<&crate::net::proxy::UpstreamProxy>,
+        ssrf: Arc<dyn SsrfValidator>,
+        danger_accept_invalid_certs: bool,
+    ) -> Result<Self, NetError> {
         let proxy = proxy.map(crate::net::proxy::UpstreamProxy::wreq_proxy).transpose()?;
         Ok(Self::build(
             cookie_jar,
             proxy,
             ssrf,
             Arc::new(EnvironmentSystemProxySelector),
+            danger_accept_invalid_certs,
         ))
     }
 
@@ -92,7 +104,7 @@ impl StealthHttpClient {
         ssrf: Arc<dyn SsrfValidator>,
         selector: Arc<dyn SystemProxySelector>,
     ) -> Self {
-        Self::build(cookie_jar, None, ssrf, selector)
+        Self::build(cookie_jar, None, ssrf, selector, false)
     }
 
     fn build(
@@ -100,13 +112,15 @@ impl StealthHttpClient {
         proxy: Option<wreq::Proxy>,
         ssrf: Arc<dyn SsrfValidator>,
         system_proxy_selector: Arc<dyn SystemProxySelector>,
+        danger_accept_invalid_certs: bool,
     ) -> Self {
         let explicit_proxy = proxy.is_some();
-        let client = Self::build_client(proxy, &ssrf);
+        let client = Self::build_client(proxy, &ssrf, danger_accept_invalid_certs);
 
         StealthHttpClient {
             client,
             explicit_proxy,
+            danger_accept_invalid_certs,
             environment_clients: std::sync::Mutex::new(HashMap::new()),
             system_proxy_selector,
             ssrf,
@@ -117,7 +131,11 @@ impl StealthHttpClient {
         }
     }
 
-    fn build_client(proxy: Option<wreq::Proxy>, ssrf: &Arc<dyn SsrfValidator>) -> wreq::Client {
+    fn build_client(
+        proxy: Option<wreq::Proxy>,
+        ssrf: &Arc<dyn SsrfValidator>,
+        danger_accept_invalid_certs: bool,
+    ) -> wreq::Client {
         let cert_store = wreq::tls::trust::CertStore::builder()
             .set_default_paths()
             .build()
@@ -131,6 +149,8 @@ impl StealthHttpClient {
         let mut builder = wreq::Client::builder()
             .emulation(emulation_opts)
             .tls_cert_store(cert_store)
+            .tls_cert_verification(!danger_accept_invalid_certs)
+            .tls_verify_hostname(!danger_accept_invalid_certs)
             .timeout(Duration::from_secs(30))
             .redirect(wreq::redirect::Policy::none());
 
@@ -165,7 +185,7 @@ impl StealthHttpClient {
         if let Some(client) = clients.get(&identity) {
             return Ok(client.clone());
         }
-        let client = Self::build_client(Some(proxy.wreq_proxy()?), &self.ssrf);
+        let client = Self::build_client(Some(proxy.wreq_proxy()?), &self.ssrf, self.danger_accept_invalid_certs);
         if clients.len() >= MAX_ENVIRONMENT_PROXY_CLIENTS {
             clients.clear();
         }

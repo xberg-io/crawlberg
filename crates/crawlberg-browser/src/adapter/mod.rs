@@ -205,6 +205,8 @@ pub struct NativeBrowserConfig {
     /// Turns the bytes of a document into its text. `None` reads every document as UTF-8, with
     /// a replacement character for each sequence that is not UTF-8.
     pub document_decoder: Option<DocumentDecoder>,
+    /// Accept invalid certificates for every request made by this render.
+    pub danger_accept_invalid_certs: bool,
 }
 
 /// Decodes the bytes of a document. It gets the `Content-Type` header value, the URL and the
@@ -238,6 +240,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             origin_headers,
             max_redirects,
             document_decoder,
+            danger_accept_invalid_certs,
         } = self;
         f.debug_struct("NativeBrowserConfig")
             .field("user_agent", user_agent)
@@ -264,6 +267,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("origin_headers", origin_headers)
             .field("max_redirects", max_redirects)
             .field("document_decoder", &document_decoder.is_some())
+            .field("danger_accept_invalid_certs", danger_accept_invalid_certs)
             .finish()
     }
 }
@@ -291,6 +295,7 @@ impl Default for NativeBrowserConfig {
             origin_headers: None,
             max_redirects: None,
             document_decoder: None,
+            danger_accept_invalid_certs: false,
         }
     }
 }
@@ -601,6 +606,7 @@ async fn create_context_with_cookie_jar(
         ssrf,
         config.allow_file_access,
         cookie_jar,
+        config.danger_accept_invalid_certs,
     )?;
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {

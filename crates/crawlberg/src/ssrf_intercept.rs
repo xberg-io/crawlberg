@@ -34,6 +34,7 @@ use chromiumoxide::cdp::browser_protocol::page::{
     ClientNavigationReason, DialogType, EventFrameNavigated, EventFrameRequestedNavigation, EventFrameStoppedLoading,
     EventJavascriptDialogOpening, FrameId, HandleJavaScriptDialogParams,
 };
+use chromiumoxide::cdp::browser_protocol::security::SetIgnoreCertificateErrorsParams;
 use chromiumoxide::cdp::browser_protocol::storage::{
     GetCookiesParams as StorageGetCookiesParams, SetCookiesParams as StorageSetCookiesParams,
 };
@@ -1392,6 +1393,7 @@ async fn open_page(
     mode: PageContext,
     proxy_server: Option<String>,
     policy: Option<crate::net::ssrf::SsrfPolicy>,
+    accept_invalid_certs: Option<bool>,
 ) -> Result<(chromiumoxide::Page, Option<BrowserContextId>), CrawlError> {
     let stopped = || CrawlError::browser_error("request interception stopped");
     let failed = |error: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {error}"));
@@ -1435,6 +1437,16 @@ async fn open_page(
         }
     };
     let root = page.target_id().clone();
+    // ~keep Chrome caches certificate exceptions in the BrowserContext. Set the policy before
+    // ~keep the first navigation; session reuse must keep contexts isolated by their TLS policy.
+    if let Some(accept) = accept_invalid_certs
+        && let Err(error) = page.execute(SetIgnoreCertificateErrorsParams::new(accept)).await
+    {
+        drop_page(browser, shared, root, context).await;
+        return Err(CrawlError::browser_error(format!(
+            "failed to set browser TLS certificate policy: {error}"
+        )));
+    }
     if commands.send(Command::Opened(root.clone(), context.clone())).is_err() {
         drop_page(browser, shared, root, context).await;
         return Err(stopped());
@@ -1507,8 +1519,10 @@ impl FirewallHandle {
         proxy: Option<&crate::proxy::ChromeProxy>,
         sockets: Option<&crate::net::ssrf::SsrfPolicy>,
         policy: &crate::net::ssrf::SsrfPolicy,
+        accept_invalid_certs: bool,
     ) -> Result<chromiumoxide::Page, CrawlError> {
-        self.new_page_inner(proxy, sockets, Some(policy)).await
+        self.new_page_inner(proxy, sockets, Some(policy), Some(accept_invalid_certs))
+            .await
     }
 
     #[cfg(test)]
@@ -1517,7 +1531,7 @@ impl FirewallHandle {
         proxy: Option<&crate::proxy::ChromeProxy>,
         sockets: Option<&crate::net::ssrf::SsrfPolicy>,
     ) -> Result<chromiumoxide::Page, CrawlError> {
-        self.new_page_inner(proxy, sockets, None).await
+        self.new_page_inner(proxy, sockets, None, None).await
     }
 
     async fn new_page_inner(
@@ -1525,6 +1539,7 @@ impl FirewallHandle {
         proxy: Option<&crate::proxy::ChromeProxy>,
         sockets: Option<&crate::net::ssrf::SsrfPolicy>,
         policy: Option<&crate::net::ssrf::SsrfPolicy>,
+        accept_invalid_certs: Option<bool>,
     ) -> Result<chromiumoxide::Page, CrawlError> {
         let stopped = || CrawlError::browser_error("request interception stopped");
         let browser = self.browser.upgrade().ok_or_else(stopped)?;
@@ -1543,7 +1558,16 @@ impl FirewallHandle {
         let (reply, result) = oneshot::channel();
         tokio::spawn(async move {
             let _opening = opening;
-            let opened = open_page(&browser, &shared, &commands, mode, proxy_server, policy).await;
+            let opened = open_page(
+                &browser,
+                &shared,
+                &commands,
+                mode,
+                proxy_server,
+                policy,
+                accept_invalid_certs,
+            )
+            .await;
             if let Err(Ok((page, context))) = reply.send(opened) {
                 drop_page(&browser, &shared, page.target_id().clone(), context).await;
             }

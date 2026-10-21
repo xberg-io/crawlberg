@@ -86,9 +86,14 @@ impl BrowserContext {
             ssrf,
             allow_file_access,
             Arc::new(CookieJar::new()),
+            false,
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "existing context inputs plus the per-render TLS policy"
+    )]
     pub(crate) fn with_ssrf_and_cookie_jar(
         id: String,
         proxy: Option<UpstreamProxy>,
@@ -97,16 +102,19 @@ impl BrowserContext {
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
         cookie_jar: Arc<CookieJar>,
+        danger_accept_invalid_certs: bool,
     ) -> Result<Self, NetError> {
-        let client = HttpClient::with_ssrf(cookie_jar.clone(), proxy.as_ref(), ssrf, allow_file_access)?;
+        let mut client = HttpClient::with_ssrf(cookie_jar.clone(), proxy.as_ref(), ssrf, allow_file_access)?;
+        client.danger_accept_invalid_certs = danger_accept_invalid_certs;
         // ~keep Share the plain client's SSRF policy: the stealth path is an
         // alternate transport, not an alternate policy.
         #[cfg(feature = "stealth")]
         let stealth_client = if stealth {
-            Some(Arc::new(StealthHttpClient::with_ssrf(
+            Some(Arc::new(StealthHttpClient::with_ssrf_and_tls(
                 cookie_jar.clone(),
                 proxy.as_ref(),
                 client.ssrf.clone(),
+                danger_accept_invalid_certs,
             )?))
         } else {
             None

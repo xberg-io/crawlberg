@@ -22,6 +22,7 @@ impl std::fmt::Debug for CrawlConfig {
             bm25_threshold,
             respect_robots_txt,
             soft_http_errors,
+            danger_accept_invalid_certs,
             user_agent,
             stay_on_domain,
             allow_subdomains,
@@ -88,6 +89,7 @@ impl std::fmt::Debug for CrawlConfig {
         debug.field("bm25_threshold", bm25_threshold);
         debug.field("respect_robots_txt", respect_robots_txt);
         debug.field("soft_http_errors", soft_http_errors);
+        debug.field("danger_accept_invalid_certs", danger_accept_invalid_certs);
         debug.field("user_agent", user_agent);
         debug.field("stay_on_domain", stay_on_domain);
         debug.field("allow_subdomains", allow_subdomains);

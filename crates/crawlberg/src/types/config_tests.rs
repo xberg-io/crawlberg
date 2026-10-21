@@ -940,3 +940,16 @@ fn a_crawl_proxy_with_credentials_is_accepted_in_a_build_without_chrome() {
     let result = credentialed_crawl_proxy("http://proxy.test:8080", true).validate();
     assert!(result.is_ok(), "this build never renders in Chrome, got {result:?}");
 }
+
+#[test]
+fn wasm_transport_refuses_an_unsupported_certificate_bypass() {
+    let mut config = CrawlConfig::default();
+    config
+        .validate_wasm_transport()
+        .expect("default TLS policy is supported");
+    config.danger_accept_invalid_certs = true;
+    assert!(matches!(
+        config.validate_wasm_transport(),
+        Err(CrawlError::Unsupported { .. })
+    ));
+}

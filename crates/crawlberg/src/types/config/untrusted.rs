@@ -15,6 +15,7 @@ pub const UNTRUSTED_CALLER_FORBIDDEN_FIELDS: &[&str] = &[
     "/ssrf",
     "/ssrf_deny_private_explicit",
     "/max_redirects",
+    "/danger_accept_invalid_certs",
     "/proxy",
     "/browser/proxy",
     "/browser/endpoint",
@@ -56,6 +57,7 @@ impl CrawlConfig {
         self.ssrf = operator.ssrf.clone();
         self.ssrf_deny_private_explicit = operator.ssrf_deny_private_explicit;
         self.max_redirects = operator.max_redirects;
+        self.danger_accept_invalid_certs = operator.danger_accept_invalid_certs;
         self.proxy = operator.proxy.clone();
         self.browser.proxy = operator.browser.proxy.clone();
         self.browser.endpoint = operator.browser.endpoint.clone();

@@ -8,10 +8,11 @@ use crate::{
     AuthConfig, BrowserConfig, CrawlConfig, DispatchProfile, HostMatcher, ProxyConfig, SsrfPolicy, StaticProxyProvider,
 };
 
-const EXPECTED_FORBIDDEN_FIELDS: [&str; 15] = [
+const EXPECTED_FORBIDDEN_FIELDS: [&str; 16] = [
     "/ssrf",
     "/ssrf_deny_private_explicit",
     "/max_redirects",
+    "/danger_accept_invalid_certs",
     "/proxy",
     "/browser/proxy",
     "/browser/endpoint",
@@ -273,6 +274,7 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         bm25_threshold: _,
         respect_robots_txt: _,
         soft_http_errors: _,
+        danger_accept_invalid_certs: _,
         user_agent: _,
         stay_on_domain: _,
         allow_subdomains: _,

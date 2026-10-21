@@ -473,7 +473,10 @@ async fn acquire_pooled_page(
     {
         let session_key = session_key(url, proxy.as_ref())?;
 
-        if let Some((page, permit, handler_end)) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
+        if let Some((page, permit, handler_end)) = session_pool
+            .acquire_with_policy(&session_key, &config.ssrf, config.danger_accept_invalid_certs)
+            .await
+        {
             if !handler_end.as_ref().is_some_and(HandlerEnd::has_ended) {
                 return Ok((page, permit, None, handler_end));
             }
@@ -534,7 +537,14 @@ async fn release_pooled_page(
         tracing::debug!("parking a pooled browser page for session reuse");
         watch.park().await;
         session_pool
-            .insert_with_policy(session_key, &config.ssrf, page, permit, handler_end)
+            .insert_with_policy(
+                session_key,
+                &config.ssrf,
+                config.danger_accept_invalid_certs,
+                page,
+                permit,
+                handler_end,
+            )
             .await;
         return;
     }
@@ -809,7 +819,12 @@ impl OneShotSession {
         };
         let page = firewall
             .handle()
-            .new_page_with_policy(proxy.as_ref(), sockets, &config.ssrf)
+            .new_page_with_policy(
+                proxy.as_ref(),
+                sockets,
+                &config.ssrf,
+                config.danger_accept_invalid_certs,
+            )
             .await?;
         self.open_tab = Some(page.target_id().clone());
         let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
