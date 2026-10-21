@@ -407,7 +407,7 @@ jobs:
         run: ./scripts/ci/check-vendored-headers.sh
 
   linux-child-attach:
-    name: Linux ARM recursive child-attach diagnostics
+    name: Linux ARM candidate verification
     if: github.repository == 'xberg-io/crawlberg' && github.event_name == 'workflow_dispatch' && inputs.linux_child_attach
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -446,7 +446,7 @@ jobs:
       - name: Compile the all-feature core library test once
         run: task -t .task/diagnostics/linux-child-attach.yml build
         timeout-minutes: 20
-      - name: Run full library once and twenty exact child-attach replays
+      - name: Verify full library and sixty alternating replays per browser case
         run: task -t .task/diagnostics/linux-child-attach.yml probe
         timeout-minutes: 20
         env:

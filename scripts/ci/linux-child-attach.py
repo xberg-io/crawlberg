@@ -12,7 +12,15 @@ import time
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-FILTER = "browser_pool::tests::teardown_reliability::should_retire_an_owned_browser_with_a_live_page_without_controller_failure_logs"
+RECOVERY_MARKER = "test proved unowned child-target retirement"
+
+FILTER = "browser_pool::tests::teardown_reliability::should_report_an_active_owned_browser_transport_failure"
+
+
+STRUCTURAL_FILTER = (
+    "browser_pool::tests::teardown_reliability::"
+    "should_retire_an_owned_browser_with_a_live_page_without_controller_failure_logs"
+)
 
 
 class Result(TypedDict):
@@ -45,6 +53,8 @@ class Row(TypedDict):
     log_prefix: str
     native_exit_code: NotRequired[int]
     timed_out: NotRequired[bool]
+    filter: str | None
+    recovery_markers: int
     summaries: NotRequired[list[str]]
     error: NotRequired[str]
 
@@ -79,7 +89,7 @@ def run(directory: Path, name: str, command: list[str], timeout: float, cwd: str
     }
 
 
-def assert_result(result: Result, expected: int, ignored: int) -> None:
+def assert_result(result: Result, expected: int, ignored: int, *, full_suite: bool = False) -> None:
     """Reject missing work while preserving the baseline library's two explicit ignores."""
     summaries = re.findall(r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored;", result["stdout"])
     if result["exit_code"] or result["timed_out"] or len(summaries) != 1:
@@ -87,8 +97,16 @@ def assert_result(result: Result, expected: int, ignored: int) -> None:
     status, passed, failed, skipped = summaries[0]
     if status != "ok" or int(passed) != expected - ignored or int(failed) or int(skipped) != ignored:
         raise ValueError(f"Expected {expected} cases with {ignored} explicit ignores")
-    if re.search(r"^skipping .*Chrome", result["stdout"] + "\n" + result["stderr"], re.MULTILINE | re.IGNORECASE):
-        raise ValueError("Chrome fixture skipped")
+    intentional_control = (
+        "skipping detected_chrome_launch_errors_are_not_skippable: no Chrome executable: "
+        "Could not auto detect a chrome executable"
+    )
+    streams = (result["stdout"] + "\n" + result["stderr"]).splitlines()
+    for line in streams:
+        if full_suite and line == intentional_control:
+            continue
+        if re.search(r"^skipping .*Chrome", line, re.IGNORECASE):
+            raise ValueError("Chrome fixture skipped")
 
 
 def build(directory: Path) -> None:
@@ -123,9 +141,11 @@ def build(directory: Path) -> None:
     sys.stdout.flush()
 
 
-def run_case(directory: Path, executable: Executable, index: int, full: bool, deadline: float) -> Row:
+def run_case(
+    directory: Path, executable: Executable, index: int, full: bool, deadline: float, *, filter_name: str
+) -> Row:
     """Run a case with original package cwd and an unchanged executable hash."""
-    expected, ignored = (2126, 2) if full else (1, 0)
+    expected, ignored = (2137, 2) if full else (1, 0)
     name = f"{index:02d}-" + ("full-core" if full else "focused-child-attach")
     row: Row = {
         "phase": "full" if full else "focused",
@@ -135,6 +155,8 @@ def run_case(directory: Path, executable: Executable, index: int, full: bool, de
         "ok": False,
         "executed": False,
         "log_prefix": name,
+        "recovery_markers": 0,
+        "filter": None if full else filter_name,
     }
     try:
         if digest(executable["path"]) != executable["sha256"]:
@@ -142,7 +164,7 @@ def run_case(directory: Path, executable: Executable, index: int, full: bool, de
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("Diagnostic budget exhausted; case not executed")
-        arguments = ["--nocapture", "--test-threads=1"] + ([] if full else ["--exact", FILTER])
+        arguments = ["--nocapture", "--test-threads=1"] + ([] if full else ["--exact", filter_name])
         result = run(
             directory,
             name,
@@ -151,8 +173,9 @@ def run_case(directory: Path, executable: Executable, index: int, full: bool, de
             cwd=executable["cwd"],
         )
         row.update(executed=True, native_exit_code=result["exit_code"], timed_out=result["timed_out"])
+        row["recovery_markers"] = (result["stdout"] + result["stderr"]).count(RECOVERY_MARKER)
         row["summaries"] = re.findall(r"test result: [^\r\n]+", result["stdout"])
-        assert_result(result, expected, ignored)
+        assert_result(result, expected, ignored, full_suite=full)
         row["ok"] = True
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         row["error"] = str(error)
@@ -162,7 +185,7 @@ def run_case(directory: Path, executable: Executable, index: int, full: bool, de
 
 
 def probe(directory: Path) -> None:
-    """Preserve full-suite order before twenty isolated reproductions of the failing case."""
+    """Preserve full-suite order before sixty alternating reproductions per real-browser case."""
     artifacts = json.loads((directory / "executables.json").read_text())
     if len(artifacts) != 1 or artifacts[0]["name"] != "crawlberg":
         raise ValueError("Expected exactly one core library executable receipt")
@@ -177,34 +200,52 @@ def probe(directory: Path) -> None:
         "browser.json",
         {"path": chrome, "version_output": browser["stdout"].strip(), "sha256": digest(chrome)},
     )
+    if re.search(r"\b155\.0\.8059\.84\b", browser["stdout"]) is None:
+        raise ValueError("Same-snap verification requires Chromium 155.0.8059.84; actual browser receipt preserved")
     os.environ.update(RUST_BACKTRACE="full", RUST_TEST_THREADS="1")
     rows: list[Row] = []
     deadline = time.monotonic() + 18 * 60
-    for index in range(21):
-        rows.append(run_case(directory, artifacts[0], index, index == 0, deadline))
+    for index in range(121):
+        filter_name = FILTER if index % 2 else STRUCTURAL_FILTER
+        rows.append(run_case(directory, artifacts[0], index, index == 0, deadline, filter_name=filter_name))
         save(
             directory,
             "results.json",
             {
-                "expected_rows": 21,
+                "expected_rows": 121,
                 "observed_rows": len(rows),
                 "executed_rows": sum(row["executed"] for row in rows),
-                "expected_registered_cases": 2146,
-                "expected_passed": 2144,
+                "expected_registered_cases": 2257,
+                "expected_passed": 2255,
                 "expected_ignored": 2,
-                "filter": FILTER,
+                "expected_focused_per_filter": {FILTER: 60, STRUCTURAL_FILTER: 60},
+                "observed_focused_per_filter": {
+                    name: sum(row["filter"] == name for row in rows) for name in (FILTER, STRUCTURAL_FILTER)
+                },
+                "recovery_marker": RECOVERY_MARKER,
+                "recovery_marker_count": sum(row["recovery_markers"] for row in rows),
+                "focused_recovery_marker_count": sum(row["recovery_markers"] for row in rows[1:]),
                 "rows": rows,
             },
         )
     if digest(artifacts[0]["path"]) != artifacts[0]["sha256"]:
         raise ValueError("Final executable bytes changed")
-    if len(rows) != 21 or not all(row["ok"] for row in rows):
+    if len(rows) != 121 or not all(row["ok"] for row in rows):
         raise ValueError("Diagnostic failed; inspect all preserved rows/logs before attributing a target type")
+    if any(sum(row["filter"] == name for row in rows) != 60 for name in (FILTER, STRUCTURAL_FILTER)):
+        raise ValueError("Expected exactly sixty real-browser replays per filter")
+    assert_recovery_count(sum(row["recovery_markers"] for row in rows[1:]))
 
 
-def _rejects(case: Result) -> bool:
+def assert_recovery_count(count: int) -> None:
+    """Reject green test counts when the candidate recovery path was never observed."""
+    if count < 1:
+        raise ValueError("Candidate recovery was not observed: expected at least one retirement receipt")
+
+
+def _rejects(case: Result, expected: int = 1, ignored: int = 0, *, full_suite: bool = False) -> bool:
     try:
-        assert_result(case, 1, 0)
+        assert_result(case, expected, ignored, full_suite=full_suite)
     except ValueError:
         return True
     return False
@@ -219,18 +260,35 @@ def self_test() -> None:
         "stderr": "",
     }
     assert_result(positive, 1, 0)
-    full: Result = {**positive, "stdout": "test result: ok. 2124 passed; 0 failed; 2 ignored;"}
-    assert_result(full, 2126, 2)
+    full: Result = {**positive, "stdout": "test result: ok. 2135 passed; 0 failed; 2 ignored;"}
+    assert_result(full, 2137, 2)
+    control_line = (
+        "skipping detected_chrome_launch_errors_are_not_skippable: no Chrome executable: "
+        "Could not auto detect a chrome executable"
+    )
+    full_control: Result = {**full, "stderr": control_line}
+    assert_result(full_control, 2137, 2, full_suite=True)
     negatives: list[Result] = [
         {**positive, "stdout": "test result: ok. 0 passed; 0 failed; 0 ignored;"},
         {**positive, "exit_code": 101},
         {**positive, "stdout": "test result: ok. 1 passed; 0 failed; 1 ignored;"},
         {**positive, "stderr": "skipping fixture because no usable Chrome was found"},
+        {**positive, "stderr": control_line},
     ]
     rejected = sum(_rejects(case) for case in negatives)
-    if rejected != 4:
-        raise ValueError(f"Expected four negative controls; observed {rejected}")
-    sys.stdout.write("Harness controls: 2 positives; 4 expected failures\n")
+    full_skip: Result = {**full, "stderr": control_line + " altered"}
+    rejected += _rejects(full_skip, 2137, 2, full_suite=True)
+    if rejected != 6:
+        raise ValueError(f"Expected six negative controls; observed {rejected}")
+    assert_recovery_count(1)
+    try:
+        assert_recovery_count(0)
+    except ValueError as error:
+        if str(error) != "Candidate recovery was not observed: expected at least one retirement receipt":
+            raise
+    else:
+        raise ValueError("Missing-recovery negative control was accepted")
+    sys.stdout.write("Harness controls: 4 positives; 7 expected failures\n")
 
 
 def main() -> None:

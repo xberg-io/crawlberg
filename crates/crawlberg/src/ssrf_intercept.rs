@@ -441,6 +441,7 @@ struct Registry {
     /// Browser contexts created by this firewall and their immutable policy fingerprints.
     /// An unbound owner is opening or parked and therefore remains fail-closed. ~keep
     contexts: HashMap<BrowserContextId, ContextOwner>,
+    context_generation: Arc<()>,
     /// Recently retired context ids, bounded because authoritative absence is the ordering
     /// barrier for older events and known target ids remain in `context_targets`. ~keep
     retired_contexts: VecDeque<BrowserContextId>,
@@ -565,6 +566,7 @@ enum Owner {
 
 impl Registry {
     fn register_context(&mut self, context: BrowserContextId, policy: Option<&crate::net::ssrf::SsrfPolicy>) {
+        self.context_generation = Arc::new(());
         self.retired_contexts.retain(|retired| retired != &context);
         self.contexts.insert(
             context,
@@ -2070,8 +2072,7 @@ enum ChildPendingKind {
         session: String,
         waiting_for_debugger: bool,
         structural_parent: Option<String>,
-        #[cfg(test)]
-        target_type: String,
+        unowned: Option<UnownedArmProof>,
     },
     StructuralArm {
         session: String,
@@ -2084,10 +2085,20 @@ enum ChildPendingKind {
         target: TargetId,
         session: String,
     },
+    UnownedRetirementCensus {
+        target: TargetId,
+        session: String,
+        proof: UnownedArmProof,
+    },
     DrainCensus {
         context: BrowserContextId,
         done: oneshot::Sender<()>,
     },
+}
+
+struct UnownedArmProof {
+    target_generation: Arc<()>,
+    context_generation: Arc<()>,
 }
 
 struct ChildPending {
@@ -2347,6 +2358,83 @@ fn child_context_retired(registry: &Registry, context: &BrowserContextId) -> boo
     !registry.contexts.contains_key(context) && registry.retired_contexts.contains(context)
 }
 
+fn unowned_arm_registry_matches(
+    registry: &Registry,
+    context: Option<&BrowserContextId>,
+    target: &TargetId,
+    proof: &UnownedArmProof,
+) -> bool {
+    context.is_some_and(|context| {
+        !registry.shared_context
+            && registry.default_context_owner.is_none()
+            && !registry.contexts.contains_key(context)
+            && !registry.retired_contexts.contains(context)
+            && !registry.context_targets.contains_key(target)
+            && !registry.opened.contains_key(target)
+            && !registry.targets.iter().any(|(owned, _)| owned == target)
+            && !registry
+                .frames
+                .values()
+                .any(|frame| frame.source == *target && frame.owner.is_some())
+            && matches!(registry.ownership.get(target), Some(TargetOwnership::Other))
+            && registry
+                .target_generations
+                .get(target)
+                .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))
+            && Arc::ptr_eq(&registry.context_generation, &proof.context_generation)
+    })
+}
+
+fn unowned_context_is_draining(pending: &HashMap<u64, ChildPending>, context: Option<&BrowserContextId>) -> bool {
+    pending.values().any(|command| {
+        matches!(&command.kind, ChildPendingKind::DrainCensus { context: draining, .. } if Some(draining) == context)
+    })
+}
+
+fn unowned_arm_is_independent(
+    target: &TargetId,
+    session: &str,
+    pending: &HashMap<u64, ChildPending>,
+    root_waiters: &HashMap<TargetId, RootWaiter>,
+    armed_targets: &HashMap<TargetId, HashSet<String>>,
+    session_targets: &HashMap<String, TargetId>,
+    structural_sessions: &HashMap<String, StructuralTarget>,
+) -> bool {
+    !root_waiters.contains_key(target)
+        && !armed_targets.contains_key(target)
+        && !armed_targets.values().any(|required| required.contains(session))
+        && session_targets.get(session) == Some(target)
+        && session_targets
+            .values()
+            .filter(|candidate| *candidate == target)
+            .count()
+            == 1
+        && !structural_sessions
+            .values()
+            .any(|entry| entry.target == *target || entry.session == session)
+        && !pending.values().any(|command| match &command.kind {
+            ChildPendingKind::RecursiveArm {
+                target: other,
+                session: other_session,
+                structural_parent,
+                ..
+            } => other == target || other_session == session || structural_parent.as_deref() == Some(session),
+            ChildPendingKind::StructuralArm { session: other } | ChildPendingKind::Boundary { session: other } => {
+                other == session
+            }
+            ChildPendingKind::ForeignRetirementCensus {
+                target: other,
+                session: other_session,
+            }
+            | ChildPendingKind::UnownedRetirementCensus {
+                target: other,
+                session: other_session,
+                ..
+            } => other == target || other_session == session,
+            _ => false,
+        })
+}
+
 #[cfg(test)]
 fn trace_rejected_recursive_arm(
     shared: &Shared,
@@ -2354,8 +2442,7 @@ fn trace_rejected_recursive_arm(
     target: &TargetId,
     root_waiter: bool,
     cdp_error_code: Option<i64>,
-    target_type: &str,
-    structural_parent: bool,
+    proof: Option<&UnownedArmProof>,
 ) {
     let registry = lock(&shared.registry);
     let ownership = match registry.ownership.get(target) {
@@ -2369,8 +2456,11 @@ fn trace_rejected_recursive_arm(
     };
     tracing::info!(
         cdp_error_code,
-        target_type,
-        structural_parent,
+        unowned_proof_present = proof.is_some(),
+        unowned_target_generation_matches = proof.is_some_and(|proof| registry.target_generations.get(target)
+            .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))),
+        unowned_context_generation_matches = proof.is_some_and(|proof|
+            Arc::ptr_eq(&registry.context_generation, &proof.context_generation)),
         context_present = context.is_some(),
         context_registered = context.is_some_and(|context| registry.contexts.contains_key(context)),
         context_retired = context.is_some_and(|context| child_context_retired(&registry, context)),
@@ -2650,7 +2740,7 @@ where
                         if let Some((target, session)) = ended {
                             let Some(census_id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                             if child_socket_write(socket, child_message(census_id, "Target.getTargets",
-                                serde_json::json!({}), None), command_timeout).await.is_err() {
+                                serde_json::json!({ "filter": [{}] }), None), command_timeout).await.is_err() {
                                 return child_fail(shared, "foreign_census_write");
                             }
                             let census = child_pending_in(
@@ -2659,6 +2749,27 @@ where
                             pending.insert(census_id, census);
                             continue;
                         }
+                    }
+                    if value["error"]["code"].as_i64() == Some(-32001)
+                        && shared.origin == BrowserOrigin::Launched
+                        && let ChildPendingKind::RecursiveArm {
+                            target, session, structural_parent: None, unowned: Some(proof), ..
+                        } = &command.kind
+                        && !unowned_context_is_draining(&pending, command_context.as_ref())
+                        && unowned_arm_is_independent(target, session, &pending, &root_waiters,
+                            &armed_targets, &session_targets, &structural_sessions)
+                        && unowned_arm_registry_matches(&lock(&shared.registry), command_context.as_ref(), target, proof)
+                    {
+                        let Some(census_id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
+                        if child_socket_write(socket, child_message(census_id, "Target.getTargets",
+                            serde_json::json!({ "filter": [{}] }), None), command_timeout).await.is_err() {
+                            return child_fail(shared, "unowned_census_write");
+                        }
+                        let ChildPendingKind::RecursiveArm { target, session, unowned: Some(proof), .. } = command.kind
+                            else { return child_fail(shared, "unowned_census_state") };
+                        pending.insert(census_id, child_pending_in(
+                            ChildPendingKind::UnownedRetirementCensus { target, session, proof }, command_context));
+                        continue;
                     }
                     match command.kind {
                         ChildPendingKind::Enable { done } => {
@@ -2677,8 +2788,7 @@ where
                             session,
                             waiting_for_debugger,
                             structural_parent,
-                            #[cfg(test)]
-                            target_type,
+                            unowned: _unowned,
                         } => {
                             if !acknowledged {
                                 #[cfg(test)]
@@ -2688,8 +2798,7 @@ where
                                     &target,
                                     root_waiters.get(&target).is_some_and(|waiter| !waiter.is_closed()),
                                     value["error"]["code"].as_i64(),
-                                    &target_type,
-                                    structural_parent.is_some(),
+                                    _unowned.as_ref(),
                                 );
                                 if let Some(waiter) = root_waiters.remove(&target) {
                                     let _ = waiter.send(Err(format!(
@@ -2818,6 +2927,22 @@ where
                             }
                         }
                         ChildPendingKind::Close => {}
+                        ChildPendingKind::UnownedRetirementCensus { target, session, proof } => {
+                            let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
+                                else { return child_fail(shared, "unowned_census_parse") };
+                            let registry = lock(&shared.registry);
+                            if !acknowledged || shared.origin != BrowserOrigin::Launched
+                                || infos.iter().any(|info| info.target_id == target)
+                                || !unowned_arm_registry_matches(&registry, command_context.as_ref(), &target, &proof)
+                                || unowned_context_is_draining(&pending, command_context.as_ref())
+                                || !unowned_arm_is_independent(&target, &session, &pending, &root_waiters,
+                                    &armed_targets, &session_targets, &structural_sessions) {
+                                return child_fail(shared, "unowned_retirement_unproved");
+                            }
+                            session_targets.remove(&session);
+                            #[cfg(test)]
+                            tracing::info!(origin = ?shared.origin, "test proved unowned child-target retirement");
+                        }
                         ChildPendingKind::ForeignRetirementCensus { target, session } => {
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
                                 else { return child_fail(shared, "foreign_census_parse") };
@@ -3132,6 +3257,7 @@ where
                         matches!(registry.ownership.get(&target), Some(TargetOwnership::Other)),
                     )
                 };
+                let independent_root = parent_session.is_none();
                 let structural_parent = parent_session.filter(|session| structural_sessions.contains_key(session));
                 if !(attached.waiting_for_debugger || structural_parent.is_some() || permitted || other) {
                     return child_fail(shared, "unproved_attached_boundary");
@@ -3188,6 +3314,20 @@ where
                         return child_fail(shared, "page_enable_write");
                     }
                 }
+                let unowned = if shared.origin == BrowserOrigin::Launched && independent_root
+                    && attached.target_info.opener_id.is_none()
+                    && attached.target_info.opener_frame_id.is_none()
+                    && attached.target_info.parent_frame_id.is_none() && structural_parent.is_none() {
+                    let registry = lock(&shared.registry);
+                    registry.target_generations.get(&target).and_then(|generation| {
+                        let proof = UnownedArmProof {
+                            target_generation: Arc::clone(generation),
+                            context_generation: Arc::clone(&registry.context_generation),
+                        };
+                        unowned_arm_registry_matches(&registry, attached.target_info.browser_context_id.as_ref(), &target, &proof)
+                            .then_some(proof)
+                    })
+                } else { None };
                 let Some(id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                 if child_socket_write(socket, child_message(
                     id,
@@ -3206,8 +3346,7 @@ where
                             session: attached.session_id,
                             waiting_for_debugger: attached.waiting_for_debugger,
                             structural_parent,
-                            #[cfg(test)]
-                            target_type: attached.target_info.r#type.clone(),
+                            unowned,
                         },
                         attached.target_info.browser_context_id,
                     ),
@@ -5783,6 +5922,8 @@ mod tests {
             .await
             .expect("removed session");
         let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert_eq!(census["params"], serde_json::json!({ "filter": [{}] }));
         socket
             .send(async_tungstenite::tungstenite::Message::Text(
                 serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
@@ -6096,6 +6237,7 @@ mod tests {
     }
 
     mod retirement;
+    mod unowned_retirement;
 
     enum ArmOwner {
         Other,
