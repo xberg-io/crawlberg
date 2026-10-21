@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-21
+
+### Changed
+
+- Require libc 0.2.191 or newer to retain iOS Mach APIs, and upgrade base64 to 0.23.
+
+### Fixed
+
+- Keep a snap entry point unresolved when `/usr/bin/snap` links to `/usr/lib/snapd/snapd` (snapd 2.77).
+
+## [0.9.3]
+
 ### Added
 
 - Add `conn::parse_message`, the reader of the connection, for a caller that reads a protocol
@@ -30,7 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Keep a snap entry point unresolved when `/usr/bin/snap` links to `/usr/lib/snapd/snapd` (snapd 2.77)
 - Accept current Chrome network-policy field names while preserving the legacy typed event API
 - Recognize terminal WebSocket and pipe closure after owned-process termination; preserve
   diagnostics for active, borrowed and nonterminal failures; child connections share the
