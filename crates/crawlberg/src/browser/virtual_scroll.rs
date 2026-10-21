@@ -106,24 +106,42 @@ const SCRIPT: &str = r#"(async (maxMs) => {
           seen.set(key, { html: child.outerHTML, position, sequence: sequence++, element: child });
         }
       };
+      // ~keep A delayed scroll notification must render its mounted window before advancing.
+      const moveTo = async (top) => {
+        const before = container.scrollTop;
+        const target = container === document.scrollingElement ? document : container;
+        let finish;
+        const scrolled = new Promise((resolve) => {
+          const onScroll = () => finish();
+          const timer = setTimeout(() => finish(), Math.max(0, maxMs - (performance.now() - started)));
+          finish = () => {
+            target.removeEventListener('scroll', onScroll);
+            clearTimeout(timer);
+            resolve();
+          };
+          target.addEventListener('scroll', onScroll, { once: true });
+        });
+        container.scrollTop = top;
+        const moved = container.scrollTop !== before;
+        if (!moved) finish();
+        await scrolled;
+        await settle();
+        return moved;
+      };
       harvest(true);
-      container.scrollTop = 0;
-      await settle();
+      await moveTo(0);
       harvest(false);
       while (container.scrollTop + container.clientHeight < container.scrollHeight - 1) {
         if (stats.steps >= MAX_STEPS || seen.size >= MAX_ITEMS || outOfTime()) { stats.truncated = true; break; }
         const before = container.scrollTop;
-        container.scrollTop = before + Math.max(1, Math.floor(container.clientHeight * 0.8));
-        if (container.scrollTop === before) break;
+        if (!await moveTo(before + Math.max(1, Math.floor(container.clientHeight * 0.8)))) break;
         stats.steps++;
-        await settle();
         harvest(false);
       }
       const entries = Array.from(seen.values());
       const virtualised = entries.some((e) => !e.element.isConnected);
       const gained = Array.from(seen.keys()).some((k) => !initialKeys.has(k));
-      container.scrollTop = originalTop;
-      await settle();
+      await moveTo(originalTop);
       if (!list.isConnected) list = busiestList(container);
       if (virtualised && gained && !window.__crawlbergScrollAbort && container.isConnected && list.isConnected) {
         entries.sort((a, b) => a.position - b.position || a.sequence - b.sequence);
@@ -159,7 +177,9 @@ pub(super) async fn harvest_scroll_containers(page: &chromiumoxide::Page) {
                 tracing::warn!(%stats, "scrolling containers hit its step, item or time budget; the page holds the items collected so far");
             }
         }
-        Ok(Err(error)) => tracing::warn!(%error, "scrolling containers failed; reading the page as it is"),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "scrolling containers failed; reading the page as it is")
+        }
         Err(_) => {
             tracing::warn!("scrolling containers timed out; reading the page as it is");
             // ~keep Dropping the evaluate future does not stop the script; the flag makes it skip

@@ -164,6 +164,49 @@ async fn the_wait_ends_at_the_quiet_window_on_a_static_page_and_at_the_cap_on_a_
     );
 }
 
+#[tokio::test]
+async fn a_renderer_stall_is_not_counted_as_dom_quiet_on_a_ticker() {
+    let test_name = "a_renderer_stall_is_not_counted_as_dom_quiet_on_a_ticker";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><p>ticker</p><div id="t"></div><script>
+            const NativeObserver = MutationObserver;
+            let stalled = false;
+            window.MutationObserver = class extends NativeObserver {
+              constructor(callback) {
+                super((records, observer) => {
+                  callback(records, observer);
+                  if (!stalled) {
+                    stalled = true;
+                    setTimeout(() => {
+                      const until = performance.now() + 250;
+                      while (performance.now() < until) {}
+                    }, 10);
+                  }
+                });
+              }
+            };
+            setInterval(() => document.getElementById('t').textContent = Date.now(), 100);
+            </script></body></html>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let Some((result, elapsed)) = scrape_default(test_name, &site, config(Duration::from_secs(30))).await else {
+        return;
+    };
+    result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(
+        elapsed >= Duration::from_secs(4),
+        "a busy renderer is not quiet: {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(20),
+        "the existing cap must still end the wait: {elapsed:?}"
+    );
+}
+
 /// The settle wait must not turn a page that finished loading into a timeout: with 5 s of budget
 /// and 4.3 s spent loading, less than the 1 s quiet window is left, and the wait gets only that.
 #[tokio::test]

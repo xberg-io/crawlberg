@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import NotRequired, TypedDict
 
 RECOVERY_MARKER = "test proved unowned child-target retirement"
+STRUCTURAL_RECOVERY_MARKER = "test proved unowned structural-target retirement"
+RECOVERY_MARKERS = (RECOVERY_MARKER, STRUCTURAL_RECOVERY_MARKER)
 
 FILTER = "browser_pool::tests::teardown_reliability::should_report_an_active_owned_browser_transport_failure"
 
@@ -21,6 +23,14 @@ STRUCTURAL_FILTER = (
     "browser_pool::tests::teardown_reliability::"
     "should_retire_an_owned_browser_with_a_live_page_without_controller_failure_logs"
 )
+
+
+STRUCTURAL_TEST_PREFIX = "ssrf_intercept::tests::unowned_structural::"
+STRUCTURAL_TESTS = {
+    STRUCTURAL_TEST_PREFIX + "a_never_authorized_detached_tab_requires_absence_before_its_exact_arm_can_retire",
+    STRUCTURAL_TEST_PREFIX + "an_unowned_tab_census_rejects_live_invalid_unanswered_and_acknowledged_arms",
+    STRUCTURAL_TEST_PREFIX + "a_detached_tab_cannot_retire_after_ownership_lineage_or_identity_changes",
+}
 
 
 class Result(TypedDict):
@@ -54,6 +64,7 @@ class Row(TypedDict):
     native_exit_code: NotRequired[int]
     timed_out: NotRequired[bool]
     filter: str | None
+    recovery_receipts: dict[str, int]
     recovery_markers: int
     summaries: NotRequired[list[str]]
     error: NotRequired[str]
@@ -109,6 +120,46 @@ def assert_result(result: Result, expected: int, ignored: int, *, full_suite: bo
             raise ValueError("Chrome fixture skipped")
 
 
+def assert_test_names(names: list[str]) -> None:
+    """Require real registered tests and every exact regression/filter name before execution."""
+    if len(names) != 2140 or len(set(names)) != 2140:
+        raise ValueError("Expected 2140 unique registered test names")
+    structural = {name for name in names if name.startswith(STRUCTURAL_TEST_PREFIX)}
+    if structural != STRUCTURAL_TESTS:
+        raise ValueError("Expected exactly the three structural regression test names")
+    if not {FILTER, STRUCTURAL_FILTER}.issubset(names):
+        raise ValueError("Expected both exact real-browser filter names")
+
+
+def enumerate_tests(directory: Path, executable: Executable) -> None:
+    """Preserve the immutable compiled binary's actual list before accepting its counts."""
+    if digest(executable["path"]) != executable["sha256"]:
+        raise ValueError("Enumeration executable bytes changed")
+    result = run(directory, "enumerate-core", [executable["path"], "--list"], 30, cwd=executable["cwd"])
+    names = re.findall(r"^(.+): test$", result["stdout"], re.MULTILINE)
+    save(
+        directory,
+        "enumeration.json",
+        {
+            "expected_names": 2140,
+            "observed_names": len(names),
+            "unique_names": len(set(names)),
+            "expected_structural_names": sorted(STRUCTURAL_TESTS),
+            "expected_filters": [FILTER, STRUCTURAL_FILTER],
+            "sha256": executable["sha256"],
+            "native_exit_code": result["exit_code"],
+            "timed_out": result["timed_out"],
+            "names": names,
+        },
+    )
+    if result["exit_code"] or result["timed_out"]:
+        raise ValueError("Native test enumeration failed; complete list logs preserved")
+    assert_test_names(names)
+    if digest(executable["path"]) != executable["sha256"]:
+        raise ValueError("Enumeration executable bytes changed")
+    sys.stdout.write("Registered tests: expected2140 observed2140; exact3regressions and2filters verified\n")
+
+
 def build(directory: Path) -> None:
     """Compile one all-feature unit binary without the integration test executables."""
     command = ["cargo", "test", "-p", "crawlberg", "--all-features", "--lib", "--no-run", "--message-format=json"]
@@ -137,6 +188,7 @@ def build(directory: Path) -> None:
     if len(artifacts) != 1:
         raise ValueError(f"Expected one core library executable; observed {len(artifacts)}")
     save(directory, "executables.json", artifacts)
+    enumerate_tests(directory, artifacts[0])
     sys.stdout.write("Expected core executables: 1; observed: 1\n")
     sys.stdout.flush()
 
@@ -145,7 +197,7 @@ def run_case(
     directory: Path, executable: Executable, index: int, full: bool, deadline: float, *, filter_name: str
 ) -> Row:
     """Run a case with original package cwd and an unchanged executable hash."""
-    expected, ignored = (2137, 2) if full else (1, 0)
+    expected, ignored = (2140, 2) if full else (1, 0)
     name = f"{index:02d}-" + ("full-core" if full else "focused-child-attach")
     row: Row = {
         "phase": "full" if full else "focused",
@@ -156,6 +208,7 @@ def run_case(
         "executed": False,
         "log_prefix": name,
         "recovery_markers": 0,
+        "recovery_receipts": dict.fromkeys(RECOVERY_MARKERS, 0),
         "filter": None if full else filter_name,
     }
     try:
@@ -173,15 +226,45 @@ def run_case(
             cwd=executable["cwd"],
         )
         row.update(executed=True, native_exit_code=result["exit_code"], timed_out=result["timed_out"])
-        row["recovery_markers"] = (result["stdout"] + result["stderr"]).count(RECOVERY_MARKER)
+        row["recovery_receipts"] = {
+            marker: (result["stdout"] + result["stderr"]).count(marker) for marker in RECOVERY_MARKERS
+        }
+        row["recovery_markers"] = sum(row["recovery_receipts"].values())
         row["summaries"] = re.findall(r"test result: [^\r\n]+", result["stdout"])
         assert_result(result, expected, ignored, full_suite=full)
         row["ok"] = True
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         row["error"] = str(error)
-    sys.stdout.write(f"{name}: expected_cases={expected} ok={row['ok']}\n")
+    sys.stdout.write(json.dumps(row) + "\n")
     sys.stdout.flush()
     return row
+
+
+def save_probe_rows(directory: Path, rows: list[Row]) -> None:
+    """Persist actual footers and focused recovery receipts before the next replay."""
+    save(
+        directory,
+        "results.json",
+        {
+            "expected_rows": 121,
+            "observed_rows": len(rows),
+            "executed_rows": sum(row["executed"] for row in rows),
+            "expected_registered_cases": 2260,
+            "expected_passed": 2258,
+            "expected_ignored": 2,
+            "expected_focused_per_filter": {FILTER: 60, STRUCTURAL_FILTER: 60},
+            "observed_focused_per_filter": {
+                name: sum(row["filter"] == name for row in rows) for name in (FILTER, STRUCTURAL_FILTER)
+            },
+            "recovery_markers": RECOVERY_MARKERS,
+            "focused_recovery_receipts": {
+                marker: sum(row["recovery_receipts"][marker] for row in rows[1:]) for marker in RECOVERY_MARKERS
+            },
+            "recovery_marker_count": sum(row["recovery_markers"] for row in rows),
+            "focused_recovery_marker_count": sum(row["recovery_markers"] for row in rows[1:]),
+            "rows": rows,
+        },
+    )
 
 
 def probe(directory: Path) -> None:
@@ -208,26 +291,7 @@ def probe(directory: Path) -> None:
     for index in range(121):
         filter_name = FILTER if index % 2 else STRUCTURAL_FILTER
         rows.append(run_case(directory, artifacts[0], index, index == 0, deadline, filter_name=filter_name))
-        save(
-            directory,
-            "results.json",
-            {
-                "expected_rows": 121,
-                "observed_rows": len(rows),
-                "executed_rows": sum(row["executed"] for row in rows),
-                "expected_registered_cases": 2257,
-                "expected_passed": 2255,
-                "expected_ignored": 2,
-                "expected_focused_per_filter": {FILTER: 60, STRUCTURAL_FILTER: 60},
-                "observed_focused_per_filter": {
-                    name: sum(row["filter"] == name for row in rows) for name in (FILTER, STRUCTURAL_FILTER)
-                },
-                "recovery_marker": RECOVERY_MARKER,
-                "recovery_marker_count": sum(row["recovery_markers"] for row in rows),
-                "focused_recovery_marker_count": sum(row["recovery_markers"] for row in rows[1:]),
-                "rows": rows,
-            },
-        )
+        save_probe_rows(directory, rows)
     if digest(artifacts[0]["path"]) != artifacts[0]["sha256"]:
         raise ValueError("Final executable bytes changed")
     if len(rows) != 121 or not all(row["ok"] for row in rows):
@@ -251,8 +315,39 @@ def _rejects(case: Result, expected: int = 1, ignored: int = 0, *, full_suite: b
     return False
 
 
+def assert_bad_test_names(names: list[str], reason: str) -> None:
+    """Require each enumeration negative to fail for its intended guard."""
+    try:
+        assert_test_names(names)
+    except ValueError as error:
+        if str(error) != reason:
+            raise ValueError("Enumeration control rejected for the wrong reason") from error
+    else:
+        raise ValueError("Enumeration negative control was accepted")
+
+
+def test_enumeration_controls() -> None:
+    """Reject zero work and a same-count rename of each required regression/filter."""
+    required = sorted(STRUCTURAL_TESTS | {FILTER, STRUCTURAL_FILTER})
+    names = required + [f"fixture::{index}" for index in range(2140 - len(required))]
+    assert_test_names(names)
+    cases = [([], "Expected 2140 unique registered test names")]
+    for name in required:
+        wrong = ["fixture::renamed" if value == name else value for value in names]
+        reason = (
+            "Expected exactly the three structural regression test names"
+            if name in STRUCTURAL_TESTS
+            else ("Expected both exact real-browser filter names")
+        )
+        cases.append((wrong, reason))
+    for candidate, reason in cases:
+        assert_bad_test_names(candidate, reason)
+    sys.stdout.write("Enumeration controls: 1 positive; 1 zero-work and5exact-name negatives\n")
+
+
 def self_test() -> None:
     """Prove the count and skip guards reject known zero-work results."""
+    test_enumeration_controls()
     positive: Result = {
         "exit_code": 0,
         "timed_out": False,
@@ -260,14 +355,14 @@ def self_test() -> None:
         "stderr": "",
     }
     assert_result(positive, 1, 0)
-    full: Result = {**positive, "stdout": "test result: ok. 2135 passed; 0 failed; 2 ignored;"}
-    assert_result(full, 2137, 2)
+    full: Result = {**positive, "stdout": "test result: ok. 2138 passed; 0 failed; 2 ignored;"}
+    assert_result(full, 2140, 2)
     control_line = (
         "skipping detected_chrome_launch_errors_are_not_skippable: no Chrome executable: "
         "Could not auto detect a chrome executable"
     )
     full_control: Result = {**full, "stderr": control_line}
-    assert_result(full_control, 2137, 2, full_suite=True)
+    assert_result(full_control, 2140, 2, full_suite=True)
     negatives: list[Result] = [
         {**positive, "stdout": "test result: ok. 0 passed; 0 failed; 0 ignored;"},
         {**positive, "exit_code": 101},
@@ -277,7 +372,7 @@ def self_test() -> None:
     ]
     rejected = sum(_rejects(case) for case in negatives)
     full_skip: Result = {**full, "stderr": control_line + " altered"}
-    rejected += _rejects(full_skip, 2137, 2, full_suite=True)
+    rejected += _rejects(full_skip, 2140, 2, full_suite=True)
     if rejected != 6:
         raise ValueError(f"Expected six negative controls; observed {rejected}")
     assert_recovery_count(1)

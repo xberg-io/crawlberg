@@ -65,7 +65,10 @@ fn capture(f: impl FnOnce(&Events)) -> Vec<(tracing::Level, String)> {
     f(&events);
     let captured = events.0.lock().expect("events").clone();
     for (level, message) in &captured {
-        if *level == tracing::Level::INFO && message.contains("test proved unowned child-target retirement") {
+        if *level == tracing::Level::INFO
+            && (message.contains("test proved unowned child-target retirement")
+                || message.contains("test proved unowned structural-target retirement"))
+        {
             eprintln!("{message}");
         }
     }

@@ -377,6 +377,7 @@ fn an_unowned_census_rejects_each_dependent_controller_obligation() {
                     authorized: true,
                     arm_acknowledged: false,
                     child_boundary_acknowledged: false,
+                    unowned: None,
                     parent_session_present: false,
                 },
             );
