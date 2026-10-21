@@ -610,3 +610,53 @@ async fn a_recursive_arm_without_independent_context_lineage_or_exact_error_stil
         assert_closed(controller).await;
     }
 }
+
+#[tokio::test]
+async fn an_unrelated_context_claim_preserves_a_recursive_absence_proof() {
+    for before_error in [true, false] {
+        let page = watched("ROOT");
+        let mut state = shared_with(&page, "OTHER");
+        state.origin = BrowserOrigin::Launched;
+        let shared = Arc::new(state);
+        let owned = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(1)).await;
+        send_attached_target_with_waiting(
+            &mut socket,
+            "S-OTHER",
+            "OTHER",
+            "worker",
+            None,
+            &BrowserContextId::new("DEFAULT"),
+            false,
+        )
+        .await;
+        let arm = next_child_message(&mut socket).await;
+        assert_eq!(arm["method"], "Target.setAutoAttach");
+        if before_error {
+            lock(&shared.registry).register_context(BrowserContextId::new("UNRELATED-CONTEXT"), None);
+        }
+        reply(&mut socket, json!({"id": arm["id"], "error": {"code": -32001}})).await;
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert_eq!(census["params"], json!({"filter": [{}]}));
+        if !before_error {
+            lock(&shared.registry).register_context(BrowserContextId::new("UNRELATED-CONTEXT"), None);
+        }
+        {
+            let registry = lock(&shared.registry);
+            assert_eq!(registry.contexts.len(), 2);
+            assert!(!registry.contexts.contains_key(&BrowserContextId::new("DEFAULT")));
+            assert!(!registry.context_targets.contains_key(&TargetId::new("OTHER")));
+            assert!(!registry.opened.contains_key(&TargetId::new("OTHER")));
+            assert!(registry.others.contains(&TargetId::new("OTHER")));
+        }
+        reply(&mut socket, json!({"id": census["id"], "result": {"targetInfos": []}})).await;
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+        let root_arm = next_child_message(&mut socket).await;
+        assert_eq!(root_arm["sessionId"], "S-ROOT");
+        answer_child_command(&mut socket, &root_arm).await;
+        commands.send(super::super::ChildCommand::Stop).await.unwrap();
+        assert!(controller.await.unwrap());
+    }
+}

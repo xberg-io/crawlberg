@@ -360,3 +360,69 @@ async fn a_detached_tab_cannot_retire_after_ownership_lineage_or_identity_change
         assert_closed(fixture.controller).await;
     }
 }
+
+fn claim_unrelated_context_without_claiming_tab(shared: &Shared) {
+    let mut registry = lock(&shared.registry);
+    let target = TargetId::new("TAB");
+    let context = BrowserContextId::new("DEFAULT");
+    let token = registry.unowned_structural_observers[&target].upgrade().unwrap();
+    registry.register_context(BrowserContextId::new("UNRELATED-CONTEXT"), None);
+    assert_eq!(registry.contexts.len(), 2);
+    assert!(token.load(std::sync::atomic::Ordering::Acquire));
+    assert!(Arc::ptr_eq(
+        &token,
+        &registry.unowned_structural_observers[&target].upgrade().unwrap()
+    ));
+    assert!(!registry.ownership.contains_key(&target));
+    assert!(!registry.target_generations.contains_key(&target));
+    assert!(!registry.context_targets.contains_key(&target));
+    assert!(!registry.opened.contains_key(&target));
+    assert!(!registry.contexts.contains_key(&context));
+    assert!(!registry.retired_contexts.contains(&context));
+}
+
+#[tokio::test]
+async fn an_unrelated_context_claim_preserves_a_structural_absence_proof() {
+    for before_detach in [true, false] {
+        let page = watched("ROOT");
+        let mut state = shared_with(&page, "OTHER");
+        state.origin = BrowserOrigin::Launched;
+        let shared = Arc::new(state);
+        let owned = register_owned_context(&shared, &page);
+        let (mut socket, commands, controller) =
+            test_child_controller(Arc::clone(&shared), Duration::from_secs(1)).await;
+        send_attached_target_with_waiting(
+            &mut socket,
+            "S-TAB",
+            "TAB",
+            "tab",
+            None,
+            &BrowserContextId::new("DEFAULT"),
+            false,
+        )
+        .await;
+        let arm = next_child_message(&mut socket).await;
+        assert_eq!(arm["method"], "Target.setAutoAttach");
+        if before_detach {
+            claim_unrelated_context_without_claiming_tab(&shared);
+        }
+        reply(
+            &mut socket,
+            json!({"method": "Target.detachedFromTarget", "params": {"sessionId": "S-TAB", "targetId": "TAB"}}),
+        )
+        .await;
+        let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert_eq!(census["params"], json!({"filter": [{}]}));
+        if !before_detach {
+            claim_unrelated_context_without_claiming_tab(&shared);
+        }
+        reply(&mut socket, json!({"id": census["id"], "result": {"targetInfos": []}})).await;
+        send_attached_target_with_waiting(&mut socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+        let root_arm = next_child_message(&mut socket).await;
+        assert_eq!(root_arm["sessionId"], "S-ROOT");
+        answer_child_command(&mut socket, &root_arm).await;
+        commands.send(super::super::ChildCommand::Stop).await.unwrap();
+        assert!(controller.await.unwrap());
+    }
+}

@@ -441,7 +441,8 @@ struct Registry {
     /// Browser contexts created by this firewall and their immutable policy fingerprints.
     /// An unbound owner is opening or parked and therefore remains fail-closed. ~keep
     contexts: HashMap<BrowserContextId, ContextOwner>,
-    context_generation: Arc<()>,
+    /// ~keep An unrelated context claim must not invalidate an unowned target's absence proof.
+    unowned_context_observers: HashMap<BrowserContextId, std::sync::Weak<()>>,
     /// ~keep These weak tokens retain ownership history without attributing frames to tab targets.
     unowned_structural_observers: HashMap<TargetId, std::sync::Weak<AtomicBool>>,
     /// Recently retired context ids, bounded because authoritative absence is the ordering
@@ -567,6 +568,32 @@ enum Owner {
 }
 
 impl Registry {
+    fn observe_unowned_context(&mut self, context: &BrowserContextId) -> Option<Arc<()>> {
+        if let Some(generation) = self
+            .unowned_context_observers
+            .get(context)
+            .and_then(|token| token.upgrade())
+        {
+            return Some(generation);
+        }
+        self.unowned_context_observers
+            .retain(|_, token| token.strong_count() != 0);
+        if self.unowned_context_observers.len() >= CHILD_CONTROLLER_PENDING_LIMIT {
+            return None;
+        }
+        let generation = Arc::new(());
+        self.unowned_context_observers
+            .insert(context.clone(), Arc::downgrade(&generation));
+        Some(generation)
+    }
+
+    fn unowned_context_matches(&self, context: &BrowserContextId, generation: &Arc<()>) -> bool {
+        self.unowned_context_observers
+            .get(context)
+            .and_then(|token| token.upgrade())
+            .is_some_and(|current| Arc::ptr_eq(&current, generation))
+    }
+
     fn invalidate_unowned_structural(&mut self, target: &TargetId) {
         if let Some(token) = self
             .unowned_structural_observers
@@ -578,7 +605,7 @@ impl Registry {
     }
 
     fn register_context(&mut self, context: BrowserContextId, policy: Option<&crate::net::ssrf::SsrfPolicy>) {
-        self.context_generation = Arc::new(());
+        self.unowned_context_observers.remove(&context);
         self.retired_contexts.retain(|retired| retired != &context);
         self.contexts.insert(
             context,
@@ -720,6 +747,7 @@ impl Registry {
         if !registered.disposal_acknowledged {
             return false;
         }
+        self.unowned_context_observers.remove(context);
         self.contexts.remove(context);
         self.retired_contexts.retain(|retired| retired != context);
         self.retired_contexts.push_back(context.clone());
@@ -2445,7 +2473,7 @@ fn unowned_structural_proof(
         .insert(info.target_id.clone(), Arc::downgrade(&target_generation));
     Some(UnownedStructuralProof {
         target_generation,
-        context_generation: Arc::clone(&registry.context_generation),
+        context_generation: registry.observe_unowned_context(info.browser_context_id.as_ref()?)?,
     })
 }
 
@@ -2456,7 +2484,7 @@ fn unowned_structural_registry_matches(
     proof: &UnownedStructuralProof,
 ) -> bool {
     unowned_structural_registry_is_unowned(registry, context, target)
-        && Arc::ptr_eq(&registry.context_generation, &proof.context_generation)
+        && context.is_some_and(|context| registry.unowned_context_matches(context, &proof.context_generation))
         && proof.target_generation.load(Ordering::Acquire)
         && registry
             .unowned_structural_observers
@@ -2548,7 +2576,7 @@ fn unowned_arm_registry_matches(
                 .target_generations
                 .get(target)
                 .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))
-            && Arc::ptr_eq(&registry.context_generation, &proof.context_generation)
+            && registry.unowned_context_matches(context, &proof.context_generation)
     })
 }
 
@@ -3508,11 +3536,13 @@ where
                     && attached.target_info.opener_id.is_none()
                     && attached.target_info.opener_frame_id.is_none()
                     && attached.target_info.parent_frame_id.is_none() && structural_parent.is_none() {
-                    let registry = lock(&shared.registry);
-                    registry.target_generations.get(&target).and_then(|generation| {
+                    let mut registry = lock(&shared.registry);
+                    let generation = registry.target_generations.get(&target).cloned();
+                    generation.and_then(|generation| {
+                        let context = attached.target_info.browser_context_id.as_ref()?;
                         let proof = UnownedArmProof {
-                            target_generation: Arc::clone(generation),
-                            context_generation: Arc::clone(&registry.context_generation),
+                            target_generation: generation,
+                            context_generation: registry.observe_unowned_context(context)?,
                         };
                         unowned_arm_registry_matches(&registry, attached.target_info.browser_context_id.as_ref(), &target, &proof)
                             .then_some(proof)
@@ -6428,6 +6458,7 @@ mod tests {
     }
 
     mod retirement;
+    mod unowned_context;
     mod unowned_retirement;
     mod unowned_structural;
 
