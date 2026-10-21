@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-FILTER = "browser_pool::tests::teardown_reliability::should_report_an_active_owned_browser_transport_failure"
+FILTER = "browser_pool::tests::teardown_reliability::should_retire_an_owned_browser_with_a_live_page_without_controller_failure_logs"
 
 
 class Result(TypedDict):

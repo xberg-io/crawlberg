@@ -2143,6 +2143,8 @@ struct StructuralTarget {
     authorized: bool,
     arm_acknowledged: bool,
     child_boundary_acknowledged: bool,
+    #[cfg(test)]
+    parent_session_present: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -2928,6 +2930,49 @@ where
                             let registry = lock(&shared.registry);
                             let foreign = child_context_is_foreign_in(&registry, shared.origin, structural.context.as_ref());
                             if !foreign {
+                                #[cfg(test)]
+                                tracing::info!(
+                                    context_present = structural.context.is_some(),
+                                    context_registered = structural.context.as_ref()
+                                        .is_some_and(|context| registry.contexts.contains_key(context)),
+                                    context_retired = structural.context.as_ref()
+                                        .is_some_and(|context| child_context_retired(&registry, context)),
+                                    ownership = match registry.ownership.get(&structural.target) {
+                                        Some(TargetOwnership::Watched(page)) if page.ending.load(Ordering::Acquire) => "ending_watch",
+                                        Some(TargetOwnership::Watched(_)) => "active_watch",
+                                        Some(TargetOwnership::PendingContext(_)) => "pending_context",
+                                        Some(TargetOwnership::PendingShared) => "pending_shared",
+                                        Some(TargetOwnership::Other) => "other",
+                                        Some(TargetOwnership::Quarantined) => "quarantined",
+                                        None => "missing",
+                                    },
+                                    target_generation_present = registry.target_generations.contains_key(&structural.target),
+                                    target_opened = registry.opened.contains_key(&structural.target),
+                                    target_context_owned = registry.context_targets.contains_key(&structural.target),
+                                    shared_context = registry.shared_context,
+                                    default_owner_present = registry.default_context_owner.is_some(),
+                                    authorized = structural.authorized,
+                                    arm_acknowledged = structural.arm_acknowledged,
+                                    child_boundary_acknowledged = structural.child_boundary_acknowledged,
+                                    waiting_for_debugger = structural.waiting_for_debugger,
+                                    parent_session_present = structural.parent_session_present,
+                                    root_waiter = root_waiters.contains_key(&structural.target),
+                                    context_root_waiters = root_waiters.keys().filter(|root|
+                                        registry.context_targets.get(*root) == structural.context.as_ref()).count(),
+                                    target_sessions = session_targets.values().filter(|target| **target == structural.target).count(),
+                                    detached_session_mapped = session_targets.contains_key(session),
+                                    armed_target = armed_targets.contains_key(&structural.target),
+                                    resume_references = armed_targets.values().filter(|required| required.contains(session)).count(),
+                                    pending_structural_arms = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::StructuralArm { session: armed } if armed == session)).count(),
+                                    pending_child_arms = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::RecursiveArm { structural_parent, .. }
+                                            if structural_parent.as_deref() == Some(session))).count(),
+                                    pending_session_resumes = pending.values().filter(|command|
+                                        matches!(&command.kind, ChildPendingKind::Boundary { session: armed } if armed == session)).count(),
+                                    origin = ?shared.origin,
+                                    "test rejected structural child-target detach"
+                                );
                                 return child_fail(shared, "nonforeign_structural_detach");
                             }
                             pending.retain(|_, command| {
@@ -3041,6 +3086,8 @@ where
                         authorized: false,
                         arm_acknowledged: false,
                         child_boundary_acknowledged: false,
+                        #[cfg(test)]
+                        parent_session_present: parent_session.is_some(),
                     };
                     if structural_sessions
                         .insert(attached.session_id.clone(), structural)
