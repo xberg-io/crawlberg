@@ -2642,7 +2642,7 @@ where
                         if let Some((target, session)) = ended {
                             let Some(census_id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                             if child_socket_write(socket, child_message(census_id, "Target.getTargets",
-                                serde_json::json!({}), None), command_timeout).await.is_err() {
+                                serde_json::json!({ "filter": [{}] }), None), command_timeout).await.is_err() {
                                 return child_fail(shared, "foreign_census_write");
                             }
                             let census = child_pending_in(
@@ -5724,6 +5724,8 @@ mod tests {
             .await
             .expect("removed session");
         let census = next_child_message(&mut socket).await;
+        assert_eq!(census["method"], "Target.getTargets");
+        assert_eq!(census["params"], serde_json::json!({ "filter": [{}] }));
         socket
             .send(async_tungstenite::tungstenite::Message::Text(
                 serde_json::json!({ "id": census["id"], "result": { "targetInfos": [] } })
