@@ -80,6 +80,10 @@ on:
         description: "Run the focused Windows Chrome comparison"
         type: boolean
         default: true
+      windows_revisions:
+        description: "Compare old and current production with one fixture and Chrome155"
+        type: boolean
+        default: false
       linux_child_attach:
         description: "Run Linux ARM child-attach diagnostics"
         type: boolean
@@ -460,4 +464,44 @@ jobs:
         with:
           name: linux-child-attach-${{ github.run_id }}
           path: ${{ github.workspace }}/_diagnostics/linux-child-attach
+          if-no-files-found: error
+
+  windows-revisions:
+    name: Windows old versus current lifecycle
+    if: github.repository == 'xberg-io/crawlberg' && github.event_name == 'workflow_dispatch' && inputs.windows_revisions
+    runs-on: windows-latest
+    timeout-minutes: 55
+    env:
+      CRAWLBERG_DIAGNOSTICS_DIR: ${{ github.workspace }}/_diagnostics/windows-revisions766
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@23602a93e64f32d552325d5304540927f27d8794
+        with:
+          cache-key-prefix: windows-browser
+      - name: Install Task
+        uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
+      - name: Setup Chrome 155
+        id: chrome155
+        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        with:
+          chrome-version: "155.0.8059.84"
+      - name: Verify diagnostic harness controls
+        run: task -t .task/diagnostics/windows-revisions766.yml self-test
+      - name: Compile two exact revisions with identical current fixture
+        run: task -t .task/diagnostics/windows-revisions766.yml build
+        timeout-minutes: 40
+      - name: Compare preserved revision binaries under pinned Chrome155
+        run: task -t .task/diagnostics/windows-revisions766.yml probe
+        timeout-minutes: 10
+        env:
+          CHROME_155_PATH: ${{ steps.chrome155.outputs.chrome-path }}
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-revisions-766-${{ github.run_id }}
+          path: ${{ github.workspace }}/_diagnostics/windows-revisions766
           if-no-files-found: error
