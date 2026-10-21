@@ -29,6 +29,10 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Renderer stalls no longer count as DOM quiet, and delayed scroll notifications preserve virtual-list rows.
+- Retire an absent unowned Chrome session only after an all-target census and unchanged ownership,
+  session and context evidence, preserving owned-page security checks.
+- Include browser and tab targets in foreign-session retirement censuses.
 - Malformed percent escapes keep a stable normalized URL across repeated normalization and query sorting. (#799)
 
 - Page titles decode HTML character references once, using the same text rules as a browser tab. (#798)
