@@ -379,6 +379,7 @@ fn an_unowned_census_rejects_each_dependent_controller_obligation() {
                     child_boundary_acknowledged: false,
                     unowned: None,
                     parent_session_present: false,
+                    proof_observation: Default::default(),
                 },
             );
         },

@@ -12,3 +12,7 @@ tasks:
     dir: "{{.TASKFILE_DIR}}/../.."
     cmds:
       - python3 scripts/ci/linux-child-attach.py --mode self-test
+  structural-guard:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - python3 scripts/ci/linux-child-attach.py --mode structural-guard

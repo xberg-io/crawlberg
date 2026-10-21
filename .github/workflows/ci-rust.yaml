@@ -407,7 +407,7 @@ jobs:
         run: ./scripts/ci/check-vendored-headers.sh
 
   linux-child-attach:
-    name: Linux ARM candidate verification
+    name: Linux ARM structural guard diagnostics
     if: github.repository == 'xberg-io/crawlberg' && github.event_name == 'workflow_dispatch' && inputs.linux_child_attach
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -446,8 +446,8 @@ jobs:
       - name: Compile the all-feature core library test once
         run: task -t .task/diagnostics/linux-child-attach.yml build
         timeout-minutes: 20
-      - name: Verify full library and sixty alternating replays per browser case
-        run: task -t .task/diagnostics/linux-child-attach.yml probe
+      - name: Diagnose first structural guard rejection (at most 120 attempts)
+        run: task -t .task/diagnostics/linux-child-attach.yml structural-guard
         timeout-minutes: 20
         env:
           CHROME: ${{ steps.prepared_chrome.outputs.chrome-path }}

@@ -301,6 +301,67 @@ def probe(directory: Path) -> None:
     assert_recovery_count(sum(row["recovery_markers"] for row in rows[1:]))
 
 
+def save_structural_rows(directory: Path, rows: list[Row], reason: str) -> None:
+    """Preserve actual attempts and stop reason without presenting diagnosis as release validation."""
+    save(
+        directory,
+        "results.json",
+        {
+            "diagnostic_only": True,
+            "expected_max": 120,
+            "observed_rows": len(rows),
+            "executed_rows": sum(row["executed"] for row in rows),
+            "filter": STRUCTURAL_FILTER,
+            "expected_cases_per_attempt": 1,
+            "stop_reason": reason,
+            "rows": rows,
+            "interpretation": "No reproduction does not establish a fix; inspect native failure logs before attribution.",
+        },
+    )
+
+
+def structural_guard(directory: Path) -> None:
+    """Run only the exact structural case and stop immediately when an attempt fails."""
+    artifacts = json.loads((directory / "executables.json").read_text())
+    if len(artifacts) != 1 or artifacts[0]["name"] != "crawlberg":
+        raise ValueError("Expected exactly one core library executable receipt")
+    chrome = os.environ.get("CHROME")
+    if not chrome or not Path(chrome).is_file():
+        raise ValueError("CHROME must name the prepared snap executable")
+    browser = run(directory, "browser-version", [chrome, "--version"], 30)
+    if browser["exit_code"] or not re.search(r"\d+\.\d+\.\d+\.\d+", browser["stdout"]):
+        raise ValueError("Browser version unavailable; see browser-version logs")
+    save(
+        directory,
+        "browser.json",
+        {"path": chrome, "version_output": browser["stdout"].strip(), "sha256": digest(chrome)},
+    )
+    if re.search(r"\b155\.0\.8059\.84\b", browser["stdout"]) is None:
+        raise ValueError("Same-snap verification requires Chromium 155.0.8059.84; actual browser receipt preserved")
+    os.environ.update(RUST_BACKTRACE="full", RUST_TEST_THREADS="1")
+    rows: list[Row] = []
+    deadline = time.monotonic() + 8 * 60
+    reason = "in_progress"
+    for index in range(120):
+        row = run_case(directory, artifacts[0], index, False, deadline, filter_name=STRUCTURAL_FILTER)
+        rows.append(row)
+        reason = "limit_reached" if index == 119 else "in_progress"
+        if not row["ok"]:
+            reason = "native_failure" if row.get("native_exit_code", 0) != 0 else "guard_rejected"
+            if row.get("timed_out"):
+                reason = "native_timeout"
+        save_structural_rows(directory, rows, reason)
+        if not row["ok"]:
+            break
+    if digest(artifacts[0]["path"]) != artifacts[0]["sha256"]:
+        raise ValueError("Final executable bytes changed")
+    if not 1 <= len(rows) <= 120 or any(row["filter"] != STRUCTURAL_FILTER for row in rows):
+        raise ValueError("Structural diagnostic attempt count or exact filter changed")
+    if reason != "limit_reached":
+        raise ValueError(f"Structural diagnostic stopped: {reason}; inspect preserved native logs")
+    sys.stdout.write("No reproduction in120 exact attempts; diagnosis remains inconclusive\n")
+
+
 def assert_recovery_count(count: int) -> None:
     """Reject green test counts when the candidate recovery path was never observed."""
     if count < 1:
@@ -389,7 +450,7 @@ def self_test() -> None:
 def main() -> None:
     """Select a diagnostic phase without modifying the production source tree."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["build", "probe", "self-test"], required=True)
+    parser.add_argument("--mode", choices=["build", "probe", "structural-guard", "self-test"], required=True)
     arguments = parser.parse_args()
     if arguments.mode == "self-test":
         self_test()
@@ -399,7 +460,10 @@ def main() -> None:
         raise ValueError("Diagnostic output directory must be explicit")
     directory = Path(output)
     directory.mkdir(parents=True, exist_ok=True)
-    (build if arguments.mode == "build" else probe)(directory)
+    if arguments.mode == "structural-guard":
+        structural_guard(directory)
+    else:
+        (build if arguments.mode == "build" else probe)(directory)
 
 
 if __name__ == "__main__":
