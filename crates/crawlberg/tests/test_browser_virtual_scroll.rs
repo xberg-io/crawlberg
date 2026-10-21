@@ -363,3 +363,134 @@ async fn dynamic_height_list_has_no_duplicated_items() {
         );
     }
 }
+
+const SPACER_LIST: &str = r##"<!doctype html><html><head><title>List</title><style>
+html,body{margin:0;height:100%}
+#list{height:100vh;overflow-y:auto}
+.item{display:block;height:40px;line-height:40px}
+</style></head><body><main><h1>Docs</h1>
+<nav id="list"><div id="top"></div><div id="rows"></div><div id="bottom"></div></nav></main>
+<script>
+const N = 40, H = 40, WINDOW = 12;
+const list = document.getElementById("list");
+function draw() {
+  const first = Math.min(Math.max(0, N - WINDOW), Math.floor(list.scrollTop / H));
+  document.getElementById("top").style.height = (first * H) + "px";
+  document.getElementById("bottom").style.height = ((N - first - WINDOW) * H) + "px";
+  const rows = document.getElementById("rows");
+  rows.textContent = "";
+  for (let i = first; i < Math.min(N, first + WINDOW); i++) {
+    const a = document.createElement("a");
+    a.className = "item"; a.href = "#i" + (i + 1); a.textContent = "Item " + (i + 1);
+    rows.appendChild(a);
+  }
+}
+list.addEventListener("scroll", draw);
+draw();
+</script></body></html>"##;
+
+fn window_virtual_list() -> String {
+    virtual_list("", ITEM_LABEL)
+        .replace("html,body{margin:0;height:100%}", "html,body{margin:0}")
+        .replace("height:100vh;overflow-y:auto;position:relative;", "position:relative;")
+        .replace("list.scrollTop", "window.scrollY")
+        .replace("list.clientHeight", "window.innerHeight")
+        .replace("list.addEventListener", "window.addEventListener")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn window_virtual_list_returns_every_item_when_scrolling_is_on() {
+    let name = "window_virtual_list_returns_every_item_when_scrolling_is_on";
+    let Some(result) = scrape_page(name, &window_virtual_list(), true).await else {
+        return;
+    };
+    assert_all_items_in_order(markdown(&result));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spacer_virtual_list_returns_every_item_when_scrolling_is_on() {
+    let name = "spacer_virtual_list_returns_every_item_when_scrolling_is_on";
+    let Some(result) = scrape_page(name, SPACER_LIST, true).await else {
+        return;
+    };
+    assert_all_items_in_order(markdown(&result));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn window_scrolling_does_not_starve_a_nested_virtual_list_on_a_long_page() {
+    let name = "window_scrolling_does_not_starve_a_nested_virtual_list_on_a_long_page";
+    let body = virtual_list("", ITEM_LABEL)
+        .replace("height:100vh", "height:200px")
+        .replace("</main>", "<div style=\"height:300000px\"></div></main>");
+    let Some(result) = scrape_page(name, &body, true).await else {
+        return;
+    };
+    assert_all_items_in_order(markdown(&result));
+}
+
+const REPLACED_LIST: &str = r##"<!doctype html><html><head><title>Replaced list</title><style>
+body{margin:0}
+#scroller{height:160px;overflow:auto;position:relative}
+ul{margin:0;padding:0;height:1600px;position:relative}
+li{position:absolute;left:0;height:80px;list-style:none}
+</style></head><body><section id="scroller"><div id="header">Header</div><ul></ul></section>
+<script>
+const scroller = document.getElementById('scroller');
+function render() {
+  const first = Math.min(18, Math.floor(scroller.scrollTop / 80));
+  const fresh = document.createElement('ul');
+  for (let i = first; i < first + 2; i++) {
+    const row = document.createElement('li');
+    row.style.top = (i * 80) + 'px';
+    row.dataset.index = i;
+    row.textContent = 'Item ' + i;
+    fresh.appendChild(row);
+  }
+  scroller.querySelector('ul').replaceWith(fresh);
+}
+scroller.addEventListener('scroll', render);
+render();
+</script></body></html>"##;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replacing_a_virtual_list_preserves_its_container_and_all_ordered_rows() {
+    let name = "replacing_a_virtual_list_preserves_its_container_and_all_ordered_rows";
+    let Some(result) = scrape_page(name, REPLACED_LIST, true).await else {
+        return;
+    };
+    let dom = tl::parse(&result.html, tl::ParserOptions::default()).expect("scraped HTML");
+    let parser = dom.parser();
+    let rows: Vec<usize> = dom
+        .query_selector("li")
+        .expect("row selector")
+        .map(|handle| {
+            let row = handle.get(parser).expect("row").as_tag().expect("row tag");
+            row.attributes()
+                .get("data-index")
+                .flatten()
+                .expect("row index")
+                .as_utf8_str()
+                .parse()
+                .expect("numeric row index")
+        })
+        .collect();
+    assert_eq!(rows, (0..20).collect::<Vec<_>>(), "HTML: {}", result.html);
+    let container = dom
+        .query_selector("#scroller")
+        .expect("container selector")
+        .next()
+        .expect("container")
+        .get(parser)
+        .expect("container node")
+        .as_tag()
+        .expect("container tag");
+    let children: Vec<_> = container
+        .children()
+        .top()
+        .iter()
+        .filter_map(|handle| handle.get(parser).and_then(tl::Node::as_tag))
+        .map(|tag| tag.name().as_utf8_str().into_owned())
+        .collect();
+    assert_eq!(children, ["div", "ul"], "outer container must retain its structure");
+    assert_eq!(dom.query_selector("#header").expect("header selector").count(), 1);
+}

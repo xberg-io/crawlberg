@@ -12,12 +12,21 @@ fn escaped_octet(escape: &str) -> Option<u8> {
 
 /// Apply to `address` the two percent-encoding normalisations of RFC 3986 section 6.2.2: decode
 /// an escape of an unreserved character (a letter, a digit, `-`, `.`, `_` or `~`), and write
-/// the hex digits of every other escape in upper case. A `%` that does not start an escape
-/// stays as it is.
+/// the hex digits of every other escape in upper case. If any escape is malformed, preserve
+/// the address's percent encoding unchanged.
 ///
 /// ~keep No other escape is decoded. An escaped reserved character such as `%2F` is not
 /// ~keep equivalent to the character, so decoding it would merge two different resources.
 fn normalize_percent_encoding(address: &str) -> String {
+    // ~keep Decoding a hex digit after a malformed '%' can create a valid escape on replay
+    // ~keep (%%341 -> %41 -> A). Preserve the whole address, since sorting query parameters
+    // ~keep can move an escape ahead of the malformed one on the next normalization pass.
+    if address
+        .match_indices('%')
+        .any(|(at, _)| escaped_octet(&address[at..]).is_none())
+    {
+        return address.to_owned();
+    }
     let mut out = String::with_capacity(address.len());
     let mut rest = address;
     while let Some(at) = rest.find('%') {
@@ -319,11 +328,74 @@ mod tests {
             ("http://example.com/100%", "http://example.com/100%"),
             ("http://example.com/a%2", "http://example.com/a%2"),
             ("http://example.com/a%zzb%4", "http://example.com/a%zzb%4"),
-            ("http://example.com/a%%41", "http://example.com/a%A"),
+            ("http://example.com/a%%41", "http://example.com/a%%41"),
             ("http://example.com/a%252Db", "http://example.com/a%252Db"),
         ] {
             assert_eq!(normalize_url_for_dedup(input, false), expected, "for {input:?}");
             assert_eq!(normalize_url(input), expected, "normalized_url for {input:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_percent_escape_keeps_a_distinct_stable_normalized_url() {
+        let malformed = "http://example.com/s/%%341";
+        let normalized = normalize_url(malformed);
+        assert_eq!(normalized, malformed);
+        assert_eq!(normalize_url(&normalized), normalized);
+        assert_eq!(normalize_url("http://example.com/s/%41"), "http://example.com/s/A");
+        assert_ne!(normalized, normalize_url("http://example.com/s/%41"));
+    }
+
+    #[test]
+    fn malformed_percent_escapes_are_stable_in_both_dedup_modes() {
+        for path in ["%%341", "%%%341", "%4%31", "%4%3%31", "%G%41", "%%34%31", "%"] {
+            let input = format!("http://example.com/s/{path}");
+            for include_query in [false, true] {
+                let normalized = normalize_url_for_dedup(&input, include_query);
+                assert_eq!(normalized, input, "include_query={include_query}");
+                assert_eq!(normalize_url_for_dedup(&normalized, include_query), normalized);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_percent_escapes_stay_stable_when_query_parameters_are_sorted() {
+        for (input, expected) in [
+            (
+                "http://example.com/s/?b=%%341&a=%41",
+                "http://example.com/s/?a=%41&b=%%341",
+            ),
+            (
+                "http://example.com/s/?%%341=broken&%41=valid",
+                "http://example.com/s/?%%341=broken&%41=valid",
+            ),
+            (
+                "http://EXAMPLE.com:80/%41/%%341?z=%7e&a=%2f#fragment",
+                "http://example.com/%41/%%341?a=%2f&z=%7e",
+            ),
+        ] {
+            let normalized = normalize_url(input);
+            assert_eq!(normalized, expected);
+            assert_eq!(normalize_url(&normalized), normalized);
+        }
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/%41?bad=%%341", false),
+            "http://example.com/A"
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn percent_normalization_is_idempotent_for_malformed_paths_and_queries(
+            component in "[%0123456789abcdefABCDEFxyz_-]{0,64}",
+        ) {
+            for input in [
+                format!("http://example.com/s/{component}"),
+                format!("http://example.com/s/?b={component}&a=%41"),
+            ] {
+                let normalized = normalize_url(&input);
+                proptest::prop_assert_eq!(normalize_url(&normalized), normalized);
+            }
         }
     }
 

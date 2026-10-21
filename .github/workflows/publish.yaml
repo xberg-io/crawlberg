@@ -912,6 +912,11 @@ jobs:
           target: ${{ matrix.platform.target }}
           cache-key-prefix: publish-php-${{ matrix.platform.label }}-php${{ matrix.php }}
 
+      - name: Install the config-pinned Alef for PIE packaging
+        uses: xberg-io/actions/install-alef@cc89740654cef67b752113ddd87d4f0d23dda3f5
+        with:
+          version: latest
+
       - uses: xberg-io/actions/build-php-extension@v1
         with:
           crate-name: crawlberg-php
@@ -940,6 +945,7 @@ jobs:
           windows-compiler: ${{ steps.wincompiler.outputs.compiler }}
           version: ${{ needs.prepare.outputs.version }}
           output-dir: dist/php-package
+          dry-run: ${{ needs.prepare.outputs.dry_run }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -2026,14 +2032,18 @@ jobs:
         run: |
           set -uo pipefail
 
-          if [[ "${RESULT_PUBLISH_CRATES}" == "failure" ]]; then
+          if [[ "${RESULT_PUBLISH_CRATES}" == "failure" || "${RESULT_PUBLISH_CRATES}" == "cancelled" ]]; then
             outcome="blocked"
-          elif [[ "${RESULT_PUBLISH_CRATES}" == "success" ]]; then
-            outcome="published"
           elif [[ "${RELEASE_CRATES}" != "true" ]]; then
             outcome="not-required"
           elif [[ "${DRY_RUN}" == "true" ]]; then
-            outcome="dry-run"
+            if [[ "${ALREADY_ON_CRATESIO}" == "true" ]]; then
+              outcome="already-present"
+            else
+              outcome="dry-run"
+            fi
+          elif [[ "${RESULT_PUBLISH_CRATES}" == "success" ]]; then
+            outcome="published"
           elif [[ "${IS_TAG}" != "true" ]]; then
             outcome="not-a-tag"
           elif [[ "${ALREADY_ON_CRATESIO}" == "true" && "${FORCE_REPUBLISH}" != "true" ]]; then
@@ -2042,12 +2052,17 @@ jobs:
             outcome="blocked"
           fi
 
-          if [[ "${outcome}" == "blocked" ]]; then
-            ok="false"
-            echo "::error title=crates.io prerequisite not met::publish-crates finished with '${RESULT_PUBLISH_CRATES}' and this version is not on crates.io — every job that builds or publishes against the released crate will be held back."
-          else
-            ok="true"
-          fi
+          case "${outcome}" in
+            published|already-present|not-required) ok="true" ;;
+            dry-run)
+              ok="false"
+              echo "::notice::The simulated publish did not make this version available on crates.io; registry-dependent jobs will be held back."
+              ;;
+            *)
+              ok="false"
+              echo "::error title=crates.io prerequisite not met::publish-crates finished with '${RESULT_PUBLISH_CRATES}' (outcome=${outcome}); registry-dependent jobs will be held back."
+              ;;
+          esac
 
           echo "outcome=${outcome}" >>"$GITHUB_OUTPUT"
           echo "ok=${ok}" >>"$GITHUB_OUTPUT"

@@ -437,6 +437,7 @@ impl CrawlEngine {
                 Some(outcome)
             }
             Err(e) => {
+                state.record_waf_block(&e);
                 state.error = Some(format!("{e}"));
                 None
             }

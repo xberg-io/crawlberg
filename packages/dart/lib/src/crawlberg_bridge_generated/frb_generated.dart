@@ -277,7 +277,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -845111253;
+  int get rustContentHash => 1300708407;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -468,6 +468,10 @@ abstract class RustLibApi extends BaseApi {
 
   Future<SsrfPolicy> crateCreateSsrfPolicyFromJson({required String json});
 
+  Future<WafBlockDetails> crateCreateWafBlockDetailsFromJson({
+    required String json,
+  });
+
   Future<CitationResult> crateGenerateCitations({required String markdown});
 
   Future<InteractionResult> crateInteract({
@@ -613,7 +617,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_batch_crawl_results,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateBatchCrawlConstMeta,
         argValues: [engine, urls],
@@ -650,7 +655,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_batch_scrape_results,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateBatchScrapeConstMeta,
         argValues: [engine, urls],
@@ -687,7 +693,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_crawl_result,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateCrawlConstMeta,
         argValues: [engine, url],
@@ -1624,7 +1631,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         codec: SseCodec(
           decodeSuccessData:
               sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateCreateEngineConstMeta,
         argValues: [config],
@@ -2360,6 +2368,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<WafBlockDetails> crateCreateWafBlockDetailsFromJson({
+    required String json,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(json, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 58,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_waf_block_details,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateCreateWafBlockDetailsFromJsonConstMeta,
+        argValues: [json],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateCreateWafBlockDetailsFromJsonConstMeta =>
+      const TaskConstMeta(
+        debugName: "create_waf_block_details_from_json",
+        argNames: ["json"],
+      );
+
+  @override
   Future<CitationResult> crateGenerateCitations({required String markdown}) {
     return handler.executeNormal(
       NormalTask(
@@ -2369,7 +2410,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 58,
+            funcId: 59,
             port: port_,
           );
         },
@@ -2408,13 +2449,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 59,
+            funcId: 60,
             port: port_,
           );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_interaction_result,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateInteractConstMeta,
         argValues: [engine, url, actions],
@@ -2445,13 +2487,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 60,
+            funcId: 61,
             port: port_,
           );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_map_result,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateMapUrlsConstMeta,
         argValues: [engine, url],
@@ -2480,13 +2523,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 61,
+            funcId: 62,
             port: port_,
           );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_scrape_result,
-          decodeErrorData: sse_decode_String,
+          decodeErrorData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError,
         ),
         constMeta: kCrateScrapeConstMeta,
         argValues: [engine, url],
@@ -2528,6 +2572,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return CrawlEngineHandleImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  Object
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return switch (dco_decode_alef_bridge_error_wire(raw)) {
+      AlefBridgeErrorWire_CrawlError(:final error) => error,
+      AlefBridgeErrorWire_SsrfError(:final error) => error,
+      AlefBridgeErrorWire_InvalidInput(:final message) => ArgumentError(
+        message,
+      ),
+      AlefBridgeErrorWire_NativeFailure(:final message) => StateError(message),
+    };
   }
 
   @protected
@@ -2575,6 +2635,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       data: dco_decode_opt_String(arr[3]),
       error: dco_decode_opt_String(arr[4]),
     );
+  }
+
+  @protected
+  AlefBridgeErrorWire dco_decode_alef_bridge_error_wire(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return AlefBridgeErrorWire_CrawlError(
+          error: dco_decode_box_autoadd_crawl_error(raw[1]),
+        );
+      case 1:
+        return AlefBridgeErrorWire_SsrfError(
+          error: dco_decode_box_autoadd_ssrf_error(raw[1]),
+        );
+      case 2:
+        return AlefBridgeErrorWire_InvalidInput(
+          message: dco_decode_String(raw[1]),
+        );
+      case 3:
+        return AlefBridgeErrorWire_NativeFailure(
+          message: dco_decode_String(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -2733,6 +2818,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CrawlError dco_decode_box_autoadd_crawl_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_crawl_error(raw);
+  }
+
+  @protected
   CrawlPageResult dco_decode_box_autoadd_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_crawl_page_result(raw);
@@ -2807,6 +2898,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SsrfError dco_decode_box_autoadd_ssrf_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_ssrf_error(raw);
+  }
+
+  @protected
+  WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_waf_block_details(raw);
+  }
+
+  @protected
   BrowserBackend dco_decode_browser_backend(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return BrowserBackend.values[raw as int];
@@ -2816,8 +2919,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 18)
-      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2837,6 +2940,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chromePath: dco_decode_opt_String(arr[15]),
       chromeArgs: dco_decode_list_String(arr[16]),
       scrollContainers: dco_decode_bool(arr[17]),
+      domQuietWindow: dco_decode_i_64(arr[18]),
     );
   }
 
@@ -2944,8 +3048,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 55)
-      throw Exception('unexpected arr length: expect 55 but see ${arr.length}');
+    if (arr.length != 56)
+      throw Exception('unexpected arr length: expect 56 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -3003,6 +3107,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       saveBrowserProfile: dco_decode_bool(arr[52]),
       ssrf: dco_decode_ssrf_policy(arr[53]),
       ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[54]),
+      dangerAcceptInvalidCerts: dco_decode_bool(arr[55]),
     );
   }
 
@@ -3020,8 +3125,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return CrawlError_WafBlocked(
           vendor: dco_decode_String(raw[1]),
           message: dco_decode_String(raw[2]),
-          status: dco_decode_i_64(raw[3]),
-          body: dco_decode_String(raw[4]),
+          status: dco_decode_opt_box_autoadd_i_64(raw[3]),
+          body: dco_decode_opt_String(raw[4]),
         );
       case 4:
         return CrawlError_Timeout(message: dco_decode_String(raw[1]));
@@ -3128,8 +3233,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlResult dco_decode_crawl_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return CrawlResult(
       pages: dco_decode_list_crawl_page_result(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -3139,6 +3244,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       cookies: dco_decode_list_cookie_info(arr[5]),
       stayedOnDomain: dco_decode_bool(arr[6]),
       browserUsed: dco_decode_bool(arr[7]),
+      wafBlock: dco_decode_opt_box_autoadd_waf_block_details(arr[8]),
     );
   }
 
@@ -3648,6 +3754,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WafBlockDetails? dco_decode_opt_box_autoadd_waf_block_details(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_waf_block_details(raw);
+  }
+
+  @protected
   List<String>? dco_decode_opt_list_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_String(raw);
@@ -3687,16 +3799,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         return PageAction_Scroll(
           direction: dco_decode_scroll_direction(raw[1]),
-          selector: dco_decode_String(raw[2]),
-          amount: dco_decode_i_64(raw[3]),
+          selector: dco_decode_opt_String(raw[2]),
+          amount: dco_decode_opt_box_autoadd_i_64(raw[3]),
         );
       case 4:
         return PageAction_Wait(
-          milliseconds: dco_decode_i_64(raw[1]),
-          selector: dco_decode_String(raw[2]),
+          milliseconds: dco_decode_opt_box_autoadd_i_64(raw[1]),
+          selector: dco_decode_opt_String(raw[2]),
         );
       case 5:
-        return PageAction_Screenshot(fullPage: dco_decode_bool(raw[1]));
+        return PageAction_Screenshot(
+          fullPage: dco_decode_opt_box_autoadd_bool(raw[1]),
+        );
       case 6:
         return PageAction_ExecuteJs(script: dco_decode_String(raw[1]));
       case 7:
@@ -3918,6 +4032,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WafBlockDetails dco_decode_waf_block_details(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return WafBlockDetails(
+      vendor: dco_decode_String(arr[0]),
+      status: dco_decode_opt_box_autoadd_i_64(arr[1]),
+      bodyPrefix: dco_decode_opt_String(arr[2]),
+    );
+  }
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_String(deserializer);
@@ -3946,6 +4073,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
+  }
+
+  @protected
+  Object
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_alef_bridge_error_wire(deserializer);
+    return switch (inner) {
+      AlefBridgeErrorWire_CrawlError(:final error) => error,
+      AlefBridgeErrorWire_SsrfError(:final error) => error,
+      AlefBridgeErrorWire_InvalidInput(:final message) => ArgumentError(
+        message,
+      ),
+      AlefBridgeErrorWire_NativeFailure(:final message) => StateError(message),
+    };
   }
 
   @protected
@@ -3999,6 +4143,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       data: var_data,
       error: var_error,
     );
+  }
+
+  @protected
+  AlefBridgeErrorWire sse_decode_alef_bridge_error_wire(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_error = sse_decode_box_autoadd_crawl_error(deserializer);
+        return AlefBridgeErrorWire_CrawlError(error: var_error);
+      case 1:
+        var var_error = sse_decode_box_autoadd_ssrf_error(deserializer);
+        return AlefBridgeErrorWire_SsrfError(error: var_error);
+      case 2:
+        var var_message = sse_decode_String(deserializer);
+        return AlefBridgeErrorWire_InvalidInput(message: var_message);
+      case 3:
+        var var_message = sse_decode_String(deserializer);
+        return AlefBridgeErrorWire_NativeFailure(message: var_message);
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -4173,6 +4342,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CrawlError sse_decode_box_autoadd_crawl_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_crawl_error(deserializer));
+  }
+
+  @protected
   CrawlPageResult sse_decode_box_autoadd_crawl_page_result(
     SseDeserializer deserializer,
   ) {
@@ -4265,6 +4440,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SsrfError sse_decode_box_autoadd_ssrf_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_ssrf_error(deserializer));
+  }
+
+  @protected
+  WafBlockDetails sse_decode_box_autoadd_waf_block_details(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_waf_block_details(deserializer));
+  }
+
+  @protected
   BrowserBackend sse_decode_browser_backend(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -4292,6 +4481,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_chromePath = sse_decode_opt_String(deserializer);
     var var_chromeArgs = sse_decode_list_String(deserializer);
     var var_scrollContainers = sse_decode_bool(deserializer);
+    var var_domQuietWindow = sse_decode_i_64(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4311,6 +4501,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chromePath: var_chromePath,
       chromeArgs: var_chromeArgs,
       scrollContainers: var_scrollContainers,
+      domQuietWindow: var_domQuietWindow,
     );
   }
 
@@ -4494,6 +4685,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_ssrfDenyPrivateExplicit = sse_decode_opt_box_autoadd_bool(
       deserializer,
     );
+    var var_dangerAcceptInvalidCerts = sse_decode_bool(deserializer);
     return CrawlConfig(
       maxDepth: var_maxDepth,
       maxPages: var_maxPages,
@@ -4550,6 +4742,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       saveBrowserProfile: var_saveBrowserProfile,
       ssrf: var_ssrf,
       ssrfDenyPrivateExplicit: var_ssrfDenyPrivateExplicit,
+      dangerAcceptInvalidCerts: var_dangerAcceptInvalidCerts,
     );
   }
 
@@ -4571,8 +4764,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         var var_vendor = sse_decode_String(deserializer);
         var var_message = sse_decode_String(deserializer);
-        var var_status = sse_decode_i_64(deserializer);
-        var var_body = sse_decode_String(deserializer);
+        var var_status = sse_decode_opt_box_autoadd_i_64(deserializer);
+        var var_body = sse_decode_opt_String(deserializer);
         return CrawlError_WafBlocked(
           vendor: var_vendor,
           message: var_message,
@@ -4733,6 +4926,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_cookies = sse_decode_list_cookie_info(deserializer);
     var var_stayedOnDomain = sse_decode_bool(deserializer);
     var var_browserUsed = sse_decode_bool(deserializer);
+    var var_wafBlock = sse_decode_opt_box_autoadd_waf_block_details(
+      deserializer,
+    );
     return CrawlResult(
       pages: var_pages,
       finalUrl: var_finalUrl,
@@ -4742,6 +4938,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       cookies: var_cookies,
       stayedOnDomain: var_stayedOnDomain,
       browserUsed: var_browserUsed,
+      wafBlock: var_wafBlock,
     );
   }
 
@@ -5530,6 +5727,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WafBlockDetails? sse_decode_opt_box_autoadd_waf_block_details(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_waf_block_details(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -5597,22 +5807,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return PageAction_Press(key: var_key);
       case 3:
         var var_direction = sse_decode_scroll_direction(deserializer);
-        var var_selector = sse_decode_String(deserializer);
-        var var_amount = sse_decode_i_64(deserializer);
+        var var_selector = sse_decode_opt_String(deserializer);
+        var var_amount = sse_decode_opt_box_autoadd_i_64(deserializer);
         return PageAction_Scroll(
           direction: var_direction,
           selector: var_selector,
           amount: var_amount,
         );
       case 4:
-        var var_milliseconds = sse_decode_i_64(deserializer);
-        var var_selector = sse_decode_String(deserializer);
+        var var_milliseconds = sse_decode_opt_box_autoadd_i_64(deserializer);
+        var var_selector = sse_decode_opt_String(deserializer);
         return PageAction_Wait(
           milliseconds: var_milliseconds,
           selector: var_selector,
         );
       case 5:
-        var var_fullPage = sse_decode_bool(deserializer);
+        var var_fullPage = sse_decode_opt_box_autoadd_bool(deserializer);
         return PageAction_Screenshot(fullPage: var_fullPage);
       case 6:
         var var_script = sse_decode_String(deserializer);
@@ -5921,6 +6131,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WafBlockDetails sse_decode_waf_block_details(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_vendor = sse_decode_String(deserializer);
+    var var_status = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_bodyPrefix = sse_decode_opt_String(deserializer);
+    return WafBlockDetails(
+      vendor: var_vendor,
+      status: var_status,
+      bodyPrefix: var_bodyPrefix,
+    );
+  }
+
+  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -5953,6 +6176,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       (self as CrawlEngineHandleImpl).frbInternalSseEncode(move: false),
       serializer,
     );
+  }
+
+  @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefBridgeError(
+    Object self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_alef_bridge_error_wire(switch (self) {
+      CrawlError error => AlefBridgeErrorWire.crawlError(error: error),
+      SsrfError error => AlefBridgeErrorWire.ssrfError(error: error),
+      ArgumentError error => AlefBridgeErrorWire.invalidInput(
+        message: error.message.toString(),
+      ),
+      StateError error => AlefBridgeErrorWire.nativeFailure(
+        message: error.message,
+      ),
+      _ => throw ArgumentError.value(self, 'error', 'Unsupported bridge error'),
+    }, serializer);
   }
 
   @protected
@@ -6011,6 +6254,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.success, serializer);
     sse_encode_opt_String(self.data, serializer);
     sse_encode_opt_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_alef_bridge_error_wire(
+    AlefBridgeErrorWire self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case AlefBridgeErrorWire_CrawlError(error: final error):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_crawl_error(error, serializer);
+      case AlefBridgeErrorWire_SsrfError(error: final error):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_ssrf_error(error, serializer);
+      case AlefBridgeErrorWire_InvalidInput(message: final message):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(message, serializer);
+      case AlefBridgeErrorWire_NativeFailure(message: final message):
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(message, serializer);
+    }
   }
 
   @protected
@@ -6172,6 +6437,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_crawl_error(
+    CrawlError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_crawl_error(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_crawl_page_result(
     CrawlPageResult self,
     SseSerializer serializer,
@@ -6277,6 +6551,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_ssrf_error(
+    SsrfError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_ssrf_error(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_waf_block_details(
+    WafBlockDetails self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_waf_block_details(self, serializer);
+  }
+
+  @protected
   void sse_encode_browser_backend(
     BrowserBackend self,
     SseSerializer serializer,
@@ -6306,6 +6598,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.chromePath, serializer);
     sse_encode_list_String(self.chromeArgs, serializer);
     sse_encode_bool(self.scrollContainers, serializer);
+    sse_encode_i_64(self.domQuietWindow, serializer);
   }
 
   @protected
@@ -6456,6 +6749,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.saveBrowserProfile, serializer);
     sse_encode_ssrf_policy(self.ssrf, serializer);
     sse_encode_opt_box_autoadd_bool(self.ssrfDenyPrivateExplicit, serializer);
+    sse_encode_bool(self.dangerAcceptInvalidCerts, serializer);
   }
 
   @protected
@@ -6480,8 +6774,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(3, serializer);
         sse_encode_String(vendor, serializer);
         sse_encode_String(message, serializer);
-        sse_encode_i_64(status, serializer);
-        sse_encode_String(body, serializer);
+        sse_encode_opt_box_autoadd_i_64(status, serializer);
+        sse_encode_opt_String(body, serializer);
       case CrawlError_Timeout(message: final message):
         sse_encode_i_32(4, serializer);
         sse_encode_String(message, serializer);
@@ -6603,6 +6897,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_cookie_info(self.cookies, serializer);
     sse_encode_bool(self.stayedOnDomain, serializer);
     sse_encode_bool(self.browserUsed, serializer);
+    sse_encode_opt_box_autoadd_waf_block_details(self.wafBlock, serializer);
   }
 
   @protected
@@ -7303,6 +7598,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_waf_block_details(
+    WafBlockDetails? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_waf_block_details(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_list_String(
     List<String>? self,
     SseSerializer serializer,
@@ -7375,18 +7683,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ):
         sse_encode_i_32(3, serializer);
         sse_encode_scroll_direction(direction, serializer);
-        sse_encode_String(selector, serializer);
-        sse_encode_i_64(amount, serializer);
+        sse_encode_opt_String(selector, serializer);
+        sse_encode_opt_box_autoadd_i_64(amount, serializer);
       case PageAction_Wait(
         milliseconds: final milliseconds,
         selector: final selector,
       ):
         sse_encode_i_32(4, serializer);
-        sse_encode_i_64(milliseconds, serializer);
-        sse_encode_String(selector, serializer);
+        sse_encode_opt_box_autoadd_i_64(milliseconds, serializer);
+        sse_encode_opt_String(selector, serializer);
       case PageAction_Screenshot(fullPage: final fullPage):
         sse_encode_i_32(5, serializer);
-        sse_encode_bool(fullPage, serializer);
+        sse_encode_opt_box_autoadd_bool(fullPage, serializer);
       case PageAction_ExecuteJs(script: final script):
         sse_encode_i_32(6, serializer);
         sse_encode_String(script, serializer);
@@ -7580,6 +7888,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
+  }
+
+  @protected
+  void sse_encode_waf_block_details(
+    WafBlockDetails self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.vendor, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.status, serializer);
+    sse_encode_opt_String(self.bodyPrefix, serializer);
   }
 }
 

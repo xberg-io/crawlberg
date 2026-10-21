@@ -324,6 +324,7 @@ impl CrawlEngine {
             Ok(scrape) => Some(scrape),
             Err(e) => {
                 state.pages_failed += 1;
+                state.record_waf_block(&e);
                 let error_msg = e.to_string();
                 self.event_emitter
                     .on_error(&crate::traits::ErrorEvent {
@@ -366,8 +367,11 @@ impl CrawlEngine {
     ) -> bool {
         let in_doc_context = entry.doc_depth > 0;
         let page_is_skipped = scrape.was_skipped || scrape.is_pdf;
+        let is_soft_error =
+            self.config.soft_http_errors && scrape.status_code >= reqwest::StatusCode::BAD_REQUEST.as_u16();
         entry.depth < plan.max_depth
             && !page_is_skipped
+            && !is_soft_error
             && (!in_doc_context || self.config.follow_document_urls)
             && !(self.config.respect_robots_txt && scrape.nofollow_detected)
     }
@@ -497,7 +501,7 @@ impl CrawlEngine {
         }
 
         let stayed_on_domain = state.pages.iter().all(|p| p.stayed_on_domain);
-        Ok(CrawlResult::new(CrawlOutcome {
+        let mut result = CrawlResult::new(CrawlOutcome {
             pages: state.pages,
             final_url: state.final_url,
             redirect_count: state.redirect_count,
@@ -505,7 +509,9 @@ impl CrawlEngine {
             error: state.crawl_error,
             cookies: Vec::new(),
             stayed_on_domain,
-        }))
+        });
+        result.waf_block = state.waf_block;
+        Ok(result)
     }
 }
 
@@ -598,6 +604,7 @@ struct SequentialState {
     urls_filtered: usize,
     crawl_error: Option<String>,
     final_url: String,
+    waf_block: Option<WafBlockDetails>,
 }
 
 impl SequentialState {
@@ -612,6 +619,21 @@ impl SequentialState {
             urls_filtered: 0,
             crawl_error: None,
             final_url: seed_url.to_owned(),
+            waf_block: None,
+        }
+    }
+
+    fn record_waf_block(&mut self, error: &CrawlError) {
+        if self.waf_block.is_none()
+            && let CrawlError::WafBlocked {
+                vendor, status, body, ..
+            } = error
+        {
+            self.waf_block = Some(WafBlockDetails {
+                vendor: vendor.clone(),
+                status: *status,
+                body_prefix: body.clone(),
+            });
         }
     }
 

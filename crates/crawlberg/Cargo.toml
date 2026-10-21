@@ -172,8 +172,7 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
 
-# ~keep Released sysinfo 0.39 uses iOS Mach bindings removed by libc 0.2.190.
-# ~keep Remove this compatibility pin after sysinfo releases GuillaumeGomez/sysinfo#1758.
+# ~keep Keep sysinfo's iOS Mach bindings available: libc 0.2.190 hid them, and 0.2.191 restores them.
 [target.'cfg(target_os = "ios")'.dependencies]
 libc = { workspace = true, optional = true }
 

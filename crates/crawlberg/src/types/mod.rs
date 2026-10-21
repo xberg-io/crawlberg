@@ -41,7 +41,7 @@ pub use dispatch::{
 pub use metadata::{ArticleMetadata, FaviconInfo, HeadingInfo, HreflangEntry, PageMetadata, ResponseMeta};
 pub use results::{
     ActionResult, BrowserExtras, CachedPage, CrawlPageResult, CrawlResult, DownloadedDocument, InteractionResult,
-    MapResult, MarkdownResult, ScrapeResult, SitemapUrl,
+    MapResult, MarkdownResult, ScrapeResult, SitemapUrl, WafBlockDetails,
 };
 // ~keep Crate-internal: `CrawlOutcome` is `CrawlResult::new`'s parameter struct, not part of
 // ~keep the binding surface alef generates from this module.

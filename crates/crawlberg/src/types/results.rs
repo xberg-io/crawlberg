@@ -332,9 +332,35 @@ pub struct CrawlPageResult {
     pub original_url: String,
 }
 
+/// Structured context for a WAF-blocked response. <!-- ~keep -->
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct WafBlockDetails {
+    /// Lowercase WAF vendor identifier. <!-- ~keep -->
+    pub vendor: String,
+    /// Origin HTTP status, when a response caused the block. <!-- ~keep -->
+    pub status: Option<u16>,
+    /// At most 4 KiB of the blocked response body, when it was read. <!-- ~keep -->
+    pub body_prefix: Option<String>,
+}
+
 /// The result of a multi-page crawl operation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "pages",
+        "final_url",
+        "redirect_count",
+        "was_skipped",
+        "error",
+        "cookies",
+        "stayed_on_domain",
+        "browser_used",
+    ])
+)]
 #[serde(deny_unknown_fields)]
 pub struct CrawlResult {
     /// The list of crawled pages.
@@ -363,6 +389,9 @@ pub struct CrawlResult {
     #[cfg_attr(alef, alef(skip))]
     #[cfg_attr(feature = "mcp", schemars(skip))]
     pub normalized_urls: Vec<String>,
+    /// Details of the first WAF block encountered during the crawl. <!-- ~keep -->
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waf_block: Option<WafBlockDetails>,
 }
 
 /// Everything [`CrawlResult::new`] needs to assemble a finished crawl.
@@ -414,6 +443,7 @@ impl CrawlResult {
             cookies,
             stayed_on_domain,
             browser_used,
+            waf_block: None,
             normalized_urls: Vec::new(),
         }
     }

@@ -16,6 +16,7 @@ const ROUND_TRIP_SLACK: Duration = Duration::from_secs(2);
 const SCRIPT: &str = r#"(async (maxMs) => {
   const MAX_CONTAINERS = 8, MAX_STEPS = 200, MAX_ITEMS = 5000;
   const KEY_ATTRIBUTES = ['id', 'data-index', 'data-key', 'data-id', 'aria-posinset', 'aria-rowindex'];
+  const syntheticNodes = new WeakSet();
   window.__crawlbergScrollAbort = false;
   const started = performance.now();
   const outOfTime = () => window.__crawlbergScrollAbort || performance.now() - started > maxMs;
@@ -24,6 +25,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
     await new Promise((r) => { requestAnimationFrame(r); setTimeout(r, 40); });
   };
   const scrollable = (el) => {
+    if (el === document.scrollingElement) return el.scrollHeight > el.clientHeight + 1;
     if (el === document.body || el === document.documentElement) return false;
     if (el.clientHeight < 1 || el.scrollHeight <= el.clientHeight + 1) return false;
     const overflow = getComputedStyle(el).overflowY;
@@ -33,6 +35,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
     const tags = new Map();
     let best = 0;
     for (const child of el.children) {
+      if (syntheticNodes.has(child)) continue;
       const n = (tags.get(child.tagName) || 0) + 1;
       tags.set(child.tagName, n);
       if (n > best) best = n;
@@ -61,8 +64,21 @@ const SCRIPT: &str = r#"(async (maxMs) => {
     const originalBehavior = container.style.scrollBehavior;
     const hadStyleAttribute = container.hasAttribute('style');
     container.style.scrollBehavior = 'auto';
+    let trailingSpace;
     try {
       let list = busiestList(container);
+      // ~keep Scrolling the window cannot advance a list inside another scroll container;
+      // ~keep on a long page it would spend the whole budget before that list gets its turn.
+      if (container === document.scrollingElement &&
+          containers.some((other) => other !== container && other.contains(list))) {
+        continue;
+      }
+      // ~keep A mounted window can be shorter than its viewport (#790); trailing room lets
+      // ~keep its last rows enter the mounted range before the natural scroll limit stops it.
+      trailingSpace = document.createElement('div');
+      syntheticNodes.add(trailingSpace);
+      trailingSpace.style.cssText = 'height:' + container.clientHeight + 'px;flex-shrink:0';
+      container.appendChild(trailingSpace);
       const seen = new Map();
       const initialKeys = new Set();
       let sequence = 0;
@@ -81,6 +97,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
         const texts = new Map();
         for (const child of list.children) texts.set(child.textContent, (texts.get(child.textContent) || 0) + 1);
         for (const child of list.children) {
+          if (child === trailingSpace) continue;
           const position = child.getBoundingClientRect().top - box.top + container.scrollTop;
           const key = keyOf(child, position, texts);
           if (initial) initialKeys.add(key);
@@ -107,6 +124,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
       const gained = Array.from(seen.keys()).some((k) => !initialKeys.has(k));
       container.scrollTop = originalTop;
       await settle();
+      if (!list.isConnected) list = busiestList(container);
       if (virtualised && gained && !window.__crawlbergScrollAbort && container.isConnected && list.isConnected) {
         entries.sort((a, b) => a.position - b.position || a.sequence - b.sequence);
         for (const child of Array.from(list.children)) child.remove();
@@ -115,6 +133,7 @@ const SCRIPT: &str = r#"(async (maxMs) => {
         stats.rewritten++;
       }
     } finally {
+      trailingSpace?.remove();
       container.style.scrollBehavior = originalBehavior;
       if (!hadStyleAttribute && container.getAttribute('style') === '') container.removeAttribute('style');
       container.scrollTop = originalTop;

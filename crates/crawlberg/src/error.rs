@@ -1045,8 +1045,14 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind failed");
             let addr = listener.local_addr().expect("addr");
             tokio::spawn(async move {
-                use tokio::io::AsyncWriteExt as _;
+                use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
                 if let Ok((mut socket, _)) = listener.accept().await {
+                    // ~keep Consuming the request avoids a connection-cancel race before the
+                    // ~keep malformed response reaches hyper's response parser.
+                    let mut request = tokio::io::BufReader::new(&mut socket);
+                    let mut headers = String::new();
+                    while request.read_line(&mut headers).await.unwrap_or(0) > 0 && !headers.ends_with("\r\n\r\n") {}
+                    assert!(headers.ends_with("\r\n\r\n"));
                     let _ = socket.write_all(b"not even close to http\r\n\r\n").await;
                     let _ = socket.flush().await;
                     let _ = socket.shutdown().await;

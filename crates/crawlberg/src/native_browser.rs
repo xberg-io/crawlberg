@@ -256,6 +256,7 @@ pub(crate) fn build_native_config(
         max_redirects: Some(config.max_redirects),
         // ~keep The same decision HTTP mode makes, so a page reads the same on both paths.
         document_decoder: Some(crate::html::decode_document),
+        danger_accept_invalid_certs: config.danger_accept_invalid_certs,
     })
 }
 

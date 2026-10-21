@@ -73,6 +73,66 @@ pub(crate) use primitives::duration_ms;
 
 /// Configuration for crawl, scrape, and map operations.
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(
+    alef,
+    alef(legacy_constructor_fields = [
+        "max_depth",
+        "max_pages",
+        "max_links_per_page",
+        "max_concurrent",
+        "crawl_strategy",
+        "content_filter",
+        "bm25_query",
+        "bm25_threshold",
+        "respect_robots_txt",
+        "soft_http_errors",
+        "user_agent",
+        "stay_on_domain",
+        "allow_subdomains",
+        "include_paths",
+        "exclude_paths",
+        "path_patterns_match_query",
+        "path_patterns_match_url",
+        "dedup_include_query",
+        "strip_tracking_params",
+        "tracking_params",
+        "custom_headers",
+        "request_timeout",
+        "rate_limit_ms",
+        "max_redirects",
+        "retry_count",
+        "retry_codes",
+        "retry_initial_delay_ms",
+        "retry_max_delay_ms",
+        "rate_limit_jitter_ratio",
+        "cookies_enabled",
+        "auth",
+        "max_body_size",
+        "remove_tags",
+        "content",
+        "map_limit",
+        "map_search",
+        "download_assets",
+        "asset_types",
+        "max_asset_size",
+        "browser",
+        "proxy",
+        "user_agents",
+        "capture_screenshot",
+        "follow_document_urls",
+        "document_url_depth",
+        "download_documents",
+        "document_max_size",
+        "document_mime_types",
+        "document_output_dir",
+        "document_content_encoding",
+        "warc_output",
+        "browser_profile",
+        "save_browser_profile",
+        "ssrf",
+        "ssrf_deny_private_explicit",
+    ])
+)]
 #[serde(deny_unknown_fields, default)]
 pub struct CrawlConfig {
     /// Maximum crawl depth (number of link hops from the start URL).
@@ -106,15 +166,11 @@ pub struct CrawlConfig {
     /// page is still crawled and its links followed; the page result marks it with
     /// `noindex_detected`.
     pub respect_robots_txt: bool,
-    /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
-    /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-    /// than raised as `CrawlError`. A WAF block reports the status of the refused
-    /// response when it is a 4xx or 5xx, and 403 when the block page came with a
-    /// 2xx status. Default `false` preserves the historical
-    /// throw-on-error contract for direct fetches. Independently of this flag,
-    /// 404s reached at the end of a redirect chain are *always* surfaced softly —
-    /// the user opted into redirect-following, so receiving a 404 there is part of
-    /// the normal flow rather than an unexpected error.
+    /// When true, readable HTTP error responses (4xx and 5xx) are surfaced as
+    /// `ScrapeResult` records with their status and body rather than raised as errors.
+    /// WAF blocks report their original 4xx/5xx status, or 403 for a block served as 2xx.
+    /// Default `false` raises errors for recognized error statuses in both `scrape`
+    /// and `crawl`, including a 404 reached through redirects.
     #[serde(default)]
     pub soft_http_errors: bool,
     /// Custom user-agent string.
@@ -392,6 +448,13 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub browser_session_pool: Option<std::sync::Arc<crate::browser_session_pool::BrowserSessionPool>>,
+    /// Accept invalid TLS certificates for page and robots.txt requests.
+    /// Defaults to false. Enable only for sites whose certificates you explicitly trust.
+    /// The browser backends also apply this setting before navigation.
+    /// On WebAssembly, enabling this setting returns `Unsupported`: the host's Fetch
+    /// implementation controls certificate validation.
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
 }
 
 impl Default for CrawlConfig {
@@ -407,6 +470,7 @@ impl Default for CrawlConfig {
             bm25_threshold: None,
             respect_robots_txt: false,
             soft_http_errors: false,
+            danger_accept_invalid_certs: false,
             user_agent: None,
             stay_on_domain: false,
             allow_subdomains: false,
@@ -500,6 +564,18 @@ impl CrawlConfig {
         self.validate_browser_endpoint()?;
         self.validate_browser_launch()?;
         self.validate_content_formatting()?;
+        #[cfg(target_arch = "wasm32")]
+        self.validate_wasm_transport()?;
+        Ok(())
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn validate_wasm_transport(&self) -> Result<(), CrawlError> {
+        if self.danger_accept_invalid_certs {
+            return Err(CrawlError::unsupported(
+                "danger_accept_invalid_certs is unavailable on WebAssembly; host Fetch controls TLS verification",
+            ));
+        }
         Ok(())
     }
 

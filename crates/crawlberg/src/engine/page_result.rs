@@ -29,7 +29,7 @@ impl CrawlEngine {
         let page_url = fetch.entry.url.clone();
         let depth = fetch.entry.depth;
 
-        if fetch.status_code >= SERVER_ERROR_STATUS_FLOOR {
+        if fetch.status_code >= SERVER_ERROR_STATUS_FLOOR && !self.config.soft_http_errors {
             state.pages_failed += 1;
             self.report_server_error(page_url, fetch.status_code, context).await;
             return Ok(false);

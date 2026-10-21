@@ -166,17 +166,10 @@ jobs:
           - lang: c
             test-cmd: "task c:e2e:test"
           - lang: dart
-            # ~keep This SDK version is a formatter pin, not just a runtime pin. `alef e2e
-            # ~keep generate` runs `dart format` in-process (it cannot be disabled), so the
-            # ~keep freshness check below compares this runner's formatter output against a
-            # ~keep tree formatted by whichever SDK the committer had. 3.11.6 and 3.13.x
-            # ~keep disagree on two things present in every generated file: 3.13 inserts
-            # ~keep blank lines between import groups and keeps a long `json:` named
-            # ~keep argument on one line, while 3.11.6 does neither. The committed e2e/dart
-            # ~keep tree is a fixed point of 3.13.2 (29/29 files, `dart format
-            # ~keep --set-exit-if-changed` clean), so pin the runner to it. Bumping this
-            # ~keep requires reformatting e2e/dart in the same commit.
-            dart-version: "3.13.2"
+            # ~keep Alef invokes `dart format` during e2e generation, so this exact SDK
+            # ~keep pins the formatter used by the generated-output freshness check too.
+            # ~keep Regenerate and commit e2e/dart with this SDK whenever the pin changes.
+            dart-version: "3.13.6"
             test-cmd: "task dart:e2e:test"
           - lang: swift
             swift-version: "6.0"
@@ -356,7 +349,7 @@ jobs:
         if: matrix.gradle
         uses: xberg-io/actions/setup-gradle@v1
         with:
-          gradle-version: "9.8.1"
+          gradle-version: "9.8.2"
 
       # gradle: true is exclusive to kotlin_android. No org action wraps
       # SDK-only setup (setup-android-emulator bundles a full AVD, which

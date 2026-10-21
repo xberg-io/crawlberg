@@ -294,7 +294,7 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
 
     let automaton = AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
-        .match_kind(MatchKind::LeftmostFirst)
+        .match_kind(MatchKind::Standard)
         .build(body.patterns)
         .map_err(|e| RulesError::MatcherBuild(e.to_string()))?;
 
@@ -360,7 +360,7 @@ impl Rules {
 
         let mut matched_fp_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if check_body {
-            for mat in self.automaton.find_iter(&response.body) {
+            for mat in self.automaton.find_overlapping_iter(&response.body) {
                 let fp_idx = self.pattern_to_fp[mat.pattern().as_usize()];
                 matched_fp_indices.insert(fp_idx);
             }
@@ -461,6 +461,44 @@ mod tests {
             !rules.fingerprints.is_empty(),
             "builtin must have at least one fingerprint"
         );
+    }
+
+    #[test]
+    fn body_matches_reach_every_eligible_fingerprint_despite_overlap() {
+        for pattern in ["blocked", "blocked by gateway"] {
+            let source = format!(
+                r#"
+[[fingerprint]]
+id = "restricted"
+vendor = "inactive"
+weight = 1.0
+statuses = [403]
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "blocked"
+[[fingerprint]]
+id = "active"
+vendor = "gateway"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "{pattern}"
+"#
+            );
+            let rules = load_from_str(&source).expect("valid fixture rules");
+            let response = make_response(200, vec![], "Blocked by Gateway");
+            let signal = rules
+                .classify(&response)
+                .expect("classification succeeds")
+                .expect("active rule matches");
+            assert_eq!(signal.fingerprint_id, "active");
+            assert!(
+                rules
+                    .classify(&make_response(200, vec![], "ordinary content"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     #[test]

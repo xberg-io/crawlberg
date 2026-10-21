@@ -341,3 +341,51 @@ async fn a_link_that_redirects_to_a_queued_page_gives_no_event_and_the_destinati
         "the redirecting links give no event of their own: {urls:?}"
     );
 }
+
+#[tokio::test]
+async fn soft_errors_keep_readable_bodies_for_every_http_error_status() {
+    let mock = MockServer::start().await;
+    for status in [400_u16, 401, 403, 404, 408, 410, 418, 429, 451, 500, 502, 503, 504] {
+        let route = format!("/{status}");
+        serve(&mock, &route, html(status, ERROR_PAGE_BODY)).await;
+        let crawled = crawl(&engine(true), &format!("{}{route}", mock.uri())).await;
+        assert_eq!(crawled.errors.len(), 0, "status {status}: {:?}", crawled.errors);
+        assert_eq!(crawled.pages.len(), 1, "status {status}: {:?}", crawled.pages);
+        assert_eq!(crawled.pages[0].3, status);
+        assert!(
+            crawled.pages[0].4.contains("real readable body text"),
+            "status {status}: {:?}",
+            crawled.pages
+        );
+    }
+}
+
+#[tokio::test]
+async fn redirected_404_obeys_soft_error_flag_in_scrape_and_crawl() {
+    let mock = MockServer::start().await;
+    serve_root(&mock, &["/moved"]).await;
+    serve(&mock, "/moved", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+    for soft in [false, true] {
+        let handle = engine(soft);
+        let result = scrape(&handle, &format!("{}/moved", mock.uri())).await;
+        if soft {
+            let page = result.expect("soft redirected 404 must be a page");
+            assert_eq!(page.status_code, 404);
+            assert!(
+                page.markdown
+                    .expect("Markdown")
+                    .content
+                    .contains("real readable body text")
+            );
+        } else {
+            assert!(matches!(result, Err(CrawlError::NotFound { .. })), "{result:?}");
+        }
+        for route in ["/moved", "/"] {
+            let result = crawl(&handle, &format!("{}{route}", mock.uri())).await;
+            let missing = result.pages.iter().find(|page| page.3 == 404);
+            assert_eq!(missing.is_some(), soft, "soft={soft}, route={route}");
+            assert_eq!(result.errors.is_empty(), soft, "soft={soft}, route={route}");
+        }
+    }
+}

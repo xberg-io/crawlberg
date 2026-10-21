@@ -247,6 +247,7 @@ pub struct HttpClient {
     pub ssrf: Arc<dyn SsrfValidator>,
     /// Whether `file://` URLs may be fetched. Off unless the embedder opts in.
     pub allow_file_access: bool,
+    pub(crate) danger_accept_invalid_certs: bool,
     pub cookie_jar: Arc<CookieJar>,
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
@@ -331,6 +332,7 @@ impl HttpClient {
             proxy,
             ssrf,
             allow_file_access,
+            danger_accept_invalid_certs: false,
             cookie_jar,
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
@@ -349,7 +351,7 @@ impl HttpClient {
                 let mut builder = Client::builder()
                     .redirect(Policy::none())
                     .timeout(Duration::from_secs(30))
-                    .danger_accept_invalid_certs(false);
+                    .danger_accept_invalid_certs(self.danger_accept_invalid_certs);
 
                 let proxied = self.proxy.is_some();
                 if let Some(ref proxy) = self.proxy {
@@ -385,7 +387,7 @@ impl HttpClient {
         let client = Client::builder()
             .redirect(Policy::none())
             .timeout(Duration::from_secs(30))
-            .danger_accept_invalid_certs(false)
+            .danger_accept_invalid_certs(self.danger_accept_invalid_certs)
             .proxy(proxy.reqwest_proxy()?)
             .build()
             .expect("failed to build HTTP client");

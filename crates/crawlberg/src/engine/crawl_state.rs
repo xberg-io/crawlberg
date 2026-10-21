@@ -137,6 +137,7 @@ pub(super) struct CrawlState {
     pub(super) pages: Vec<CrawlPageResult>,
     pub(super) redirect_count: usize,
     pub(super) error: Option<String>,
+    pub(super) waf_block: Option<crate::types::WafBlockDetails>,
     pub(super) was_skipped: bool,
     pub(super) all_cookies: Vec<CookieInfo>,
     pub(super) pages_failed: usize,
@@ -158,6 +159,7 @@ impl CrawlState {
             pages: Vec::with_capacity(capacity),
             redirect_count: 0,
             error: None,
+            waf_block: None,
             was_skipped: false,
             all_cookies: Vec::new(),
             pages_failed: 0,
@@ -180,8 +182,23 @@ impl CrawlState {
     /// result with no error and fewer pages would hide it (xberg-io/crawlberg#705). ~keep
     pub(super) fn record_failed_fetch(&mut self, error: &crate::error::CrawlError) {
         self.pages_failed += 1;
+        self.record_waf_block(error);
         if error.browser_connection_closed() && self.error.is_none() {
             self.error = Some(error.to_string());
+        }
+    }
+
+    pub(super) fn record_waf_block(&mut self, error: &crate::error::CrawlError) {
+        if self.waf_block.is_none()
+            && let crate::error::CrawlError::WafBlocked {
+                vendor, status, body, ..
+            } = error
+        {
+            self.waf_block = Some(crate::types::WafBlockDetails {
+                vendor: vendor.clone(),
+                status: *status,
+                body_prefix: body.clone(),
+            });
         }
     }
 
@@ -200,7 +217,7 @@ impl CrawlState {
             let stayed = self.pages.iter().all(|p| p.stayed_on_domain);
             (self.pages, stayed)
         };
-        CrawlResult::new(CrawlOutcome {
+        let mut result = CrawlResult::new(CrawlOutcome {
             pages: pages_to_return,
             final_url,
             redirect_count: self.redirect_count,
@@ -208,7 +225,9 @@ impl CrawlState {
             error: self.error,
             cookies: self.all_cookies,
             stayed_on_domain,
-        })
+        });
+        result.waf_block = self.waf_block;
+        result
     }
 }
 
@@ -320,5 +339,19 @@ mod tests {
             error.contains("failed to create page first"),
             "the first loss is kept, got: {error}"
         );
+    }
+
+    #[test]
+    fn should_preserve_waf_details_without_replacing_the_error_message() {
+        let mut state = CrawlState::new(0, false);
+        let error = CrawlError::waf_blocked_response("cloudflare", "challenge", 403, Some("<h1>Blocked</h1>"));
+        state.error = Some(error.to_string());
+        state.record_failed_fetch(&error);
+        let result = state.into_result("https://example.com/".to_string());
+        assert_eq!(result.error.as_deref(), Some(error.to_string().as_str()));
+        let details = result.waf_block.expect("WAF details survive crawl completion");
+        assert_eq!(details.vendor, "cloudflare");
+        assert_eq!(details.status, Some(403));
+        assert_eq!(details.body_prefix.as_deref(), Some("<h1>Blocked</h1>"));
     }
 }

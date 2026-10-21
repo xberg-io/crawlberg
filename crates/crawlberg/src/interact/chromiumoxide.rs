@@ -179,7 +179,12 @@ async fn run_with_browser(
     )?;
     let page = firewall
         .handle()
-        .new_page_with_policy(proxy.as_ref(), sockets, &config.ssrf)
+        .new_page_with_policy(
+            proxy.as_ref(),
+            sockets,
+            &config.ssrf,
+            config.danger_accept_invalid_certs,
+        )
         .await?;
 
     // ~keep The SSRF check holds for the whole session, not just the first navigation: the

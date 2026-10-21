@@ -6,6 +6,13 @@ includes:
     internal: true
 
 tasks:
+  ci:release-prerequisites:test:
+    desc: Test release registry gates and PHP packaging prerequisites
+    cmds:
+      - uv run --no-project --with pyyaml==6.0.3 python scripts/ci/test_release_prerequisites.py
+      - uv run --no-project --with pyyaml==6.0.3 python -m unittest discover -s scripts/ci -p test_release_dry_run.py
+      - uv run --no-project --with pyyaml==6.0.3 python -m unittest discover -s scripts/ci -p test_fork_publication.py
+
   shell:lint:
     desc: Lint shell scripts with auto-fix (shfmt + shellcheck)
     cmds:

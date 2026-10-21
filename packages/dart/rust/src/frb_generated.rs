@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -845111253;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1300708407;
 
 // Section: executor
 
@@ -165,7 +165,7 @@ fn wire__crate__batch_crawl_impl(
             let api_urls = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::batch_crawl(api_engine, api_urls).await?;
                         std::result::Result::Ok(output_ok)
@@ -197,7 +197,7 @@ fn wire__crate__batch_scrape_impl(
             let api_urls = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::batch_scrape(api_engine, api_urls).await?;
                         std::result::Result::Ok(output_ok)
@@ -229,7 +229,7 @@ fn wire__crate__crawl_impl(
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::crawl(api_engine, api_url).await?;
                         std::result::Result::Ok(output_ok)
@@ -1047,7 +1047,7 @@ fn wire__crate__create_engine_impl(
             let api_config = <Option<crate::CrawlConfig>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
-                transform_result_sse::<_, String>((move || {
+                transform_result_sse::<_, AlefBridgeError>((move || {
                     let output_ok = crate::create_engine(api_config)?;
                     std::result::Result::Ok(output_ok)
                 })())
@@ -1699,6 +1699,34 @@ fn wire__crate__create_ssrf_policy_from_json_impl(
         },
     )
 }
+fn wire__crate__create_waf_block_details_from_json_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "create_waf_block_details_from_json",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
+            };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::create_waf_block_details_from_json(api_json)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__generate_citations_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1749,7 +1777,7 @@ fn wire__crate__interact_impl(
             let api_actions = <Vec<crate::PageAction>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::interact(api_engine, api_url, api_actions).await?;
                         std::result::Result::Ok(output_ok)
@@ -1781,7 +1809,7 @@ fn wire__crate__map_urls_impl(
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::map_urls(api_engine, api_url).await?;
                         std::result::Result::Ok(output_ok)
@@ -1813,7 +1841,7 @@ fn wire__crate__scrape_impl(
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, String>(
+                transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
                         let output_ok = crate::scrape(api_engine, api_url).await?;
                         std::result::Result::Ok(output_ok)
@@ -1908,6 +1936,7 @@ const _: fn() = || {
         let _: Option<String> = BrowserConfig.chrome_path;
         let _: Vec<String> = BrowserConfig.chrome_args;
         let _: bool = BrowserConfig.scroll_containers;
+        let _: i64 = BrowserConfig.dom_quiet_window;
     }
     {
         let BrowserExtras = None::<crate::BrowserExtras>.unwrap();
@@ -2013,6 +2042,7 @@ const _: fn() = || {
         let _: bool = CrawlConfig.save_browser_profile;
         let _: crate::SsrfPolicy = CrawlConfig.ssrf;
         let _: Option<bool> = CrawlConfig.ssrf_deny_private_explicit;
+        let _: bool = CrawlConfig.danger_accept_invalid_certs;
     }
     match None::<crate::CrawlError>.unwrap() {
         crate::CrawlError::NotFound { message } => {
@@ -2032,8 +2062,8 @@ const _: fn() = || {
         } => {
             let _: String = vendor;
             let _: String = message;
-            let _: i64 = status;
-            let _: String = body;
+            let _: Option<i64> = status;
+            let _: Option<String> = body;
         }
         crate::CrawlError::Timeout { message } => {
             let _: String = message;
@@ -2140,6 +2170,7 @@ const _: fn() = || {
         let _: Vec<crate::CookieInfo> = CrawlResult.cookies;
         let _: bool = CrawlResult.stayed_on_domain;
         let _: bool = CrawlResult.browser_used;
+        let _: Option<crate::WafBlockDetails> = CrawlResult.waf_block;
     }
     {
         let CrawlStreamRequest = None::<crate::CrawlStreamRequest>.unwrap();
@@ -2269,15 +2300,15 @@ const _: fn() = || {
             amount,
         } => {
             let _: crate::ScrollDirection = direction;
-            let _: String = selector;
-            let _: i64 = amount;
+            let _: Option<String> = selector;
+            let _: Option<i64> = amount;
         }
         crate::PageAction::Wait { milliseconds, selector } => {
-            let _: i64 = milliseconds;
-            let _: String = selector;
+            let _: Option<i64> = milliseconds;
+            let _: Option<String> = selector;
         }
         crate::PageAction::Screenshot { full_page } => {
-            let _: bool = full_page;
+            let _: Option<bool> = full_page;
         }
         crate::PageAction::ExecuteJs { script } => {
             let _: String = script;
@@ -2413,6 +2444,12 @@ const _: fn() = || {
         let _: i64 = SsrfPolicy.max_redirects;
         let _: Vec<String> = SsrfPolicy.scheme_allowlist;
     }
+    {
+        let WafBlockDetails = None::<crate::WafBlockDetails>.unwrap();
+        let _: String = WafBlockDetails.vendor;
+        let _: Option<i64> = WafBlockDetails.status;
+        let _: Option<String> = WafBlockDetails.body_prefix;
+    }
 };
 
 // Section: related_funcs
@@ -2439,6 +2476,14 @@ impl SseDecode for CrawlEngineHandle {
                 deserializer,
             );
         return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
+    }
+}
+
+impl SseDecode for AlefBridgeError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <crate::AlefBridgeErrorWire>::sse_decode(deserializer);
+        return crate::alef_decode_bridge_error(inner);
     }
 }
 
@@ -2489,6 +2534,34 @@ impl SseDecode for crate::ActionResult {
             data: var_data,
             error: var_error,
         };
+    }
+}
+
+impl SseDecode for crate::AlefBridgeErrorWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_error = <crate::CrawlError>::sse_decode(deserializer);
+                return crate::AlefBridgeErrorWire::CrawlError { error: var_error };
+            }
+            1 => {
+                let mut var_error = <crate::SsrfError>::sse_decode(deserializer);
+                return crate::AlefBridgeErrorWire::SsrfError { error: var_error };
+            }
+            2 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::AlefBridgeErrorWire::InvalidInput { message: var_message };
+            }
+            3 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::AlefBridgeErrorWire::NativeFailure { message: var_message };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
 
@@ -2670,6 +2743,7 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_chromePath = <Option<String>>::sse_decode(deserializer);
         let mut var_chromeArgs = <Vec<String>>::sse_decode(deserializer);
         let mut var_scrollContainers = <bool>::sse_decode(deserializer);
+        let mut var_domQuietWindow = <i64>::sse_decode(deserializer);
         return crate::BrowserConfig {
             mode: var_mode,
             backend: var_backend,
@@ -2689,6 +2763,7 @@ impl SseDecode for crate::BrowserConfig {
             chrome_path: var_chromePath,
             chrome_args: var_chromeArgs,
             scroll_containers: var_scrollContainers,
+            dom_quiet_window: var_domQuietWindow,
         };
     }
 }
@@ -2893,6 +2968,7 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_saveBrowserProfile = <bool>::sse_decode(deserializer);
         let mut var_ssrf = <crate::SsrfPolicy>::sse_decode(deserializer);
         let mut var_ssrfDenyPrivateExplicit = <Option<bool>>::sse_decode(deserializer);
+        let mut var_dangerAcceptInvalidCerts = <bool>::sse_decode(deserializer);
         return crate::CrawlConfig {
             max_depth: var_maxDepth,
             max_pages: var_maxPages,
@@ -2949,6 +3025,7 @@ impl SseDecode for crate::CrawlConfig {
             save_browser_profile: var_saveBrowserProfile,
             ssrf: var_ssrf,
             ssrf_deny_private_explicit: var_ssrfDenyPrivateExplicit,
+            danger_accept_invalid_certs: var_dangerAcceptInvalidCerts,
         };
     }
 }
@@ -2973,8 +3050,8 @@ impl SseDecode for crate::CrawlError {
             3 => {
                 let mut var_vendor = <String>::sse_decode(deserializer);
                 let mut var_message = <String>::sse_decode(deserializer);
-                let mut var_status = <i64>::sse_decode(deserializer);
-                let mut var_body = <String>::sse_decode(deserializer);
+                let mut var_status = <Option<i64>>::sse_decode(deserializer);
+                let mut var_body = <Option<String>>::sse_decode(deserializer);
                 return crate::CrawlError::WafBlocked {
                     vendor: var_vendor,
                     message: var_message,
@@ -3164,6 +3241,7 @@ impl SseDecode for crate::CrawlResult {
         let mut var_cookies = <Vec<crate::CookieInfo>>::sse_decode(deserializer);
         let mut var_stayedOnDomain = <bool>::sse_decode(deserializer);
         let mut var_browserUsed = <bool>::sse_decode(deserializer);
+        let mut var_wafBlock = <Option<crate::WafBlockDetails>>::sse_decode(deserializer);
         return crate::CrawlResult {
             pages: var_pages,
             final_url: var_finalUrl,
@@ -3173,6 +3251,7 @@ impl SseDecode for crate::CrawlResult {
             cookies: var_cookies,
             stayed_on_domain: var_stayedOnDomain,
             browser_used: var_browserUsed,
+            waf_block: var_wafBlock,
         };
     }
 }
@@ -3975,6 +4054,17 @@ impl SseDecode for Option<crate::ScrapeResult> {
     }
 }
 
+impl SseDecode for Option<crate::WafBlockDetails> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::WafBlockDetails>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<Vec<String>> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4042,8 +4132,8 @@ impl SseDecode for crate::PageAction {
             }
             3 => {
                 let mut var_direction = <crate::ScrollDirection>::sse_decode(deserializer);
-                let mut var_selector = <String>::sse_decode(deserializer);
-                let mut var_amount = <i64>::sse_decode(deserializer);
+                let mut var_selector = <Option<String>>::sse_decode(deserializer);
+                let mut var_amount = <Option<i64>>::sse_decode(deserializer);
                 return crate::PageAction::Scroll {
                     direction: var_direction,
                     selector: var_selector,
@@ -4051,15 +4141,15 @@ impl SseDecode for crate::PageAction {
                 };
             }
             4 => {
-                let mut var_milliseconds = <i64>::sse_decode(deserializer);
-                let mut var_selector = <String>::sse_decode(deserializer);
+                let mut var_milliseconds = <Option<i64>>::sse_decode(deserializer);
+                let mut var_selector = <Option<String>>::sse_decode(deserializer);
                 return crate::PageAction::Wait {
                     milliseconds: var_milliseconds,
                     selector: var_selector,
                 };
             }
             5 => {
-                let mut var_fullPage = <bool>::sse_decode(deserializer);
+                let mut var_fullPage = <Option<bool>>::sse_decode(deserializer);
                 return crate::PageAction::Screenshot {
                     full_page: var_fullPage,
                 };
@@ -4388,6 +4478,20 @@ impl SseDecode for usize {
     }
 }
 
+impl SseDecode for crate::WafBlockDetails {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_vendor = <String>::sse_decode(deserializer);
+        let mut var_status = <Option<i64>>::sse_decode(deserializer);
+        let mut var_bodyPrefix = <Option<String>>::sse_decode(deserializer);
+        return crate::WafBlockDetails {
+            vendor: var_vendor,
+            status: var_status,
+            body_prefix: var_bodyPrefix,
+        };
+    }
+}
+
 fn pde_ffi_dispatcher_primary_impl(
     func_id: i32,
     port: flutter_rust_bridge::for_generated::MessagePort,
@@ -4457,10 +4561,11 @@ fn pde_ffi_dispatcher_primary_impl(
         55 => wire__crate__create_scroll_direction_from_json_impl(port, ptr, rust_vec_len, data_len),
         56 => wire__crate__create_sitemap_url_from_json_impl(port, ptr, rust_vec_len, data_len),
         57 => wire__crate__create_ssrf_policy_from_json_impl(port, ptr, rust_vec_len, data_len),
-        58 => wire__crate__generate_citations_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__interact_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__map_urls_impl(port, ptr, rust_vec_len, data_len),
-        61 => wire__crate__scrape_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__create_waf_block_details_from_json_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__generate_citations_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__interact_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__map_urls_impl(port, ptr, rust_vec_len, data_len),
+        62 => wire__crate__scrape_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4494,6 +4599,18 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<CrawlEngineHandle>> for CrawlE
 }
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<AlefBridgeError> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        crate::alef_encode_bridge_error(self.0).into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<AlefBridgeError> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<AlefBridgeError>> for AlefBridgeError {
+    fn into_into_dart(self) -> FrbWrapper<AlefBridgeError> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ActionResult> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4510,6 +4627,34 @@ impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<
 impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::ActionResult>> for crate::ActionResult {
     fn into_into_dart(self) -> FrbWrapper<crate::ActionResult> {
         self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::AlefBridgeErrorWire {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::AlefBridgeErrorWire::CrawlError { error } => {
+                [0.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefBridgeErrorWire::SsrfError { error } => {
+                [1.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefBridgeErrorWire::InvalidInput { message } => {
+                [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefBridgeErrorWire::NativeFailure { message } => {
+                [3.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::AlefBridgeErrorWire {}
+impl flutter_rust_bridge::IntoIntoDart<crate::AlefBridgeErrorWire> for crate::AlefBridgeErrorWire {
+    fn into_into_dart(self) -> crate::AlefBridgeErrorWire {
+        self
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -4704,6 +4849,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.chrome_path.into_into_dart().into_dart(),
             self.0.chrome_args.into_into_dart().into_dart(),
             self.0.scroll_containers.into_into_dart().into_dart(),
+            self.0.dom_quiet_window.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4925,6 +5071,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.save_browser_profile.into_into_dart().into_dart(),
             self.0.ssrf.into_into_dart().into_dart(),
             self.0.ssrf_deny_private_explicit.into_into_dart().into_dart(),
+            self.0.danger_accept_invalid_certs.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5096,6 +5243,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlResult> {
             self.0.cookies.into_into_dart().into_dart(),
             self.0.stayed_on_domain.into_into_dart().into_dart(),
             self.0.browser_used.into_into_dart().into_dart(),
+            self.0.waf_block.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5728,6 +5876,23 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::SsrfPolicy>> for crate:
         self.into()
     }
 }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::WafBlockDetails> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.0.vendor.into_into_dart().into_dart(),
+            self.0.status.into_into_dart().into_dart(),
+            self.0.body_prefix.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::WafBlockDetails> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::WafBlockDetails>> for crate::WafBlockDetails {
+    fn into_into_dart(self) -> FrbWrapper<crate::WafBlockDetails> {
+        self.into()
+    }
+}
 
 impl SseEncode for flutter_rust_bridge::for_generated::anyhow::Error {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -5743,6 +5908,13 @@ impl SseEncode for CrawlEngineHandle {
             flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self),
             serializer,
         );
+    }
+}
+
+impl SseEncode for AlefBridgeError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::AlefBridgeErrorWire>::sse_encode(crate::alef_encode_bridge_error(self), serializer);
     }
 }
 
@@ -5784,6 +5956,33 @@ impl SseEncode for crate::ActionResult {
         <bool>::sse_encode(self.success, serializer);
         <Option<String>>::sse_encode(self.data, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
+    }
+}
+
+impl SseEncode for crate::AlefBridgeErrorWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::AlefBridgeErrorWire::CrawlError { error } => {
+                <i32>::sse_encode(0, serializer);
+                <crate::CrawlError>::sse_encode(error, serializer);
+            }
+            crate::AlefBridgeErrorWire::SsrfError { error } => {
+                <i32>::sse_encode(1, serializer);
+                <crate::SsrfError>::sse_encode(error, serializer);
+            }
+            crate::AlefBridgeErrorWire::InvalidInput { message } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::AlefBridgeErrorWire::NativeFailure { message } => {
+                <i32>::sse_encode(3, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
 
@@ -5936,6 +6135,7 @@ impl SseEncode for crate::BrowserConfig {
         <Option<String>>::sse_encode(self.chrome_path, serializer);
         <Vec<String>>::sse_encode(self.chrome_args, serializer);
         <bool>::sse_encode(self.scroll_containers, serializer);
+        <i64>::sse_encode(self.dom_quiet_window, serializer);
     }
 }
 
@@ -6109,6 +6309,7 @@ impl SseEncode for crate::CrawlConfig {
         <bool>::sse_encode(self.save_browser_profile, serializer);
         <crate::SsrfPolicy>::sse_encode(self.ssrf, serializer);
         <Option<bool>>::sse_encode(self.ssrf_deny_private_explicit, serializer);
+        <bool>::sse_encode(self.danger_accept_invalid_certs, serializer);
     }
 }
 
@@ -6137,8 +6338,8 @@ impl SseEncode for crate::CrawlError {
                 <i32>::sse_encode(3, serializer);
                 <String>::sse_encode(vendor, serializer);
                 <String>::sse_encode(message, serializer);
-                <i64>::sse_encode(status, serializer);
-                <String>::sse_encode(body, serializer);
+                <Option<i64>>::sse_encode(status, serializer);
+                <Option<String>>::sse_encode(body, serializer);
             }
             crate::CrawlError::Timeout { message } => {
                 <i32>::sse_encode(4, serializer);
@@ -6284,6 +6485,7 @@ impl SseEncode for crate::CrawlResult {
         <Vec<crate::CookieInfo>>::sse_encode(self.cookies, serializer);
         <bool>::sse_encode(self.stayed_on_domain, serializer);
         <bool>::sse_encode(self.browser_used, serializer);
+        <Option<crate::WafBlockDetails>>::sse_encode(self.waf_block, serializer);
     }
 }
 
@@ -6959,6 +7161,16 @@ impl SseEncode for Option<crate::ScrapeResult> {
     }
 }
 
+impl SseEncode for Option<crate::WafBlockDetails> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::WafBlockDetails>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<Vec<String>> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7023,17 +7235,17 @@ impl SseEncode for crate::PageAction {
             } => {
                 <i32>::sse_encode(3, serializer);
                 <crate::ScrollDirection>::sse_encode(direction, serializer);
-                <String>::sse_encode(selector, serializer);
-                <i64>::sse_encode(amount, serializer);
+                <Option<String>>::sse_encode(selector, serializer);
+                <Option<i64>>::sse_encode(amount, serializer);
             }
             crate::PageAction::Wait { milliseconds, selector } => {
                 <i32>::sse_encode(4, serializer);
-                <i64>::sse_encode(milliseconds, serializer);
-                <String>::sse_encode(selector, serializer);
+                <Option<i64>>::sse_encode(milliseconds, serializer);
+                <Option<String>>::sse_encode(selector, serializer);
             }
             crate::PageAction::Screenshot { full_page } => {
                 <i32>::sse_encode(5, serializer);
-                <bool>::sse_encode(full_page, serializer);
+                <Option<bool>>::sse_encode(full_page, serializer);
             }
             crate::PageAction::ExecuteJs { script } => {
                 <i32>::sse_encode(6, serializer);
@@ -7254,6 +7466,15 @@ impl SseEncode for usize {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u64::<NativeEndian>(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::WafBlockDetails {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.vendor, serializer);
+        <Option<i64>>::sse_encode(self.status, serializer);
+        <Option<String>>::sse_encode(self.body_prefix, serializer);
     }
 }
 

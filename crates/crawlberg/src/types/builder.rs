@@ -82,6 +82,12 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Set whether page and robots.txt requests accept invalid TLS certificates.
+    pub fn danger_accept_invalid_certs(mut self, value: bool) -> Self {
+        self.inner.danger_accept_invalid_certs = value;
+        self
+    }
+
     /// Set a custom user-agent string.
     pub fn user_agent(mut self, value: impl Into<String>) -> Self {
         self.inner.user_agent = Some(value.into());

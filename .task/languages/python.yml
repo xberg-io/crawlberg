@@ -30,7 +30,7 @@ tasks:
     desc: Build Python extension in debug mode
     dir: packages/python
     cmds:
-      - uv run maturin develop
+      - uv run maturin develop --profile dev
 
   build:release:
     desc: Build Python extension in release mode (optimized)

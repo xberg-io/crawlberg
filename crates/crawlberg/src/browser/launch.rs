@@ -248,6 +248,7 @@ fn build_one_shot_launch_builder(
     proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
+        .respect_https_errors()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)

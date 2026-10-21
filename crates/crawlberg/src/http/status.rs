@@ -113,25 +113,25 @@ where
     })
 }
 
-/// The response a 404 or 410 error was raised for, kept as that error's source when
+/// The response an HTTP error was raised for, kept as that error's source when
 /// `soft_http_errors` may still turn the error into a page.
 ///
 /// ~keep Carried in the error's source chain, not in a new `CrawlError` field: the error type is
 /// part of the binding surface, and the retry and escalation machinery that sees the error first
 /// reads only its variant and [`HttpStatus`], which this reports through `source()` unchanged.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error)]
 #[error("HTTP status {}", .status.0)]
 pub(crate) struct RefusedResponse {
-    #[source]
     pub(crate) status: HttpStatus,
+    pub(crate) final_url: String,
+    #[source]
+    original_source: Option<crate::error::ErrorSource>,
     pub(crate) content_type: String,
     pub(crate) headers: std::collections::HashMap<String, Vec<String>>,
     pub(crate) body: Vec<u8>,
 }
 
-/// [`status_error`] for a 404 (or, for any other status, a 410) whose response is kept on the error.
-#[cfg(not(target_arch = "wasm32"))]
+/// Classify an error status while preserving its bounded response for soft errors.
 pub(crate) fn status_error_keeping_response(
     status: u16,
     url: &str,
@@ -139,22 +139,39 @@ pub(crate) fn status_error_keeping_response(
     headers: std::collections::HashMap<String, Vec<String>>,
     body: Vec<u8>,
 ) -> CrawlError {
-    let source = RefusedResponse {
-        status: HttpStatus(status),
-        content_type,
-        headers,
-        body,
-    };
-    let message = status_message(status, url);
-    if status == 404 {
-        CrawlError::not_found_with_source(message, source)
+    let text = String::from_utf8_lossy(&body);
+    let mut error = if super::challenge::is_challenge_status(status) {
+        super::challenge::challenge_body_error(status, url, &text, &headers)
     } else {
-        CrawlError::gone_with_source(message, source)
+        status_error_with_headers(status, url, &headers)
+            .unwrap_or_else(|| CrawlError::forbidden_with_source(status_message(status, url), HttpStatus(status)))
+    };
+    match &mut error {
+        CrawlError::Unauthorized { source, .. }
+        | CrawlError::Forbidden { source, .. }
+        | CrawlError::WafBlocked { source, .. }
+        | CrawlError::NotFound { source, .. }
+        | CrawlError::Timeout { source, .. }
+        | CrawlError::Gone { source, .. }
+        | CrawlError::RateLimited { source, .. }
+        | CrawlError::ServerError { source, .. }
+        | CrawlError::BadGateway { source, .. } => {
+            let response = RefusedResponse {
+                status: HttpStatus(status),
+                final_url: url.to_owned(),
+                original_source: source.take(),
+                content_type,
+                headers,
+                body,
+            };
+            *source = Some(crate::error::ErrorSource::new(response));
+        }
+        _ => {}
     }
+    error
 }
 
 /// The response `error` was raised for, when it kept one.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn refused_response(error: &CrawlError) -> Option<&RefusedResponse> {
     let mut cause = std::error::Error::source(error);
     while let Some(current) = cause {
@@ -185,6 +202,26 @@ pub(crate) fn error_status(error: &CrawlError) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_error_responses_preserve_retry_after_and_origin_status() {
+        for status in [429_u16, 503] {
+            let headers = HashMap::from([("retry-after".to_owned(), vec!["7".to_owned()])]);
+            let error = status_error_keeping_response(
+                status,
+                "https://example.com/",
+                "text/html".to_owned(),
+                headers,
+                b"<p>Read this error</p>".to_vec(),
+            );
+            assert_eq!(error_status(&error), Some(status));
+            assert_eq!(error_retry_after(&error), Some(Duration::from_secs(7)));
+            assert_eq!(
+                refused_response(&error).expect("response retained").body,
+                b"<p>Read this error</p>"
+            );
+        }
+    }
 
     #[test]
     fn parse_retry_after_reads_delta_seconds_and_http_dates() {

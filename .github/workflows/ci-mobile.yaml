@@ -89,7 +89,7 @@ jobs:
         shell: bash
       - uses: xberg-io/actions/setup-gradle@v1
         with:
-          gradle-version: "9.8.1"
+          gradle-version: "9.8.2"
       - name: Assemble AAR
         working-directory: packages/kotlin-android
         run: gradle assembleDebug --no-daemon

@@ -26,6 +26,7 @@ use crate::types::CrawlConfig;
 struct ClientCacheKey {
     runtime: Option<tokio::runtime::Id>,
     timeout_micros: u128,
+    danger_accept_invalid_certs: bool,
     proxy: String,
     ssrf: String,
 }
@@ -35,6 +36,7 @@ impl ClientCacheKey {
         Self {
             runtime: tokio::runtime::Handle::try_current().map(|handle| handle.id()).ok(),
             timeout_micros: config.request_timeout.as_micros(),
+            danger_accept_invalid_certs: config.danger_accept_invalid_certs,
             proxy: proxy_identity(config),
             ssrf: ssrf_identity(config),
         }
@@ -454,6 +456,7 @@ fn configure_client(
 ) -> Result<reqwest::ClientBuilder, CrawlError> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(config.danger_accept_invalid_certs)
         .timeout(config.request_timeout);
 
     // ~keep Closes the DNS-rebinding TOCTOU: `validate_url` resolves the host and checks
@@ -488,6 +491,7 @@ fn configure_environment_client(
 ) -> Result<reqwest::ClientBuilder, CrawlError> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(config.danger_accept_invalid_certs)
         .timeout(config.request_timeout)
         .proxy(proxy.reqwest_proxy()?))
 }

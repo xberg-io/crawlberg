@@ -112,7 +112,7 @@ fn soft_error_status(err: &CrawlError) -> Option<u16> {
                 .filter(|status| is_soft_error_status(*status))
                 .unwrap_or(403),
         ),
-        _ => None,
+        _ => crate::http::error_status(err).filter(|status| is_soft_error_status(*status)),
     }
 }
 

@@ -4,10 +4,16 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.0] - 2026-10-19
+## [1.12.0] - 2026-10-21
 
 ### Added
 
+- `danger_accept_invalid_certs` accepts invalid TLS certificates for HTTP pages, robots.txt, and browser
+  navigation when explicitly enabled. It defaults to `false`; browser navigation now verifies certificates too. (#797)
+- `browser.dom_quiet_window` configures the DOM quiet period in milliseconds, defaulting to 150 ms.
+  Increase it or set `browser.extra_wait` for pages whose first DOM update occurs later. (#795)
+- `CrawlResult.waf_block` exposes the vendor, origin status, and bounded body prefix of the first WAF block,
+  while preserving the existing error message. (#794)
 - `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
   virtualised list mounts, so a list rendered by window returns every item. (#768)
 - Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
@@ -15,18 +21,40 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Upgrade `libc` to 0.2.191, which restores the iOS Mach bindings removed in 0.2.190, and refresh dependency
+  lockfiles, including html-to-markdown 3.18.5 and updated TLS trust validation. The browser fork moves to 0.9.4 and uses base64 0.23.
+- Pin the repository's Rust toolchain to 1.99.1.
 - The Python binding builds against PyO3 0.30 and the PHP extension against ext-php-rs 0.16.3; bindings are
-  regenerated with alef 0.111.0.
+  regenerated with alef 0.112.0.
 
 ### Fixed
 
+- Malformed percent escapes keep a stable normalized URL across repeated normalization and query sorting. (#799)
+
+- Page titles decode HTML character references once, using the same text rules as a browser tab. (#798)
+- Window-scrolled virtual lists and lists using spacer elements retain their final items. (#789, #790)
+- Virtual lists that replace their list element retain ordered rows without rewriting surrounding content.
+- WAF errors in the REST API expose structured vendor, status, and body-prefix fields and retain an origin
+  error status such as 429 or 503 instead of always returning 403. (#796)
+- Bare mentions of DataDome, BigIPServer, and AWS WAF on successful pages no longer count as blocks. (#793)
+- Overlapping WAF body signatures no longer hide one another; explicit DataDome block pages remain blocked,
+  including when served as robots.txt.
+- With `soft_http_errors`, readable bodies survive 401, 403, 429, and server-error responses. (#791)
+- `scrape`, `crawl`, and `map` require `soft_http_errors` to accept redirected 404/410 responses;
+  the flag is no longer silently overridden. (#792)
+- Python `WafBlockedError` retains its `vendor`, `status`, and `body` attributes. (#794)
+- PHP WAF exceptions retain their typed class and response payload; Java nullable WAF status values remain null. (#794)
+- Java configuration and crawl-result constructors retain their released signatures as new fields are added.
+- Release dry runs hold registry-dependent package builds until the core version is available on crates.io.
+- PHP release packaging installs the pinned Alef generator and honors dry-run mode.
+- Python development builds use the development profile even when package builds default to release mode.
 - Browser-backed pages wait for required Chrome startup acknowledgements before reporting readiness,
   avoiding premature use and teardown.
 - Chrome installed as a snap launches again with snapd 2.77 and later, where `/usr/bin/snap` links to
   `/usr/lib/snapd/snapd`; the launch resolved the link and started the snapd daemon instead of Chrome.
-- The default browser wait returns once the DOM has been unchanged for one second after the load (at most four
-  seconds, and never past `browser.timeout`), instead of a fixed 500 ms, so single-page apps that draw shortly after their last response are captured.
-  `browser.extra_wait` remains the escape hatch for apps that render later. (#769)
+- The default browser wait returns once the DOM has been unchanged for `browser.dom_quiet_window` after load
+  (at most four seconds, and never past `browser.timeout`), instead of a fixed sleep. DOM changes restart the
+  quiet period; `browser.extra_wait` remains the escape hatch for apps that render later. (#769, #795)
 - A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
   markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
   `browser.timeout`, within what is left of `browser.overall_timeout`; when none is left the page fails with `browser_timeout`. (#779)

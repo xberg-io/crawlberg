@@ -77,7 +77,7 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
     #[cfg(target_arch = "wasm32")]
     let policy = crate::http::AdmitEvery;
     let mut policy = RateLimited::new(policy, context.limiter);
-    let page = fetch_with_retry(
+    let page = match fetch_with_retry(
         url,
         config,
         &std::collections::HashMap::new(),
@@ -86,7 +86,14 @@ pub async fn map(engine: &CrawlEngine, seed: &crate::engine::SeedUrl) -> Result<
         Fetched::Sitemap,
         &mut policy,
     )
-    .await?;
+    .await
+    {
+        Ok(page) => page,
+        Err(error) if config.soft_http_errors && crate::http::refused_response(&error).is_some() => {
+            return Ok(filter_map_result(Vec::new(), &filter, config.map_limit));
+        }
+        Err(error) => return Err(error),
+    };
     let urls = urls_from_direct_response(&parsed_url, &page.response, page.page_scan, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
@@ -2118,7 +2125,13 @@ mod tests {
         let start = r#"<html><head><meta http-equiv="refresh" content="0; url=/missing"></head>
             <body><a href="/fallback">f</a></body></html>"#;
         mount_body(&mock, "/start", "text/html", start.to_owned()).await;
-        let config = local_test_config();
+        let mut config = local_test_config();
+
+        assert!(matches!(
+            map(&format!("{base}/start"), &config).await,
+            Err(CrawlError::NotFound { .. })
+        ));
+        config.soft_http_errors = true;
 
         let result = map(&format!("{base}/start"), &config).await;
 
@@ -2335,7 +2348,13 @@ mod tests {
         let mock = MockServer::start().await;
         let base = mock.uri();
         mount_redirect(&mock, "/r0", "/missing").await;
-        let config = local_test_config();
+        let mut config = local_test_config();
+
+        assert!(matches!(
+            map(&format!("{base}/r0"), &config).await,
+            Err(CrawlError::NotFound { .. })
+        ));
+        config.soft_http_errors = true;
 
         let result = map(&format!("{base}/r0"), &config).await;
 

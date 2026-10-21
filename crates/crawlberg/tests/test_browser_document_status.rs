@@ -111,7 +111,7 @@ async fn assert_scrape_matches_http_mode(test_name: &str, backend: BrowserBacken
         ("/missing", Err("NotFound".to_owned())),
         ("/broken", Err("ServerError".to_owned())),
         ("/waf", Err("WafBlocked".to_owned())),
-        ("/moved", Ok(404)),
+        ("/moved", Err("NotFound".to_owned())),
     ] {
         let url = format!("{}{route}", site.uri());
         let http_outcome = scrape_outcome(scrape(&http, &url).await);
@@ -150,8 +150,7 @@ async fn native_scrape_reports_the_document_status_as_http_mode_does() {
     .await;
 }
 
-/// With `soft_http_errors`, a 404 or 410 page is a page with its status and its body text, and a
-/// 403 WAF page one with no body, in both modes.
+/// With `soft_http_errors`, error pages retain their status and body text in both modes.
 #[tokio::test]
 async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does() {
     let test_name = "chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does";
@@ -165,7 +164,7 @@ async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_do
     for (route, status, text) in [
         ("/missing", 404, Some("no such page")),
         ("/gone", 410, Some("no longer here")),
-        ("/waf", 403, None),
+        ("/waf", 403, Some("forbidden-marker")),
     ] {
         let url = format!("{}{route}", site.uri());
         let expected = scrape(&http, &url)
@@ -1001,9 +1000,7 @@ async fn late_404_site(target: &str) -> MockServer {
     site
 }
 
-/// A 404 at the end of a redirect is a page in HTTP mode, and only the redirects of the late
-/// navigation count: the seed's redirect does not make a late 404 a page, and a late navigation
-/// that redirects to a 404 is one.
+/// A late 404 remains an error with soft errors disabled, including after redirects.
 #[tokio::test]
 async fn chromiumoxide_counts_only_the_late_navigation_s_redirects_for_a_404() {
     let test_name = "chromiumoxide_counts_only_the_late_navigation_s_redirects_for_a_404";
@@ -1026,15 +1023,11 @@ async fn chromiumoxide_counts_only_the_late_navigation_s_redirects_for_a_404() {
             return;
         };
         assert_requested(test_name, &site, reached).await;
-        let page = result.unwrap_or_else(|error| {
-            panic!("{test_name}: a late navigation that redirected to a 404 is a page: {error:?}")
-        });
         assert_eq!(
-            (page.status_code, page.html.as_str()),
-            (404, ""),
+            scrape_outcome(result),
+            Err("NotFound".to_owned()),
             "{test_name}: {target}"
         );
-        assert!(page.final_url.ends_with(reached), "{test_name}: {}", page.final_url);
     }
 }
 

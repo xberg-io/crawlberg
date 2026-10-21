@@ -201,9 +201,9 @@ pub struct BrowserConfig {
     /// Extra time to wait after the wait condition is met.
     ///
     /// The default `network_idle` wait returns once the page has loaded and its DOM has been
-    /// unchanged for one second (at most four seconds, and never past `timeout`, counted from
-    /// the start of the navigation). An app that draws later than that after its last request,
-    /// such as a single-page app that renders its data on a slow pass, needs `extra_wait`; for
+    /// unchanged for `dom_quiet_window` (at most four seconds, and never past `timeout`, counted
+    /// from the start of the navigation). An app that draws after a longer quiet period needs
+    /// a larger `dom_quiet_window` or `extra_wait`; for
     /// example `3000` waits three more seconds.
     #[serde(default, with = "option_duration_ms")]
     pub extra_wait: Option<Duration>,
@@ -291,6 +291,13 @@ pub struct BrowserConfig {
     /// Chromiumoxide backend only.
     #[serde(default)]
     pub scroll_containers: bool,
+    /// How long the DOM must stay unchanged after page load for `network_idle` to return,
+    /// in milliseconds when serialized. Default: 150 ms. Every mutation restarts this window;
+    /// the whole wait stays bounded to four seconds and the remaining navigation timeout.
+    /// A page whose first delayed render follows a longer quiet gap needs a larger value
+    /// or `extra_wait`. Chromiumoxide backend only.
+    #[serde(with = "duration_ms")]
+    pub dom_quiet_window: Duration,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -326,6 +333,7 @@ impl std::fmt::Debug for BrowserConfig {
             chrome_args,
             private_pipe,
             scroll_containers,
+            dom_quiet_window,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -353,6 +361,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
             .field("private_pipe", private_pipe)
             .field("scroll_containers", scroll_containers)
+            .field("dom_quiet_window", dom_quiet_window)
             .finish()
     }
 }
@@ -379,6 +388,7 @@ impl Default for BrowserConfig {
             chrome_args: Vec::new(),
             private_pipe: false,
             scroll_containers: false,
+            dom_quiet_window: Duration::from_millis(150),
         }
     }
 }

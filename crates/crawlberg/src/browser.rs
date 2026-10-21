@@ -473,7 +473,10 @@ async fn acquire_pooled_page(
     {
         let session_key = session_key(url, proxy.as_ref())?;
 
-        if let Some((page, permit, handler_end)) = session_pool.acquire_with_policy(&session_key, &config.ssrf).await {
+        if let Some((page, permit, handler_end)) = session_pool
+            .acquire_with_policy(&session_key, &config.ssrf, config.danger_accept_invalid_certs)
+            .await
+        {
             if !handler_end.as_ref().is_some_and(HandlerEnd::has_ended) {
                 return Ok((page, permit, None, handler_end));
             }
@@ -534,7 +537,14 @@ async fn release_pooled_page(
         tracing::debug!("parking a pooled browser page for session reuse");
         watch.park().await;
         session_pool
-            .insert_with_policy(session_key, &config.ssrf, page, permit, handler_end)
+            .insert_with_policy(
+                session_key,
+                &config.ssrf,
+                config.danger_accept_invalid_certs,
+                page,
+                permit,
+                handler_end,
+            )
             .await;
         return;
     }
@@ -809,7 +819,12 @@ impl OneShotSession {
         };
         let page = firewall
             .handle()
-            .new_page_with_policy(proxy.as_ref(), sockets, &config.ssrf)
+            .new_page_with_policy(
+                proxy.as_ref(),
+                sockets,
+                &config.ssrf,
+                config.danger_accept_invalid_certs,
+            )
             .await?;
         self.open_tab = Some(page.target_id().clone());
         let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
@@ -942,8 +957,10 @@ mod tests {
         site: &MockServer,
         route: &str,
         executor: &NativeBrowserExecutor,
+        soft_http_errors: bool,
     ) -> Result<BrowserPage, CrawlError> {
         let config = CrawlConfig {
+            soft_http_errors,
             browser: BrowserConfig {
                 backend: BrowserBackend::Native,
                 mode: BrowserMode::Always,
@@ -967,10 +984,8 @@ mod tests {
         .await
     }
 
-    /// A native fetch that followed a redirect to a 404 is a page with status 404 and no body,
-    /// as in HTTP mode. The same 404 without the redirect is `NotFound`.
     #[tokio::test]
-    async fn a_native_fetch_reports_a_404_after_a_redirect_as_a_page() {
+    async fn a_native_fetch_requires_soft_errors_for_direct_and_redirected_404_pages() {
         let site = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/missing"))
@@ -984,15 +999,23 @@ mod tests {
             .await;
         let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
             .expect("single-worker executor should start");
-        let page = native_fetch_route(&site, "/moved", &executor)
-            .await
-            .expect("a 404 at the end of a redirect is a page");
-        assert_eq!(
-            (page.response.status, page.response.body.as_str(), page.redirected),
-            (404, "", true)
-        );
-        let direct = native_fetch_route(&site, "/missing", &executor).await;
-        assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
+        for soft_http_errors in [false, true] {
+            for route in ["/moved", "/missing"] {
+                let fetched = native_fetch_route(&site, route, &executor, soft_http_errors).await;
+                if soft_http_errors {
+                    let page = fetched.expect("soft errors preserve a 404 response");
+                    assert_eq!(page.response.status, 404);
+                    assert!(page.response.body.contains("gone"), "{}", page.response.body);
+                    assert_eq!(page.redirected, route == "/moved");
+                } else {
+                    assert!(
+                        matches!(fetched, Err(CrawlError::NotFound { .. })),
+                        "{:?}",
+                        fetched.err()
+                    );
+                }
+            }
+        }
     }
 
     /// A native fetch through `browser_fetch` fails at `overall_timeout` when the page takes
@@ -1117,7 +1140,7 @@ mod tests {
             .await;
         let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
             .expect("single-worker executor should start");
-        let page = native_fetch_route(&site, "/latin1", &executor)
+        let page = native_fetch_route(&site, "/latin1", &executor, false)
             .await
             .expect("the page must load");
         assert!(
