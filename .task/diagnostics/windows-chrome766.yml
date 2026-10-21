@@ -1,0 +1,14 @@
+version: "3"
+tasks:
+  build:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - pwsh -NoLogo -NoProfile -File scripts/ci/windows-chrome766.ps1 -Mode Build
+  probe:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - pwsh -NoLogo -NoProfile -File scripts/ci/windows-chrome766.ps1 -Mode Probe
+  self-test:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - pwsh -NoLogo -NoProfile -File scripts/ci/windows-chrome766.ps1 -Mode SelfTest
