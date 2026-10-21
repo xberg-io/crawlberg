@@ -106,15 +106,11 @@ pub struct CrawlConfig {
     /// page is still crawled and its links followed; the page result marks it with
     /// `noindex_detected`.
     pub respect_robots_txt: bool,
-    /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
-    /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-    /// than raised as `CrawlError`. A WAF block reports the status of the refused
-    /// response when it is a 4xx or 5xx, and 403 when the block page came with a
-    /// 2xx status. Default `false` preserves the historical
-    /// throw-on-error contract for direct fetches. Independently of this flag,
-    /// 404s reached at the end of a redirect chain are *always* surfaced softly —
-    /// the user opted into redirect-following, so receiving a 404 there is part of
-    /// the normal flow rather than an unexpected error.
+    /// When true, readable HTTP error responses (4xx and 5xx) are surfaced as
+    /// `ScrapeResult` records with their status and body rather than raised as errors.
+    /// WAF blocks report their original 4xx/5xx status, or 403 for a block served as 2xx.
+    /// Default `false` raises errors for recognized error statuses in both `scrape`
+    /// and `crawl`, including a 404 reached through redirects.
     #[serde(default)]
     pub soft_http_errors: bool,
     /// Custom user-agent string.

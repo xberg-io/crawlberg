@@ -105,11 +105,9 @@ async fn direct_404_returns_result_when_soft_errors_enabled() {
     assert_soft_page_shape(&page);
 }
 
-/// A 302→404 chain must always surface as `Ok(ScrapeResult { status_code: 404 })`
-/// regardless of the `soft_http_errors` setting, because the caller opted into
-/// redirect-following.
+/// A redirected 404 uses the same explicit soft-error policy as a direct 404.
 #[tokio::test]
-async fn redirected_404_returns_result_regardless_of_soft_errors() {
+async fn redirected_404_raises_when_soft_errors_disabled() {
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -132,13 +130,7 @@ async fn redirected_404_returns_result_regardless_of_soft_errors() {
     let url = format!("{}/start", mock.uri());
     let result = scrape(&handle, &url).await;
 
-    assert!(
-        result.is_ok(),
-        "redirected 404 must return Ok regardless of soft_http_errors: {:?}",
-        result.err()
-    );
-    let page = result.unwrap();
-    assert_eq!(page.status_code, 404, "status_code must be 404 after redirect chain");
+    assert!(matches!(result, Err(CrawlError::NotFound { .. })), "{result:?}");
 }
 
 /// With the default config (`soft_http_errors = false`), a bare 403 response
@@ -191,7 +183,7 @@ async fn direct_403_returns_result_when_soft_errors_enabled() {
 
 /// Scrapes `route` served as `response` with `soft_http_errors` on, checks the page has the soft
 /// error page shape, and returns the page's status.
-async fn soft_status_of(route: &str, response: ResponseTemplate) -> u16 {
+async fn soft_status_of(route: &str, response: ResponseTemplate, expected_body: Option<&str>) -> u16 {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(route))
@@ -206,7 +198,11 @@ async fn soft_status_of(route: &str, response: ResponseTemplate) -> u16 {
     let page = scrape(&handle, &format!("{}{route}", mock.uri()))
         .await
         .unwrap_or_else(|err| panic!("{route}: expected a soft error page, got Err: {err:?}"));
-    assert_soft_page_shape(&page);
+    if let Some(body) = expected_body {
+        assert_eq!(page.html, body);
+    } else {
+        assert_soft_page_shape(&page);
+    }
     page.status_code
 }
 
@@ -218,6 +214,7 @@ async fn waf_block_on_429_reports_429_when_soft_errors_enabled() {
         ResponseTemplate::new(429)
             .append_header("x-px-block", "1")
             .set_body_string("<html>px-captcha</html>"),
+        Some("<html>px-captcha</html>"),
     )
     .await;
     assert_eq!(status, 429, "a 429 WAF block must report 429");
@@ -231,6 +228,7 @@ async fn waf_block_on_503_reports_503_when_soft_errors_enabled() {
         ResponseTemplate::new(503)
             .append_header("x-datadome", "blocked")
             .set_body_string("<html>challenge</html>"),
+        Some("<html>challenge</html>"),
     )
     .await;
     assert_eq!(status, 503, "a 503 WAF block must report 503");
@@ -244,6 +242,7 @@ async fn waf_block_on_2xx_reports_403_when_soft_errors_enabled() {
         ResponseTemplate::new(202)
             .insert_header("content-type", "text/html")
             .set_body_string("<html>cf-chl- x</html>"),
+        None,
     )
     .await;
     assert_eq!(status, 403, "a 2xx refused as a WAF block must report 403");
@@ -313,12 +312,16 @@ async fn waf_block_on_403_reports_403_when_soft_errors_enabled() {
         "the fixture must be refused as a WAF block, got {refused:?}"
     );
 
-    let status = soft_status_of("/blocked-403", blocked()).await;
+    let status = soft_status_of(
+        "/blocked-403",
+        blocked(),
+        Some("<html><title>Attention Required! | Cloudflare</title>cf-chl- x</html>"),
+    )
+    .await;
     assert_eq!(status, 403, "a 403 WAF block must report 403");
 }
 
-/// A crawl reports a 429 WAF block on a linked page with its 429 status. A 503 WAF block is a
-/// server error, which a crawl reports as an error event rather than as a page.
+/// A soft crawl keeps both 429 and 503 WAF responses as pages with their original statuses.
 #[tokio::test]
 async fn crawl_reports_a_waf_block_with_its_status_when_soft_errors_enabled() {
     let mock = MockServer::start().await;
@@ -375,24 +378,13 @@ async fn crawl_reports_a_waf_block_with_its_status_when_soft_errors_enabled() {
         .find(|(url, _)| url.ends_with("/blocked-429"))
         .unwrap_or_else(|| panic!("the 429 block must be a page, got {pages:?}"));
     assert_eq!(blocked.1, 429, "a 429 WAF block must report 429");
-    assert!(
-        !pages.iter().any(|(url, _)| url.ends_with("/blocked-503")),
-        "a 503 WAF block must not be a page, got {pages:?}"
-    );
-    assert_eq!(
-        errors
-            .iter()
-            .filter(|(url, _)| url.ends_with("/blocked-503"))
-            .map(|(_, error)| error.as_str())
-            .collect::<Vec<_>>(),
-        vec!["server_error: HTTP 503"],
-        "a 503 WAF block must be one error event, got {errors:?}"
-    );
-    assert_eq!(
-        pages_crawled,
-        Some(2),
-        "the crawl counts the seed and the 429 block, not the 503 block, got pages {pages:?}"
-    );
+    let blocked_503 = pages
+        .iter()
+        .find(|(url, _)| url.ends_with("/blocked-503"))
+        .unwrap_or_else(|| panic!("the 503 block must be a page, got {pages:?}"));
+    assert_eq!(blocked_503.1, 503);
+    assert_eq!(errors, Vec::<(String, String)>::new());
+    assert_eq!(pages_crawled, Some(3));
 }
 
 /// A retry policy that refuses every successful response whose URL ends with `suffix`, for `reason`.

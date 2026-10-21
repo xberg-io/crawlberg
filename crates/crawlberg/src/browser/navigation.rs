@@ -964,10 +964,10 @@ mod tests {
     }
 
     #[test]
-    fn an_error_page_404_is_a_page_only_when_its_own_navigation_redirected() {
-        assert!(matches!(error_page(404, 0), Err(CrawlError::NotFound { .. })));
-        let page = error_page(404, 1).expect("a 404 at the end of a redirect is a page");
-        assert_eq!((page.status, page.body.as_str()), (404, ""));
+    fn an_error_page_404_requires_soft_errors_even_after_a_redirect() {
+        for redirects in [0, 1] {
+            assert!(matches!(error_page(404, redirects), Err(CrawlError::NotFound { .. })));
+        }
     }
 
     #[test]

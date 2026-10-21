@@ -31,7 +31,6 @@ pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use headers::result_cookies_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, retry_delay_ms, should_retry_error};
 pub(crate) use status::{HttpStatus, status_error};
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use status::{error_status, refused_response, status_error_keeping_response};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
@@ -125,21 +124,6 @@ pub(crate) enum Fetched {
 enum HopOutcome {
     Redirect(url::Url),
     Complete(HttpResponse),
-}
-
-/// The response a 404 past the first hop of a followed chain stops on: the crawl's chain reports
-/// the same empty 404 at the missing URL.
-fn not_found_response(url: &url::Url) -> HttpResponse {
-    HttpResponse {
-        status: 404,
-        content_type: String::new(),
-        body: String::new(),
-        body_bytes: Vec::new(),
-        headers: HashMap::new(),
-        browser_extras: None,
-        final_url: url.to_string(),
-        screenshot: None,
-    }
 }
 
 /// Where a 3xx response points.
@@ -398,13 +382,7 @@ async fn fetch_as(
         policy.admit(&current_url, redirects_followed > 0).await?;
         let hop_left = redirects_followed < config.max_redirects;
         let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
-        let outcome = match fetch_one_hop(&context, &current_url, follows_location, policy).await {
-            Ok(outcome) => outcome,
-            Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
-                return Ok(FetchedPage::unread(not_found_response(&current_url)));
-            }
-            Err(error) => return Err(error),
-        };
+        let outcome = fetch_one_hop(&context, &current_url, follows_location, policy).await?;
         let next_url = match outcome {
             HopOutcome::Redirect(next_url) => next_url,
             HopOutcome::Complete(response) => {
@@ -496,11 +474,6 @@ impl ChainRules {
         Ok(true)
     }
 
-    /// Whether `error`, raised past the first hop, ends the chain on a response instead.
-    fn stops_on(&self, error: &CrawlError) -> bool {
-        self.0.is_some() && matches!(error, CrawlError::NotFound { .. })
-    }
-
     /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
     /// The meta refresh check leaves its read of the body in `page_scan`.
     #[cfg(not(target_arch = "wasm32"))]
@@ -564,6 +537,20 @@ async fn fetch_one_hop(
     // building one here would add an allocation to paths that previously had none. The
     // challenge statuses below are the exception and always need it.
     let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
+
+    if context.config.soft_http_errors
+        && (is_challenge_status(head.status) || status_error(head.status, current_url.as_str()).is_some())
+    {
+        let headers = build_headers_map(&head.headers);
+        let body = read_validated_body(context.config, resp, head.content_length()).await?;
+        return Err(status_error_keeping_response(
+            head.status,
+            current_url.as_str(),
+            head.content_type,
+            headers,
+            body,
+        ));
+    }
 
     // ~keep Fingerprinting has to precede `status_error`: once a 429/503 has become a
     // `RateLimited`/`ServerError` the retry policy answers it with `Retry`, and a challenge
@@ -691,49 +678,30 @@ async fn unfollowed_redirect_response(
     head.into_response(body, body_bytes, headers_map)
 }
 
-/// Apply HTTP mode's status handling to a page a browser rendered. A status the HTTP fetch
-/// raises as an error raises the same error here. Where HTTP mode reports the status as a
-/// page instead, the page keeps its status, as the HTTP fetch reports it. A 404 or 410 under
-/// `soft_http_errors` also keeps its body; a 403 under it, or a 404 at the end of a redirect
-/// without it, loses the body.
+/// Apply the same soft error flag to browser-rendered and HTTP error responses.
 #[cfg(any(feature = "browser", feature = "browser-native"))]
 pub(crate) fn rendered_status_outcome(
-    mut response: HttpResponse,
-    redirected: bool,
+    response: HttpResponse,
+    _redirected: bool,
     config: &CrawlConfig,
 ) -> Result<HttpResponse, CrawlError> {
-    let status = response.status;
-    // ~keep A challenge status is fingerprinted before `status_error` maps it, as in HTTP mode:
-    // ~keep a 429 or 503 WAF challenge is a WAF block, which escalates, not an error the retry
-    // ~keep policy retries (crawlberg#169).
-    let error = if challenge::is_challenge_status(status) {
+    if config.soft_http_errors {
+        return Ok(response);
+    }
+    let error = if challenge::is_challenge_status(response.status) {
         Some(challenge::challenge_body_error(
-            status,
+            response.status,
             &response.final_url,
             &response.body,
             &response.headers,
         ))
     } else {
-        status_error(status, &response.final_url)
+        status_error(response.status, &response.final_url)
     };
-    let Some(error) = error else {
-        return Ok(response);
-    };
-    let keeps_body = config.soft_http_errors && matches!(status, 404 | 410);
-    let reported_as_page = match status {
-        404 => config.soft_http_errors || redirected,
-        403 | 410 => config.soft_http_errors,
-        _ => false,
-    };
-    if !reported_as_page {
-        return Err(error);
+    match error {
+        Some(error) => Err(error),
+        None => Ok(response),
     }
-    if !keeps_body {
-        response.content_type.clear();
-        response.body.clear();
-        response.body_bytes.clear();
-    }
-    Ok(response)
 }
 
 /// Shortfall below the declared `content-length` that is read as a truncated transfer
@@ -1582,8 +1550,7 @@ mod tests {
         );
     }
 
-    /// Under `soft_http_errors` a rendered 404 or 410 keeps its body, as the HTTP fetch's soft page
-    /// now does; a rendered 403 does not, and a 410 is still an error without the flag.
+    /// Rendered error pages retain their bodies only when soft errors are enabled.
     #[cfg(any(feature = "browser", feature = "browser-native"))]
     #[test]
     fn a_rendered_404_or_410_keeps_its_body_under_soft_http_errors() {
@@ -1601,28 +1568,21 @@ mod tests {
             soft_http_errors: true,
             ..CrawlConfig::default()
         };
-        for status in [404_u16, 410] {
+        for status in [401_u16, 403, 404, 408, 410, 429, 500, 502, 503, 504] {
             let page = rendered_status_outcome(rendered(status), false, &soft).expect("a soft page");
             assert_eq!(page.status, status);
             assert_eq!(page.body, "<p>words</p>", "{status}: body kept");
             assert!(!page.content_type.is_empty(), "{status}: content type kept");
         }
-        let forbidden = rendered_status_outcome(rendered(403), false, &soft).expect("a soft page");
-        assert!(
-            forbidden.body.is_empty() && forbidden.body_bytes.is_empty(),
-            "403 body dropped"
-        );
-
         let hard = CrawlConfig::default();
         assert!(matches!(
             rendered_status_outcome(rendered(410), false, &hard),
             Err(CrawlError::Gone { .. })
         ));
-        let redirected = rendered_status_outcome(rendered(404), true, &hard).expect("a redirected 404 is a page");
-        assert!(
-            redirected.body.is_empty(),
-            "a redirected 404 loses its body without the flag"
-        );
+        assert!(matches!(
+            rendered_status_outcome(rendered(404), true, &hard),
+            Err(CrawlError::NotFound { .. })
+        ));
     }
 
     /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
@@ -1956,7 +1916,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_followed_chain_stops_on_a_404_past_the_first_hop_as_the_crawl_does() {
+    async fn a_followed_chain_requires_soft_errors_for_a_404_past_the_first_hop() {
         let mock = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/here"))
@@ -1975,12 +1935,10 @@ mod tests {
             }
         };
 
-        let response = fetch("/here", RefreshRedirects::Follow)
-            .await
-            .expect("a 404 past the first hop must not fail a followed chain");
-        assert_eq!(response.status, 404);
-        assert_eq!(response.final_url, format!("{}/missing", mock.uri()));
-        assert!(response.body.is_empty(), "the crawl's chain reports an empty 404");
+        assert!(matches!(
+            fetch("/here", RefreshRedirects::Follow).await,
+            Err(CrawlError::NotFound { .. })
+        ));
 
         assert!(
             matches!(

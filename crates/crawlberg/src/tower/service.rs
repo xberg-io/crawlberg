@@ -281,23 +281,11 @@ async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<Craw
         return Ok(read_redirect_response(resp, config, status, content_type, headers, sent_user_agent).await);
     }
 
-    // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
-    // a second copy: the two copies had already drifted. The one that stood here classified
-    // every response as if it were a 403 and showed the classifier only the `server` header, so
-    // a 403 identified by any other header came back as vendor "unknown".
-    if crate::http::is_challenge_status(status) {
-        return Err(crate::http::challenge_status_error(
-            status,
-            &req.url,
-            &headers,
-            resp,
-            crate::http::effective_max_body_size(config),
-        )
-        .await);
-    }
-    // ~keep Under `soft_http_errors` a 404 or 410 may end as a page, so its body is read before
-    // the error is raised; the error otherwise discards the response.
-    if config.soft_http_errors && matches!(status, 404 | 410) {
+    // ~keep Read error bodies before classification so soft results retain origin content,
+    // ~keep while the original error chain still drives WAF escalation and retry policy.
+    if config.soft_http_errors
+        && (crate::http::is_challenge_status(status) || crate::http::status_error(status, &req.url).is_some())
+    {
         let (body, truncated) = match crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
             .await
         {
@@ -317,6 +305,20 @@ async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<Craw
             headers,
             body,
         ));
+    }
+    // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
+    // a second copy: the two copies had already drifted. The one that stood here classified
+    // every response as if it were a 403 and showed the classifier only the `server` header, so
+    // a 403 identified by any other header came back as vendor "unknown".
+    if crate::http::is_challenge_status(status) {
+        return Err(crate::http::challenge_status_error(
+            status,
+            &req.url,
+            &headers,
+            resp,
+            crate::http::effective_max_body_size(config),
+        )
+        .await);
     }
     if let Some(error) = crate::http::status_error(status, &req.url) {
         return Err(error);

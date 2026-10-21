@@ -522,7 +522,6 @@ pub(super) struct RedirectCursor {
     prepared: bool,
     chain: RedirectChain,
     max_redirects: usize,
-    browser_used: bool,
     browser_cookies: Vec<crate::types::BrowserCookie>,
     native_state: super::fetch::NativeRenderState,
     refused_on_earlier_hops: Vec<String>,
@@ -543,7 +542,6 @@ impl RedirectCursor {
             prepared: false,
             chain: RedirectChain::new(url, max_redirects),
             max_redirects,
-            browser_used: false,
             browser_cookies: Vec::new(),
             native_state,
             refused_on_earlier_hops: Vec::new(),
@@ -583,7 +581,6 @@ impl RedirectCursor {
             prepared,
             mut chain,
             max_redirects,
-            mut browser_used,
             mut browser_cookies,
             mut native_state,
             mut refused_on_earlier_hops,
@@ -639,16 +636,9 @@ impl RedirectCursor {
         };
         let (mut resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,
-            // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
-            // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
-            Err(CrawlError::NotFound { .. }) if chain.redirect_count > 0 => {
-                return Ok(RedirectStep::Done(RedirectResolution::Fetched(Box::new(
-                    chain.into_outcome(synthetic_not_found(), None, browser_used),
-                ))));
-            }
             Err(e) => return Err(e),
         };
-        browser_used = hop_browser_used;
+        let browser_used = hop_browser_used;
 
         // ~keep The browser tier follows redirects itself, so the chain learns of the hop only
         // ~keep after the request went out. Its landed URL still passes the SSRF check and the
@@ -698,7 +688,6 @@ impl RedirectCursor {
             prepared: false,
             chain,
             max_redirects,
-            browser_used,
             browser_cookies,
             native_state,
             refused_on_earlier_hops,
@@ -867,16 +856,6 @@ pub(crate) fn unfollowed_redirect_error<R: RedirectSignals>(
 ) -> Option<CrawlError> {
     let target = http_redirect_target(resp, current_url)?;
     crate::http::reject_redirect(&target, !visited(&target), false).err()
-}
-
-/// The response a 404 further down a redirect chain is reported as.
-fn synthetic_not_found() -> crate::tower::CrawlResponse {
-    crate::tower::CrawlResponse::new(
-        404,
-        String::new(),
-        HashMap::new(),
-        crate::tower::ResponseBody::Bytes(Vec::new()),
-    )
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than

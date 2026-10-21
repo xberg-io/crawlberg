@@ -366,8 +366,11 @@ impl CrawlEngine {
     ) -> bool {
         let in_doc_context = entry.doc_depth > 0;
         let page_is_skipped = scrape.was_skipped || scrape.is_pdf;
+        let is_soft_error =
+            self.config.soft_http_errors && scrape.status_code >= reqwest::StatusCode::BAD_REQUEST.as_u16();
         entry.depth < plan.max_depth
             && !page_is_skipped
+            && !is_soft_error
             && (!in_doc_context || self.config.follow_document_urls)
             && !(self.config.respect_robots_txt && scrape.nofollow_detected)
     }

@@ -367,7 +367,7 @@ impl CrawlEngine {
             Some(agent) => std::collections::HashMap::from([("user-agent".to_owned(), agent.to_owned())]),
             None => std::collections::HashMap::new(),
         };
-        let resp = crate::http::fetch_with_retry(
+        let fetched = crate::http::fetch_with_retry(
             url,
             &self.config,
             &extra_headers,
@@ -376,8 +376,11 @@ impl CrawlEngine {
             crate::http::Fetched::Page,
             &mut crate::http::AdmitEvery,
         )
-        .await?
-        .response;
+        .await;
+        let resp = match fetched {
+            Ok(page) => page.response,
+            Err(error) => self.wasm_soft_error_response(&error).ok_or(error)?,
+        };
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
         let crawl_resp = crate::tower::CrawlResponse::new(
@@ -388,5 +391,22 @@ impl CrawlEngine {
         )
         .with_sent_user_agent(forced_user_agent.map(str::to_owned));
         Ok((post_redirect_url, crawl_resp, false))
+    }
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn wasm_soft_error_response(&self, error: &CrawlError) -> Option<crate::http::HttpResponse> {
+        if !self.config.soft_http_errors {
+            return None;
+        }
+        let refused = crate::http::refused_response(error)?;
+        Some(crate::http::HttpResponse {
+            status: refused.status.0,
+            content_type: refused.content_type.clone(),
+            body: String::from_utf8_lossy(&refused.body).into_owned(),
+            body_bytes: refused.body.clone(),
+            headers: refused.headers.clone(),
+            browser_extras: None,
+            final_url: refused.final_url.clone(),
+            screenshot: None,
+        })
     }
 }

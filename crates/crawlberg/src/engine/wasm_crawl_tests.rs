@@ -1891,3 +1891,52 @@ async fn wasm_page_fetch_returns_bytes_that_are_read_with_their_character_set() 
     assert_eq!(text.as_deref(), Some("<p>caf\u{e9}</p>"));
     assert_eq!(charset.as_deref(), Some("iso-8859-1"));
 }
+
+#[tokio::test]
+async fn wasm_page_fetch_keeps_all_soft_http_error_bodies() {
+    let mock = MockServer::start().await;
+    let body = "<html><body>Readable error body</body></html>";
+    let engine = engine_with(permissive(CrawlConfig {
+        soft_http_errors: true,
+        ..Default::default()
+    }));
+    for status in [401_u16, 403, 404, 408, 410, 429, 500, 502, 503, 504] {
+        let route = format!("/{status}");
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .respond_with(ResponseTemplate::new(status).set_body_raw(body, "text/html"))
+            .mount(&mock)
+            .await;
+        let (_, response, _) = engine
+            .wasm_fetch_for_scrape(&format!("{}{route}", mock.uri()), None)
+            .await
+            .unwrap_or_else(|error| panic!("soft {status}: {error:?}"));
+        assert_eq!(response.status, status);
+        assert_eq!(response.body, body);
+    }
+}
+
+#[tokio::test]
+async fn sequential_crawl_keeps_soft_error_body_without_following_its_links() {
+    let mock = MockServer::start().await;
+    let body = "<html><body>Unavailable <a href='/child'>child</a></body></html>";
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(500).set_body_raw(body, "text/html"))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    mount_html_expecting(&mock, "/child", "<p>child</p>", 0).await;
+    let engine = engine_with(permissive(CrawlConfig {
+        soft_http_errors: true,
+        retry_count: 0,
+        max_depth: Some(2),
+        ..Default::default()
+    }));
+
+    let result = crawl_admitted(&engine, &mock.uri()).await.expect("crawl must succeed");
+
+    assert_eq!(result.pages.len(), 1);
+    assert_eq!(result.pages[0].status_code, 500);
+    assert!(result.pages[0].html.contains("Unavailable"));
+}
