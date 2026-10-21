@@ -53,39 +53,28 @@ function Save-Json($Value, [string]$Name) {
 }
 
 function Build-TestExecutables {
-    $commands = @(
-        @('test', '--locked', '--manifest-path', 'vendor/crawlberg-chromiumoxide/Cargo.toml', '--lib'),
-        @('test', '-p', 'crawlberg', '--features', 'browser,interact', '--lib'),
-        @('test', '-p', 'crawlberg', '--features', 'browser,interact',
-            '--test', 'test_browser_profile_cleanup', '--test', 'test_browser_pool_lifecycle')
-    )
-    $wanted = @('chromiumoxide', 'crawlberg', 'test_browser_pool_lifecycle', 'test_browser_profile_cleanup')
+    $arguments = @('test', '-p', 'crawlberg', '--features', 'browser,interact',
+        '--test', 'test_browser_pool_lifecycle', '--no-run', '--message-format=json')
+    $cargo = (Get-Command cargo -CommandType Application).Source
+    $result = Invoke-RecordedProcess $cargo $arguments 'build-lifecycle' 1200
+    if ($result.exit_code -ne 0 -or $result.timed_out) {
+        throw 'Lifecycle build failed; see preserved build logs'
+    }
     $artifacts = @()
-    for ($index = 0; $index -lt $commands.Count; $index++) {
-        $arguments = $commands[$index] + @('--no-run', '--message-format=json')
-        $cargo = (Get-Command cargo -CommandType Application).Source
-        $result = Invoke-RecordedProcess $cargo $arguments "build-$index" 1200
-        if ($result.exit_code -ne 0 -or $result.timed_out) {
-            throw "Build $index failed; see preserved build logs"
-        }
-        foreach ($line in $result.stdout -split "`n") {
-            if (-not $line.StartsWith('{')) { continue }
-            $message = $line | ConvertFrom-Json -Depth 100
-            if ($message.reason -eq 'compiler-artifact' -and $message.executable -and
-                $message.profile.test -and $message.target.name -in $wanted) {
-                $artifacts += [pscustomobject]@{
-                    name = $message.target.name; path = $message.executable
-                    sha256 = (Get-FileHash $message.executable -Algorithm SHA256).Hash
-                }
+    foreach ($line in $result.stdout -split "`n") {
+        if (-not $line.StartsWith('{')) { continue }
+        $message = $line | ConvertFrom-Json -Depth 100
+        if ($message.reason -eq 'compiler-artifact' -and $message.executable -and
+            $message.profile.test -and $message.target.name -eq 'test_browser_pool_lifecycle') {
+            $artifacts += [pscustomobject]@{
+                name = $message.target.name; path = $message.executable
+                sha256 = (Get-FileHash $message.executable -Algorithm SHA256).Hash
             }
         }
     }
-    $names = @($artifacts.name | Sort-Object) -join ','
-    if ($artifacts.Count -ne 4 -or $names -ne (@($wanted | Sort-Object) -join ',')) {
-        throw 'Expected exactly four existing test executables'
-    }
+    if ($artifacts.Count -ne 1) { throw 'Expected exactly one existing lifecycle test executable' }
     Save-Json $artifacts 'executables.json'
-    Write-Output 'Expected executables: 4; observed executables: 4'
+    Write-Output 'Expected executables: 1; observed executables: 1'
 }
 
 function Get-Chrome([string]$Path, [string]$Version) {
@@ -102,26 +91,17 @@ function Get-Chrome([string]$Path, [string]$Version) {
     }
 }
 
-function Get-TestSelection([string]$Name, [bool]$Suite) {
-    $expected = switch ($Name) {
-        'chromiumoxide' { 47 }
-        'crawlberg' { 2 }
-        'test_browser_pool_lifecycle' { if ($Suite) { 3 } else { 1 } }
-        'test_browser_profile_cleanup' { 1 }
-    }
+function Get-TestSelection([bool]$Suite) {
+    $expected = if ($Suite) { 3 } else { 1 }
     $arguments = @('--nocapture', '--test-threads=1')
-    if ($Name -eq 'crawlberg') {
-        $arguments += @('--exact',
-            'browser_pool::tests::a_process_started_at_once_by_the_launched_one_is_in_its_process_tree',
-            'browser_pool::tests::a_launched_profile_holds_the_process_tree_of_its_chrome')
-    } elseif (-not $Suite) {
+    if (-not $Suite) {
         $arguments += @('--exact', 'pool_bounds_concurrent_navigations_to_max_pages')
     }
     return [pscustomobject]@{ expected = $expected; arguments = $arguments }
 }
 
 function Invoke-ProbeCase($Binary, $Chrome, [bool]$Suite, [string]$Name, [DateTime]$Deadline) {
-    $selection = Get-TestSelection $Binary.name $Suite
+    $selection = Get-TestSelection $Suite
     $row = [ordered]@{
         browser = $Chrome.version; binary = $Binary.name
         phase = $(if ($Suite) { 'suite' } else { 'replay' })
@@ -148,10 +128,10 @@ function Invoke-ProbeCase($Binary, $Chrome, [bool]$Suite, [string]$Name, [DateTi
 
 function Save-ProbeRows($Rows) {
     $receipt = @{
-        expected_rows = 18; observed_rows = $Rows.Count
+        expected_rows = 12; observed_rows = $Rows.Count
         executed_rows = @($Rows | Where-Object executed).Count
-        expected_suite_tests_per_version = 53; expected_replays_per_version = 5
-        expected_total_test_executions = 116; rows = $Rows
+        expected_suite_tests_per_version = 3; expected_replays_per_version = 5
+        expected_total_test_executions = 16; rows = $Rows
         interpretation = 'Version differences are provisional; bytes and five counterbalanced replays are controlled.'
     }
     Save-Json $receipt 'results.json'
@@ -159,7 +139,9 @@ function Save-ProbeRows($Rows) {
 
 function Run-ChromeProbe {
     $binaries = @(Get-Content -Raw (Join-Path $OutputDirectory 'executables.json') | ConvertFrom-Json)
-    if ($binaries.Count -ne 4) { throw 'Expected four compiled executable receipts' }
+    if ($binaries.Count -ne 1 -or $binaries[0].name -ne 'test_browser_pool_lifecycle') {
+        throw 'Expected one compiled lifecycle executable receipt'
+    }
     $browsers = @((Get-Chrome $env:CHROME_155_PATH '155.0.8059.84'),
         (Get-Chrome $env:CHROME_156_PATH '156.0.8078.47'))
     if ($browsers[0].path -eq $browsers[1].path -or $browsers[0].sha256 -eq $browsers[1].sha256) {
@@ -178,10 +160,7 @@ function Run-ChromeProbe {
         $chrome = $browsers[$entry.browser]
         $env:CHROME = $chrome.path
         $env:CRAWLBERG_TEST_CHROME_PATH = $chrome.path
-        $selected = if ($entry.suite) { $binaries } else {
-            @($binaries | Where-Object name -eq 'test_browser_pool_lifecycle')
-        }
-        foreach ($binary in $selected) {
+        foreach ($binary in $binaries) {
             $name = '{0:D2}-{1}-{2}' -f $rows.Count, $chrome.version, $binary.name
             $row = Invoke-ProbeCase $binary $chrome $entry.suite $name $deadline
             $rows.Add($row)
@@ -194,10 +173,10 @@ function Run-ChromeProbe {
             throw 'Final executable bytes changed'
         }
     }
-    if ($rows.Count -ne 18 -or @($rows | Where-Object { -not $_.ok }).Count -ne 0) {
-        throw 'Probe failed; inspect all eighteen expected rows and preserved logs'
+    if ($rows.Count -ne 12 -or @($rows | Where-Object { -not $_.ok }).Count -ne 0) {
+        throw 'Probe failed; inspect all twelve expected rows and preserved logs'
     }
-    Write-Output 'Expected rows: 18; observed rows: 18; all passing'
+    Write-Output 'Expected rows: 12; observed rows: 12; all passing'
 }
 
 function Test-Harness {

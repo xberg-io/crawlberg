@@ -231,7 +231,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      CRAWLBERG_DIAGNOSTICS_DIR: ${{ github.workspace }}/_diagnostics/windows-chrome766
+      CRAWLBERG_DIAGNOSTICS_DIR: ${{ github.workspace }}/_diagnostics/windows-chrome766-focused
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Setup Rust
@@ -252,7 +252,7 @@ jobs:
           chrome-version: "156.0.8078.47"
       - name: Verify diagnostic harness controls
         run: task -t .task/diagnostics/windows-chrome766.yml self-test
-      - name: Compile existing Windows test executables once
+      - name: Compile the existing Windows lifecycle test once
         run: task -t .task/diagnostics/windows-chrome766.yml build
         timeout-minutes: 30
       - name: Compare pinned Chrome versions with identical executable bytes
@@ -265,8 +265,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: windows-chrome-766-${{ github.run_id }}
-          path: ${{ github.workspace }}/_diagnostics/windows-chrome766
+          name: windows-chrome-766-focused-${{ github.run_id }}
+          path: ${{ github.workspace }}/_diagnostics/windows-chrome766-focused
           if-no-files-found: error
 
   # ~keep Every feature-configuration bug this workflow has accumulated a step for was the
