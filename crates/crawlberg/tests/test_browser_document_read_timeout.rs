@@ -30,8 +30,8 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 ///
 /// ~keep Timing, so the budget for the reads fires and not the navigation bound: `load` fires at
 /// ~keep ~0 ms, and the navigation and ready wait (goto plus plain sleeps, no CDP round trip) end
-/// ~keep well inside `browser.timeout`. The reads of the committed document start at ~1.1-1.5 s,
-/// ~keep inside a busy block, so their shared 3 s budget fires: a BrowserTimeout naming "reading
+/// ~keep well inside `browser.timeout`. The explicit 500 ms extra wait puts the document reads
+/// ~keep after the busy loop starts, so their shared 3 s budget fires: a BrowserTimeout naming "reading
 /// ~keep the committed document" and "3s", ~4-8 s in total.
 ///
 /// ~keep A navigation the server accepts and never answers does not stall the reads: it waits in
@@ -128,6 +128,7 @@ fn read_bound_config() -> CrawlConfig {
             // ~keep the ONLY deadline that can end this fetch is the budget shared by the reads.
             timeout: Duration::from_secs(3),
             overall_timeout: Duration::from_secs(30),
+            extra_wait: Some(Duration::from_millis(500)),
             ..BrowserConfig::default()
         },
         ..CrawlConfig::builder().allow_private_networks(true).build()

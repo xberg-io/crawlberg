@@ -32,12 +32,6 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 
-/// How long the DOM must stay unchanged after the load event before a `NetworkIdle` wait
-/// returns. A static page pays this once (it replaced a fixed 500 ms delay). A single-page app
-/// that draws within this window of its last response is captured; one that draws later needs
-/// `browser.extra_wait`.
-const DOM_QUIET_WINDOW: Duration = Duration::from_millis(1000);
-
 /// The longest the quiescence wait runs for a page that keeps mutating (a ticker, a carousel).
 const DOM_QUIET_CAP: Duration = Duration::from_secs(4);
 
@@ -269,7 +263,7 @@ async fn render(
         // ~keep navigation timeout, on what is left of the budget, so a page that loaded is never
         // ~keep reported partial because it was still settling.
         let remaining = timeout.saturating_sub(navigation_started.elapsed());
-        wait_for_dom_quiet(page, watch, remaining).await;
+        wait_for_dom_quiet(page, watch, config.browser.dom_quiet_window, remaining).await;
     }
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -686,13 +680,13 @@ async fn wait_for_ready(
     Ok(())
 }
 
-/// Wait until the document has had no DOM mutation for [`DOM_QUIET_WINDOW`], or [`DOM_QUIET_CAP`]
+/// Wait until the document has had no DOM mutation for `quiet_window`, or [`DOM_QUIET_CAP`]
 /// (at most `budget`) has passed, whichever comes first. It returns silently when the budget ends.
 ///
 /// ~keep Failing to observe (a navigation destroyed the script's context, or Chrome did not
 /// ~keep answer) falls back to the fixed settle delay the wait used before: the page is still
 /// ~keep read, and the failure is not a reason to fail the fetch.
-async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, budget: Duration) {
+async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, quiet_window: Duration, budget: Duration) {
     let cap = DOM_QUIET_CAP.min(budget);
     if cap.is_zero() {
         return;
@@ -711,7 +705,7 @@ async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, budget: D
            }};
            setTimeout(check, 25);
          }})",
-        quiet = DOM_QUIET_WINDOW.as_millis(),
+        quiet = quiet_window.as_millis(),
         cap = cap.as_millis(),
     );
     let params = match EvaluateParams::builder().expression(script).await_promise(true).build() {

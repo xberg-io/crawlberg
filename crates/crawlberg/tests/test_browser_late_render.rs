@@ -106,10 +106,12 @@ async fn scrape_default(
 }
 
 #[tokio::test]
-async fn default_wait_captures_text_drawn_600ms_after_the_last_response() {
-    let test_name = "default_wait_captures_text_drawn_600ms_after_the_last_response";
+async fn configured_quiet_window_captures_text_drawn_600ms_after_the_last_response() {
+    let test_name = "configured_quiet_window_captures_text_drawn_600ms_after_the_last_response";
     let site = spa(600).await;
-    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(20))).await else {
+    let mut options = config(Duration::from_secs(20));
+    options.browser.dom_quiet_window = Duration::from_secs(1);
+    let Some((result, _)) = scrape_default(test_name, &site, options).await else {
         return;
     };
     let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
@@ -176,7 +178,9 @@ async fn a_page_that_loads_late_in_its_timeout_is_not_partial() {
         )
         .mount(&site)
         .await;
-    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(5))).await else {
+    let mut options = config(Duration::from_secs(5));
+    options.browser.dom_quiet_window = Duration::from_secs(1);
+    let Some((result, _)) = scrape_default(test_name, &site, options).await else {
         return;
     };
     let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
@@ -254,4 +258,37 @@ async fn a_timeout_with_nothing_rendered_is_still_a_timeout_error() {
         matches!(result, Err(CrawlError::BrowserTimeout { .. })),
         "{test_name}: {result:?}"
     );
+}
+
+#[test]
+fn quiet_window_defaults_to_150ms_and_accepts_milliseconds_in_json() {
+    let default = serde_json::to_value(BrowserConfig::default()).expect("serialize config");
+    assert_eq!(default["dom_quiet_window"], serde_json::json!(150));
+    let config: BrowserConfig =
+        serde_json::from_value(serde_json::json!({"dom_quiet_window": 725})).expect("deserialize config");
+    let serialized = serde_json::to_value(config).expect("serialize configured window");
+    assert_eq!(serialized["dom_quiet_window"], serde_json::json!(725));
+}
+
+#[tokio::test]
+async fn each_dom_mutation_restarts_the_default_quiet_window() {
+    let test_name = "each_dom_mutation_restarts_the_default_quiet_window";
+    let site = MockServer::start().await;
+    let html = format!(
+        "<html><body><h1>Loading</h1><p id=progress></p><script>\
+         let ticks = 0; const timer = setInterval(() => {{\
+         const progress = document.getElementById('progress'); ticks++;\
+         progress.textContent = ticks < 4 ? String(ticks) : '{NEEDLE}';\
+         if (ticks === 4) clearInterval(timer); }}, 75);</script></body></html>"
+    );
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(html, "text/html"))
+        .mount(&site)
+        .await;
+    let Some((result, _)) = scrape_default(test_name, &site, config(Duration::from_secs(20))).await else {
+        return;
+    };
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(page.html.contains(NEEDLE), "{test_name}: {}", page.html);
 }
