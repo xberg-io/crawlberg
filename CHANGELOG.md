@@ -21,6 +21,7 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Upgrade the embedded JavaScript runtime to `deno_core` 0.413.0, including its isolate-teardown lifetime fix.
 - Upgrade `libc` to 0.2.191, which restores the iOS Mach bindings removed in 0.2.190, and refresh dependency
   lockfiles, including html-to-markdown 3.18.5 and updated TLS trust validation. The browser fork moves to 0.9.4 and uses base64 0.23.
 - Pin the repository's Rust toolchain to 1.99.1.

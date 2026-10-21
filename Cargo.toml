@@ -68,7 +68,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep versions split the type graph and make those trait implementations uncompilable.
 cssparser = "0.38"
 dashmap = "6"
-deno_core = "0.412"
+deno_core = "0.413"
 deno_error = "0.7"
 dirs = "7"
 encoding_rs = "0.8"
