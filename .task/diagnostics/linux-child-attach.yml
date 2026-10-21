@@ -16,3 +16,7 @@ tasks:
     dir: "{{.TASKFILE_DIR}}/../.."
     cmds:
       - python3 scripts/ci/linux-child-attach.py --mode structural-guard
+  engine-receipt:test:
+    dir: "{{.TASKFILE_DIR}}/../.."
+    cmds:
+      - python3 scripts/ci/test_linux_snap_receipt.py

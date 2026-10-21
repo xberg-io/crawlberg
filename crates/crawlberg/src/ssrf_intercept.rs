@@ -2115,6 +2115,7 @@ enum ReconciledLifecycle {
     Destroyed(Arc<EventTargetDestroyed>, Option<bool>),
 }
 
+#[cfg_attr(test, derive(Debug))]
 enum ChildPendingKind {
     Enable {
         done: oneshot::Sender<Result<(), String>>,
@@ -2154,6 +2155,7 @@ enum ChildPendingKind {
     },
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct UnownedArmProof {
     target_generation: Arc<()>,
     context_generation: Arc<()>,
@@ -2187,14 +2189,27 @@ struct StructuralProofObservation {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 struct UnownedStructuralProof {
     target_generation: Arc<AtomicBool>,
     context_generation: Arc<()>,
 }
 
+#[cfg(test)]
+struct PendingAttachmentObservation {
+    target_type: String,
+    target: TargetId,
+    session: String,
+    context: Option<BrowserContextId>,
+    waiting: bool,
+    raw_parent_session: Option<String>,
+}
+
 struct ChildPending {
     context: Option<BrowserContextId>,
     kind: ChildPendingKind,
+    #[cfg(test)]
+    attachment_observation: Option<PendingAttachmentObservation>,
 }
 
 struct ChildDrain {
@@ -2286,11 +2301,126 @@ fn child_command_id(next_id: &mut u64) -> Option<u64> {
 }
 
 fn child_pending(kind: ChildPendingKind) -> ChildPending {
-    ChildPending { context: None, kind }
+    ChildPending {
+        context: None,
+        kind,
+        #[cfg(test)]
+        attachment_observation: None,
+    }
 }
 
 fn child_pending_in(kind: ChildPendingKind, context: Option<BrowserContextId>) -> ChildPending {
-    ChildPending { context, kind }
+    ChildPending {
+        context,
+        kind,
+        #[cfg(test)]
+        attachment_observation: None,
+    }
+}
+
+#[cfg(test)]
+fn trace_pending_command(
+    id: u64,
+    command: &ChildPending,
+    registry: &Registry,
+    session_targets: &HashMap<String, TargetId>,
+    structural_sessions: &HashMap<String, StructuralTarget>,
+) {
+    let target = match &command.kind {
+        ChildPendingKind::RecursiveArm { target, .. }
+        | ChildPendingKind::ForeignRetirementCensus { target, .. }
+        | ChildPendingKind::UnownedRetirementCensus { target, .. }
+        | ChildPendingKind::UnownedStructuralCensus { target, .. } => Some(target),
+        ChildPendingKind::StructuralArm { session } => structural_sessions.get(session).map(|tab| &tab.target),
+        ChildPendingKind::Boundary { session } => session_targets.get(session),
+        _ => command.attachment_observation.as_ref().map(|item| &item.target),
+    };
+    let observation = command.attachment_observation.as_ref();
+    tracing::info!(
+        command_id = id, pending_kind = ?command.kind, command_context = ?command.context, resolved_target = ?target,
+        attachment_type = observation.map(|item| item.target_type.as_str()),
+        attached_target = ?observation.map(|item| &item.target),
+        attached_session = observation.map(|item| item.session.as_str()),
+        attached_context = ?observation.and_then(|item| item.context.as_ref()),
+        attached_waiting = ?observation.map(|item| item.waiting),
+        raw_parent_session = ?observation.and_then(|item| item.raw_parent_session.as_deref()),
+        attachment_observed = observation.is_some(),
+        ownership = match target.and_then(|target| registry.ownership.get(target)) {
+            Some(TargetOwnership::Watched(page)) if page.ending.load(Ordering::Acquire) => "ending_watch",
+            Some(TargetOwnership::Watched(_)) => "active_watch",
+            Some(TargetOwnership::PendingContext(_)) => "pending_context",
+            Some(TargetOwnership::PendingShared) => "pending_shared",
+            Some(TargetOwnership::Other) => "other",
+            Some(TargetOwnership::Quarantined) => "quarantined",
+            None => "missing",
+        },
+        "test structural pending command"
+    );
+    match &command.kind {
+        ChildPendingKind::RecursiveArm {
+            target,
+            unowned: Some(proof),
+            ..
+        }
+        | ChildPendingKind::UnownedRetirementCensus { target, proof, .. } => {
+            trace_pending_recursive_proof(id, command.context.as_ref(), target, proof, registry)
+        }
+        ChildPendingKind::UnownedStructuralCensus { target, proof, .. } => {
+            trace_pending_structural_proof(id, command.context.as_ref(), target, proof, registry)
+        }
+        ChildPendingKind::StructuralArm { session } => {
+            if let Some(tab) = structural_sessions.get(session)
+                && let Some(proof) = tab.unowned.as_ref()
+            {
+                trace_pending_structural_proof(id, command.context.as_ref(), &tab.target, proof, registry);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+fn trace_pending_recursive_proof(
+    id: u64,
+    context: Option<&BrowserContextId>,
+    target: &TargetId,
+    proof: &UnownedArmProof,
+    registry: &Registry,
+) {
+    tracing::info!(
+        command_id = id,
+        target_token_matches = registry
+            .target_generations
+            .get(target)
+            .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation)),
+        context_token_matches =
+            context.is_some_and(|context| registry.unowned_context_matches(context, &proof.context_generation)),
+        registry_matches = unowned_arm_registry_matches(registry, context, target, proof),
+        "test structural pending recursive proof"
+    );
+}
+
+#[cfg(test)]
+fn trace_pending_structural_proof(
+    id: u64,
+    context: Option<&BrowserContextId>,
+    target: &TargetId,
+    proof: &UnownedStructuralProof,
+    registry: &Registry,
+) {
+    tracing::info!(
+        command_id = id,
+        target_token_true = proof.target_generation.load(Ordering::Acquire),
+        target_token_pointer_matches = registry
+            .unowned_structural_observers
+            .get(target)
+            .and_then(|token| token.upgrade())
+            .is_some_and(|current| Arc::ptr_eq(&current, &proof.target_generation)),
+        context_token_matches =
+            context.is_some_and(|context| registry.unowned_context_matches(context, &proof.context_generation)),
+        registry_matches = unowned_structural_registry_matches(registry, context, target, proof),
+        "test structural pending tab proof"
+    );
 }
 
 fn child_capacity_used(
@@ -3443,6 +3573,13 @@ where
                                 #[cfg(test)]
                                 {
                                     let registry = lock(&shared.registry);
+                                    let mut pending_order = pending.iter().collect::<Vec<_>>();
+                                    pending_order.sort_unstable_by_key(|(id, _)| **id);
+                                    for (command_id, command) in pending_order {
+                                        trace_pending_command(*command_id, command, &registry, &session_targets, &structural_sessions);
+                                    }
+                                    tracing::info!(session_targets = ?session_targets, armed_targets = ?armed_targets,
+                                        "test structural pending controller maps");
                                     let arm_id = pending.iter().find_map(|(id, command)|
                                         matches!(&command.kind, ChildPendingKind::StructuralArm { session: armed } if armed == session).then_some(*id));
                                     let observed_token = registry.unowned_structural_observers.get(&structural.target).and_then(|token| token.upgrade());
@@ -3628,6 +3765,15 @@ where
                     .get("sessionId")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned);
+                #[cfg(test)]
+                let attachment_observation = PendingAttachmentObservation {
+                    target_type: attached.target_info.r#type.clone(),
+                    target: attached.target_info.target_id.clone(),
+                    session: attached.session_id.clone(),
+                    context: attached.target_info.browser_context_id.clone(),
+                    waiting: attached.waiting_for_debugger,
+                    raw_parent_session: parent_session.clone(),
+                };
                 if !global_requested {
                     return child_fail(shared, "global_attach_not_requested");
                 }
@@ -3705,6 +3851,10 @@ where
                             attached.target_info.browser_context_id.clone(),
                         ),
                     );
+                    #[cfg(test)]
+                    {
+                        pending.get_mut(&id).expect("structural arm was inserted").attachment_observation = Some(attachment_observation);
+                    }
                     continue;
                 }
                 let _ = adopt_target(shared, &attached.target_info);
@@ -3745,6 +3895,10 @@ where
                         }
                         pending.insert(id, child_pending_in(ChildPendingKind::Close,
                             attached.target_info.browser_context_id.clone()));
+                        #[cfg(test)]
+                        {
+                            pending.get_mut(&id).expect("target close was inserted").attachment_observation = Some(attachment_observation);
+                        }
                     }
                     continue;
                 }
@@ -3814,6 +3968,10 @@ where
                         attached.target_info.browser_context_id,
                     ),
                 );
+                #[cfg(test)]
+                {
+                    pending.get_mut(&id).expect("recursive arm was inserted").attachment_observation = Some(attachment_observation);
+                }
             }
         }
     }

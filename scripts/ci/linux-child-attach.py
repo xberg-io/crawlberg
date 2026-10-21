@@ -60,6 +60,22 @@ class Executable(TypedDict):
     sha256: str
 
 
+class SnapIdentity(TypedDict):
+    """Mounted Snap file identities, without claiming attestation of a running process."""
+
+    launcher_path: str
+    launcher_resolved_path: str
+    launcher_sha256: str
+    snap_revision: str
+    revision_root: str
+    runtime_launcher_path: str
+    runtime_launcher_sha256: str
+    engine_path: str
+    engine_size: int
+    engine_sha256: str
+    scope: str
+
+
 class Row(TypedDict):
     """One expected test execution, including explicit evidence when it did no work."""
 
@@ -88,6 +104,65 @@ def digest(path: str | Path) -> str:
     """Hash the exact executable bytes used for each replay."""
     with Path(path).open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def snap_browser_identity(chrome: str, *, snap_root: Path = Path("/snap/chromium")) -> SnapIdentity:
+    """Identify only the fixed mounted ELF selected by Chromium's Snap launcher source."""
+    launcher = Path(chrome).absolute()
+    if launcher != snap_root.parent / "bin/chromium" or not launcher.is_file():
+        raise ValueError("Expected the official Snap chromium launcher path")
+    revision = (snap_root / "current").resolve(strict=True)
+    if revision.parent != snap_root.resolve(strict=True) or re.fullmatch(r"[1-9][0-9]*", revision.name) is None:
+        raise ValueError("Snap current must resolve to one numeric chromium revision")
+    runtime_launcher = revision / "bin/chromium.launcher"
+    source = runtime_launcher.read_bytes()
+    if len(source) > 65536 or b'exec "$SNAP/usr/lib/chromium-browser/chrome"' not in source:
+        raise ValueError("Snap launcher does not declare the expected fixed Chromium engine")
+    engine = revision / "usr/lib/chromium-browser/chrome"
+    if not engine.is_file():
+        raise ValueError("Mounted Snap Chromium engine is missing")
+    if engine.resolve(strict=True) != engine or engine.stat().st_size < 64:
+        raise ValueError("Mounted Snap engine must be a nonempty revision-local ELF file")
+    with engine.open("rb") as binary:
+        header = binary.read(64)
+    if (
+        header[:7] != b"\x7fELF\x02\x01\x01"
+        or int.from_bytes(header[16:18], "little") not in (2, 3)
+        or int.from_bytes(header[18:20], "little") != 183
+        or int.from_bytes(header[20:24], "little") != 1
+        or int.from_bytes(header[52:54], "little") != 64
+    ):
+        raise ValueError("Mounted Snap engine must have a valid AArch64 ELF executable header")
+    identity: SnapIdentity = {
+        "launcher_path": str(launcher),
+        "launcher_resolved_path": str(launcher.resolve(strict=True)),
+        "launcher_sha256": digest(launcher),
+        "snap_revision": revision.name,
+        "revision_root": str(revision),
+        "runtime_launcher_path": str(runtime_launcher),
+        "runtime_launcher_sha256": digest(runtime_launcher),
+        "engine_path": str(engine),
+        "engine_size": engine.stat().st_size,
+        "engine_sha256": digest(engine),
+        "scope": "Mounted Snap files before/after the test batch; not running-process attestation",
+    }
+    if (snap_root / "current").resolve(strict=True) != revision:
+        raise ValueError("Snap revision changed while recording engine identity")
+    return identity
+
+
+def assert_snap_browser_stable(
+    directory: Path, chrome: str, before: SnapIdentity, *, snap_root: Path = Path("/snap/chromium")
+) -> None:
+    """Retain the after receipt and fail if the selected revision or mounted bytes changed."""
+    try:
+        after = snap_browser_identity(chrome, snap_root=snap_root)
+    except (OSError, ValueError) as error:
+        save(directory, "browser-after.json", {"identity_error": str(error)})
+        raise
+    save(directory, "browser-after.json", after)
+    if after != before:
+        raise ValueError("Snap browser mount identity changed during the test batch")
 
 
 def run(directory: Path, name: str, command: list[str], timeout: float, cwd: str | None = None) -> Result:
@@ -292,11 +367,8 @@ def probe(directory: Path) -> None:
     browser = run(directory, "browser-version", [chrome, "--version"], 30)
     if browser["exit_code"] or not re.search(r"\d+\.\d+\.\d+\.\d+", browser["stdout"]):
         raise ValueError("Browser version unavailable; see browser-version logs")
-    save(
-        directory,
-        "browser.json",
-        {"path": chrome, "version_output": browser["stdout"].strip(), "sha256": digest(chrome)},
-    )
+    browser_identity = snap_browser_identity(chrome)
+    save(directory, "browser.json", {"version_output": browser["stdout"].strip(), **browser_identity})
     if re.search(r"\b155\.0\.8059\.84\b", browser["stdout"]) is None:
         raise ValueError("Same-snap verification requires Chromium 155.0.8059.84; actual browser receipt preserved")
     os.environ.update(RUST_BACKTRACE="full", RUST_TEST_THREADS="1")
@@ -306,6 +378,7 @@ def probe(directory: Path) -> None:
         filter_name = FILTER if index % 2 else STRUCTURAL_FILTER
         rows.append(run_case(directory, artifacts[0], index, index == 0, deadline, filter_name=filter_name))
         save_probe_rows(directory, rows)
+    assert_snap_browser_stable(directory, chrome, browser_identity)
     if digest(artifacts[0]["path"]) != artifacts[0]["sha256"]:
         raise ValueError("Final executable bytes changed")
     if len(rows) != 121 or not all(row["ok"] for row in rows):
@@ -345,11 +418,8 @@ def structural_guard(directory: Path) -> None:
     browser = run(directory, "browser-version", [chrome, "--version"], 30)
     if browser["exit_code"] or not re.search(r"\d+\.\d+\.\d+\.\d+", browser["stdout"]):
         raise ValueError("Browser version unavailable; see browser-version logs")
-    save(
-        directory,
-        "browser.json",
-        {"path": chrome, "version_output": browser["stdout"].strip(), "sha256": digest(chrome)},
-    )
+    browser_identity = snap_browser_identity(chrome)
+    save(directory, "browser.json", {"version_output": browser["stdout"].strip(), **browser_identity})
     if re.search(r"\b155\.0\.8059\.84\b", browser["stdout"]) is None:
         raise ValueError("Same-snap verification requires Chromium 155.0.8059.84; actual browser receipt preserved")
     os.environ.update(RUST_BACKTRACE="full", RUST_TEST_THREADS="1")
@@ -367,6 +437,7 @@ def structural_guard(directory: Path) -> None:
         save_structural_rows(directory, rows, reason)
         if not row["ok"]:
             break
+    assert_snap_browser_stable(directory, chrome, browser_identity)
     if digest(artifacts[0]["path"]) != artifacts[0]["sha256"]:
         raise ValueError("Final executable bytes changed")
     if not 1 <= len(rows) <= 120 or any(row["filter"] != STRUCTURAL_FILTER for row in rows):
