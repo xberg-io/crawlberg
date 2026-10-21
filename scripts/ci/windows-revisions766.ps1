@@ -59,10 +59,10 @@ function Get-RevisionSource([string]$Revision, [string]$Name) {
     if (Test-Path $directory) { throw 'Revision source directory must be fresh' }
     [void](New-Item -ItemType Directory $directory)
     $archive = Join-Path $OutputDirectory "$Name-source.tar"
-    $git = (Get-Command git -CommandType Application).Source
+    $git = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     $result = Invoke-RecordedProcess $git @('archive', '--format=tar', "--output=$archive", $Revision) "archive-$Name"
     if ($result.exit_code -ne 0 -or $result.timed_out) { throw "Unable to archive $Revision" }
-    $tar = (Get-Command tar -CommandType Application).Source
+    $tar = (Get-Command tar -CommandType Application | Select-Object -First 1).Source
     $result = Invoke-RecordedProcess $tar @('-xf', $archive, '-C', $directory) "extract-$Name"
     if ($result.exit_code -ne 0 -or $result.timed_out) { throw "Unable to extract $Revision" }
     return [pscustomobject]@{
@@ -79,7 +79,7 @@ function Build-Revision($Source, [string]$Fixture) {
         '--test', 'test_browser_pool_lifecycle', '--no-run', '--message-format=json')
     $lock = Join-Path $Source.directory 'Cargo.lock'
     $lockHash = (Get-FileHash $lock -Algorithm SHA256).Hash
-    $cargo = (Get-Command cargo -CommandType Application).Source
+    $cargo = (Get-Command cargo -CommandType Application | Select-Object -First 1).Source
     $result = Invoke-RecordedProcess $cargo $arguments "build-$($Source.name)" 1200 $Source.directory
     if ($result.exit_code -ne 0 -or $result.timed_out) { throw 'Revision build failed; full logs preserved' }
     if ((Get-FileHash $lock -Algorithm SHA256).Hash -ne $lockHash) { throw 'Revision lockfile changed' }
@@ -108,7 +108,7 @@ function Build-TestExecutables {
     $current = Get-RevisionSource '51645bb2ee16a40a1e0ca345c5294d5010fdbf5d' 'current'
     $old = Get-RevisionSource '3a8e6fa6c4906f0bc65557e02aac221eef3cf48b' 'old'
     Save-Json @($old, $current) 'sources.json'
-    $rustc = (Get-Command rustc -CommandType Application).Source
+    $rustc = (Get-Command rustc -CommandType Application | Select-Object -First 1).Source
     $version = Invoke-RecordedProcess $rustc @('+1.99.1', '--version', '--verbose') 'rustc-version'
     if ($version.exit_code -ne 0 -or $version.timed_out) { throw 'Pinned Rust1.99.1 is unavailable' }
     $fixture = Join-Path $current.directory 'crates/crawlberg/tests/test_browser_pool_lifecycle.rs'
