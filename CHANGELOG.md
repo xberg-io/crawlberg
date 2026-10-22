@@ -4,7 +4,7 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.0] - 2026-10-21
+## [1.12.0] - 2026-10-22
 
 ### Added
 
@@ -24,6 +24,9 @@ All notable changes to crawlberg are documented here.
 - Upgrade the embedded JavaScript runtime to `deno_core` 0.413.0, including its isolate-teardown lifetime fix.
 - Upgrade `libc` to 0.2.191, which restores the iOS Mach bindings removed in 0.2.190, and refresh dependency
   lockfiles, including html-to-markdown 3.18.5 and updated TLS trust validation. The browser fork moves to 0.9.4 and uses base64 0.23.
+- Use getrandom 0.4.3 while retaining older aliases required by transitive WebAssembly backends.
+- Refresh Rust and language-package dependencies, including Tokio 1.54.1, ureq 3.5.0, NAPI CLI 3.10.9,
+  Astro 7.4.2, Vitest 5.0.5, Testify 1.12.1, and pnpm 12.14.0.
 - Pin the repository's Rust toolchain to 1.99.1.
 - The Python binding builds against PyO3 0.30 and the PHP extension against ext-php-rs 0.16.3; bindings are
   regenerated with alef 0.112.0.
@@ -34,6 +37,9 @@ All notable changes to crawlberg are documented here.
 - Retire an absent unowned Chrome session only after an all-target census and unchanged ownership,
   session and context evidence, preserving owned-page security checks.
 - Preserve unowned-target absence proofs when an unrelated browser context is created or retired.
+- Keep an original unowned-session removal witness when Chrome detaches it before replying to its pending arm.
+- Retire an acknowledged unowned tab and its pending child only after proving both targets absent,
+  while preserving unrelated interception commands and owned-page readiness.
 - Include browser and tab targets in foreign-session retirement censuses.
 - Malformed percent escapes keep a stable normalized URL across repeated normalization and query sorting. (#799)
 
