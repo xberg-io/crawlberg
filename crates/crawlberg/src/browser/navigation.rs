@@ -691,15 +691,18 @@ async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, quiet_win
     if cap.is_zero() {
         return;
     }
+    // ~keep A blocked renderer delays polling as well as mutations; that unobserved time is not DOM quiet.
     let script = format!(
         "new Promise(resolve => {{
            const quiet = {quiet}, cap = {cap};
            const start = performance.now();
-           let last = start;
+           let last = start, checked = start;
            const observer = new MutationObserver(() => {{ last = performance.now(); }});
            observer.observe(document, {{ childList: true, subtree: true, characterData: true }});
            const check = () => {{
              const now = performance.now();
+             last = Math.min(now, last + Math.max(0, now - checked - 25));
+             checked = now;
              if (now - last >= quiet || now - start >= cap) {{ observer.disconnect(); resolve(true); }}
              else {{ setTimeout(check, 25); }}
            }};

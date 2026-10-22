@@ -428,6 +428,34 @@ async fn window_scrolling_does_not_starve_a_nested_virtual_list_on_a_long_page()
     assert_all_items_in_order(markdown(&result));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn delayed_scroll_notifications_do_not_skip_virtual_rows() {
+    let name = "delayed_scroll_notifications_do_not_skip_virtual_rows";
+    let body = virtual_list("", ITEM_LABEL)
+        .replace("height:100vh", "height:200px")
+        .replace("</main>", "<div style=\"height:300000px\"></div></main>");
+    let listener = "list.addEventListener(\"scroll\", draw);";
+    assert_eq!(
+        body.matches(listener).count(),
+        1,
+        "the controlled scroll seam must exist"
+    );
+    let body = body.replace(
+        listener,
+        r#"list.addEventListener("scroll", (event) => {
+          if (event.isTrusted) {
+            event.stopImmediatePropagation();
+            setTimeout(() => list.dispatchEvent(new Event("scroll")), 150);
+          }
+        }, true);
+        list.addEventListener("scroll", draw);"#,
+    );
+    let Some(result) = scrape_page(name, &body, true).await else {
+        return;
+    };
+    assert_all_items_in_order(markdown(&result));
+}
+
 const REPLACED_LIST: &str = r##"<!doctype html><html><head><title>Replaced list</title><style>
 body{margin:0}
 #scroller{height:160px;overflow:auto;position:relative}
