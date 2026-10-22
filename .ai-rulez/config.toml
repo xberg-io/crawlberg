@@ -79,4 +79,9 @@ self_server_command = ["ai-rulez", "mcp"]
 include_outputs = false
 
 [lint]
-allow_overrides = ["python-conventions"]
+# Crawlberg supplies its own MCP reference and review prompt for these harness names. ~keep
+allow_overrides = ["python-conventions", "claude:mcp", "claude:review"]
+
+[lint.builtin_names]
+# Keep the repository review command instead of OpenCode's built-in command. ~keep
+allow = ["opencode:review"]

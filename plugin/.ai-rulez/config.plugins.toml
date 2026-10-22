@@ -25,6 +25,8 @@ icon = "./assets/icon.svg"
 logo = "./assets/logo.png"
 keywords = ["web-scraping", "crawling", "html-to-markdown", "headless-chrome"]
 
+opencode_dependency = "^2.1.2"
+
 include = ["scripts/**", "assets/**"]
 
 [plugin.author]
