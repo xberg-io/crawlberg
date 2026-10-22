@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/xberg-io/crawlberg/packages/go v1.12.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 )
 
 require (

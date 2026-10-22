@@ -59,7 +59,7 @@
     "access": "public"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.10.8"
+    "@napi-rs/cli": "^3.10.9"
   },
-  "packageManager": "pnpm@12.11.2"
+  "packageManager": "pnpm@12.14.0"
 }
