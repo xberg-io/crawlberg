@@ -216,13 +216,15 @@ async fn an_unowned_census_cannot_retire_a_second_session_or_its_pending_arm() {
             true,
         )
         .await;
-        let arm = next_child_message(&mut fixture.socket).await;
-        assert_eq!(arm["method"], "Target.setAutoAttach");
-        reply(
-            &mut fixture.socket,
-            json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
-        )
-        .await;
+        let response = tokio::time::timeout(Duration::from_secs(1), fixture.socket.next())
+            .await
+            .expect("identity reuse must fail before arming a replacement");
+        if let Some(Ok(message)) = response {
+            assert!(
+                !message.is_text(),
+                "identity reuse must not issue a command: {message:?}"
+            );
+        }
         assert_closed(fixture.controller).await;
     }
 }
@@ -661,4 +663,115 @@ async fn an_unrelated_context_claim_preserves_a_recursive_absence_proof() {
         commands.send(super::super::ChildCommand::Stop).await.unwrap();
         assert!(controller.await.unwrap());
     }
+}
+
+async fn ended_session_census_fixture(event: &str, waiting: bool, before_error: bool) -> CensusFixture {
+    let page = watched("ROOT");
+    let mut state = shared_with(&page, "OTHER");
+    state.origin = BrowserOrigin::Launched;
+    let shared = Arc::new(state);
+    register_owned_context(&shared, &page);
+    let context = BrowserContextId::new("DEFAULT");
+    let target = TargetId::new("OTHER");
+    let (mut socket, commands, controller) = test_child_controller(Arc::clone(&shared), Duration::from_secs(1)).await;
+    send_attached_target_with_waiting(&mut socket, "S-UI", "OTHER", "browser_ui", None, &context, waiting).await;
+    let arm = next_child_message(&mut socket).await;
+    assert_eq!(arm["method"], "Target.setAutoAttach");
+    assert_eq!(arm["sessionId"], "S-UI");
+    let generation = lock(&shared.registry).target_generations[&target].clone();
+    let params = if event == "Target.detachedFromTarget" {
+        json!({"sessionId": "S-UI", "targetId": "OTHER"})
+    } else {
+        assert_eq!(event, "Target.targetDestroyed");
+        json!({"targetId": "OTHER"})
+    };
+    if before_error {
+        reply(&mut socket, json!({"method": event, "params": params.clone()})).await;
+    }
+    reply(&mut socket, json!({"id": arm["id"], "error": {"code": -32001}})).await;
+    let census = next_child_message(&mut socket).await;
+    assert_eq!(census["method"], "Target.getTargets");
+    assert_eq!(census["params"], json!({"filter": [{}]}));
+    assert!(census.get("sessionId").is_none());
+    assert_ne!(census["id"], arm["id"]);
+    if !before_error {
+        reply(&mut socket, json!({"method": event, "params": params})).await;
+    }
+    {
+        let registry = lock(&shared.registry);
+        assert!(Arc::ptr_eq(&registry.target_generations[&target], &generation));
+        assert!(matches!(registry.ownership.get(&target), Some(TargetOwnership::Other)));
+        assert!(!registry.contexts.contains_key(&context));
+        assert!(!registry.retired_contexts.contains(&context));
+    }
+    CensusFixture {
+        shared,
+        page,
+        socket,
+        _commands: commands,
+        controller,
+        census,
+    }
+}
+
+#[tokio::test]
+async fn an_ended_session_still_requires_absence_before_its_original_pending_arm_can_retire() {
+    let mut executed = 0;
+    for event in ["Target.detachedFromTarget", "Target.targetDestroyed"] {
+        for waiting in [false, true] {
+            for (live, before_error) in [(false, true), (true, true), (false, false), (true, false)] {
+                let mut fixture = ended_session_census_fixture(event, waiting, before_error).await;
+                let targets = if live {
+                    vec![
+                        json!({"targetId": "OTHER", "type": "browser_ui", "title": "", "url": "",
+                        "attached": false, "canAccessOpener": false, "browserContextId": "DEFAULT"}),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                reply(
+                    &mut fixture.socket,
+                    json!({"id": fixture.census["id"], "result": {"targetInfos": targets}}),
+                )
+                .await;
+                if live {
+                    let response = tokio::time::timeout(Duration::from_secs(1), fixture.socket.next())
+                        .await
+                        .expect("live ended target rejection must close the socket promptly");
+                    if let Some(Ok(message)) = response {
+                        assert!(
+                            !message.is_text(),
+                            "a live ended target must not be resumed: {message:?}"
+                        );
+                    }
+                    assert_closed(fixture.controller).await;
+                } else {
+                    let owned = lock(&fixture.shared.registry).context_targets[&fixture.page.root].clone();
+                    send_attached_target_with_waiting(
+                        &mut fixture.socket,
+                        "S-ROOT",
+                        "ROOT",
+                        "page",
+                        None,
+                        &owned,
+                        false,
+                    )
+                    .await;
+                    let root_arm = next_child_message(&mut fixture.socket).await;
+                    assert_eq!(root_arm["method"], "Target.setAutoAttach");
+                    assert_eq!(root_arm["sessionId"], "S-ROOT");
+                    answer_child_command(&mut fixture.socket, &root_arm).await;
+                    fixture._commands.send(super::super::ChildCommand::Stop).await.unwrap();
+                    assert!(
+                        tokio::time::timeout(Duration::from_secs(1), fixture.controller)
+                            .await
+                            .expect("absence-proved controller must stop promptly")
+                            .unwrap()
+                    );
+                }
+                executed += 1;
+            }
+        }
+    }
+    assert_eq!(executed, 16);
 }
