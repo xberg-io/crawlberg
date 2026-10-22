@@ -110,6 +110,50 @@ class ReleasePrerequisiteTests(unittest.TestCase):
                     values["needs.crates-gate.outputs.ok"] = str(ready).lower()
                     assert release_condition(self.jobs[name]["if"], values) is ready
 
+    def test_php_native_build_runs_even_when_packagist_metadata_exists(self) -> None:
+        values = {
+            "needs.prepare.outputs.force_republish": "false",
+            "needs.prepare.outputs.release_php": "true",
+            "needs.crates-gate.outputs.ok": "true",
+            "needs.check-packagist.outputs.exists": "true",
+        }
+        assert release_condition(self.jobs["php-extension"]["if"], values) is True
+
+    def test_release_report_rejects_missing_php_assets_despite_packagist_metadata(self) -> None:
+        reports = [
+            step
+            for job in self.jobs.values()
+            for step in job.get("steps", [])
+            if step.get("name") == "Verify every enabled publish target succeeded"
+        ]
+        assert len(reports) == 1
+        report = reports[0]
+        values = dict.fromkeys(report["env"], "false")
+        values.update({name: "success" for name in values if name.startswith("RESULT_")})
+        values.update(
+            TAG="v1.12.0",
+            CRATES_GATE_OK="true",
+            RELEASE_PHP="true",
+            EXISTS_PACKAGIST="true",
+        )
+        cases = (("skipped", 1), ("failure", 1), ("success", 0))
+        observed = 0
+        for result, code in cases:
+            observed += 1
+            with self.subTest(result=result):
+                completed = subprocess.run(
+                    ["bash", "-c", report["run"]],
+                    env={**os.environ, **values, "RESULT_UPLOAD_PHP_PIE": result},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                assert completed.returncode == code, completed.stdout + completed.stderr
+                if code != 0:
+                    assert "Publish target 'php-pie-assets'" in completed.stdout
+        assert observed == 3
+        print(f"PHP release report cases: expected=3 observed={observed}")
+
     def test_php_packager_installs_the_config_pinned_alef_first(self) -> None:
         steps = self.jobs["php-extension"]["steps"]
         installers = [step for step in steps if step.get("uses", "").startswith("xberg-io/actions/install-alef@")]

@@ -876,7 +876,7 @@ jobs:
     name: Build PHP extension (php${{ matrix.php }} ${{ matrix.platform.label }})
     needs: [prepare, check-packagist, crates-gate]
     if: >-
-      ${{ !inputs.plugins-only && (!cancelled() && needs.crates-gate.outputs.ok == 'true' && needs.prepare.outputs.release_php == 'true' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
+      ${{ !inputs.plugins-only && (!cancelled() && needs.crates-gate.outputs.ok == 'true' && needs.prepare.outputs.release_php == 'true') }}
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 60
     strategy:
@@ -3540,7 +3540,7 @@ jobs:
           require_publish "go-ffi-assets" "${RESULT_UPLOAD_GO}" "${RELEASE_GO}" "${EXISTS_GO}"
           require_publish "c-ffi-assets" "${RESULT_UPLOAD_C_FFI}" "${RELEASE_C_FFI}" "${EXISTS_C_FFI}"
           require_publish "elixir-nif-assets" "${RESULT_UPLOAD_ELIXIR}" "${RELEASE_ELIXIR}" "${EXISTS_ELIXIR}"
-          require_publish "php-pie-assets" "${RESULT_UPLOAD_PHP_PIE}" "${RELEASE_PHP}" "${EXISTS_PACKAGIST}"
+          require_publish "php-pie-assets" "${RESULT_UPLOAD_PHP_PIE}" "${RELEASE_PHP}"
           require_publish "swift-assets" "${RESULT_UPLOAD_SWIFT}" "${RELEASE_SWIFT}"
           require_publish "swift-checksums" "${RESULT_SWIFT_CHECKSUMS}" "${RELEASE_SWIFT}"
 
