@@ -2720,7 +2720,7 @@ jobs:
           ls -la "$out"
           for d in "$out"/*/; do echo "--- $d ---"; ls -la "$d"; done
 
-      - uses: xberg-io/actions/publish-zig@v1
+      - uses: xberg-io/actions/publish-zig@d46e381fa26536ce63621f8f5a37e722ce60c240
         with:
           working-directory: packages/zig
           tag: ${{ needs.prepare.outputs.tag }}
