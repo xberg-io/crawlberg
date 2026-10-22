@@ -562,7 +562,22 @@
  #[derive(Clone, Default)]
  struct PageOpenDiagnostics(Arc<Mutex<Vec<u8>>>);
  
-@@ -299,10 +322,13 @@
+@@ -286,11 +309,13 @@
+             .lock()
+             .expect("diagnostic sink must lock")
+             .extend_from_slice(bytes);
++        // ~keep Preserve CI stage evidence when the diagnostic process is forcibly terminated.
++        std::io::Write::write_all(&mut std::io::stderr().lock(), bytes)?;
+         Ok(bytes.len())
+     }
+ 
+     fn flush(&mut self) -> std::io::Result<()> {
+-        Ok(())
++        std::io::Write::flush(&mut std::io::stderr().lock())
+     }
+ }
+ 
+@@ -299,10 +324,13 @@
          let sink = self.clone();
          tracing::Dispatch::new(
              tracing_subscriber::fmt()
@@ -578,7 +593,7 @@
                  .with_writer(move || sink.clone())
                  .finish(),
          )
-@@ -310,7 +336,10 @@
+@@ -310,7 +338,10 @@
  
      fn snapshot(&self) -> String {
          let bytes = self.0.lock().expect("diagnostic sink must lock");
@@ -590,7 +605,7 @@
      }
  }
  
-@@ -347,4 +376,36 @@
+@@ -347,4 +378,36 @@
      ] {
          assert!(std::panic::catch_unwind(|| assert_known_timeout_capture(&invalid)).is_err());
      }

@@ -13,6 +13,7 @@ tasks:
     desc: Verify completed release and record diagnostic browser and source provenance
     cmds:
       - python scripts/ci/rust/windows766.py prepare
+      - python scripts/ci/rust/test_windows766_sink.py
 
   build:
     desc: Compile one locked Windows browser-lifecycle executable
