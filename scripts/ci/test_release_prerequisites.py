@@ -154,6 +154,20 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         assert observed == 3
         print(f"PHP release report cases: expected=3 observed={observed}")
 
+    def test_swift_archive_deployment_target_matches_the_public_macos_minimum(self) -> None:
+        manifest = (ROOT / "Package.swift").read_text()
+        minimums = re.findall(r"\.macOS\(\.v([0-9]+)(?:_([0-9]+))?\)", manifest)
+        assert len(minimums) == 1, "Expected one public macOS deployment minimum"
+        major, minor = minimums[0]
+        expected = f"{major}.{minor or '0'}"
+        builders = [
+            step
+            for step in self.jobs["swift-artifactbundle"]["steps"]
+            if step.get("uses", "").startswith("xberg-io/actions/build-swift-artifactbundle@")
+        ]
+        assert len(builders) == 1, "Expected one native Swift artifact builder"
+        assert builders[0].get("env", {}).get("MACOSX_DEPLOYMENT_TARGET") == expected
+
     def test_php_packager_installs_the_config_pinned_alef_first(self) -> None:
         steps = self.jobs["php-extension"]["steps"]
         installers = [step for step in steps if step.get("uses", "").startswith("xberg-io/actions/install-alef@")]
