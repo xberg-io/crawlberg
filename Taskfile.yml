@@ -5,6 +5,9 @@ includes:
     taskfile: .task/config/vars.yml
     internal: true
 
+  ci:windows766:
+    taskfile: .task/ci-windows766.yml
+
   binding-compatibility:
     taskfile: .task/ci-binding-compatibility.yml
 

@@ -1,0 +1,30 @@
+version: "3"
+
+env:
+  WINDOWS766_ARTIFACTS: "{{.RUNNER_TEMP}}/crawlberg-windows766"
+
+tasks:
+  harness-test:
+    desc: Verify Windows diagnostic evidence rejects empty, ignored and skipped runs
+    cmds:
+      - python scripts/ci/rust/test_windows766.py
+
+  prepare:
+    desc: Verify completed release and record diagnostic browser and source provenance
+    cmds:
+      - python scripts/ci/rust/windows766.py prepare
+
+  build:
+    desc: Compile one locked Windows browser-lifecycle executable
+    cmds:
+      - python scripts/ci/rust/windows766.py build
+
+  run:
+    desc: Run one capture control and one unchanged real Windows regression
+    cmds:
+      - python scripts/ci/rust/windows766.py run
+
+  verify:
+    desc: Require two complete diagnostic test executions and report reproduction status
+    cmds:
+      - python scripts/ci/rust/windows766.py verify

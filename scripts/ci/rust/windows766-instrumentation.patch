@@ -1,0 +1,630 @@
+--- a/crates/crawlberg/src/browser_pool.rs
++++ b/crates/crawlberg/src/browser_pool.rs
+@@ -21,6 +21,8 @@
+ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+ use tokio::task::JoinHandle;
+ use tokio_stream::StreamExt;
++use tracing::Instrument as _;
++use tracing::instrument::WithSubscriber as _;
+ 
+ use crate::chrome_args::chrome_arg_key;
+ use crate::error::CrawlError;
+@@ -56,6 +58,43 @@
+         timeout_ms = PAGE_OPEN_TIMEOUT.as_millis(),
+         "page open timed out"
+     );
++}
++
++// ~keep Issue #766 CI-only instrumentation; completion means resolution, including an error.
++pub(crate) async fn diagnostic_stage<T>(stage: &'static str, work: impl std::future::Future<Output = T>) -> T {
++    let mut record = PageOpenDiagnosticStage {
++        stage,
++        started: std::time::Instant::now(),
++        completed: false,
++    };
++    record.emit("begin");
++    let result = work.await;
++    record.completed = true;
++    result
++}
++
++struct PageOpenDiagnosticStage {
++    stage: &'static str,
++    started: std::time::Instant,
++    completed: bool,
++}
++
++impl PageOpenDiagnosticStage {
++    fn emit(&self, boundary: &'static str) {
++        tracing::debug!(
++            target: "crawlberg::browser_pool::diagnostic",
++            stage = self.stage,
++            boundary,
++            elapsed_ms = self.started.elapsed().as_millis(),
++            "Windows acquisition diagnostic"
++        );
++    }
++}
++
++impl Drop for PageOpenDiagnosticStage {
++    fn drop(&mut self) {
++        self.emit(if self.completed { "complete" } else { "dropped" });
++    }
+ }
+ 
+ /// Timeout for waiting on the CDP handler task during shutdown.
+@@ -1674,10 +1713,7 @@
+         drop(watched);
+         after_end.await;
+     };
+-    #[cfg(test)]
+-    use tracing::instrument::WithSubscriber as _;
+-    #[cfg(test)]
+-    let running = running.with_current_subscriber();
++    let running = running.with_current_subscriber().in_current_span();
+     let handle = tokio::spawn(running);
+     (handle, end)
+ }
+@@ -1757,6 +1793,8 @@
+     fn drop(&mut self) {
+         self.end.0.ended.store(true, Ordering::Release);
+         self.end.0.notification.notify_waiters();
++        tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "handler_ended",
++            cause_recorded = self.end.0.cause.get().is_some(), "Windows acquisition diagnostic");
+     }
+ }
+ 
+@@ -2354,13 +2392,23 @@
+         // ~keep replaces the browser. A page that fails on a live browser is tried on it again.
+         let mut pooled = self
+             .until_shut_down(async {
+-                match self.try_new_page(proxy, config).await {
++                match self
++                    .try_new_page(proxy, config)
++                    .instrument(tracing::debug_span!(target: "crawlberg::browser_pool::diagnostic",
++                        "acquisition_attempt", attempt = 1))
++                    .await
++                {
+                     Ok(pooled) => Ok(pooled),
+-                    Err(first_err) => self.try_new_page(proxy, config).await.map_err(|e| {
+-                        CrawlError::browser_error(format!(
+-                            "failed to open page after relaunch: {e} (original: {first_err})"
+-                        ))
+-                    }),
++                    Err(first_err) => self
++                        .try_new_page(proxy, config)
++                        .instrument(tracing::debug_span!(target: "crawlberg::browser_pool::diagnostic",
++                            "acquisition_attempt", attempt = 2))
++                        .await
++                        .map_err(|e| {
++                            CrawlError::browser_error(format!(
++                                "failed to open page after relaunch: {e} (original: {first_err})"
++                            ))
++                        }),
+                 }
+             })
+             .await?;
+@@ -2439,7 +2487,7 @@
+         proxy: Option<&crate::proxy::ChromeProxy>,
+         config: &crate::types::CrawlConfig,
+     ) -> Result<PooledPage, CrawlError> {
+-        let browser = self.running_browser().await?;
++        let browser = diagnostic_stage("running_browser", self.running_browser()).await?;
+         let sockets = crate::net::egress::socket_policy(
+             &config.ssrf,
+             self.config.browser_endpoint.as_deref(),
+@@ -2449,17 +2497,29 @@
+         // ~keep answers the arm would otherwise hold an acquisition until someone shut the pool down.
+         let started = std::time::Instant::now();
+         let mut phase = PageOpenPhase::CreatePage;
+-        let (page, watch) = tokio::time::timeout(PAGE_OPEN_TIMEOUT, async {
+-            let page = browser
+-                .firewall
+-                .new_page_with_policy(proxy, sockets, &config.ssrf, config.danger_accept_invalid_certs)
+-                .await?;
+-            phase = PageOpenPhase::ArmWatch;
+-            let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
+-            Ok::<_, CrawlError>((page, watch))
+-        })
+-        .await
+-        .map_err(|_| {
++        let opened = tokio::time::timeout(
++            PAGE_OPEN_TIMEOUT,
++            async {
++                browser.firewall.diagnostic_state();
++                let page = browser
++                    .firewall
++                    .new_page_with_policy(proxy, sockets, &config.ssrf, config.danger_accept_invalid_certs)
++                    .await?;
++                phase = PageOpenPhase::ArmWatch;
++                let watch = browser.firewall.watch(&page, config, config.max_redirects).await?;
++                Ok::<_, CrawlError>((page, watch))
++            }
++            .instrument(tracing::debug_span!(target: "crawlberg::browser_pool::diagnostic",
++            "page_open_generation", generation = browser.generation)),
++        )
++        .await;
++        browser.firewall.diagnostic_state();
++        #[cfg(any(feature = "browser", test))]
++        tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "acquisition_result",
++            generation = browser.generation, phase = phase.as_str(), elapsed_ms = started.elapsed().as_millis(),
++            handler_ended = browser.handler_end.has_ended(), timed_out = opened.is_err(),
++            "Windows acquisition diagnostic");
++        let (page, watch) = opened.map_err(|_| {
+             report_page_open_timeout(phase, browser.generation, started.elapsed());
+             CrawlError::browser_error("timeout opening page")
+         })??;
+--- a/crates/crawlberg/src/ssrf_intercept.rs
++++ b/crates/crawlberg/src/ssrf_intercept.rs
+@@ -46,6 +46,8 @@
+ use futures::future::BoxFuture;
+ use futures::stream::{BoxStream, FuturesOrdered, FuturesUnordered, SelectAll, Stream, StreamExt as _};
+ use tokio::sync::{Notify, mpsc, oneshot};
++use tracing::Instrument as _;
++use tracing::instrument::WithSubscriber as _;
+ 
+ use crate::error::CrawlError;
+ use crate::html::is_fetchable_scheme;
+@@ -843,6 +845,8 @@
+ impl Drop for Opening {
+     fn drop(&mut self) {
+         self.0.opening.fetch_sub(1, Ordering::AcqRel);
++        tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "opening_guard_released",
++            opening_count = self.0.opening.load(Ordering::Acquire), "Windows acquisition diagnostic");
+     }
+ }
+ 
+@@ -1167,18 +1171,25 @@
+         };
+         let child_shared = Arc::clone(&shared);
+         let child_browser = Arc::clone(&browser);
+-        let child_controller = tokio::spawn(async move {
+-            let expected = controller_completed(serve_child_targets(
+-                child_socket,
+-                child_receiver,
+-                &child_shared,
+-                &child_browser,
+-            ))
+-            .await;
+-            if !expected && !child_shared.stopping.load(Ordering::Acquire) {
+-                fail_controller(&child_browser, &child_shared, "child-target controller").await;
++        let child_controller = tokio::spawn(
++            async move {
++                let expected = controller_completed(serve_child_targets(
++                    child_socket,
++                    child_receiver,
++                    &child_shared,
++                    &child_browser,
++                ))
++                .await;
++                tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "child_controller_ended",
++                expected, stopping = child_shared.stopping.load(Ordering::Acquire),
++                "Windows acquisition diagnostic");
++                if !expected && !child_shared.stopping.load(Ordering::Acquire) {
++                    fail_controller(&child_browser, &child_shared, "child-target controller").await;
++                }
+             }
+-        });
++            .with_current_subscriber()
++            .in_current_span(),
++        );
+         let (enabled, ready) = oneshot::channel();
+         child_commands
+             .send(ChildCommand::Enable { done: enabled })
+@@ -1190,23 +1201,30 @@
+             .map_err(|_| CrawlError::browser_error("child-target controller stopped before it could be enabled"))?
+             .map_err(CrawlError::browser_error)?;
+         let listener_shared = Arc::clone(&shared);
+-        let listener = tokio::spawn(async move {
+-            let expected = controller_completed(serve(
+-                Arc::clone(&browser),
+-                Arc::clone(&listener_shared),
+-                Events {
+-                    paused,
+-                    created,
+-                    destroyed,
+-                },
+-                receiver,
+-            ))
+-            .await;
+-            if expected {
+-                return;
++        let listener = tokio::spawn(
++            async move {
++                let expected = controller_completed(serve(
++                    Arc::clone(&browser),
++                    Arc::clone(&listener_shared),
++                    Events {
++                        paused,
++                        created,
++                        destroyed,
++                    },
++                    receiver,
++                ))
++                .await;
++                tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "interception_controller_ended",
++                expected, stopping = listener_shared.stopping.load(Ordering::Acquire),
++                "Windows acquisition diagnostic");
++                if expected {
++                    return;
++                }
++                fail_controller(&browser, &listener_shared, "request-interception controller").await;
+             }
+-            fail_controller(&browser, &listener_shared, "request-interception controller").await;
+-        });
++            .with_current_subscriber()
++            .in_current_span(),
++        );
+         Ok(Self {
+             handle,
+             listener,
+@@ -1454,17 +1472,19 @@
+     let context = match mode {
+         PageContext::Shared => None,
+         PageContext::Isolated | PageContext::Copied => Some(
+-            browser
+-                .create_browser_context(CreateBrowserContextParams {
++            crate::browser_pool::diagnostic_stage(
++                "create_browser_context",
++                browser.create_browser_context(CreateBrowserContextParams {
+                     dispose_on_detach: Some(true),
+                     proxy_bypass_list: proxy_server
+                         .as_ref()
+                         .map(|_| crate::browser_pool::NO_LOOPBACK_BYPASS.to_owned()),
+                     proxy_server,
+                     ..CreateBrowserContextParams::default()
+-                })
+-                .await
+-                .map_err(|error| failed(&error))?,
++                }),
++            )
++            .await
++            .map_err(|error| failed(&error))?,
+         ),
+     };
+     if let Some(context) = &context {
+@@ -1472,7 +1492,8 @@
+     }
+     if mode == PageContext::Copied
+         && let Some(context) = &context
+-        && let Err(error) = copy_cookies(browser, context.clone()).await
++        && let Err(error) =
++            crate::browser_pool::diagnostic_stage("copy_context_cookies", copy_cookies(browser, context.clone())).await
+     {
+         let _ = dispose_and_retire_context(browser, shared, context.clone()).await;
+         return Err(CrawlError::browser_error(format!(
+@@ -1481,7 +1502,7 @@
+     }
+     let mut params = CreateTargetParams::new("about:blank");
+     params.browser_context_id = context.clone();
+-    let page = match browser.new_page(params).await {
++    let page = match crate::browser_pool::diagnostic_stage("new_target_and_driver", browser.new_page(params)).await {
+         Ok(page) => page,
+         Err(error) => {
+             if let Some(context) = context {
+@@ -1494,7 +1515,11 @@
+     // ~keep Chrome caches certificate exceptions in the BrowserContext. Set the policy before
+     // ~keep the first navigation; session reuse must keep contexts isolated by their TLS policy.
+     if let Some(accept) = accept_invalid_certs
+-        && let Err(error) = page.execute(SetIgnoreCertificateErrorsParams::new(accept)).await
++        && let Err(error) = crate::browser_pool::diagnostic_stage(
++            "set_tls_policy",
++            page.execute(SetIgnoreCertificateErrorsParams::new(accept)),
++        )
++        .await
+     {
+         drop_page(browser, shared, root, context).await;
+         return Err(CrawlError::browser_error(format!(
+@@ -1509,6 +1534,16 @@
+ }
+ 
+ impl FirewallHandle {
++    pub(crate) fn diagnostic_state(&self) {
++        tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "controller_state",
++            failed = self.shared.failed.load(Ordering::Acquire),
++            stopping = self.shared.stopping.load(Ordering::Acquire),
++            opening_count = self.shared.opening.load(Ordering::Acquire),
++            command_receiver_closed = self.commands.is_closed(),
++            child_receiver_closed = self.child_commands.is_closed(),
++            "Windows acquisition diagnostic");
++    }
++
+     pub(crate) async fn failed(&self) {
+         loop {
+             let notified = self.shared.failure.notified();
+@@ -1600,7 +1635,9 @@
+         #[cfg(test)]
+         let sockets = sockets.filter(|_| !self.shared.delays.bypass_egress);
+         let egress = match (&self.context, sockets) {
+-            (PageContext::Isolated | PageContext::Copied, Some(policy)) => self.egress_proxy(proxy, policy).await?,
++            (PageContext::Isolated | PageContext::Copied, Some(policy)) => {
++                crate::browser_pool::diagnostic_stage("egress_proxy", self.egress_proxy(proxy, policy)).await?
++            }
+             _ => None,
+         };
+         let proxy_server = egress.as_ref().or(proxy).map(|proxy| proxy.server.clone());
+@@ -1610,23 +1647,33 @@
+         let mode = self.context;
+         let policy = policy.cloned();
+         let (reply, result) = oneshot::channel();
+-        tokio::spawn(async move {
+-            let _opening = opening;
+-            let opened = open_page(
+-                &browser,
+-                &shared,
+-                &commands,
+-                mode,
+-                proxy_server,
+-                policy,
+-                accept_invalid_certs,
+-            )
+-            .await;
+-            if let Err(Ok((page, context))) = reply.send(opened) {
+-                drop_page(&browser, &shared, page.target_id().clone(), context).await;
++        tokio::spawn(
++            async move {
++                let _opening = opening;
++                let opened = open_page(
++                    &browser,
++                    &shared,
++                    &commands,
++                    mode,
++                    proxy_server,
++                    policy,
++                    accept_invalid_certs,
++                )
++                .await;
++                if let Err(Ok((page, context))) = reply.send(opened) {
++                    crate::browser_pool::diagnostic_stage(
++                        "cancelled_open_cleanup",
++                        drop_page(&browser, &shared, page.target_id().clone(), context),
++                    )
++                    .await;
++                }
+             }
+-        });
+-        let (page, _) = result.await.map_err(|_| stopped())??;
++            .with_current_subscriber()
++            .in_current_span(),
++        );
++        let (page, _) = crate::browser_pool::diagnostic_stage("opening_reply", result)
++            .await
++            .map_err(|_| stopped())??;
+         Ok(page)
+     }
+ 
+@@ -1640,31 +1687,39 @@
+         redirect_limit: usize,
+     ) -> Result<Watch, CrawlError> {
+         let mut setup = WatchSetup::new(&self.commands, page.target_id().clone());
+-        let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
+-        let navigations = page
+-            .event_listener::<EventFrameNavigated>()
+-            .await
+-            .map_err(|e| CrawlError::browser_error(format!("failed to register navigation listener: {e}")))?;
+-        let failures = page
+-            .event_listener::<EventLoadingFailed>()
+-            .await
+-            .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
+-        let scheduled = page
+-            .event_listener::<RefreshScheduled>()
+-            .await
+-            .map_err(|e| CrawlError::browser_error(format!("failed to register refresh listener: {e}")))?;
+-        let requested = page
+-            .event_listener::<EventFrameRequestedNavigation>()
+-            .await
+-            .map_err(|e| CrawlError::browser_error(format!("failed to register requested navigation listener: {e}")))?;
++        let main_frame = require_main_frame(
++            crate::browser_pool::diagnostic_stage("main_frame", page.mainframe())
++                .await
++                .map_err(|e| e.to_string()),
++        )?;
++        let navigations =
++            crate::browser_pool::diagnostic_stage("navigation_listener", page.event_listener::<EventFrameNavigated>())
++                .await
++                .map_err(|e| CrawlError::browser_error(format!("failed to register navigation listener: {e}")))?;
++        let failures =
++            crate::browser_pool::diagnostic_stage("failure_listener", page.event_listener::<EventLoadingFailed>())
++                .await
++                .map_err(|e| CrawlError::browser_error(format!("failed to register document failure listener: {e}")))?;
++        let scheduled =
++            crate::browser_pool::diagnostic_stage("refresh_listener", page.event_listener::<RefreshScheduled>())
++                .await
++                .map_err(|e| CrawlError::browser_error(format!("failed to register refresh listener: {e}")))?;
++        let requested = crate::browser_pool::diagnostic_stage(
++            "requested_listener",
++            page.event_listener::<EventFrameRequestedNavigation>(),
++        )
++        .await
++        .map_err(|e| CrawlError::browser_error(format!("failed to register requested navigation listener: {e}")))?;
+         let requested = Box::pin(futures::stream::select(
+             scheduled.map(|event| Arc::new(RefreshNavigation::Scheduled(event))),
+             requested.map(|event| Arc::new(RefreshNavigation::Requested(event))),
+         ));
+-        let dialogs = page
+-            .event_listener::<EventJavascriptDialogOpening>()
+-            .await
+-            .map_err(|e| CrawlError::browser_error(format!("failed to register dialog listener: {e}")))?;
++        let dialogs = crate::browser_pool::diagnostic_stage(
++            "dialog_listener",
++            page.event_listener::<EventJavascriptDialogOpening>(),
++        )
++        .await
++        .map_err(|e| CrawlError::browser_error(format!("failed to register dialog listener: {e}")))?;
+         #[cfg(test)]
+         if let Some(gate) = &self.shared.delays.watch_handoff_gate {
+             lock(&gate.held).push(page.target_id().inner().clone());
+@@ -1698,7 +1753,7 @@
+             ))
+             .map_err(|_| CrawlError::browser_error("request interception stopped"))?;
+         setup.queued = Some(Arc::clone(&watched));
+-        match enabled.await {
++        match crate::browser_pool::diagnostic_stage("watch_controller_ack", enabled).await {
+             Ok(Ok(owned_context)) => {
+                 let watch = Watch {
+                     owned_context,
+@@ -1710,16 +1765,22 @@
+                     ended: false,
+                 };
+                 setup.disarm();
+-                disable_primary_child_attach(page).await?;
++                crate::browser_pool::diagnostic_stage(
++                    "disable_primary_child_attach",
++                    disable_primary_child_attach(page),
++                )
++                .await?;
+                 let (armed, boundary) = oneshot::channel();
+-                self.child_commands
+-                    .send(ChildCommand::Arm {
++                crate::browser_pool::diagnostic_stage(
++                    "queue_child_arm",
++                    self.child_commands.send(ChildCommand::Arm {
+                         root: page.target_id().clone(),
+                         done: armed,
+-                    })
+-                    .await
+-                    .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?;
+-                boundary
++                    }),
++                )
++                .await
++                .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?;
++                crate::browser_pool::diagnostic_stage("child_controller_ack", boundary)
+                     .await
+                     .map_err(|_| CrawlError::browser_error("child-target controller stopped"))?
+                     .map_err(CrawlError::browser_error)?;
+--- a/crates/crawlberg/tests/test_browser_pool_lifecycle.rs
++++ b/crates/crawlberg/tests/test_browser_pool_lifecycle.rs
+@@ -39,6 +39,8 @@
+ };
+ use tokio::io::{AsyncReadExt, AsyncWriteExt};
+ use tokio::net::TcpListener;
++use tracing::Instrument as _;
++use tracing::instrument::WithSubscriber as _;
+ 
+ mod common;
+ use common::{announce_chrome_skip, is_missing_chrome_message};
+@@ -122,6 +124,7 @@
+ /// concurrently open connections it observed; with `max_pages: 1` that peak
+ /// must never exceed 1.
+ #[tokio::test(flavor = "current_thread")]
++#[expect(clippy::print_stderr, reason = "issue #766 diagnostic artifact output")]
+ async fn pool_bounds_concurrent_navigations_to_max_pages() {
+     let server = TestServer::start().await;
+     let pool = BrowserPool::new(BrowserPoolConfig {
+@@ -137,12 +140,16 @@
+     let dispatch = diagnostics.subscriber();
+     // ~keep The current-thread runtime also polls spawned continuations under this scoped dispatcher.
+     let _guard = tracing::dispatcher::set_default(&dispatch);
++    let scheduling = tokio::spawn(sample_page_open_scheduler().with_current_subscriber());
+     let results = batch_scrape(&engine, urls).await.unwrap_or_else(|error| {
+         panic!(
+-            "batch_scrape must run: {error}; page_open_diagnostics={}",
++            "batch_scrape must run: {error}; windows766_diagnostics={}",
+             diagnostics.snapshot()
+         )
+     });
++
++    scheduling.abort();
++    eprintln!("windows766_diagnostics={}", diagnostics.snapshot());
+ 
+     if let Some(message) = results.results.iter().find_map(|entry| entry.error.as_deref())
+         && is_missing_chrome_message(message)
+@@ -187,7 +194,7 @@
+     assert!(
+         results.total_count == 4 && results.results.len() == 4 && all_succeeded && paths == expected_paths && peak == 1,
+         "expected all four marker bodies, exactly four known GET paths and peak=1; total={} outcomes={outcomes:?} \
+-         paths={paths:?} peak={peak} page_open_diagnostics={}",
++         paths={paths:?} peak={peak} windows766_diagnostics={}",
+         results.total_count,
+         diagnostics.snapshot()
+     );
+@@ -277,6 +284,22 @@
+     }
+ }
+ 
++const PAGE_OPEN_DIAGNOSTIC_INTERVAL: Duration = Duration::from_millis(100);
++const PAGE_OPEN_DIAGNOSTIC_SAMPLES: usize = 900;
++const PAGE_OPEN_DIAGNOSTIC_CHARS: usize = 256 * 1024;
++
++async fn sample_page_open_scheduler() {
++    let started = std::time::Instant::now();
++    for sample_index in 0..PAGE_OPEN_DIAGNOSTIC_SAMPLES {
++        let expected = tokio::time::Instant::now() + PAGE_OPEN_DIAGNOSTIC_INTERVAL;
++        tokio::time::sleep_until(expected).await;
++        tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "scheduler_sample",
++            boundary = "sample", sample_index, elapsed_ms = started.elapsed().as_millis(),
++            delay_ms = tokio::time::Instant::now().saturating_duration_since(expected).as_millis(),
++            "Windows acquisition diagnostic");
++    }
++}
++
+ #[derive(Clone, Default)]
+ struct PageOpenDiagnostics(Arc<Mutex<Vec<u8>>>);
+ 
+@@ -299,10 +322,13 @@
+         let sink = self.clone();
+         tracing::Dispatch::new(
+             tracing_subscriber::fmt()
+-                .with_env_filter("off,crawlberg::browser_pool::page_open=warn")
++                .with_env_filter(concat!(
++                    "off,crawlberg::browser_pool=warn,crawlberg::ssrf_intercept=warn,",
++                    "crawlberg::browser_pool::page_open=warn,crawlberg::browser_pool::diagnostic=debug"
++                ))
+                 .with_ansi(false)
+                 .without_time()
+-                .with_target(false)
++                .with_target(true)
+                 .with_writer(move || sink.clone())
+                 .finish(),
+         )
+@@ -310,7 +336,10 @@
+ 
+     fn snapshot(&self) -> String {
+         let bytes = self.0.lock().expect("diagnostic sink must lock");
+-        String::from_utf8_lossy(&bytes).chars().take(4096).collect()
++        String::from_utf8_lossy(&bytes)
++            .chars()
++            .take(PAGE_OPEN_DIAGNOSTIC_CHARS)
++            .collect()
+     }
+ }
+ 
+@@ -347,4 +376,36 @@
+     ] {
+         assert!(std::panic::catch_unwind(|| assert_known_timeout_capture(&invalid)).is_err());
+     }
+-}
++
++    let stage_capture = PageOpenDiagnostics::default();
++    let stage_dispatch = stage_capture.subscriber();
++    tokio::spawn(
++        async {
++            let span = tracing::debug_span!(target: "crawlberg::browser_pool::diagnostic",
++            "diagnostic_control", attempt = 3, generation = 11);
++            async {
++                tracing::debug!(target: "crawlberg::browser_pool::diagnostic", stage = "known_diagnostic_stage",
++                boundary = "begin", elapsed_ms = 0, "Windows acquisition diagnostic");
++            }
++            .instrument(span)
++            .await;
++        }
++        .with_subscriber(stage_dispatch),
++    )
++    .await
++    .expect("diagnostic stage producer must finish");
++    let stage_evidence = stage_capture.snapshot();
++    assert_eq!(
++        stage_evidence.lines().count(),
++        1,
++        "expected one stage diagnostic: {stage_evidence}"
++    );
++    for field in [
++        "known_diagnostic_stage",
++        "boundary=\"begin\"",
++        "attempt=3",
++        "generation=11",
++    ] {
++        assert!(stage_evidence.contains(field), "missing {field}: {stage_evidence}");
++    }
++}
