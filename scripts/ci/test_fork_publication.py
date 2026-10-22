@@ -27,6 +27,88 @@ FORK_MANIFEST = "vendor/crawlberg-chromiumoxide/Cargo.toml"
 FORK_NAME = "crawlberg-chromiumoxide"
 
 
+def git(directory: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-C", str(directory), *arguments],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def release_fixture(directory: Path) -> tuple[Path, str, str]:
+    origin = directory / "origin"
+    origin.mkdir()
+    git(origin, "-c", "init.templateDir=", "init", "--quiet", "--initial-branch=main")
+    git(origin, "config", "user.name", "Test")
+    git(origin, "config", "user.email", "test@example.invalid")
+    (origin / "release.txt").write_text("immutable old release source\n")
+    (origin / "Taskfile.yml").write_text("version: '3'\ntasks:\n  existing: {cmds: [echo existing]}\n")
+    git(origin, "add", "release.txt", "Taskfile.yml")
+    git(origin, "commit", "--quiet", "-m", "test: create old release")
+    release_sha = git(origin, "rev-parse", "HEAD")
+    for name in ("check_browser_fork.py", "fork-check.Taskfile.yml"):
+        original = ROOT / "scripts/ci" / name
+        if original.exists():
+            destination = origin / "scripts/ci" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(original.read_bytes())
+    git(origin, "add", "scripts/ci")
+    git(origin, "commit", "--quiet", "-m", "test: add workflow tooling")
+    workflow_sha = git(origin, "rev-parse", "HEAD")
+    checkout = directory / "release"
+    subprocess.run(["git", "-c", "init.templateDir=", "clone", "--quiet", str(origin), str(checkout)], check=True)
+    git(checkout, "switch", "--quiet", "--detach", release_sha)
+    return checkout, release_sha, workflow_sha
+
+
+def install_registry_boundary(directory: Path) -> Path:
+    stub = directory / "http-boundary"
+    stub.mkdir()
+    (stub / "sitecustomize.py").write_text(
+        "import io, json, os, urllib.error, urllib.request, urllib.response\n"
+        "from pathlib import Path\n"
+        "def urlopen(request, timeout):\n"
+        "    expected = 'https://crates.io/api/v1/crates/crawlberg-chromiumoxide/0.9.4'\n"
+        "    assert request.full_url == expected and timeout == 30\n"
+        "    Path(os.environ['HTTP_AUDIT']).write_text(expected)\n"
+        "    if os.environ['REGISTRY_EXISTS'] == 'false':\n"
+        "        raise urllib.error.HTTPError(expected, 404, 'missing', None, None)\n"
+        "    body = json.dumps({'version': {'crate': 'crawlberg-chromiumoxide', 'num': '0.9.4'}}).encode()\n"
+        "    return urllib.response.addinfourl(io.BytesIO(body), {}, expected, 200)\n"
+        "urllib.request.urlopen = urlopen\n"
+    )
+    return stub
+
+
+def checkout_workflow_tools(release: Path, origin: Path, workflow_sha: str, checkout: dict) -> None:
+    assert checkout["ref"] == "${{ github.workflow_sha }}"
+    assert checkout["fetch-depth"] == 1 and checkout["persist-credentials"] is False
+    assert checkout["sparse-checkout-cone-mode"] is False
+    patterns = checkout["sparse-checkout"].split()
+    assert patterns == ["/scripts/ci/check_browser_fork.py", "/scripts/ci/fork-check.Taskfile.yml"]
+    tooling = release / checkout["path"]
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "init.templateDir=",
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            "--depth=1",
+            origin.as_uri(),
+            str(tooling),
+        ],
+        check=True,
+    )
+    git(tooling, "sparse-checkout", "set", "--no-cone", *patterns)
+    git(tooling, "switch", "--quiet", "--detach", workflow_sha)
+    assert git(tooling, "ls-files", "-t").count("H ") == 2
+    assert not (tooling / "Taskfile.yml").exists()
+
+
 class ForkPublicationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())
@@ -124,7 +206,8 @@ class ForkPublicationTests(unittest.TestCase):
         guards = [step for step in self.steps if step.get("id") == "fork_registry"]
         assert len(guards) == 1
         guard = guards[0]
-        assert guard["run"] == "task ci:release:fork:check"
+        assert guard["run"] == "task --taskfile fork-check.Taskfile.yml check"
+        assert guard["working-directory"] == ".release-workflow/scripts/ci"
         assert guard["env"] == {"FORK_VERSION": "${{ steps.fork_metadata.outputs.version }}"}
         publisher = next(
             step for step in self.steps if step.get("name") == "Publish the browser fork before core crates"
@@ -135,8 +218,51 @@ class ForkPublicationTests(unittest.TestCase):
             r"xberg-io/actions/install-task@[0-9a-f]{40}", installers[0]["uses"]
         )
         assert self.steps.index(installers[0]) < self.steps.index(guard)
+        tools = [step for step in self.steps if step.get("name") == "Check out workflow publishing tools"]
+        assert len(tools) == 1
+        assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", tools[0]["uses"])
+        assert self.steps.index(self.metadata_step()) < self.steps.index(tools[0]) < self.steps.index(guard)
         tasks = yaml.safe_load((ROOT / ".task/tools/general.yml").read_text())["tasks"]
         assert tasks["ci:release:fork:check"]["cmds"] == ["python3 scripts/ci/check_browser_fork.py"]
+
+    def test_registry_guard_works_when_the_release_has_no_workflow_tooling(self) -> None:
+        guard = next(step for step in self.steps if step.get("id") == "fork_registry")
+        tools = [step for step in self.steps if step.get("name") == "Check out workflow publishing tools"]
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            release, release_sha, workflow_sha = release_fixture(temporary)
+            stub = install_registry_boundary(temporary)
+            if tools:
+                assert len(tools) == 1
+                checkout_workflow_tools(release, temporary / "origin", workflow_sha, tools[0]["with"])
+            observed = 0
+            for exists in ("true", "false"):
+                output, audit = temporary / f"output-{exists}", temporary / f"http-{exists}"
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", guard["run"]],
+                    cwd=release / guard.get("working-directory", "."),
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "FORK_VERSION": "0.9.4",
+                        "GITHUB_OUTPUT": str(output),
+                        "PYTHONPATH": str(stub),
+                        "HTTP_AUDIT": str(audit),
+                        "REGISTRY_EXISTS": exists,
+                    },
+                    check=False,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert output.read_text() == f"exists={exists}\n"
+                assert audit.read_text().endswith("/crawlberg-chromiumoxide/0.9.4")
+                assert git(release, "rev-parse", "HEAD") == release_sha
+                assert (release / "release.txt").read_text() == "immutable old release source\n"
+                assert git(release, "diff", "--name-only", "HEAD") == ""
+                assert not (release / "scripts/ci/check_browser_fork.py").exists()
+                observed += 1
+            assert observed == 2
+            print(f"Old-release registry cases: expected=2 observed={observed}")
 
     def test_registry_guard_only_emits_booleans_for_verified_registry_responses(self) -> None:
         module = self.registry_checker()

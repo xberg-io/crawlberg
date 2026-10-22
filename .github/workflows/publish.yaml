@@ -2003,13 +2003,26 @@ jobs:
               output.write(f'version={version}\n')
           PYTHON
 
+      - name: Check out workflow publishing tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-workflow
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/ci/check_browser_fork.py
+            /scripts/ci/fork-check.Taskfile.yml
+
       - uses: xberg-io/actions/install-task@e509ab645f16cc3be40131e54243e815bb83dbe5
 
       - name: Check the browser fork version in crates.io
         id: fork_registry
         env:
           FORK_VERSION: ${{ steps.fork_metadata.outputs.version }}
-        run: task ci:release:fork:check
+        working-directory: .release-workflow/scripts/ci
+        run: task --taskfile fork-check.Taskfile.yml check
 
       - name: Publish the browser fork before core crates
         if: steps.fork_registry.outputs.exists == 'false'

@@ -1,0 +1,7 @@
+version: "3"
+
+tasks:
+  check:
+    desc: Check whether the browser fork version is already published
+    cmds:
+      - python3 check_browser_fork.py
