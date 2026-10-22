@@ -15,8 +15,9 @@ from typing import NotRequired, TypedDict
 RECOVERY_MARKER = "test proved unowned child-target retirement"
 STRUCTURAL_RECOVERY_MARKER = "test proved unowned structural-target retirement"
 AUTHORIZED_RECOVERY_MARKER = "test proved authorized unowned tab-drain retirement"
-RECOVERY_MARKERS = (RECOVERY_MARKER, STRUCTURAL_RECOVERY_MARKER, AUTHORIZED_RECOVERY_MARKER)
-REGISTERED_TESTS = 2148
+RESUME_RECOVERY_MARKER = "test proved unowned resume-target retirement"
+RECOVERY_MARKERS = (RECOVERY_MARKER, STRUCTURAL_RECOVERY_MARKER, AUTHORIZED_RECOVERY_MARKER, RESUME_RECOVERY_MARKER)
+REGISTERED_TESTS = 2150
 IGNORED_TESTS = 2
 FOCUSED_REPLAYS = 120
 NEW_RETIREMENT_TESTS = {
@@ -31,6 +32,17 @@ NEW_RETIREMENT_TESTS = {
     (
         "ssrf_intercept::tests::unowned_retirement::"
         "an_ended_session_still_requires_absence_before_its_original_pending_arm_can_retire"
+    ),
+}
+
+RESUME_TESTS = {
+    (
+        "ssrf_intercept::tests::unowned_resume::"
+        "an_unowned_resume_session_error_requires_absence_and_never_retires_an_owned_resume"
+    ),
+    (
+        "ssrf_intercept::tests::unowned_resume::"
+        "an_unowned_resume_census_rejects_reused_identity_and_new_owned_obligations"
     ),
 }
 
@@ -224,8 +236,8 @@ def assert_result(result: Result, expected: int, ignored: int, *, full_suite: bo
 
 def assert_test_names(names: list[str]) -> None:
     """Require real registered tests and every exact regression/filter name before execution."""
-    if len(names) != 2148 or len(set(names)) != 2148:
-        raise ValueError("Expected 2148 unique registered test names")
+    if len(names) != 2150 or len(set(names)) != 2150:
+        raise ValueError("Expected 2150 unique registered test names")
     structural = {name for name in names if name.startswith(STRUCTURAL_TEST_PREFIX)}
     if structural != STRUCTURAL_TESTS:
         raise ValueError("Expected exactly the four structural regression test names")
@@ -233,6 +245,8 @@ def assert_test_names(names: list[str]) -> None:
         raise ValueError("Expected all five context identity regression test names")
     if not NEW_RETIREMENT_TESTS.issubset(names):
         raise ValueError("Expected all three authorized-drain and ended-session regression names")
+    if not RESUME_TESTS.issubset(names):
+        raise ValueError("Expected both unowned resume retirement regression names")
     if not {FILTER, STRUCTURAL_FILTER}.issubset(names):
         raise ValueError("Expected both exact real-browser filter names")
 
@@ -247,12 +261,13 @@ def enumerate_tests(directory: Path, executable: Executable) -> None:
         directory,
         "enumeration.json",
         {
-            "expected_names": 2148,
+            "expected_names": 2150,
             "observed_names": len(names),
             "unique_names": len(set(names)),
             "expected_structural_names": sorted(STRUCTURAL_TESTS),
             "expected_context_names": sorted(CONTEXT_TESTS),
             "expected_new_retirement_names": sorted(NEW_RETIREMENT_TESTS),
+            "expected_resume_names": sorted(RESUME_TESTS),
             "expected_filters": [FILTER, STRUCTURAL_FILTER],
             "sha256": executable["sha256"],
             "native_exit_code": result["exit_code"],
@@ -266,7 +281,7 @@ def enumerate_tests(directory: Path, executable: Executable) -> None:
     if digest(executable["path"]) != executable["sha256"]:
         raise ValueError("Enumeration executable bytes changed")
     sys.stdout.write(
-        "Registered tests: expected2148 observed2148; exact4structural+5context+3retirement regressions and2filters verified\n"
+        "Registered tests: expected2150 observed2150; exact4structural+5context+3retirement+2resume regressions and2filters verified\n"
     )
 
 
@@ -307,7 +322,7 @@ def run_case(
     directory: Path, executable: Executable, index: int, full: bool, deadline: float, *, filter_name: str
 ) -> Row:
     """Run a case with original package cwd and an unchanged executable hash."""
-    expected, ignored = (2148, 2) if full else (1, 0)
+    expected, ignored = (2150, 2) if full else (1, 0)
     name = f"{index:02d}-" + ("full-core" if full else "focused-child-attach")
     row: Row = {
         "phase": "full" if full else "focused",
@@ -495,29 +510,28 @@ def assert_bad_test_names(names: list[str], reason: str) -> None:
 
 def test_enumeration_controls() -> None:
     """Reject zero work and a same-count rename of each required regression/filter."""
-    required = sorted(STRUCTURAL_TESTS | CONTEXT_TESTS | NEW_RETIREMENT_TESTS | {FILTER, STRUCTURAL_FILTER})
-    names = required + [f"fixture::{index}" for index in range(2148 - len(required))]
+    required = sorted(
+        STRUCTURAL_TESTS | CONTEXT_TESTS | NEW_RETIREMENT_TESTS | RESUME_TESTS | {FILTER, STRUCTURAL_FILTER}
+    )
+    names = required + [f"fixture::{index}" for index in range(2150 - len(required))]
     assert_test_names(names)
-    cases = [([], "Expected 2148 unique registered test names")]
+    cases = [([], "Expected 2150 unique registered test names")]
     for name in required:
         wrong = ["fixture::renamed" if value == name else value for value in names]
-        reason = (
-            "Expected exactly the four structural regression test names"
-            if name in STRUCTURAL_TESTS
-            else (
-                "Expected all five context identity regression test names"
-                if name in CONTEXT_TESTS
-                else (
-                    "Expected all three authorized-drain and ended-session regression names"
-                    if name in NEW_RETIREMENT_TESTS
-                    else "Expected both exact real-browser filter names"
-                )
-            )
-        )
+        if name in STRUCTURAL_TESTS:
+            reason = "Expected exactly the four structural regression test names"
+        elif name in CONTEXT_TESTS:
+            reason = "Expected all five context identity regression test names"
+        elif name in NEW_RETIREMENT_TESTS:
+            reason = "Expected all three authorized-drain and ended-session regression names"
+        elif name in RESUME_TESTS:
+            reason = "Expected both unowned resume retirement regression names"
+        else:
+            reason = "Expected both exact real-browser filter names"
         cases.append((wrong, reason))
     for candidate, reason in cases:
         assert_bad_test_names(candidate, reason)
-    sys.stdout.write("Enumeration controls: 1 positive; 1 zero-work and13exact-name negatives\n")
+    sys.stdout.write("Enumeration controls: 1 positive; 1 zero-work and15exact-name negatives\n")
 
 
 def self_test() -> None:
@@ -530,14 +544,14 @@ def self_test() -> None:
         "stderr": "",
     }
     assert_result(positive, 1, 0)
-    full: Result = {**positive, "stdout": "test result: ok. 2146 passed; 0 failed; 2 ignored;"}
-    assert_result(full, 2148, 2)
+    full: Result = {**positive, "stdout": "test result: ok. 2148 passed; 0 failed; 2 ignored;"}
+    assert_result(full, 2150, 2)
     control_line = (
         "skipping detected_chrome_launch_errors_are_not_skippable: no Chrome executable: "
         "Could not auto detect a chrome executable"
     )
     full_control: Result = {**full, "stderr": control_line}
-    assert_result(full_control, 2148, 2, full_suite=True)
+    assert_result(full_control, 2150, 2, full_suite=True)
     negatives: list[Result] = [
         {**positive, "stdout": "test result: ok. 0 passed; 0 failed; 0 ignored;"},
         {**positive, "exit_code": 101},
@@ -547,7 +561,7 @@ def self_test() -> None:
     ]
     rejected = sum(_rejects(case) for case in negatives)
     full_skip: Result = {**full, "stderr": control_line + " altered"}
-    rejected += _rejects(full_skip, 2148, 2, full_suite=True)
+    rejected += _rejects(full_skip, 2150, 2, full_suite=True)
     if rejected != 6:
         raise ValueError(f"Expected six negative controls; observed {rejected}")
     assert_recovery_count(1)

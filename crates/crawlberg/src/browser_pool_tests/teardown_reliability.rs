@@ -68,7 +68,8 @@ fn capture(f: impl FnOnce(&Events)) -> Vec<(tracing::Level, String)> {
         if *level == tracing::Level::INFO
             && (message.contains("test proved unowned child-target retirement")
                 || message.contains("test proved unowned structural-target retirement")
-                || message.contains("test proved authorized unowned tab-drain retirement"))
+                || message.contains("test proved authorized unowned tab-drain retirement")
+                || message.contains("test proved unowned resume-target retirement"))
         {
             eprintln!("{message}");
         }
