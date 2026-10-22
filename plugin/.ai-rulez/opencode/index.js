@@ -58,7 +58,7 @@ function runCli(args, context) {
         resolve({
           title: "crawlberg CLI not found",
           content:
-            "Install the crawlberg CLI with `brew install xberg-io/tap/crawlberg`, or run it via `npx @xberg-io/crawlberg-cli` / `uvx --from crawlberg-cli crawlberg`.",
+            "Install the crawlberg CLI on PATH with `brew install xberg-io/tap/crawlberg` or `cargo install crawlberg-cli --features all`.",
           metadata: { exitCode: 127, command: "crawlberg", subcommand: args[0] },
         });
         return;

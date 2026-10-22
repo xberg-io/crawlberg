@@ -1,6 +1,6 @@
 // AI-RULEZ :: GENERATED FILE — DO NOT EDIT
-// Content-Hash: blake3:78b8f5c9a004f9f8602c9ddd2c81ba9bb8d42ce3454ba5faa6ea8a624a278ec3
-// Source-Hash: blake3:24471c7640e55f8f1f88adfa6e9ac290cd1bc200811b0726f5d41a5dd9fe2863
+// Content-Hash: blake3:1acb0b9e6a7ba4f729e29dee8776ca8b65ab50c331851c7b60b7d20e4ff67cb5
+// Source-Hash: blake3:35d7104804de6e35d2fbdac6f848690feb2c3f4c8363922406d27fdb1478313a
 // Schema-Version: v1
 
 import { registerBundledContent } from "../ai-rulez-content.js";
@@ -63,7 +63,7 @@ function runCli(args, context) {
         resolve({
           title: "crawlberg CLI not found",
           content:
-            "Install the crawlberg CLI with `brew install xberg-io/tap/crawlberg`, or run it via `npx @xberg-io/crawlberg-cli` / `uvx --from crawlberg-cli crawlberg`.",
+            "Install the crawlberg CLI on PATH with `brew install xberg-io/tap/crawlberg` or `cargo install crawlberg-cli --features all`.",
           metadata: { exitCode: 127, command: "crawlberg", subcommand: args[0] },
         });
         return;

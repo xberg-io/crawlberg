@@ -49,7 +49,7 @@ Pi loads the bundled skills and prompt templates. Use `/crawlberg-scrape` or `/c
 
 ### Binary requirement
 
-The MCP server runs through an auto-installing launcher (`scripts/mcp-launch.sh`): on first use it reuses any working `crawlberg` binary already on `PATH`, then tries `npx`/`uvx`, then Homebrew, then a prebuilt download. No manual install is required for MCP.
+The MCP server runs through an auto-installing launcher (`scripts/mcp-launch.sh`): on first use it reuses any working `crawlberg` binary already on `PATH`, then tries `npx`, Homebrew, or a prebuilt download. No manual install is required for MCP.
 
 To install the CLI yourself (recommended for direct CLI use, and reused by the launcher):
 
@@ -57,7 +57,6 @@ To install the CLI yourself (recommended for direct CLI use, and reused by the l
 brew install xberg-io/tap/crawlberg
 # or run it without a persistent install (the CLI proxy package self-installs the binary):
 pnpm dlx @xberg-io/crawlberg-cli --help
-uvx --from crawlberg-cli crawlberg --help
 # or build from source (the mcp/api subcommands are non-default features):
 cargo install crawlberg-cli --features all
 ```
