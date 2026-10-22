@@ -91,6 +91,7 @@
     ".claude/agents/typescript-specialist.md",
     ".claude/agents/wasm-specialist.md",
     ".claude/agents/zig-specialist.md",
+    ".claude/settings.json",
     ".claude/skills/add-language-generator/SKILL.md",
     ".claude/skills/agent-coordination/SKILL.md",
     ".claude/skills/alef-workflow/SKILL.md",
@@ -317,6 +318,7 @@
     "opencode.json"
   ],
   "merged": {
+    ".claude/settings.json": [],
     ".codex/config.toml": [],
     ".gemini/settings.json": [],
     ".mcp.json": [],
