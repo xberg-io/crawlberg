@@ -42,7 +42,6 @@ rust_out
 *.egg-info/
 __pycache__/
 .venv/
-.mypy_cache/
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
