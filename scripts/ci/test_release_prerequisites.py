@@ -154,6 +154,39 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         assert observed == 3
         print(f"PHP release report cases: expected=3 observed={observed}")
 
+    def test_release_completion_rejects_cancelled_publishers_and_unfinished_finalization(self) -> None:
+        jobs = ("release-finalize", "announce-discord")
+        publishers = ("publish-rubygems", "publish-hex", "upload-php-pie-release")
+        cases = (("success", True), ("skipped", True), ("failure", False), ("cancelled", False))
+        observed = 0
+        for name in jobs:
+            prerequisites = publishers + (("release-finalize",) if name == "announce-discord" else ())
+            for publisher in prerequisites:
+                assert publisher in self.jobs[name]["needs"]
+                for result, expected in cases:
+                    if publisher == "release-finalize":
+                        expected = result == "success"
+                    results = dict.fromkeys(self.jobs[name]["needs"], "success")
+                    results[publisher] = result
+                    expression = self.jobs[name]["if"].replace("always()", "true")
+                    expression = re.sub(
+                        r"contains\(needs\.\*\.result, '([^']+)'\)",
+                        lambda match, states=tuple(results.values()): str(match[1] in states).lower(),
+                        expression,
+                    )
+                    values = {
+                        "needs.prepare.outputs.is_tag": "true",
+                        "needs.prepare.outputs.dry_run": "false",
+                        "needs.prepare.outputs.is_prerelease": "false",
+                        "needs.crates-gate.outputs.ok": "true",
+                        **{f"needs.{job}.result": state for job, state in results.items()},
+                    }
+                    with self.subTest(job=name, publisher=publisher, result=result):
+                        observed += 1
+                        assert release_condition(expression, values) is expected
+        assert observed == 28
+        print(f"Release completion cases: expected=28 observed={observed}")
+
     def test_swift_archive_deployment_target_matches_the_public_macos_minimum(self) -> None:
         manifest = (ROOT / "Package.swift").read_text()
         minimums = re.findall(r"\.macOS\(\.v([0-9]+)(?:_([0-9]+))?\)", manifest)

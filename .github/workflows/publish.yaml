@@ -3158,8 +3158,9 @@ jobs:
       - upload-php-pie-release
       - upload-swift-release
       - publish-swift-checksums
+    # ~keep A rerun can reuse cancelled prerequisite results while !cancelled() is true.
     if: >-
-      ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure')) }}
+      ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -3208,7 +3209,7 @@ jobs:
       - upload-swift-release
       - release-finalize
     if: >-
-      ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.is_prerelease != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure')) }}
+      ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.is_prerelease != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.release-finalize.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
