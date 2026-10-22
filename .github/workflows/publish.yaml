@@ -1089,12 +1089,28 @@ jobs:
       - name: Write native archive checksum
         shell: bash
         working-directory: dist/go-ffi
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           python3 - <<'PYTHON'
           import hashlib
+          import os
+          import re
+          import shutil
           from pathlib import Path
-          for archive in Path(".").glob("*.tar.gz"):
+
+          version = os.environ["RELEASE_VERSION"]
+          platform = os.environ["RELEASE_PLATFORM"]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
+              raise SystemExit("Missing or invalid Go native release version")
+          if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9_]+)+", platform):
+              raise SystemExit("Missing or invalid Go native release platform")
+          original = Path(f"crawlberg-go-{platform}.tar.gz")
+          versioned = Path(f"crawlberg-go-v{version}-{platform}.tar.gz")
+          shutil.copyfile(original, versioned)
+          for archive in (original, versioned):
               digest = hashlib.sha256(archive.read_bytes()).hexdigest()
               Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n")
           PYTHON

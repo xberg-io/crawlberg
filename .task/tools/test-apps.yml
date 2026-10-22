@@ -81,22 +81,7 @@ tasks:
       GOWORK: "off"
     cmds:
       - go mod download
-      # Trigger the published module's `//go:generate go run ./cmd/download_ffi`
-      - silent: true
-        cmd: |-
-          set -e
-          # `go list -m -f {{.Dir}} <mod>` returns an empty Dir for a published
-          # module unless the version is pinned explicitly; resolve it from go.mod.
-          FFI_VERSION=$(grep -E '^[[:space:]]*github.com/xberg-io/crawlberg/packages/go[[:space:]]' go.mod | awk '{print $NF}')
-          MOD_DIR=$(go list -m -f '{{`{{.Dir}}`}}' "github.com/xberg-io/crawlberg/packages/go@$FFI_VERSION")
-          echo "FFI mod dir: $MOD_DIR"
-          if [ -z "$MOD_DIR" ]; then echo "could not resolve go module dir" >&2; exit 1; fi
-          chmod -R u+w "$MOD_DIR" 2>/dev/null || true
-          cd "$MOD_DIR"
-          # cmd/download_ffi/main.go is tagged `//go:build ignore` (so the
-          # package is never compiled into a binary). Invoke it directly by
-          # file path to bypass the build constraint.
-          go run -mod=mod ./cmd/download_ffi/main.go
+      - go run github.com/xberg-io/crawlberg/packages/go/cmd/setup
       - go test -v -run "Test_Scrape"
 
   smoke:java:
