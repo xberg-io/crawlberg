@@ -6,6 +6,11 @@ includes:
     internal: true
 
 tasks:
+  ci:release:fork:check:
+    desc: Check whether the browser fork version is already published
+    cmds:
+      - python3 scripts/ci/check_browser_fork.py
+
   ci:release-prerequisites:test:
     desc: Test release registry gates and PHP packaging prerequisites
     cmds:

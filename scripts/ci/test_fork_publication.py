@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
+import io
+import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
+import urllib.error
+import urllib.response
 from pathlib import Path
+from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import yaml
+
+if TYPE_CHECKING:
+    from types import ModuleType
+from test_plugin_dispatch import evaluate_condition
 
 ROOT = Path(__file__).resolve().parents[2]
 FORK_MANIFEST = "vendor/crawlberg-chromiumoxide/Cargo.toml"
@@ -19,6 +31,14 @@ class ForkPublicationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())
         self.steps = self.workflow["jobs"]["publish-crates"]["steps"]
+
+    def registry_checker(self) -> ModuleType:
+        path = ROOT / "scripts/ci/check_browser_fork.py"
+        spec = importlib.util.spec_from_file_location("browser_fork_check", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
 
     def metadata_step(self) -> dict:
         matches = [step for step in self.steps if step.get("id") == "fork_metadata"]
@@ -86,6 +106,101 @@ class ForkPublicationTests(unittest.TestCase):
                 result, output = self.extract_metadata(manifest)
                 assert result.returncode != 0
                 assert output == ""
+
+    def test_existing_fork_is_skipped_and_missing_fork_is_published(self) -> None:
+        publisher = next(
+            step for step in self.steps if step.get("name") == "Publish the browser fork before core crates"
+        )
+        assert "if" in publisher, "The existing fork must not be uploaded again unconditionally"
+        for exists, expected in (("true", False), ("false", True), ("", False), ("unknown", False)):
+            with self.subTest(exists=exists):
+                condition = publisher["if"].replace("steps.fork_registry.outputs.exists", repr(exists))
+                assert (
+                    evaluate_condition(condition, event="release", plugins_only=False, ref="refs/tags/v1.12.0")
+                    is expected
+                )
+
+    def test_registry_guard_is_executed_before_any_publisher_with_the_fork_version(self) -> None:
+        guards = [step for step in self.steps if step.get("id") == "fork_registry"]
+        assert len(guards) == 1
+        guard = guards[0]
+        assert guard["run"] == "task ci:release:fork:check"
+        assert guard["env"] == {"FORK_VERSION": "${{ steps.fork_metadata.outputs.version }}"}
+        publisher = next(
+            step for step in self.steps if step.get("name") == "Publish the browser fork before core crates"
+        )
+        assert self.steps.index(self.metadata_step()) < self.steps.index(guard) < self.steps.index(publisher)
+        installers = [step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/install-task@")]
+        assert len(installers) == 1 and re.fullmatch(
+            r"xberg-io/actions/install-task@[0-9a-f]{40}", installers[0]["uses"]
+        )
+        assert self.steps.index(installers[0]) < self.steps.index(guard)
+        tasks = yaml.safe_load((ROOT / ".task/tools/general.yml").read_text())["tasks"]
+        assert tasks["ci:release:fork:check"]["cmds"] == ["python3 scripts/ci/check_browser_fork.py"]
+
+    def test_registry_guard_only_emits_booleans_for_verified_registry_responses(self) -> None:
+        module = self.registry_checker()
+        version = "0.9.4"
+        url = f"https://crates.io/api/v1/crates/{FORK_NAME}/{version}"
+        cases = (
+            (json.dumps({"version": {"crate": FORK_NAME, "num": version}}).encode(), "true"),
+            (urllib.error.HTTPError(url, 404, "not found", None, None), "false"),
+            (urllib.error.HTTPError(url, 403, "forbidden", None, None), None),
+            (urllib.error.HTTPError(url, 503, "unavailable", None, None), None),
+            (urllib.error.URLError("offline"), None),
+            (b"not JSON", None),
+            (b"{}", None),
+            (b'{"version": []}', None),
+            (json.dumps({"version": {"crate": "other", "num": version}}).encode(), None),
+            (json.dumps({"version": {"crate": FORK_NAME, "num": "0.9.3"}}).encode(), None),
+        )
+        assert len(cases) == 10
+        for response, expected in cases:
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                kwargs = (
+                    {"side_effect": response}
+                    if isinstance(response, Exception)
+                    else {"return_value": urllib.response.addinfourl(io.BytesIO(response), {}, url, 200)}
+                )
+                with (
+                    patch("urllib.request.urlopen", **kwargs) as request,
+                    patch.dict(os.environ, {"FORK_VERSION": version, "GITHUB_OUTPUT": str(output)}),
+                ):
+                    if expected is None:
+                        with self.assertRaises((ValueError, OSError)):  # noqa: PT027  # ~keep Stdlib-only CI.
+                            module.main()
+                        assert not output.exists()
+                    else:
+                        module.main()
+                        assert output.read_text() == f"exists={expected}\n"
+                    assert request.call_count == 1
+                    assert request.call_args.args[0].full_url == url
+
+    def test_registry_guard_rejects_unexpected_success_status(self) -> None:
+        module = self.registry_checker()
+        body = json.dumps({"version": {"crate": FORK_NAME, "num": "0.9.4"}}).encode()
+        response = urllib.response.addinfourl(io.BytesIO(body), {}, "https://crates.io", 201)
+        with patch("urllib.request.urlopen", return_value=response) as request:
+            with self.assertRaisesRegex(  # noqa: PT027  # ~keep Stdlib-only CI.
+                ValueError, "unexpected HTTP status 201"
+            ):
+                module.registry_exists("0.9.4")
+            assert request.call_count == 1
+
+    def test_registry_guard_rejects_missing_inputs_before_network_work(self) -> None:
+        module = self.registry_checker()
+        for version, output in (("", "/tmp/unused"), ("0.9.4", ""), ("   ", "/tmp/unused")):
+            with (
+                self.subTest(version=version, output=output),
+                patch("urllib.request.urlopen") as request,
+                patch.dict(os.environ, {"FORK_VERSION": version, "GITHUB_OUTPUT": output}),
+            ):
+                with self.assertRaisesRegex(  # noqa: PT027  # ~keep Stdlib-only CI.
+                    ValueError, "must be nonempty"
+                ):
+                    module.main()
+                assert request.call_count == 0
 
 
 if __name__ == "__main__":
