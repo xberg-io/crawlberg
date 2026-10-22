@@ -6,3 +6,77 @@ description = "Web crawling and scraping with HTML→Markdown and headless-Chrom
 agents_md = false
 # Pinned by `ai-rulez migrate v5`: the 4.x default. Remove this line to take the v5 default.
 gitignore = true
+
+[lint]
+# The repository MCP reference intentionally keeps the Claude /mcp name. ~keep
+allow_overrides = ["claude:mcp"]
+
+[[lint.ignore_rules]]
+rules = ["AR701"]
+paths = [
+  ".claude/skills/api/SKILL.md",
+  ".claude/skills/cli/SKILL.md",
+  ".claude/skills/mcp/SKILL.md",
+  ".codex/skills/api/SKILL.md",
+  ".codex/skills/cli/SKILL.md",
+  ".codex/skills/mcp/SKILL.md",
+  ".github/skills/api/SKILL.md",
+  ".github/skills/cli/SKILL.md",
+  ".github/skills/mcp/SKILL.md",
+]
+reason = "Alef emits the same API, CLI and MCP reference descriptions for each harness."
+
+[[lint.ignore_rules]]
+rules = ["AR701", "AR703"]
+paths = [
+  "plugin/.cursor-plugin/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/.cursor-plugin/skills/crawlberg/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/.hermes/plugins/crawlberg/skills/crawlberg/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/.opencode/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/.opencode/skills/crawlberg/SKILL.md",
+  "plugin/.pi/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/.pi/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/.pi/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/.pi/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/.pi/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/.pi/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/.pi/skills/crawlberg/SKILL.md",
+  "plugin/skills/crawlberg-automating-the-browser/SKILL.md",
+  "plugin/skills/crawlberg-crawling-a-site/SKILL.md",
+  "plugin/skills/crawlberg-headless-fallback/SKILL.md",
+  "plugin/skills/crawlberg-mapping-urls/SKILL.md",
+  "plugin/skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "plugin/skills/crawlberg-serving-the-api/SKILL.md",
+  "plugin/skills/crawlberg/SKILL.md",
+  "skills/crawlberg-automating-the-browser/SKILL.md",
+  "skills/crawlberg-crawling-a-site/SKILL.md",
+  "skills/crawlberg-headless-fallback/SKILL.md",
+  "skills/crawlberg-mapping-urls/SKILL.md",
+  "skills/crawlberg-scraping-html-to-markdown/SKILL.md",
+  "skills/crawlberg-serving-the-api/SKILL.md",
+  "skills/crawlberg/SKILL.md",
+]
+reason = "Generated plugin and public mirrors intentionally preserve authored skill identities and descriptions; plugin verification checks their bytes."
