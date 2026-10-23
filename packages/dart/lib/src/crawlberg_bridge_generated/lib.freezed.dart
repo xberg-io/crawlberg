@@ -475,6 +475,782 @@ as String,
 }
 
 /// @nodoc
+mixin _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleBatchCrawlStreamWire);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleBatchCrawlStreamWire()';
+}
+
+
+}
+
+/// @nodoc
+class $AlefStreamCrawlEngineHandleBatchCrawlStreamWireCopyWith<$Res>  {
+$AlefStreamCrawlEngineHandleBatchCrawlStreamWireCopyWith(AlefStreamCrawlEngineHandleBatchCrawlStreamWire _, $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire) __);
+}
+
+
+/// Adds pattern-matching-related methods to [AlefStreamCrawlEngineHandleBatchCrawlStreamWire].
+extension AlefStreamCrawlEngineHandleBatchCrawlStreamWirePatterns on AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item value)?  item,TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error value)?  error,TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure value)?  nativeFailure,required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item() when item != null:
+return item(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error() when error != null:
+return error(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item value)  item,required TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error value)  error,required TResult Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure value)  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item():
+return item(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error():
+return error(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure():
+return nativeFailure(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item value)?  item,TResult? Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error value)?  error,TResult? Function( AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure value)?  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item() when item != null:
+return item(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error() when error != null:
+return error(_that);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( CrawlEvent value)?  item,TResult Function( CrawlError error)?  error,TResult Function( String message)?  nativeFailure,required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item() when item != null:
+return item(_that.value);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error() when error != null:
+return error(_that.error);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( CrawlEvent value)  item,required TResult Function( CrawlError error)  error,required TResult Function( String message)  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item():
+return item(_that.value);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error():
+return error(_that.error);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure():
+return nativeFailure(_that.message);}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( CrawlEvent value)?  item,TResult? Function( CrawlError error)?  error,TResult? Function( String message)?  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item() when item != null:
+return item(_that.value);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error() when error != null:
+return error(_that.error);case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item extends AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item({required this.value}): super._();
+
+
+ final  CrawlEvent value;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWith<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item> get copyWith => _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWithImpl<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item&&(identical(other.value, value) || other.value == value));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,value);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleBatchCrawlStreamWire.item(value: $value)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWith<$Res> implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWith(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item value, $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item) _then) = _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWithImpl;
+@useResult
+$Res call({
+ CrawlEvent value
+});
+
+
+$CrawlEventCopyWith<$Res> get value;
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ItemCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item _self;
+  final $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? value = null,}) {
+  return _then(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(
+value: null == value ? _self.value : value // ignore: cast_nullable_to_non_nullable
+as CrawlEvent,
+  ));
+}
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$CrawlEventCopyWith<$Res> get value {
+
+  return $CrawlEventCopyWith<$Res>(_self.value, (value) {
+    return _then(_self.copyWith(value: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error extends AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error({required this.error}): super._();
+
+
+ final  CrawlError error;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWith<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error> get copyWith => _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWithImpl<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error&&(identical(other.error, error) || other.error == error));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,error);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleBatchCrawlStreamWire.error(error: $error)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWith<$Res> implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWith(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error value, $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error) _then) = _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWithImpl;
+@useResult
+$Res call({
+ CrawlError error
+});
+
+
+$CrawlErrorCopyWith<$Res> get error;
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_ErrorCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error _self;
+  final $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? error = null,}) {
+  return _then(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(
+error: null == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as CrawlError,
+  ));
+}
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$CrawlErrorCopyWith<$Res> get error {
+
+  return $CrawlErrorCopyWith<$Res>(_self.error, (value) {
+    return _then(_self.copyWith(error: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure extends AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWith<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure> get copyWith => _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWithImpl<AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleBatchCrawlStreamWire.nativeFailure(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWith<$Res> implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWith(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure value, $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure) _then) = _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailureCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure _self;
+  final $Res Function(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+mixin _$AlefStreamCrawlEngineHandleCrawlStreamWire {
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleCrawlStreamWire);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleCrawlStreamWire()';
+}
+
+
+}
+
+/// @nodoc
+class $AlefStreamCrawlEngineHandleCrawlStreamWireCopyWith<$Res>  {
+$AlefStreamCrawlEngineHandleCrawlStreamWireCopyWith(AlefStreamCrawlEngineHandleCrawlStreamWire _, $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire) __);
+}
+
+
+/// Adds pattern-matching-related methods to [AlefStreamCrawlEngineHandleCrawlStreamWire].
+extension AlefStreamCrawlEngineHandleCrawlStreamWirePatterns on AlefStreamCrawlEngineHandleCrawlStreamWire {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Item value)?  item,TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Error value)?  error,TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure value)?  nativeFailure,required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item() when item != null:
+return item(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error() when error != null:
+return error(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Item value)  item,required TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Error value)  error,required TResult Function( AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure value)  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item():
+return item(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error():
+return error(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure():
+return nativeFailure(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Item value)?  item,TResult? Function( AlefStreamCrawlEngineHandleCrawlStreamWire_Error value)?  error,TResult? Function( AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure value)?  nativeFailure,}){
+final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item() when item != null:
+return item(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error() when error != null:
+return error(_that);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( CrawlEvent value)?  item,TResult Function( CrawlError error)?  error,TResult Function( String message)?  nativeFailure,required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item() when item != null:
+return item(_that.value);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error() when error != null:
+return error(_that.error);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( CrawlEvent value)  item,required TResult Function( CrawlError error)  error,required TResult Function( String message)  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item():
+return item(_that.value);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error():
+return error(_that.error);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure():
+return nativeFailure(_that.message);}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( CrawlEvent value)?  item,TResult? Function( CrawlError error)?  error,TResult? Function( String message)?  nativeFailure,}) {final _that = this;
+switch (_that) {
+case AlefStreamCrawlEngineHandleCrawlStreamWire_Item() when item != null:
+return item(_that.value);case AlefStreamCrawlEngineHandleCrawlStreamWire_Error() when error != null:
+return error(_that.error);case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure() when nativeFailure != null:
+return nativeFailure(_that.message);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleCrawlStreamWire_Item extends AlefStreamCrawlEngineHandleCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleCrawlStreamWire_Item({required this.value}): super._();
+
+
+ final  CrawlEvent value;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWith<AlefStreamCrawlEngineHandleCrawlStreamWire_Item> get copyWith => _$AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWithImpl<AlefStreamCrawlEngineHandleCrawlStreamWire_Item>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleCrawlStreamWire_Item&&(identical(other.value, value) || other.value == value));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,value);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleCrawlStreamWire.item(value: $value)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWith<$Res> implements $AlefStreamCrawlEngineHandleCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWith(AlefStreamCrawlEngineHandleCrawlStreamWire_Item value, $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_Item) _then) = _$AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWithImpl;
+@useResult
+$Res call({
+ CrawlEvent value
+});
+
+
+$CrawlEventCopyWith<$Res> get value;
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleCrawlStreamWire_ItemCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleCrawlStreamWire_Item _self;
+  final $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_Item) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? value = null,}) {
+  return _then(AlefStreamCrawlEngineHandleCrawlStreamWire_Item(
+value: null == value ? _self.value : value // ignore: cast_nullable_to_non_nullable
+as CrawlEvent,
+  ));
+}
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$CrawlEventCopyWith<$Res> get value {
+
+  return $CrawlEventCopyWith<$Res>(_self.value, (value) {
+    return _then(_self.copyWith(value: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleCrawlStreamWire_Error extends AlefStreamCrawlEngineHandleCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleCrawlStreamWire_Error({required this.error}): super._();
+
+
+ final  CrawlError error;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWith<AlefStreamCrawlEngineHandleCrawlStreamWire_Error> get copyWith => _$AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWithImpl<AlefStreamCrawlEngineHandleCrawlStreamWire_Error>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleCrawlStreamWire_Error&&(identical(other.error, error) || other.error == error));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,error);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleCrawlStreamWire.error(error: $error)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWith<$Res> implements $AlefStreamCrawlEngineHandleCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWith(AlefStreamCrawlEngineHandleCrawlStreamWire_Error value, $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_Error) _then) = _$AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWithImpl;
+@useResult
+$Res call({
+ CrawlError error
+});
+
+
+$CrawlErrorCopyWith<$Res> get error;
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleCrawlStreamWire_ErrorCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleCrawlStreamWire_Error _self;
+  final $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_Error) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? error = null,}) {
+  return _then(AlefStreamCrawlEngineHandleCrawlStreamWire_Error(
+error: null == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as CrawlError,
+  ));
+}
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$CrawlErrorCopyWith<$Res> get error {
+
+  return $CrawlErrorCopyWith<$Res>(_self.error, (value) {
+    return _then(_self.copyWith(error: value));
+  });
+}
+}
+
+/// @nodoc
+
+
+class AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure extends AlefStreamCrawlEngineHandleCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure({required this.message}): super._();
+
+
+ final  String message;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWith<AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure> get copyWith => _$AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWithImpl<AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,message);
+}
+
+@override
+String toString() {
+    return 'AlefStreamCrawlEngineHandleCrawlStreamWire.nativeFailure(message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWith<$Res> implements $AlefStreamCrawlEngineHandleCrawlStreamWireCopyWith<$Res> {
+  factory $AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWith(AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure value, $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure) _then) = _$AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWithImpl;
+@useResult
+$Res call({
+ String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWithImpl<$Res>
+    implements $AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWith<$Res> {
+  _$AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailureCopyWithImpl(this._self, this._then);
+
+  final AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure _self;
+  final $Res Function(AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure) _then;
+
+/// Create a copy of AlefStreamCrawlEngineHandleCrawlStreamWire
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
+  return _then(AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
 mixin _$AuthConfig {
 
 

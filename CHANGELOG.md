@@ -4,6 +4,24 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-10-23
+
+### Fixed
+
+- Python tagged enum factories are declared once in type stubs, allowing typed calls to every
+  `AuthConfig` and `HostMatcher` constructor. (#803)
+- Python constructors reject malformed JSON field values instead of silently dropping their data.
+- The Hermes bridge supports MCP Python SDK 2 and preserves protocol field names.
+- Release-contract CI installs the Task runner required by its package checks.
+- Documentation generation uses a compatible matcher without the vulnerable brace-expansion dependency.
+
+### Changed
+
+- Regenerate language bindings with Alef 0.113.3, preserving released error payloads and all Node runtime exports.
+- Upgrade html-to-markdown to 3.18.6, ICU to 2.4, and compatible package dependencies.
+- Remove exact package requirements and restrictive upper bounds where supported; the Dart
+  bridge runtime and generator retain their required matching version.
+
 ## [1.12.0] - 2026-10-22
 
 ### Added

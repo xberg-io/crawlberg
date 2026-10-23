@@ -524,7 +524,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
               serializer,
             );
             sse_encode_box_autoadd_batch_crawl_stream_request(req, serializer);
-            sse_encode_StreamSink_crawl_event_Sse(sink, serializer);
+            sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+              sink,
+              serializer,
+            );
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
@@ -567,7 +570,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
               serializer,
             );
             sse_encode_box_autoadd_crawl_stream_request(req, serializer);
-            sse_encode_StreamSink_crawl_event_Sse(sink, serializer);
+            sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
+              sink,
+              serializer,
+            );
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
@@ -2591,6 +2597,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CrawlEvent
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return switch (dco_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+      raw,
+    )) {
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(:final value) =>
+        value,
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(:final error) =>
+        throw error,
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+        :final message,
+      ) =>
+        throw StateError(message),
+    };
+  }
+
+  @protected
+  CrawlEvent
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return switch (dco_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+      raw,
+    )) {
+      AlefStreamCrawlEngineHandleCrawlStreamWire_Item(:final value) => value,
+      AlefStreamCrawlEngineHandleCrawlStreamWire_Error(:final error) =>
+        throw error,
+      AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
+        :final message,
+      ) =>
+        throw StateError(message),
+    };
+  }
+
+  @protected
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Map.fromEntries(
@@ -2609,7 +2654,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustStreamSink<CrawlEvent> dco_decode_StreamSink_crawl_event_Sse(
+  RustStreamSink<CrawlEvent>
+  dco_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
+  @protected
+  RustStreamSink<CrawlEvent>
+  dco_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -2655,6 +2710,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 3:
         return AlefBridgeErrorWire_NativeFailure(
+          message: dco_decode_String(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+  dco_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(
+          value: dco_decode_box_crawl_event(raw[1]),
+        );
+      case 1:
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(
+          error: dco_decode_box_crawl_error(raw[1]),
+        );
+      case 2:
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+          message: dco_decode_String(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  AlefStreamCrawlEngineHandleCrawlStreamWire
+  dco_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_Item(
+          value: dco_decode_box_crawl_event(raw[1]),
+        );
+      case 1:
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_Error(
+          error: dco_decode_box_crawl_error(raw[1]),
+        );
+      case 2:
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
           message: dco_decode_String(raw[1]),
         );
       default:
@@ -2907,6 +3008,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_waf_block_details(raw);
+  }
+
+  @protected
+  CrawlError dco_decode_box_crawl_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_crawl_error(raw);
+  }
+
+  @protected
+  CrawlEvent dco_decode_box_crawl_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_crawl_event(raw);
   }
 
   @protected
@@ -4093,6 +4206,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CrawlEvent
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner =
+        sse_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+          deserializer,
+        );
+    return switch (inner) {
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(:final value) =>
+        value,
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(:final error) =>
+        throw error,
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+        :final message,
+      ) =>
+        throw StateError(message),
+    };
+  }
+
+  @protected
+  CrawlEvent
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+      deserializer,
+    );
+    return switch (inner) {
+      AlefStreamCrawlEngineHandleCrawlStreamWire_Item(:final value) => value,
+      AlefStreamCrawlEngineHandleCrawlStreamWire_Error(:final error) =>
+        throw error,
+      AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
+        :final message,
+      ) =>
+        throw StateError(message),
+    };
+  }
+
+  @protected
   Map<String, String> sse_decode_Map_String_String_None(
     SseDeserializer deserializer,
   ) {
@@ -4114,7 +4269,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustStreamSink<CrawlEvent> sse_decode_StreamSink_crawl_event_Sse(
+  RustStreamSink<CrawlEvent>
+  sse_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
+  RustStreamSink<CrawlEvent>
+  sse_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -4165,6 +4330,64 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         var var_message = sse_decode_String(deserializer);
         return AlefBridgeErrorWire_NativeFailure(message: var_message);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+  sse_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_value = sse_decode_box_crawl_event(deserializer);
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(
+          value: var_value,
+        );
+      case 1:
+        var var_error = sse_decode_box_crawl_error(deserializer);
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(
+          error: var_error,
+        );
+      case 2:
+        var var_message = sse_decode_String(deserializer);
+        return AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+          message: var_message,
+        );
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  AlefStreamCrawlEngineHandleCrawlStreamWire
+  sse_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_value = sse_decode_box_crawl_event(deserializer);
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_Item(
+          value: var_value,
+        );
+      case 1:
+        var var_error = sse_decode_box_crawl_error(deserializer);
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_Error(
+          error: var_error,
+        );
+      case 2:
+        var var_message = sse_decode_String(deserializer);
+        return AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
+          message: var_message,
+        );
       default:
         throw UnimplementedError('');
     }
@@ -4451,6 +4674,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_waf_block_details(deserializer));
+  }
+
+  @protected
+  CrawlError sse_decode_box_crawl_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_crawl_error(deserializer));
+  }
+
+  @protected
+  CrawlEvent sse_decode_box_crawl_event(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_crawl_event(deserializer));
   }
 
   @protected
@@ -6199,6 +6434,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    CrawlEvent self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+      AlefStreamCrawlEngineHandleBatchCrawlStreamWire.item(value: self),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    CrawlEvent self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+      AlefStreamCrawlEngineHandleCrawlStreamWire.item(value: self),
+      serializer,
+    );
+  }
+
+  @protected
   void sse_encode_Map_String_String_None(
     Map<String, String> self,
     SseSerializer serializer,
@@ -6224,7 +6485,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_StreamSink_crawl_event_Sse(
+  void
+  sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
     RustStreamSink<CrawlEvent> self,
     SseSerializer serializer,
   ) {
@@ -6232,7 +6494,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(
       self.setupAndSerialize(
         codec: SseCodec(
-          decodeSuccessData: sse_decode_crawl_event,
+          decodeSuccessData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
+    RustStreamSink<CrawlEvent> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream,
           decodeErrorData: sse_decode_AnyhowException,
         ),
       ),
@@ -6274,6 +6556,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(message, serializer);
       case AlefBridgeErrorWire_NativeFailure(message: final message):
         sse_encode_i_32(3, serializer);
+        sse_encode_String(message, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    AlefStreamCrawlEngineHandleBatchCrawlStreamWire self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item(
+        value: final value,
+      ):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_crawl_event(value, serializer);
+      case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error(
+        error: final error,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_crawl_error(error, serializer);
+      case AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure(
+        message: final message,
+      ):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(message, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+    AlefStreamCrawlEngineHandleCrawlStreamWire self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case AlefStreamCrawlEngineHandleCrawlStreamWire_Item(value: final value):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_crawl_event(value, serializer);
+      case AlefStreamCrawlEngineHandleCrawlStreamWire_Error(error: final error):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_crawl_error(error, serializer);
+      case AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure(
+        message: final message,
+      ):
+        sse_encode_i_32(2, serializer);
         sse_encode_String(message, serializer);
     }
   }
@@ -6566,6 +6894,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_waf_block_details(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_crawl_error(CrawlError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_crawl_error(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_crawl_event(CrawlEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_crawl_event(self, serializer);
   }
 
   @protected

@@ -876,7 +876,37 @@ mod tests {
 
         #[tokio::test]
         async fn dns_failure_produces_dns_tag() {
-            let err = scrape_url("http://this-hostname-does-not-exist-crawlberg-test.invalid/").await;
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            struct FailingResolver(Arc<AtomicUsize>);
+            impl reqwest::dns::Resolve for FailingResolver {
+                fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+                    assert_eq!(name.as_str(), "this-hostname-does-not-exist-crawlberg-test.invalid");
+                    self.0.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(async {
+                        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test name not found").into())
+                    })
+                }
+            }
+
+            let lookups = Arc::new(AtomicUsize::new(0));
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .dns_resolver(Arc::new(FailingResolver(Arc::clone(&lookups))))
+                .timeout(Duration::from_millis(500))
+                .build()
+                .expect("client build must not fail");
+            let raw_err = client
+                .get("http://this-hostname-does-not-exist-crawlberg-test.invalid/")
+                .send()
+                .await
+                .expect_err("expected DNS resolution failure");
+            assert_eq!(lookups.load(Ordering::Relaxed), 1, "the failing resolver must run");
+            assert!(
+                !raw_err.is_timeout(),
+                "DNS resolution must fail before the request times out"
+            );
+            let err = classify_reqwest_error(raw_err);
             let msg = err.to_string();
             assert!(msg.contains("[network:dns]"), "expected [network:dns] in '{msg}'");
             assert!(msg.contains("dns"), "expected 'dns' in '{msg}'");

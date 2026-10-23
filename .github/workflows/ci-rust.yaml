@@ -120,7 +120,7 @@ jobs:
         uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: rust-${{ matrix.os }}
-          use-sccache: "true"
+          use-sccache: "false"
 
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
@@ -235,6 +235,7 @@ jobs:
       - name: Setup Rust
         uses: xberg-io/actions/setup-rust@23602a93e64f32d552325d5304540927f27d8794
         with:
+          use-sccache: "false"
           cache-key-prefix: windows-browser
       - name: Install Task
         uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
@@ -272,7 +273,7 @@ jobs:
         uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: feature-combinations
-          use-sccache: "true"
+          use-sccache: "false"
 
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
@@ -323,7 +324,7 @@ jobs:
         uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: validate-rust
-          use-sccache: "true"
+          use-sccache: "false"
 
       - name: Install Task
         uses: xberg-io/actions/install-task@v1

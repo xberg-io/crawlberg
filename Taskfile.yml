@@ -548,7 +548,7 @@ tasks:
   plugin:hermes:test:
     desc: Verify the Hermes bridge against a real MCP stdio fixture
     cmds:
-      - uv run --no-project --python 3.11 --with mcp==1.28.1 --with PyYAML==6.0.3 python scripts/tests/test_hermes_plugin.py
+      - uv run --no-project --python 3.11 --with 'mcp>=2.3.0' --with 'PyYAML>=6.0.3' python scripts/tests/test_hermes_plugin.py
 
   governance:check:
     desc: Check materialized local governance outputs against shared sources

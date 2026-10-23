@@ -2,10 +2,10 @@
 import RustBridgeC
 
 public func crawlConfigValidateFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RustString {
-    try { let val = __swift_bridge__$crawl_config_validate_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_config_validate_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlResultUniqueNormalizedUrlsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RustString {
-    try { let val = __swift_bridge__$crawl_result_unique_normalized_urls_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_result_unique_normalized_urls_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawl_engine_handle_noop(_ client: CrawlEngineHandleRef) {
     __swift_bridge__$crawl_engine_handle_noop(client.ptr)
@@ -16,7 +16,7 @@ public func batchCrawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEng
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(BatchCrawlResults(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -44,7 +44,7 @@ public func batchScrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEn
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(BatchScrapeResults(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -72,7 +72,7 @@ public func crawl<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineHa
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(CrawlResult(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -95,7 +95,7 @@ class CbWrapper$crawl {
     }
 }
 public func createEngine(_ config: Optional<CrawlConfig>) throws -> CrawlEngineHandle {
-    try { let val = __swift_bridge__$create_engine({ if let val = config { val.isOwned = false; return val.ptr } else { return nil } }()); if val.is_ok { return CrawlEngineHandle(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$create_engine({ if let val = config { val.isOwned = false; return val.ptr } else { return nil } }()); if val.is_ok { return CrawlEngineHandle(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func generateCitations<GenericIntoRustString: IntoRustString>(_ markdown: GenericIntoRustString) -> CitationResult {
     CitationResult(ptr: __swift_bridge__$generate_citations({ let rustString = markdown.intoRustString(); rustString.isOwned = false; return rustString.ptr }()))
@@ -106,7 +106,7 @@ public func interact<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngin
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(InteractionResult(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -134,7 +134,7 @@ public func mapUrls<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngine
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(MapResult(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -162,7 +162,7 @@ public func scrape<GenericIntoRustString: IntoRustString>(_ engine: CrawlEngineH
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(ScrapeResult(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -190,7 +190,7 @@ public func crawlEngineHandleCrawlStreamStart(_ client: CrawlEngineHandleRef, _ 
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(CrawlEngineHandleCrawlStreamStreamHandle(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -218,7 +218,7 @@ public func crawlEngineHandleBatchCrawlStreamStart(_ client: CrawlEngineHandleRe
         if rustFnRetVal.is_ok {
             wrapper.cb(.success(CrawlEngineHandleBatchCrawlStreamStreamHandle(ptr: rustFnRetVal.ok_or_err!)))
         } else {
-            wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+            wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
         }
     }
 
@@ -241,160 +241,160 @@ class CbWrapper$crawl_engine_handle_batch_crawl_stream_start {
     }
 }
 public func actionResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ActionResult {
-    try { let val = __swift_bridge__$action_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ActionResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$action_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ActionResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func articleMetadataFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ArticleMetadata {
-    try { let val = __swift_bridge__$article_metadata_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ArticleMetadata(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$article_metadata_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ArticleMetadata(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func batchCrawlResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchCrawlResult {
-    try { let val = __swift_bridge__$batch_crawl_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$batch_crawl_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func batchCrawlResultsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchCrawlResults {
-    try { let val = __swift_bridge__$batch_crawl_results_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlResults(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$batch_crawl_results_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlResults(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func batchCrawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchCrawlStreamRequest {
-    try { let val = __swift_bridge__$batch_crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$batch_crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlStreamRequest(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func batchScrapeResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchScrapeResult {
-    try { let val = __swift_bridge__$batch_scrape_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchScrapeResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$batch_scrape_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchScrapeResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func batchScrapeResultsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchScrapeResults {
-    try { let val = __swift_bridge__$batch_scrape_results_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchScrapeResults(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$batch_scrape_results_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchScrapeResults(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func browserConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserConfig {
-    try { let val = __swift_bridge__$browser_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$browser_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserConfig(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func browserExtrasFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserExtras {
-    try { let val = __swift_bridge__$browser_extras_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserExtras(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$browser_extras_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserExtras(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func citationReferenceFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CitationReference {
-    try { let val = __swift_bridge__$citation_reference_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CitationReference(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$citation_reference_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CitationReference(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func citationResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CitationResult {
-    try { let val = __swift_bridge__$citation_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CitationResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$citation_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CitationResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func contentConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ContentConfig {
-    try { let val = __swift_bridge__$content_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ContentConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$content_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ContentConfig(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func cookieInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CookieInfo {
-    try { let val = __swift_bridge__$cookie_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CookieInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$cookie_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CookieInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlConfig {
-    try { let val = __swift_bridge__$crawl_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlConfig(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlPageResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlPageResult {
-    try { let val = __swift_bridge__$crawl_page_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlPageResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_page_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlPageResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlResult {
-    try { let val = __swift_bridge__$crawl_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlStreamRequest {
-    try { let val = __swift_bridge__$crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStreamRequest(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func downloadedAssetFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> DownloadedAsset {
-    try { let val = __swift_bridge__$downloaded_asset_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DownloadedAsset(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$downloaded_asset_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DownloadedAsset(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func downloadedDocumentFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> DownloadedDocument {
-    try { let val = __swift_bridge__$downloaded_document_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DownloadedDocument(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$downloaded_document_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DownloadedDocument(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func extractionMetaFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ExtractionMeta {
-    try { let val = __swift_bridge__$extraction_meta_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExtractionMeta(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$extraction_meta_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExtractionMeta(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func faviconInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> FaviconInfo {
-    try { let val = __swift_bridge__$favicon_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FaviconInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$favicon_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FaviconInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func feedInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> FeedInfo {
-    try { let val = __swift_bridge__$feed_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FeedInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$feed_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FeedInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func headingInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> HeadingInfo {
-    try { let val = __swift_bridge__$heading_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HeadingInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$heading_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HeadingInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func hreflangEntryFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> HreflangEntry {
-    try { let val = __swift_bridge__$hreflang_entry_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HreflangEntry(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$hreflang_entry_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HreflangEntry(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func imageInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ImageInfo {
-    try { let val = __swift_bridge__$image_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ImageInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$image_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ImageInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func interactionResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> InteractionResult {
-    try { let val = __swift_bridge__$interaction_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return InteractionResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$interaction_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return InteractionResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func jsonLdEntryFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> JsonLdEntry {
-    try { let val = __swift_bridge__$json_ld_entry_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return JsonLdEntry(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$json_ld_entry_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return JsonLdEntry(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func linkInfoFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> LinkInfo {
-    try { let val = __swift_bridge__$link_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return LinkInfo(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$link_info_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return LinkInfo(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func mapResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> MapResult {
-    try { let val = __swift_bridge__$map_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return MapResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$map_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return MapResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func markdownResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> MarkdownResult {
-    try { let val = __swift_bridge__$markdown_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return MarkdownResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$markdown_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return MarkdownResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func pageMetadataFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> PageMetadata {
-    try { let val = __swift_bridge__$page_metadata_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return PageMetadata(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$page_metadata_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return PageMetadata(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func proxyConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ProxyConfig {
-    try { let val = __swift_bridge__$proxy_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ProxyConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$proxy_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ProxyConfig(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func responseMetaFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ResponseMeta {
-    try { let val = __swift_bridge__$response_meta_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ResponseMeta(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$response_meta_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ResponseMeta(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func scrapeResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ScrapeResult {
-    try { let val = __swift_bridge__$scrape_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrapeResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$scrape_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrapeResult(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func sitemapUrlFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> SitemapUrl {
-    try { let val = __swift_bridge__$sitemap_url_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return SitemapUrl(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$sitemap_url_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return SitemapUrl(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func ssrfPolicyFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> SsrfPolicy {
-    try { let val = __swift_bridge__$ssrf_policy_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return SsrfPolicy(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$ssrf_policy_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return SsrfPolicy(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func wafBlockDetailsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> WafBlockDetails {
-    try { let val = __swift_bridge__$waf_block_details_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return WafBlockDetails(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$waf_block_details_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return WafBlockDetails(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func assetCategoryFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> AssetCategory {
-    try { let val = __swift_bridge__$asset_category_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AssetCategory(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$asset_category_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AssetCategory(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func authConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> AuthConfig {
-    try { let val = __swift_bridge__$auth_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AuthConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$auth_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AuthConfig(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func browserBackendFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserBackend {
-    try { let val = __swift_bridge__$browser_backend_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserBackend(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$browser_backend_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserBackend(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func browserModeFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserMode {
-    try { let val = __swift_bridge__$browser_mode_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserMode(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$browser_mode_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserMode(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func browserWaitFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserWait {
-    try { let val = __swift_bridge__$browser_wait_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserWait(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$browser_wait_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserWait(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func contentFilterKindFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ContentFilterKind {
-    try { let val = __swift_bridge__$content_filter_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ContentFilterKind(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$content_filter_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ContentFilterKind(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlEventFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlEvent {
-    try { let val = __swift_bridge__$crawl_event_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlEvent(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_event_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlEvent(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func crawlStrategyKindFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlStrategyKind {
-    try { let val = __swift_bridge__$crawl_strategy_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStrategyKind(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$crawl_strategy_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStrategyKind(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func documentContentEncodingFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> DocumentContentEncoding {
-    try { let val = __swift_bridge__$document_content_encoding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DocumentContentEncoding(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$document_content_encoding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DocumentContentEncoding(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func feedTypeFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> FeedType {
-    try { let val = __swift_bridge__$feed_type_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FeedType(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$feed_type_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return FeedType(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func hostMatcherFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> HostMatcher {
-    try { let val = __swift_bridge__$host_matcher_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HostMatcher(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$host_matcher_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HostMatcher(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func imageSourceFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ImageSource {
-    try { let val = __swift_bridge__$image_source_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ImageSource(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$image_source_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ImageSource(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func linkTypeFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> LinkType {
-    try { let val = __swift_bridge__$link_type_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return LinkType(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$link_type_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return LinkType(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func pageActionFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> PageAction {
-    try { let val = __swift_bridge__$page_action_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return PageAction(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$page_action_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return PageAction(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func scrollDirectionFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ScrollDirection {
-    try { let val = __swift_bridge__$scroll_direction_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrollDirection(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+    try { let val = __swift_bridge__$scroll_direction_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrollDirection(ptr: val.ok_or_err!) } else { throw AlefBridgeError(ptr: val.ok_or_err!) } }()
 }
 public func __alef_phantom_vec_action_result() -> RustVec<ActionResult> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_action_result())
@@ -552,6 +552,106 @@ public func __alef_phantom_vec_crawl_stream_request() -> RustVec<CrawlStreamRequ
 public func __alef_phantom_vec_crawl_event() -> RustVec<CrawlEvent> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_crawl_event())
 }
+
+public class AlefBridgeError: AlefBridgeErrorRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$AlefBridgeError$_free(ptr)
+        }
+    }
+}
+public class AlefBridgeErrorRefMut: AlefBridgeErrorRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class AlefBridgeErrorRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension AlefBridgeErrorRef {
+    public func message() -> RustString {
+        RustString(ptr: __swift_bridge__$AlefBridgeError$message(ptr))
+    }
+
+    public func errorType() -> RustString {
+        RustString(ptr: __swift_bridge__$AlefBridgeError$error_type(ptr))
+    }
+
+    public func kind() -> RustString {
+        RustString(ptr: __swift_bridge__$AlefBridgeError$kind(ptr))
+    }
+
+    public func payload() -> RustString {
+        RustString(ptr: __swift_bridge__$AlefBridgeError$payload(ptr))
+    }
+
+    public func status() -> Int32 {
+        __swift_bridge__$AlefBridgeError$status(ptr)
+    }
+
+    public func retryAfterMs() -> Int64 {
+        __swift_bridge__$AlefBridgeError$retry_after_ms(ptr)
+    }
+}
+extension AlefBridgeError: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_AlefBridgeError$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_AlefBridgeError$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: AlefBridgeError) {
+        __swift_bridge__$Vec_AlefBridgeError$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_AlefBridgeError$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (AlefBridgeError(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<AlefBridgeErrorRef> {
+        let pointer = __swift_bridge__$Vec_AlefBridgeError$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return AlefBridgeErrorRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<AlefBridgeErrorRefMut> {
+        let pointer = __swift_bridge__$Vec_AlefBridgeError$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return AlefBridgeErrorRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<AlefBridgeErrorRef> {
+        UnsafePointer<AlefBridgeErrorRef>(OpaquePointer(__swift_bridge__$Vec_AlefBridgeError$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_AlefBridgeError$len(vecPtr)
+    }
+}
+
 
 public class ActionResult: ActionResultRefMut {
     public var isOwned: Bool = true
@@ -6151,7 +6251,7 @@ extension CrawlEngineHandleBatchCrawlStreamStreamHandleRef {
             if rustFnRetVal.is_ok {
                 wrapper.cb(.success(RustString(ptr: rustFnRetVal.ok_or_err!)))
             } else {
-                wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+                wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
             }
         }
 
@@ -6256,7 +6356,7 @@ extension CrawlEngineHandleCrawlStreamStreamHandleRef {
             if rustFnRetVal.is_ok {
                 wrapper.cb(.success(RustString(ptr: rustFnRetVal.ok_or_err!)))
             } else {
-                wrapper.cb(.failure(RustString(ptr: rustFnRetVal.ok_or_err!)))
+                wrapper.cb(.failure(AlefBridgeError(ptr: rustFnRetVal.ok_or_err!)))
             }
         }
 

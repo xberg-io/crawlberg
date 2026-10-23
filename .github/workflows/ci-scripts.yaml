@@ -3,7 +3,7 @@ name: CI Scripts
 on:
   push:
     branches: [main]
-    paths: &script-paths
+    paths:
       - "scripts/**"
       - "Taskfile.yml"
       - ".github/workflows/ci-scripts.yaml"

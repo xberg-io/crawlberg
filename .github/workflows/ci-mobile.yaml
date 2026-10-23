@@ -49,6 +49,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: ci-mobile-android-${{ matrix.abi }}
       - uses: xberg-io/actions/setup-android-ndk@v1
       - name: cargo ndk check crawlberg-dart
@@ -73,6 +74,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-kotlin-android-${{ matrix.abi }}
       - uses: xberg-io/actions/setup-android-ndk@v1
@@ -113,6 +115,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-ios-${{ matrix.target }}
       - name: cargo check crawlberg-dart

@@ -48,6 +48,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CrawlEvent
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    dynamic raw,
+  );
+
+  @protected
+  CrawlEvent
+  dco_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    dynamic raw,
+  );
+
+  @protected
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
 
   @protected
@@ -57,7 +69,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  RustStreamSink<CrawlEvent> dco_decode_StreamSink_crawl_event_Sse(dynamic raw);
+  RustStreamSink<CrawlEvent>
+  dco_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+    dynamic raw,
+  );
+
+  @protected
+  RustStreamSink<CrawlEvent>
+  dco_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
+    dynamic raw,
+  );
 
   @protected
   String dco_decode_String(dynamic raw);
@@ -67,6 +88,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AlefBridgeErrorWire dco_decode_alef_bridge_error_wire(dynamic raw);
+
+  @protected
+  AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+  dco_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    dynamic raw,
+  );
+
+  @protected
+  AlefStreamCrawlEngineHandleCrawlStreamWire
+  dco_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(dynamic raw);
 
   @protected
   ArticleMetadata dco_decode_article_metadata(dynamic raw);
@@ -164,6 +195,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw);
+
+  @protected
+  CrawlError dco_decode_box_crawl_error(dynamic raw);
+
+  @protected
+  CrawlEvent dco_decode_box_crawl_event(dynamic raw);
 
   @protected
   BrowserBackend dco_decode_browser_backend(dynamic raw);
@@ -484,6 +521,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CrawlEvent
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CrawlEvent
+  sse_decode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Map<String, String> sse_decode_Map_String_String_None(
     SseDeserializer deserializer,
   );
@@ -495,7 +544,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  RustStreamSink<CrawlEvent> sse_decode_StreamSink_crawl_event_Sse(
+  RustStreamSink<CrawlEvent>
+  sse_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RustStreamSink<CrawlEvent>
+  sse_decode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
     SseDeserializer deserializer,
   );
 
@@ -507,6 +563,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AlefBridgeErrorWire sse_decode_alef_bridge_error_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+  sse_decode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  AlefStreamCrawlEngineHandleCrawlStreamWire
+  sse_decode_alef_stream_crawl_engine_handle_crawl_stream_wire(
     SseDeserializer deserializer,
   );
 
@@ -636,6 +704,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WafBlockDetails sse_decode_box_autoadd_waf_block_details(
     SseDeserializer deserializer,
   );
+
+  @protected
+  CrawlError sse_decode_box_crawl_error(SseDeserializer deserializer);
+
+  @protected
+  CrawlEvent sse_decode_box_crawl_event(SseDeserializer deserializer);
 
   @protected
   BrowserBackend sse_decode_browser_backend(SseDeserializer deserializer);
@@ -1022,6 +1096,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream(
+    CrawlEvent self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream(
+    CrawlEvent self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_Map_String_String_None(
     Map<String, String> self,
     SseSerializer serializer,
@@ -1035,7 +1123,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_StreamSink_crawl_event_Sse(
+  void
+  sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleBatchCrawlStream_Sse(
+    RustStreamSink<CrawlEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_StreamSink_CustomSerializer_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAlefStreamCrawlEngineHandleCrawlStream_Sse(
     RustStreamSink<CrawlEvent> self,
     SseSerializer serializer,
   );
@@ -1049,6 +1145,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_alef_bridge_error_wire(
     AlefBridgeErrorWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_alef_stream_crawl_engine_handle_batch_crawl_stream_wire(
+    AlefStreamCrawlEngineHandleBatchCrawlStreamWire self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_alef_stream_crawl_engine_handle_crawl_stream_wire(
+    AlefStreamCrawlEngineHandleCrawlStreamWire self,
     SseSerializer serializer,
   );
 
@@ -1222,6 +1330,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     WafBlockDetails self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_crawl_error(CrawlError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_crawl_event(CrawlEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_browser_backend(

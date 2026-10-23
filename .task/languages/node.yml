@@ -31,13 +31,13 @@ tasks:
     desc: Build Node/TypeScript native bindings in debug mode
     dir: crates/crawlberg-node
     cmds:
-      - pnpm exec napi build --platform --dts index.native.d.ts
+      - pnpm exec napi build --no-js --platform --dts index.native.d.ts
 
   build:release:
     desc: Build Node/TypeScript native bindings in release mode (optimized)
     dir: crates/crawlberg-node
     cmds:
-      - pnpm exec napi build --platform --dts index.native.d.ts --release --strip
+      - pnpm exec napi build --no-js --platform --dts index.native.d.ts --release --strip
 
   build:ci:
     desc: Build Node/TypeScript native bindings in CI mode (with debug info)
@@ -46,7 +46,7 @@ tasks:
           cd crates/crawlberg-node
           corepack enable
           pnpm install -r
-          pnpm exec napi build --platform --dts index.native.d.ts --release
+          pnpm exec napi build --no-js --platform --dts index.native.d.ts --release
 
   build:bindings:
     desc: Build Node bindings for benchmarking
@@ -68,6 +68,11 @@ tasks:
       ORT_DYLIB_PATH: /opt/homebrew/lib/libonnxruntime.dylib
     cmds:
       - pnpm test
+
+  test:released-exports:
+    desc: Check released Node runtime exports through CommonJS and ESM
+    cmds:
+      - node --test scripts/tests/node-binding-exports.test.mjs
 
   clippy:
     desc: Run clippy on crawlberg-node crate

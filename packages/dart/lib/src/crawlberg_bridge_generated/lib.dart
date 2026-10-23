@@ -10,7 +10,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `try_convert_asset_category_from_core`, `try_convert_auth_config_from_core`, `try_convert_browser_backend_from_core`, `try_convert_browser_mode_from_core`, `try_convert_browser_wait_from_core`, `try_convert_content_filter_kind_from_core`, `try_convert_crawl_event_from_core`, `try_convert_crawl_strategy_kind_from_core`, `try_convert_document_content_encoding_from_core`, `try_convert_feed_type_from_core`, `try_convert_host_matcher_from_core`, `try_convert_image_source_from_core`, `try_convert_link_type_from_core`, `try_convert_page_action_from_core`, `try_convert_scroll_direction_from_core`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `try_from`, `try_from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `try_from`, `try_from`
 
 /// Convert markdown links to numbered citations.
 ///
@@ -302,6 +302,38 @@ sealed class AlefBridgeErrorWire with _$AlefBridgeErrorWire {
       AlefBridgeErrorWire_InvalidInput;
   const factory AlefBridgeErrorWire.nativeFailure({required String message}) =
       AlefBridgeErrorWire_NativeFailure;
+}
+
+@freezed
+sealed class AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+    with _$AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleBatchCrawlStreamWire._();
+
+  const factory AlefStreamCrawlEngineHandleBatchCrawlStreamWire.item({
+    required CrawlEvent value,
+  }) = AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Item;
+  const factory AlefStreamCrawlEngineHandleBatchCrawlStreamWire.error({
+    required CrawlError error,
+  }) = AlefStreamCrawlEngineHandleBatchCrawlStreamWire_Error;
+  const factory AlefStreamCrawlEngineHandleBatchCrawlStreamWire.nativeFailure({
+    required String message,
+  }) = AlefStreamCrawlEngineHandleBatchCrawlStreamWire_NativeFailure;
+}
+
+@freezed
+sealed class AlefStreamCrawlEngineHandleCrawlStreamWire
+    with _$AlefStreamCrawlEngineHandleCrawlStreamWire {
+  const AlefStreamCrawlEngineHandleCrawlStreamWire._();
+
+  const factory AlefStreamCrawlEngineHandleCrawlStreamWire.item({
+    required CrawlEvent value,
+  }) = AlefStreamCrawlEngineHandleCrawlStreamWire_Item;
+  const factory AlefStreamCrawlEngineHandleCrawlStreamWire.error({
+    required CrawlError error,
+  }) = AlefStreamCrawlEngineHandleCrawlStreamWire_Error;
+  const factory AlefStreamCrawlEngineHandleCrawlStreamWire.nativeFailure({
+    required String message,
+  }) = AlefStreamCrawlEngineHandleCrawlStreamWire_NativeFailure;
 }
 
 /// Article metadata extracted from `article:*` Open Graph tags.

@@ -95,7 +95,7 @@ packages:
       path: "../../packages/dart"
       relative: true
     source: path
-    version: "1.12.0"
+    version: "1.12.1"
   crypto:
     dependency: transitive
     description:

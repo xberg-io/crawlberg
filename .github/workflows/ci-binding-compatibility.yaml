@@ -78,6 +78,7 @@ jobs:
       - uses: xberg-io/actions/install-task@v1
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: binding-compatibility-python
       - uses: xberg-io/actions/setup-python-env@v1
         with:
@@ -99,6 +100,7 @@ jobs:
       - uses: xberg-io/actions/install-task@v1
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: binding-compatibility-swift
       - uses: xberg-io/actions/setup-swift@v1
         with:

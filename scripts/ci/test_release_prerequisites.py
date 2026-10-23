@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -38,12 +39,49 @@ def run_gate(source: str, overrides: dict[str, str]) -> dict[str, str]:
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
 
 
+def assert_node_package_payload(payloads: dict[str, bytes]) -> set[str]:
+    manifest = json.loads(payloads["package.json"])
+    entrypoints = {manifest["main"], manifest["types"], *manifest["exports"]["."].values()}
+    declared_files = {name for name in manifest["files"] if "*" not in name}
+    required = {"package.json", *(name.removeprefix("./") for name in entrypoints), *declared_files}
+    missing = sorted(required - payloads.keys())
+    assert missing == [], f"Missing Node release files: {', '.join(missing)}"
+    empty = sorted(name for name in required if len(payloads[name]) == 0)
+    assert empty == [], f"Empty Node release files: {', '.join(empty)}"
+    return required
+
+
 class ReleasePrerequisiteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.jobs = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())["jobs"]
         decisions = [step for step in self.jobs["crates-gate"]["steps"] if step.get("id") == "decide"]
         assert len(decisions) == 1, "Expected exactly one executable registry gate"
         self.gate = decisions[0]["run"]
+
+    def test_node_runtime_entrypoints_exist_in_a_clean_release_checkout(self) -> None:
+        directory = "crates/crawlberg-node/"
+        paths = subprocess.check_output(["git", "ls-files", "--", directory], cwd=ROOT, text=True).splitlines()
+        payloads = {
+            path.removeprefix(directory): subprocess.check_output(["git", "show", f":{path}"], cwd=ROOT)
+            for path in paths
+            if "/" not in path.removeprefix(directory)
+        }
+        required = assert_node_package_payload(payloads)
+        assert required == {"package.json", "index.js", "binding.cjs", "index.mjs", "index.d.ts"}
+        print(f"Node release runtime files: expected=5 observed={len(required)}")
+
+    def test_node_package_rejects_a_missing_main_loader(self) -> None:
+        directory = ROOT / "crates/crawlberg-node"
+        names = {"package.json", "index.js", "binding.cjs", "index.mjs", "index.d.ts"}
+        payloads = {name: (directory / name).read_bytes() for name in names}
+        del payloads["index.js"]
+        failure: AssertionError | None = None
+        try:
+            assert_node_package_payload(payloads)
+        except AssertionError as error:
+            failure = error
+        assert failure is not None, "a package missing its main loader must be rejected"
+        assert str(failure) == "Missing Node release files: index.js"
 
     def test_registry_gate_distinguishes_simulation_from_published_packages(self) -> None:
         cases = (

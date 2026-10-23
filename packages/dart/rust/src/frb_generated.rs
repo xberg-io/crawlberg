@@ -70,9 +70,10 @@ fn wire__crate__CrawlEngineHandle_batch_crawl_stream_impl(
                     &mut deserializer,
                 );
             let api_req = <crate::BatchCrawlStreamRequest>::sse_decode(&mut deserializer);
-            let api_sink = <StreamSink<crate::CrawlEvent, flutter_rust_bridge::for_generated::SseCodec>>::sse_decode(
-                &mut deserializer,
-            );
+            let api_sink = <StreamSink<
+                AlefStreamCrawlEngineHandleBatchCrawlStream,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
@@ -118,9 +119,10 @@ fn wire__crate__CrawlEngineHandle_crawl_stream_impl(
                     &mut deserializer,
                 );
             let api_req = <crate::CrawlStreamRequest>::sse_decode(&mut deserializer);
-            let api_sink = <StreamSink<crate::CrawlEvent, flutter_rust_bridge::for_generated::SseCodec>>::sse_decode(
-                &mut deserializer,
-            );
+            let api_sink = <StreamSink<
+                AlefStreamCrawlEngineHandleCrawlStream,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
@@ -2487,6 +2489,22 @@ impl SseDecode for AlefBridgeError {
     }
 }
 
+impl SseDecode for AlefStreamCrawlEngineHandleBatchCrawlStream {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire>::sse_decode(deserializer);
+        return crate::alef_decode_stream_crawl_engine_handle_batch_crawl_stream(inner);
+    }
+}
+
+impl SseDecode for AlefStreamCrawlEngineHandleCrawlStream {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <crate::AlefStreamCrawlEngineHandleCrawlStreamWire>::sse_decode(deserializer);
+        return crate::alef_decode_stream_crawl_engine_handle_crawl_stream(inner);
+    }
+}
+
 impl SseDecode for std::collections::HashMap<String, String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2503,7 +2521,17 @@ impl SseDecode for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpa
     }
 }
 
-impl SseDecode for StreamSink<crate::CrawlEvent, flutter_rust_bridge::for_generated::SseCodec> {
+impl SseDecode
+    for StreamSink<AlefStreamCrawlEngineHandleBatchCrawlStream, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
+impl SseDecode for StreamSink<AlefStreamCrawlEngineHandleCrawlStream, flutter_rust_bridge::for_generated::SseCodec> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <String>::sse_decode(deserializer);
@@ -2557,6 +2585,54 @@ impl SseDecode for crate::AlefBridgeErrorWire {
             3 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::AlefBridgeErrorWire::NativeFailure { message: var_message };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_value = <Box<crate::CrawlEvent>>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Item { value: var_value };
+            }
+            1 => {
+                let mut var_error = <Box<crate::CrawlError>>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Error { error: var_error };
+            }
+            2 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::NativeFailure { message: var_message };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::AlefStreamCrawlEngineHandleCrawlStreamWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_value = <Box<crate::CrawlEvent>>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Item { value: var_value };
+            }
+            1 => {
+                let mut var_error = <Box<crate::CrawlError>>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Error { error: var_error };
+            }
+            2 => {
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::AlefStreamCrawlEngineHandleCrawlStreamWire::NativeFailure { message: var_message };
             }
             _ => {
                 unimplemented!("");
@@ -2707,6 +2783,20 @@ impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
+impl SseDecode for Box<crate::CrawlError> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        return Box::new(<crate::CrawlError>::sse_decode(deserializer));
+    }
+}
+
+impl SseDecode for Box<crate::CrawlEvent> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        return Box::new(<crate::CrawlEvent>::sse_decode(deserializer));
     }
 }
 
@@ -4611,6 +4701,40 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<AlefBridgeError>> for AlefBrid
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<AlefStreamCrawlEngineHandleBatchCrawlStream> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        crate::alef_encode_stream_crawl_engine_handle_batch_crawl_stream(self.0).into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for FrbWrapper<AlefStreamCrawlEngineHandleBatchCrawlStream>
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<AlefStreamCrawlEngineHandleBatchCrawlStream>>
+    for AlefStreamCrawlEngineHandleBatchCrawlStream
+{
+    fn into_into_dart(self) -> FrbWrapper<AlefStreamCrawlEngineHandleBatchCrawlStream> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<AlefStreamCrawlEngineHandleCrawlStream> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        crate::alef_encode_stream_crawl_engine_handle_crawl_stream(self.0).into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for FrbWrapper<AlefStreamCrawlEngineHandleCrawlStream>
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<AlefStreamCrawlEngineHandleCrawlStream>>
+    for AlefStreamCrawlEngineHandleCrawlStream
+{
+    fn into_into_dart(self) -> FrbWrapper<AlefStreamCrawlEngineHandleCrawlStream> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ActionResult> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4654,6 +4778,63 @@ impl flutter_rust_bridge::IntoDart for crate::AlefBridgeErrorWire {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::AlefBridgeErrorWire {}
 impl flutter_rust_bridge::IntoIntoDart<crate::AlefBridgeErrorWire> for crate::AlefBridgeErrorWire {
     fn into_into_dart(self) -> crate::AlefBridgeErrorWire {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Item { value } => {
+                [0.into_dart(), value.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Error { error } => {
+                [1.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::NativeFailure { message } => {
+                [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire>
+    for crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire
+{
+    fn into_into_dart(self) -> crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::AlefStreamCrawlEngineHandleCrawlStreamWire {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Item { value } => {
+                [0.into_dart(), value.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Error { error } => {
+                [1.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::NativeFailure { message } => {
+                [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::AlefStreamCrawlEngineHandleCrawlStreamWire {}
+impl flutter_rust_bridge::IntoIntoDart<crate::AlefStreamCrawlEngineHandleCrawlStreamWire>
+    for crate::AlefStreamCrawlEngineHandleCrawlStreamWire
+{
+    fn into_into_dart(self) -> crate::AlefStreamCrawlEngineHandleCrawlStreamWire {
         self
     }
 }
@@ -5918,6 +6099,26 @@ impl SseEncode for AlefBridgeError {
     }
 }
 
+impl SseEncode for AlefStreamCrawlEngineHandleBatchCrawlStream {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire>::sse_encode(
+            crate::alef_encode_stream_crawl_engine_handle_batch_crawl_stream(self),
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for AlefStreamCrawlEngineHandleCrawlStream {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::AlefStreamCrawlEngineHandleCrawlStreamWire>::sse_encode(
+            crate::alef_encode_stream_crawl_engine_handle_crawl_stream(self),
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for std::collections::HashMap<String, String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5934,7 +6135,16 @@ impl SseEncode for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpa
     }
 }
 
-impl SseEncode for StreamSink<crate::CrawlEvent, flutter_rust_bridge::for_generated::SseCodec> {
+impl SseEncode
+    for StreamSink<AlefStreamCrawlEngineHandleBatchCrawlStream, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
+    }
+}
+
+impl SseEncode for StreamSink<AlefStreamCrawlEngineHandleCrawlStream, flutter_rust_bridge::for_generated::SseCodec> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         unimplemented!("")
@@ -5977,6 +6187,52 @@ impl SseEncode for crate::AlefBridgeErrorWire {
             }
             crate::AlefBridgeErrorWire::NativeFailure { message } => {
                 <i32>::sse_encode(3, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Item { value } => {
+                <i32>::sse_encode(0, serializer);
+                <Box<crate::CrawlEvent>>::sse_encode(value, serializer);
+            }
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::Error { error } => {
+                <i32>::sse_encode(1, serializer);
+                <Box<crate::CrawlError>>::sse_encode(error, serializer);
+            }
+            crate::AlefStreamCrawlEngineHandleBatchCrawlStreamWire::NativeFailure { message } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::AlefStreamCrawlEngineHandleCrawlStreamWire {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Item { value } => {
+                <i32>::sse_encode(0, serializer);
+                <Box<crate::CrawlEvent>>::sse_encode(value, serializer);
+            }
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::Error { error } => {
+                <i32>::sse_encode(1, serializer);
+                <Box<crate::CrawlError>>::sse_encode(error, serializer);
+            }
+            crate::AlefStreamCrawlEngineHandleCrawlStreamWire::NativeFailure { message } => {
+                <i32>::sse_encode(2, serializer);
                 <String>::sse_encode(message, serializer);
             }
             _ => {
@@ -6095,6 +6351,20 @@ impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for Box<crate::CrawlError> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::CrawlError>::sse_encode(*self, serializer);
+    }
+}
+
+impl SseEncode for Box<crate::CrawlEvent> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::CrawlEvent>::sse_encode(*self, serializer);
     }
 }
 

@@ -627,6 +627,8 @@ jobs:
           submodules: recursive
 
       - uses: xberg-io/actions/setup-rust@v1
+        with:
+          use-sccache: "false"
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
@@ -703,6 +705,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.rust_target || matrix.target }}
           cache-key-prefix: publish-node-${{ matrix.target }}
 
@@ -716,6 +719,7 @@ jobs:
           crate-dir: crates/crawlberg-node
           target: ${{ matrix.target }}
           use-napi-cross: ${{ matrix.use_napi_cross }}
+          js-name: index.native.cjs
           dts-name: index.native.d.ts # ~keep NAPI must preserve Alef's public index.d.ts.
           pack-target-tarball: node-bindings-${{ matrix.target }}.tar.gz
 
@@ -749,6 +753,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: wasm32-unknown-unknown
           cache-key-prefix: publish-wasm
 
@@ -825,6 +830,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: publish-ruby-${{ matrix.label }}
 
       - uses: ruby/setup-ruby@v1
@@ -909,6 +915,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.platform.target }}
           cache-key-prefix: publish-php-${{ matrix.platform.label }}-php${{ matrix.php }}
 
@@ -964,8 +971,9 @@ jobs:
       ${{ !inputs.plugins-only && (needs.prepare.outputs.release_cli == 'true' && (needs.validate-versions.result == 'success' || needs.validate-versions.result == 'skipped') && (needs.check-cli.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
     permissions:
       contents: write
-    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@v1
+    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@d7a9c1a34abcfb73b61c467bf4cdd9d0830d6d6c
     with:
+      rust-use-sccache: false
       package-name: crawlberg-cli
       binary-name: crawlberg
       tag: ${{ needs.prepare.outputs.tag }}
@@ -1072,6 +1080,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-go-${{ matrix.platform }}
 
@@ -1151,6 +1160,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-c-ffi-${{ matrix.platform }}
 
@@ -1222,6 +1232,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-java-${{ matrix.classifier }}
 
@@ -1323,6 +1334,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-csharp-${{ matrix.rid }}
 
@@ -1364,6 +1376,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-csharp-${{ matrix.rid }}
 
@@ -1430,6 +1443,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-elixir-${{ matrix.label }}
 
@@ -1485,6 +1499,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: publish-elixir-musl-${{ matrix.arch }}
 
@@ -1517,6 +1532,7 @@ jobs:
           fetch-depth: 0
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           macos-dynamic-lookup: "false"
       # ~keep cargo-zigbuild's unreleased fix drops rustc's ignored -Wl,-O1 flag for Zig 0.17.
       - name: Install compatible Swift cross-linker
@@ -1557,6 +1573,8 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
 
+        with:
+          use-sccache: "false"
       - uses: xberg-io/actions/build-swift-package@v1
         with:
           package-dir: packages/swift
@@ -1582,6 +1600,8 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
 
+        with:
+          use-sccache: "false"
       - uses: xberg-io/actions/build-zig-package@v1
         with:
           ffi-crate: crawlberg-ffi
@@ -1963,6 +1983,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: publish-crates
 
       # ~keep publish-crates takes `crates` as a required input, but an input that
@@ -2602,6 +2623,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: kotlin-android-${{ matrix.abi }}
 

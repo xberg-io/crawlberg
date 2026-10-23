@@ -421,9 +421,22 @@ mod tests {
     #[tokio::test]
     async fn dns_failure_propagates_network_tag() {
         use crate::error::classify_reqwest_error;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::Duration;
 
+        struct FailingResolver(Arc<AtomicUsize>);
+        impl reqwest::dns::Resolve for FailingResolver {
+            fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+                assert_eq!(name.as_str(), "this-host-does-not-exist-crawlberg-engine-test.invalid");
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Box::pin(async { Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test name not found").into()) })
+            }
+        }
+
+        let lookups = Arc::new(AtomicUsize::new(0));
         let client = reqwest::Client::builder()
+            .no_proxy()
+            .dns_resolver(Arc::new(FailingResolver(Arc::clone(&lookups))))
             .timeout(Duration::from_millis(1000))
             .build()
             .expect("client build must not fail");
@@ -433,6 +446,11 @@ mod tests {
             .send()
             .await
             .expect_err("expected dns error");
+        assert_eq!(lookups.load(Ordering::Relaxed), 1, "the failing resolver must run");
+        assert!(
+            !raw_err.is_timeout(),
+            "DNS resolution must fail before the request times out"
+        );
 
         let err = classify_reqwest_error(raw_err);
         let msg = err.to_string();

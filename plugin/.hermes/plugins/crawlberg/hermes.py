@@ -1,6 +1,6 @@
 # AI-RULEZ :: GENERATED FILE — DO NOT EDIT
-# Content-Hash: blake3:29265196c0fc2e577138fb7c7b80a2c9876a8e1d867a145392867788c4630083
-# Source-Hash: blake3:35d7104804de6e35d2fbdac6f848690feb2c3f4c8363922406d27fdb1478313a
+# Content-Hash: blake3:6884a66204bc2374f6118ce0467c158a7498bc3e1cdc69b13e50d3e90f46d600
+# Source-Hash: blake3:45e0d62770afaf0c4706c19129d349dd2b9fa9bc0cf1d12d59c1ade364a14e34
 # Schema-Version: v1
 
 """Register product skills and a local MCP tool bridge with Hermes."""
@@ -12,14 +12,12 @@ import json
 import os
 import shutil
 from builtins import ExceptionGroup
-from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, MCPError, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.shared.exceptions import McpError
 
 if TYPE_CHECKING:
     from hermes_cli.plugins import PluginContext
@@ -66,17 +64,17 @@ async def call_tool(arguments: dict[str, object], **_kwargs: object) -> dict[str
         async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
             async with (
                 stdio_client(server) as (read, write),
-                ClientSession(read, write, read_timeout_seconds=timedelta(seconds=REQUEST_TIMEOUT_SECONDS)) as session,
+                ClientSession(read, write, read_timeout_seconds=REQUEST_TIMEOUT_SECONDS) as session,
             ):
                 await session.initialize()
                 if tool == DISCOVERY_TOOL:
                     result = await session.list_tools()
                 else:
                     result = await session.call_tool(tool, parameters)
-                return result.model_dump(mode="json", exclude_none=True)
+                return result.model_dump(mode="json", by_alias=True, exclude_none=True)
     except TimeoutError:
         return {"error": f"{CLI_COMMAND} MCP request timed out; prepare models or reduce the workload."}
-    except (McpError, OSError, ExceptionGroup, ValueError) as error:
+    except (MCPError, OSError, ExceptionGroup, ValueError) as error:
         return {"error": f"{CLI_COMMAND} MCP request failed: {error_details(error)}"}
 
 

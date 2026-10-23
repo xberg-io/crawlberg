@@ -60,11 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: arduino/setup-task@v2
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install workflow parser
-        run: python3 -m pip install PyYAML==6.0.3
+        run: python3 -m pip install 'PyYAML>=6.0.3'
       # ~keep The discovery below also runs the tests of the released-constructor check.
       - name: Install the Swift reader
         run: python3 -m pip install -r scripts/ci/requirements-released-constructors.txt
@@ -76,9 +77,10 @@ jobs:
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
-    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@v1
+    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@a8b47bd3c3e1a04183885b2c4183f169158bd494
     with:
       setup-rust: true
+      rust-use-sccache: false
       setup-python: true
       python-version: "3.13"
       # poly's checkstyle whole-project check runs `mvn checkstyle:check` on
@@ -136,11 +138,11 @@ jobs:
       # `freezed: ^4.0.1`, and freezed 4.x now requires SDK >=3.13.0, so resolution died
       # with "Because crawlberg depends on freezed >=4.0.0 which requires SDK version
       # >=3.13.0 <4.0.0, version solving failed" — 264 of the job's 528 session-prep
-      # Errors. 3.13.6 keeps the analysis-server fix and clears freezed's floor. ~keep
+      # Errors. 3.13.7 keeps the analysis-server fix and clears freezed's floor. ~keep
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:
-          sdk: "3.13.6"
+          sdk: "3.13.7"
 
       - name: Setup Zig
         uses: xberg-io/actions/setup-zig@v1

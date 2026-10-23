@@ -18,7 +18,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.12.0"
+version = "1.12.1"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>", "Tobias Perlstein <tobias@xberg.io>"]
 license = "MIT"
@@ -59,9 +59,9 @@ chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.12.0" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.12.0" }
-crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.12.0" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.12.1" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.12.1" }
+crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.12.1" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
 # ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched
@@ -79,13 +79,13 @@ fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
 html-escape = "0.3.0"
-html-to-markdown-rs = { version = "3.18.5", features = ["full"] }
+html-to-markdown-rs = { version = "3.18.6", features = ["full"] }
 # ~keep Kept in lockstep with html-to-markdown-rs, which pins html5ever 0.40 from 3.14 on.
 # Before that it pinned 0.39 and the graph carried two copies of the html5ever/markup5ever/
 # string_cache/web_atoms stack; matching majors is what collapses them to one.
 html5ever = "0.40"
-icu_casemap = { version = "2.3", default-features = false, features = ["compiled_data"] }
-icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+icu_casemap = { version = "2.4", default-features = false, features = ["compiled_data"] }
+icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 idna = "1"
 ipnet = "2"
 itertools = "0.15"

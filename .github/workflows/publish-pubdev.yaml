@@ -89,6 +89,7 @@ jobs:
 
       - uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: dart-native-${{ matrix.rid }}
 
       - name: Build Dart native

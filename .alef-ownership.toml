@@ -29,6 +29,8 @@ owned_paths = [
   "crates/crawlberg-ffi/cmake/crawlberg-ffi-config.cmake",
   "crates/crawlberg-node/.gitignore",
   "crates/crawlberg-node/README.md",
+  "crates/crawlberg-node/binding.cjs",
+  "crates/crawlberg-node/index.mjs",
   "crates/crawlberg-wasm/README.md",
   "crates/crawlberg/README.md",
   "docs-site/src/content/docs/reference/api-c.md",

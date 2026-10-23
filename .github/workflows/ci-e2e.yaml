@@ -85,6 +85,7 @@ jobs:
       - name: Setup Rust
         uses: xberg-io/actions/setup-rust@v1
         with:
+          use-sccache: "false"
           cache-key-prefix: build-ffi-${{ matrix.target }}
           target: ${{ matrix.target }}
 
@@ -169,7 +170,7 @@ jobs:
             # ~keep Alef invokes `dart format` during e2e generation, so this exact SDK
             # ~keep pins the formatter used by the generated-output freshness check too.
             # ~keep Regenerate and commit e2e/dart with this SDK whenever the pin changes.
-            dart-version: "3.13.6"
+            dart-version: "3.13.7"
             test-cmd: "task dart:e2e:test"
           - lang: swift
             swift-version: "6.0"
@@ -191,7 +192,7 @@ jobs:
         uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: e2e-${{ matrix.lang }}
-          use-sccache: ${{ matrix.lang == 'rust' || matrix.lang == 'wasm' }}
+          use-sccache: "false"
 
       - name: Download FFI artifacts
         uses: actions/download-artifact@v8
@@ -530,6 +531,10 @@ jobs:
           matrix.lang == 'swift'
         shell: bash
         run: task ${{ matrix.lang }}:build:dev
+
+      - name: Check released Node runtime exports
+        if: matrix.lang == 'node'
+        run: task node:test:released-exports
 
       - name: Stage FFI for zig (target/debug shim)
         if: matrix.lang == 'zig'

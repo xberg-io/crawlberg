@@ -92,9 +92,9 @@ tasks:
     dir: packages/python
     cmds:
       - >-
-        uv run --no-project --with pyrefly==1.3.2 pyrefly check
+        uv run --no-project --with 'pyrefly>=1.4.0' pyrefly check
         --config pyproject.toml --search-path . tests/released_constructor_calls.py
-      - uv run --with pytest==8.4.2 pytest tests/released_constructor_calls.py
+      - uv run --with 'pytest>=9.1.1' pytest tests/released_constructor_calls.py
 
   clippy:
     desc: Run clippy on crawlberg-py crate

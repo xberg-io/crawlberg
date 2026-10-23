@@ -4,11 +4,13 @@ Keep these released call shapes unchanged when regenerating bindings; update the
 Type checking preserves call shapes; runtime assertions verify their field values.
 """
 
+from collections.abc import Callable
+
 from crawlberg import _crawlberg as native
 
 
 def released_action_result() -> native.ActionResult:
-    return native.ActionResult(1, "action_type-sentinel", True, "data-optional", "error-optional")
+    return native.ActionResult(1, "action_type-sentinel", True, '"data-optional"', "error-optional")
 
 
 def released_article_metadata() -> native.ArticleMetadata:
@@ -60,7 +62,7 @@ def released_browser_config() -> native.BrowserConfig:
 
 
 def released_browser_extras() -> native.BrowserExtras:
-    return native.BrowserExtras([], [], "eval_result-optional")
+    return native.BrowserExtras([], [], '"eval_result-optional"')
 
 
 def released_citation_reference() -> native.CitationReference:
@@ -122,7 +124,7 @@ def released_crawl_page_result() -> native.CrawlPageResult:
         [],
         "detected_charset-optional",
         None,
-        "extracted_data-optional",
+        '"extracted_data-optional"',
         None,
         None,
     )
@@ -198,7 +200,7 @@ def released_map_result() -> native.MapResult:
 
 def released_markdown_result() -> native.MarkdownResult:
     return native.MarkdownResult(
-        "content-sentinel", [], [], False, "document_structure-optional", "fit_content-optional"
+        "content-sentinel", [], [], False, '"document_structure-optional"', "fit_content-optional"
     )
 
 
@@ -307,7 +309,7 @@ def test_should_preserve_released_action_result_values() -> None:
     assert value.action_index == 1
     assert value.action_type == "action_type-sentinel"
     assert value.success is True
-    assert value.data == "data-optional"
+    assert value.data == '"data-optional"'
     assert value.error == "error-optional"
 
 
@@ -380,7 +382,7 @@ def test_should_preserve_released_browser_extras_values() -> None:
     value = released_browser_extras()
     assert value.network_events == []
     assert value.cookies == []
-    assert value.eval_result == "eval_result-optional"
+    assert value.eval_result == '"eval_result-optional"'
 
 
 def test_should_preserve_released_citation_reference_values() -> None:
@@ -444,7 +446,7 @@ def test_should_preserve_released_crawl_page_result_values() -> None:
     assert value.ssrf_refused_urls == []
     assert value.detected_charset == "detected_charset-optional"
     assert value.markdown is None
-    assert value.extracted_data == "extracted_data-optional"
+    assert value.extracted_data == '"extracted_data-optional"'
     assert value.extraction_meta is None
     assert value.downloaded_document is None
 
@@ -570,7 +572,7 @@ def test_should_preserve_released_markdown_result_values() -> None:
     assert value.tables == []
     assert value.warnings == []
     assert value.citations is False
-    assert value.document_structure == "document_structure-optional"
+    assert value.document_structure == '"document_structure-optional"'
     assert value.fit_content == "fit_content-optional"
 
 
@@ -727,3 +729,120 @@ def test_should_preserve_released_auth_factory_header_values() -> None:
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_should_declare_tagged_enum_factories_once_in_stubs() -> None:
+    import ast
+    from pathlib import Path
+
+    stub = Path(__file__).resolve().parents[1] / "crawlberg" / "_crawlberg.pyi"
+    tree = ast.parse(stub.read_text(), filename=str(stub))
+    expected = {"AuthConfig": ("basic", "bearer", "header"), "HostMatcher": ("exact", "suffix", "cidr")}
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name in expected]
+    assert sorted(node.name for node in classes) == sorted(expected)
+    observed: dict[str, int] = {}
+    for declaration in classes:
+        for factory in expected[declaration.name]:
+            members = [
+                node
+                for node in declaration.body
+                if (isinstance(node, ast.FunctionDef) and node.name == factory)
+                or (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == factory)
+            ]
+            observed[f"{declaration.name}.{factory}"] = len(members)
+    assert len(observed) == 6
+    assert observed == {name: 1 for name in observed}, f"Factory declarations must be unique: {observed}"
+    for declaration in classes:
+        factories = [
+            node
+            for node in declaration.body
+            if isinstance(node, ast.FunctionDef) and node.name in expected[declaration.name]
+        ]
+        assert len(factories) == 3
+        for factory in factories:
+            assert [ast.unparse(item) for item in factory.decorator_list] == ["staticmethod"]
+            assert factory.returns is not None
+            assert ast.unparse(factory.returns) == declaration.name
+
+
+def test_should_preserve_host_matcher_factory_values() -> None:
+    import json
+
+    cases = (
+        (native.HostMatcher.exact("host.example.test"), "exact", "host.example.test"),
+        (native.HostMatcher.suffix("example.test"), "suffix", "example.test"),
+        (native.HostMatcher.cidr("192.0.2.0/24"), "cidr", "192.0.2.0/24"),
+    )
+    assert len(cases) == 3
+    for value, kind, expected in cases:
+        assert value.type == kind
+        assert json.loads(str(value)) == {"type": kind, "value": expected}
+
+
+def _assert_should_reject_malformed_constructor_json(factory: Callable[[str], object], field: str) -> None:
+    failure: ValueError | None = None
+    try:
+        factory("not-json")
+    except ValueError as error:
+        failure = error
+    assert failure is not None, f"malformed constructor JSON in {field} must raise ValueError"
+    assert str(failure).startswith(f"invalid JSON in `{field}`:"), str(failure)
+
+
+def test_should_reject_malformed_action_result_data() -> None:
+    _assert_should_reject_malformed_constructor_json(lambda value: native.ActionResult(data=value), "data")
+
+
+def test_should_reject_malformed_browser_eval_result() -> None:
+    _assert_should_reject_malformed_constructor_json(
+        lambda value: native.BrowserExtras(eval_result=value), "eval_result"
+    )
+
+
+def test_should_reject_malformed_crawl_page_extracted_data() -> None:
+    _assert_should_reject_malformed_constructor_json(
+        lambda value: native.CrawlPageResult(extracted_data=value), "extracted_data"
+    )
+
+
+def test_should_reject_malformed_markdown_document_structure() -> None:
+    _assert_should_reject_malformed_constructor_json(
+        lambda value: native.MarkdownResult(document_structure=value), "document_structure"
+    )
+
+
+def test_should_reject_malformed_scrape_extracted_data() -> None:
+    _assert_should_reject_malformed_constructor_json(
+        lambda value: native.ScrapeResult(extracted_data=value), "extracted_data"
+    )
+
+
+def _json_constructor_fields(payload: str | None) -> dict[str, str | None]:
+    return {
+        "ActionResult.data": native.ActionResult(data=payload).data,
+        "BrowserExtras.eval_result": native.BrowserExtras(eval_result=payload).eval_result,
+        "CrawlPageResult.extracted_data": native.CrawlPageResult(extracted_data=payload).extracted_data,
+        "MarkdownResult.document_structure": native.MarkdownResult(document_structure=payload).document_structure,
+        "ScrapeResult.extracted_data": native.ScrapeResult(extracted_data=payload).extracted_data,
+    }
+
+
+def test_should_preserve_json_object_scalar_and_null_constructor_values() -> None:
+    import json
+
+    values = ({"answer": 42, "nested": [True, None]}, [1, "two"], "sentinel", 7, True, None)
+    assert len(values) == 6
+    for expected in values:
+        payload = json.dumps(expected)
+        observed = _json_constructor_fields(payload)
+        assert len(observed) == 5
+        assert observed == dict.fromkeys(observed, payload)
+        for field, value in observed.items():
+            assert value is not None, field
+            assert json.loads(value) == expected, field
+
+
+def test_should_preserve_absent_optional_json_constructor_fields() -> None:
+    observed = _json_constructor_fields(None)
+    assert len(observed) == 5
+    assert observed == dict.fromkeys(observed, None)

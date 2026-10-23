@@ -1,8 +1,8 @@
 name: "crawlberg"
-version: "1.12.0"
+version: "1.12.1"
 description: "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback."
 author: "Kreuzberg, Inc."
 kind: "standalone"
 python_dependencies:
-  - "mcp==1.28.1"
-  - "PyYAML==6.0.3"
+  - "mcp>=2.3.0"
+  - "PyYAML>=6.0.3"

@@ -7,3 +7,7 @@ minimumReleaseAgeExclude:
   - "@astrojs/prism@4.1.1"
   - "@astrojs/telemetry@3.4.1"
   - astro@7.4.2
+
+# ~keep The plugin only uses isMatch; Picomatch preserves it without vulnerable braces (GHSA-vfj7-8cjw-p6xm).
+overrides:
+  "starlight-llms-txt>micromatch": "npm:picomatch@^4.0.7"
