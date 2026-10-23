@@ -67,6 +67,18 @@ pub(crate) enum RedirectResolution {
     },
 }
 
+pub(crate) struct RedirectFailure {
+    pub(super) error: CrawlError,
+    pub(super) final_url: String,
+    pub(super) redirect_count: usize,
+}
+
+impl From<Box<RedirectFailure>> for CrawlError {
+    fn from(failure: Box<RedirectFailure>) -> Self {
+        failure.error
+    }
+}
+
 /// Why [`RedirectPolicy`] refused a URL.
 pub(crate) enum PolicyRefusal {
     /// robots.txt forbids it, with the reason the crawl reports.
@@ -727,13 +739,22 @@ pub(crate) async fn follow_redirects(
     mut policy: Option<&mut RedirectPolicy<'_>>,
     override_user_agent: Option<&str>,
     hop: Hop,
-) -> Result<RedirectResolution, CrawlError> {
+) -> Result<RedirectResolution, Box<RedirectFailure>> {
     let mut cursor = RedirectCursor::new(initial_url, max_redirects);
     loop {
+        // ~keep A failed destination fetch still followed the cursor's completed HTTP hops.
+        let final_url = cursor.chain.current_url.clone();
+        let redirect_count = cursor.chain.redirect_count;
         match cursor
             .step(engine, policy.as_deref_mut(), override_user_agent, hop)
-            .await?
-        {
+            .await
+            .map_err(|error| {
+                Box::new(RedirectFailure {
+                    error,
+                    final_url,
+                    redirect_count,
+                })
+            })? {
             RedirectStep::Continue(next) => cursor = next,
             RedirectStep::Done(outcome) => return Ok(outcome),
         }

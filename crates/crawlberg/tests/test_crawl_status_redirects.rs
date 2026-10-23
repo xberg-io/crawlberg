@@ -300,6 +300,33 @@ async fn a_seed_that_redirects_to_a_404_is_an_error_when_soft_errors_disabled() 
     );
 }
 
+#[tokio::test]
+async fn a_failed_seed_keeps_its_completed_redirect_hops() {
+    let mock = MockServer::start().await;
+    serve(&mock, "/first", redirect("/second")).await;
+    serve(&mock, "/second", redirect("/missing")).await;
+    serve(&mock, "/missing", html(404, ERROR_PAGE_BODY)).await;
+
+    for (route, redirect_count) in [("/missing", 0), ("/second", 1), ("/first", 2)] {
+        let result = crawlberg::crawl(&engine(false), &format!("{}{route}", mock.uri()))
+            .await
+            .expect("an HTTP failure is represented in the crawl result");
+
+        assert!(result.pages.is_empty(), "{route}: got {:?}", result.pages);
+        assert!(
+            result.error.as_ref().is_some_and(|error| error.contains("404")),
+            "{route}: got {:?}",
+            result.error
+        );
+        assert_eq!(result.redirect_count, redirect_count, "{route}: completed hops");
+        assert_eq!(
+            result.final_url,
+            format!("{}/missing", mock.uri()),
+            "{route}: final URL"
+        );
+    }
+}
+
 /// A link whose redirect lands on a URL the crawl already holds is requested but gets no event of
 /// its own: the destination page is the event, and it is reported once. Documented on
 /// `CrawlEvent::Page`.

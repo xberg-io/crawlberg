@@ -160,7 +160,7 @@ impl CrawlEngine {
         };
         state.urls_filtered += policy.urls_filtered;
 
-        let seed = match seed {
+        let (seed, final_url) = match seed {
             Ok(seed) => seed,
             Err(refusal) => {
                 let (refused_url, reason) = refusal.into_parts();
@@ -170,11 +170,6 @@ impl CrawlEngine {
             }
         };
         let robots = policy.into_outcome();
-        let final_url = seed
-            .as_ref()
-            .map(|outcome| outcome.final_url.clone())
-            .unwrap_or_else(|| seed_url.clone());
-
         if state.error.is_some() {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         }
@@ -388,15 +383,16 @@ impl CrawlEngine {
     /// ~keep Returns the whole [`RedirectOutcome`], including `final_response`. It used to
     /// return only the final URL and drop the response, which is what made the crawl loop
     /// fetch the seed a second time.
-    /// `Ok(None)` is a chain that failed, with `state.error` carrying the reason. `Err` is the
-    /// policy refusing a URL, which stops the crawl before that URL is requested.
+    /// ~keep A missing outcome retains the failed chain's final URL, with `state.error` carrying
+    /// ~keep the reason. `Err` is a policy refusal before the refused URL is requested.
     async fn resolve_initial_redirects(
         &self,
         url: &str,
         max_redirects: usize,
         state: &mut CrawlState,
         policy: &mut RedirectPolicy<'_>,
-    ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
+    ) -> Result<(Option<RedirectOutcome>, String), PolicyRefusal> {
+        let mut final_url = url.to_owned();
         let resolution = match follow_redirects(self, url, max_redirects, Some(policy), None, Hop::Fetch).await {
             Ok(RedirectResolution::Refused {
                 refusal,
@@ -414,10 +410,15 @@ impl CrawlEngine {
                 return Err(refusal);
             }
             Ok(RedirectResolution::Fetched(outcome)) => Ok(*outcome),
-            Err(e) => Err(e),
+            Err(failure) => {
+                final_url = failure.final_url;
+                state.redirect_count = failure.redirect_count;
+                Err(failure.error)
+            }
         };
-        Ok(match resolution {
+        let outcome = match resolution {
             Ok(outcome) => {
+                final_url = outcome.final_url.clone();
                 if self.config.cookies_enabled {
                     for (hop, headers) in &outcome.intermediate_headers {
                         state.all_cookies.extend(result_cookies_from_hashmap(hop, headers));
@@ -441,7 +442,8 @@ impl CrawlEngine {
                 state.error = Some(format!("{e}"));
                 None
             }
-        })
+        };
+        Ok((outcome, final_url))
     }
 
     /// Push one entry onto the frontier, wrapping any backend failure with the URL.
