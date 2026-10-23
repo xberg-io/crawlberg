@@ -11,6 +11,7 @@ All notable changes to crawlberg are documented here.
 - Python tagged enum factories are declared once in type stubs, allowing typed calls to every
   `AuthConfig` and `HostMatcher` constructor. (#803)
 - Python constructors reject malformed JSON field values instead of silently dropping their data.
+- Ruby screenshot actions accept the `fullPage` wire key and the existing `full_page` alias.
 - The Hermes bridge supports MCP Python SDK 2 and preserves protocol field names.
 - Release-contract CI installs the Task runner required by its package checks.
 - Documentation generation uses a compatible matcher without the vulnerable brace-expansion dependency.
