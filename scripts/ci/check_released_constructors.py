@@ -61,27 +61,79 @@ class Parameter:
 
 
 @dataclass
+class PythonFactory:
+    signature: dict[str, Parameter] = field(default_factory=dict)
+    variadics: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class BoundType:
     # ~keep `fields` is the struct order: the public Python dataclass, Kotlin and Go follow it.
     # `signature` is the native constructor: PHP, WebAssembly, Java, Dart and Zig follow it.
     fields: dict[str, str] = field(default_factory=dict)
     signature: dict[str, Parameter] = field(default_factory=dict)
+    factories: dict[str, PythonFactory] = field(default_factory=dict)
+    variadics: dict[str, str] = field(default_factory=dict)
+    ordered_fields: bool = True
 
 
-def parse_signature(init: ast.FunctionDef) -> dict[str, Parameter]:
-    """Return every parameter of the constructor but `self`, by name."""
+def parse_signature(init: ast.FunctionDef, *, skip_receiver: bool = True) -> dict[str, Parameter]:
+    """Read call parameters, omitting an instance/class receiver when present."""
     arguments = init.args
     positional = [(argument, False) for argument in arguments.posonlyargs]
     positional += [(argument, True) for argument in arguments.args]
     first_default = len(positional) - len(arguments.defaults)
     signature: dict[str, Parameter] = {}
-    for index, (argument, by_keyword) in enumerate(positional[1:], start=1):
+    offset = int(skip_receiver)
+    for index, (argument, by_keyword) in enumerate(positional[offset:], start=offset):
         annotation = ast.unparse(argument.annotation) if argument.annotation else ""
-        signature[argument.arg] = Parameter(argument.arg, annotation, index >= first_default, index - 1, by_keyword)
+        signature[argument.arg] = Parameter(
+            argument.arg, annotation, index >= first_default, index - offset, by_keyword
+        )
     for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True):
         annotation = ast.unparse(argument.annotation) if argument.annotation else ""
         signature[argument.arg] = Parameter(argument.arg, annotation, default is not None, None, True)
     return signature
+
+
+def parse_variadics(function: ast.FunctionDef) -> dict[str, str]:
+    return {
+        kind: ast.unparse(argument.annotation) if argument.annotation else ""
+        for kind, argument in (("*args", function.args.vararg), ("**kwargs", function.args.kwarg))
+        if argument is not None
+    }
+
+
+def parse_python_factories(owner: ast.ClassDef) -> dict[str, PythonFactory]:
+    factories: dict[str, PythonFactory] = {}
+    for item in owner.body:
+        if not isinstance(item, ast.FunctionDef) or item.name.startswith("_") or item.returns is None:
+            continue
+        returned = item.returns.value if isinstance(item.returns, ast.Constant) else ast.unparse(item.returns)
+        decorators = {ast.unparse(decorator) for decorator in item.decorator_list}
+        if returned != owner.name or not decorators.intersection({"staticmethod", "classmethod"}):
+            continue
+        if item.name in factories:
+            raise SyntaxError(f"{owner.name}.{item.name}: duplicate factory declarations")
+        factories[item.name] = PythonFactory(
+            parse_signature(item, skip_receiver="classmethod" in decorators), parse_variadics(item)
+        )
+    return factories
+
+
+def has_tagged_value_constructor(init: ast.FunctionDef, bound: BoundType) -> bool:
+    positional = [*init.args.posonlyargs, *init.args.args]
+    return bool(
+        bound.factories
+        and bound.fields.get("type") == "str"
+        and len(positional) == 2
+        and positional[1].arg == "value"
+        and positional[1].annotation is not None
+        and ast.unparse(positional[1].annotation) == "dict[str, Any] | str | None"
+        and init.args.kwarg is not None
+        and init.args.vararg is None
+        and not init.args.kwonlyargs
+    )
 
 
 def parse_stub(source: str, where: str = STUB) -> dict[str, BoundType]:
@@ -100,6 +152,12 @@ def parse_stub(source: str, where: str = STUB) -> dict[str, BoundType]:
         if init is None:
             continue
         bound.signature = parse_signature(init)
+        bound.variadics = parse_variadics(init)
+        bound.factories = parse_python_factories(node)
+        # ~keep These descriptors are callable on both class and instance in released PyO3
+        # bindings. A duplicate stub annotation never represented an instance payload field.
+        bound.fields = {name: annotation for name, annotation in bound.fields.items() if name not in bound.factories}
+        bound.ordered_fields = not has_tagged_value_constructor(init, bound)
         types[node.name] = bound
     return types
 
@@ -112,6 +170,8 @@ def compare_fields(name: str, released: BoundType, head: BoundType, tag: str) ->
             errors.append(f"{name}.{field_name}: the field of {tag} is not in the bindings (removed or skipped)")
         elif head.fields[field_name] != annotation:
             errors.append(f"{name}.{field_name}: the type changed from `{annotation}` to `{head.fields[field_name]}`")
+    if not released.ordered_fields and not head.ordered_fields:
+        return errors
     kept = [field_name for field_name in head_names if field_name in released.fields]
     if not errors and kept != list(released.fields):
         errors.append(f"{name}: the fields of {tag} are in another order: {', '.join(kept)}")
@@ -124,7 +184,9 @@ def compare_fields(name: str, released: BoundType, head: BoundType, tag: str) ->
     return errors
 
 
-def compare_constructor(name: str, released: BoundType, head: BoundType, tag: str) -> list[str]:
+def compare_constructor(
+    name: str, released: BoundType | PythonFactory, head: BoundType | PythonFactory, tag: str, *, factory: bool = False
+) -> list[str]:
     """Keep released names, types, positional slots, keyword access and defaults.
 
     New arguments must leave every released call binding the same values.
@@ -155,11 +217,25 @@ def compare_constructor(name: str, released: BoundType, head: BoundType, tag: st
         # ~keep Python accepts a new positional argument with a default at the end. The bindings
         # with one positional constructor (PHP, WebAssembly, Java, Dart, Zig) do not. alef writes
         # a new field as keyword-only exactly when the struct records the released constructor.
-        if parameter.slot is not None:
+        if parameter.slot is not None and not (factory and parameter.has_default):
             errors.append(
                 f"{where}: the new field is positional argument {parameter.slot + 1} of the constructor, "
                 f"with no recorded constructor of {tag}"
             )
+    for variadic, annotation in released.variadics.items():
+        if head.variadics.get(variadic) != annotation:
+            errors.append(f"{name}.{variadic}: the variadic argument of {tag} is removed or retyped")
+    return errors
+
+
+def compare_python_factories(name: str, released: BoundType, head: BoundType, tag: str) -> list[str]:
+    errors = []
+    for factory_name, signature in released.factories.items():
+        where = f"{name}.{factory_name}"
+        if factory_name not in head.factories:
+            errors.append(f"{where}: the owner-returning factory of {tag} is removed or changed")
+        else:
+            errors.extend(compare_constructor(where, signature, head.factories[factory_name], tag, factory=True))
     return errors
 
 
@@ -173,6 +249,7 @@ def compare(released: dict[str, BoundType], head: dict[str, BoundType], tag: str
         # ~keep A field in the wrong struct slot already names its type. The constructor check
         # then only repeats it, so it runs for a type whose struct order is good.
         errors.extend(found or compare_constructor(name, released_type, head[name], tag))
+        errors.extend(compare_python_factories(name, released_type, head[name], tag))
     return errors
 
 

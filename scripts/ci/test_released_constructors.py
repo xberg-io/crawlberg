@@ -149,6 +149,101 @@ class BrokenConstructorTests(unittest.TestCase):
         self.assert_fails(errors("class Options:\n    wrap: bool\n"), "Options", "no constructor")
 
 
+def tagged_stub(
+    fields: tuple[str, ...] = ("type: str", "make_payload: Any | None", "stop: Any | None"),
+    factory: str = "def make(value: str, attempts: int = ...) -> TaggedAction: ...",
+) -> str:
+    lines = ["class TaggedAction:", *(f"    {declaration}" for declaration in fields)]
+    if factory:
+        lines.extend(("    @staticmethod", f"    {factory}"))
+    lines.append("    def __init__(self, value: dict[str, Any] | str | None = None, **kwargs: Any) -> None: ...")
+    return "\n".join(lines) + "\n"
+
+
+class PythonFactoryCompatibilityTests(unittest.TestCase):
+    def test_should_accept_correcting_duplicate_factory_annotations(self) -> None:
+        released = tagged_stub(("type: str", "make: Any | None", "stop: Any | None"))
+        assert errors(tagged_stub(), released) == []
+
+    def test_should_accept_adding_payload_accessors_before_unit_variants(self) -> None:
+        released = tagged_stub(("type: str", "stop: Any | None"))
+        assert errors(tagged_stub(), released) == []
+
+    def test_should_accept_appending_an_optional_factory_argument(self) -> None:
+        factory = "def make(value: str, attempts: int = ..., *, trace: bool = False) -> TaggedAction: ..."
+        assert errors(tagged_stub(factory=factory), tagged_stub()) == []
+
+    def test_should_accept_renaming_local_variadic_parameters(self) -> None:
+        released = tagged_stub(factory="def make(*args: str) -> TaggedAction: ...")
+        head = released.replace("**kwargs: Any", "**extras: Any").replace("*args: str", "*values: str")
+        found = errors(head, released)
+        assert found == [], found
+
+    def test_should_reject_removing_or_renaming_released_factories(self) -> None:
+        for factory in ("", "def other(value: str, attempts: int = ...) -> TaggedAction: ..."):
+            with self.subTest(factory=factory):
+                found = errors(tagged_stub(factory=factory), tagged_stub())
+                assert any("TaggedAction.make" in error for error in found), found
+
+    def test_should_reject_breaking_released_factory_calls(self) -> None:
+        factories = (
+            "def make(value: int, attempts: int = ...) -> TaggedAction: ...",
+            "def make(item: str, attempts: int = ...) -> TaggedAction: ...",
+            "def make(value: str, attempts: int) -> TaggedAction: ...",
+            "def make(value: str, attempts: int = ..., *, required: bool) -> TaggedAction: ...",
+            "def make(required: bool, value: str, attempts: int = ...) -> TaggedAction: ...",
+            "def make(value: str, attempts: int = ...) -> str: ...",
+        )
+        for factory in factories:
+            with self.subTest(factory=factory):
+                found = errors(tagged_stub(factory=factory), tagged_stub())
+                assert any("TaggedAction.make" in error for error in found), found
+
+    def test_should_reject_an_instance_method_replacing_a_static_factory(self) -> None:
+        head = tagged_stub().replace("    @staticmethod\n", "")
+        found = errors(head, tagged_stub())
+        assert any("TaggedAction.make" in error for error in found), found
+
+    def test_should_reject_removing_tagged_constructor_keyword_payloads(self) -> None:
+        head = tagged_stub().replace(", **kwargs: Any", "")
+        found = errors(head, tagged_stub())
+        assert any("TaggedAction" in error and "**kwargs" in error for error in found), found
+
+    def test_should_keep_real_payload_presence_and_type_checks(self) -> None:
+        for fields in (
+            ("type: str", "stop: Any | None"),
+            ("type: str", "make_payload: str", "stop: Any | None"),
+        ):
+            with self.subTest(fields=fields):
+                found = errors(tagged_stub(fields), tagged_stub())
+                assert any("TaggedAction.make_payload" in error for error in found), found
+
+    def test_should_keep_struct_field_order_checks_with_a_builder_factory(self) -> None:
+        factory = "    @staticmethod\n    def make(wrap: bool) -> Options: ...\n"
+        released = stub() + factory
+        heads = (
+            (stub(("depth: int | None", "wrap: bool", "width: int")), "another order"),
+            (stub(("wrap: bool", "hidden: bool", "depth: int | None", "width: int")), "field 2 of the struct"),
+        )
+        for head, reason in heads:
+            with self.subTest(reason=reason):
+                found = errors(head + factory, released)
+                assert any("Options" in error and reason in error for error in found), found
+
+    def test_should_keep_struct_field_order_for_a_scalar_value_constructor(self) -> None:
+        constructor = "    def __init__(self, value: int, **kwargs: Any) -> None: ..."
+        original = "    def __init__(self, value: dict[str, Any] | str | None = None, **kwargs: Any) -> None: ..."
+        released = tagged_stub(("type: str", "value: int", "other: bool")).replace(original, constructor)
+        for fields in (
+            ("type: str", "other: bool", "value: int"),
+            ("type: str", "value: int", "inserted: bool", "other: bool"),
+        ):
+            with self.subTest(fields=fields):
+                head = tagged_stub(fields).replace(original, constructor)
+                found = errors(head, released)
+                assert any("TaggedAction" in error and "field" in error for error in found), found
+
+
 SWIFT_RELEASED = 'url: String, rel: String? = nil, marks: [String] = [",", "("], nofollow: Bool'
 DECODER = "public init(from decoder: any Decoder) throws {\n    }"
 
