@@ -12,14 +12,18 @@ All notable changes to crawlberg are documented here.
   `AuthConfig` and `HostMatcher` constructor. (#803)
 - Python constructors reject malformed JSON field values instead of silently dropping their data.
 - Ruby screenshot actions accept the `fullPage` wire key and the existing `full_page` alias.
+- Failed redirect destinations retain the final URL and completed redirect count in crawl results.
+- Swift, Dart, and WebAssembly errors preserve their display messages and structured fields.
+- Generated redirect tests use the correct mock origin for response bodies loaded from files.
 - The Hermes bridge supports MCP Python SDK 2 and preserves protocol field names.
 - Release-contract CI installs the Task runner required by its package checks.
 - Documentation generation uses a compatible matcher without the vulnerable brace-expansion dependency.
 
 ### Changed
 
-- Regenerate language bindings with Alef 0.113.3, preserving released error payloads and all Node runtime exports.
-- Upgrade html-to-markdown to 3.18.6, ICU to 2.4, and compatible package dependencies.
+- Regenerate language bindings with Alef 0.113.4, preserving released error payloads and all Node runtime exports.
+- Upgrade html-to-markdown to 3.18.6, ICU to 2.4, uuid to 1.29.0, Rollup to 4.65.0,
+  Schemathesis to 4.32.4, RuboCop to 1.92.1, and compatible package dependencies.
 - Remove exact package requirements and restrictive upper bounds where supported; the Dart
   bridge runtime and generator retain their required matching version.
 

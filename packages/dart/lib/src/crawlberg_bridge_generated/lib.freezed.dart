@@ -1933,7 +1933,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.notFound(message: $message)';
+  return "not_found: " + message.toString() + "";
 }
 
 
@@ -2001,7 +2001,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.unauthorized(message: $message)';
+  return "unauthorized: " + message.toString() + "";
 }
 
 
@@ -2069,7 +2069,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.forbidden(message: $message)';
+  return "forbidden: " + message.toString() + "";
 }
 
 
@@ -2140,7 +2140,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.wafBlocked(vendor: $vendor, message: $message, status: $status, body: $body)';
+  return "forbidden: waf/blocked: " + message.toString() + "";
 }
 
 
@@ -2211,7 +2211,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.timeout(message: $message)';
+  return "timeout: " + message.toString() + "";
 }
 
 
@@ -2279,7 +2279,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.rateLimited(message: $message)';
+  return "rate_limited: " + message.toString() + "";
 }
 
 
@@ -2347,7 +2347,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.serverError(message: $message)';
+  return "server_error: " + message.toString() + "";
 }
 
 
@@ -2415,7 +2415,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.badGateway(message: $message)';
+  return "bad_gateway: " + message.toString() + "";
 }
 
 
@@ -2483,7 +2483,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.gone(message: $message)';
+  return "gone: " + message.toString() + "";
 }
 
 
@@ -2551,7 +2551,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.connection(message: $message)';
+  return "connection: " + message.toString() + "";
 }
 
 
@@ -2619,7 +2619,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.dns(message: $message)';
+  return "dns: " + message.toString() + "";
 }
 
 
@@ -2687,7 +2687,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.ssl(message: $message)';
+  return "ssl: " + message.toString() + "";
 }
 
 
@@ -2755,7 +2755,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.dataLoss(message: $message)';
+  return "data_loss: " + message.toString() + "";
 }
 
 
@@ -2823,7 +2823,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.conversionFailed(message: $message)';
+  return "conversion_failed: " + message.toString() + "";
 }
 
 
@@ -2891,7 +2891,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.browserError(message: $message)';
+  return "browser: " + message.toString() + "";
 }
 
 
@@ -2959,7 +2959,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.browserTimeout(message: $message)';
+  return "browser_timeout: " + message.toString() + "";
 }
 
 
@@ -3027,7 +3027,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.invalidConfig(message: $message)';
+  return "invalid_config: " + message.toString() + "";
 }
 
 
@@ -3095,7 +3095,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.unsupported(message: $message)';
+  return "unsupported: " + message.toString() + "";
 }
 
 
@@ -3163,7 +3163,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.tooManyRedirects(message: $message)';
+  return "too_many_redirects: " + message.toString() + "";
 }
 
 
@@ -3232,7 +3232,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.ssrfPolicyViolation(url: $url, reason: $reason)';
+  return "ssrf_policy_violation: " + url.toString() + " - " + reason.toString() + "";
 }
 
 
@@ -3301,7 +3301,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'CrawlError.other(message: $message)';
+  return "other: " + message.toString() + "";
 }
 
 
@@ -5073,7 +5073,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'SsrfError.deniedByPolicy(reason: $reason)';
+  return "denied by SSRF policy: " + reason.toString() + "";
 }
 
 
@@ -5134,7 +5134,7 @@ int get hashCode => runtimeType.hashCode;
 
 @override
 String toString() {
-    return 'SsrfError.notOnAllowlist()';
+  return "host not on allowlist";
 }
 
 
@@ -5173,7 +5173,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'SsrfError.invalidCidr(field0: $field0)';
+  return "invalid CIDR in SSRF policy: " + field0.toString() + "";
 }
 
 
@@ -5241,7 +5241,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'SsrfError.dnsResolutionFailed(field0: $field0)';
+  return "dns resolution failed: " + field0.toString() + "";
 }
 
 
@@ -5309,7 +5309,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'SsrfError.invalidUrl(field0: $field0)';
+  return "invalid URL: " + field0.toString() + "";
 }
 
 
@@ -5377,7 +5377,7 @@ int get hashCode {
 
 @override
 String toString() {
-    return 'SsrfError.disallowedScheme(field0: $field0)';
+  return "disallowed scheme: " + field0.toString() + "";
 }
 
 
@@ -5438,7 +5438,7 @@ int get hashCode => runtimeType.hashCode;
 
 @override
 String toString() {
-    return 'SsrfError.tooManyRedirects()';
+  return "too many redirects";
 }
 
 
