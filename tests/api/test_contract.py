@@ -79,12 +79,11 @@ def test_version_always_200(api_schema: schemathesis.schemas.BaseSchema) -> None
     assert "version" in data
 
 
-def test_openapi_spec_returns_valid_json(api_schema: schemathesis.schemas.BaseSchema) -> None:
+def test_openapi_spec_returns_valid_json(openapi_url: str) -> None:
     """OpenAPI spec endpoint must return valid JSON with required fields."""
     import requests
 
-    base_url = api_schema.get_base_url()
-    response = requests.get(f"{base_url}/openapi.json", timeout=10)
+    response = requests.get(openapi_url, timeout=10)
     assert response.status_code == 200
     data = response.json()
     assert "openapi" in data
