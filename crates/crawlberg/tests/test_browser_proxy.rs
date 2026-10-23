@@ -748,7 +748,7 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
     else {
         return;
     };
-    let chrome = Arc::new(chrome);
+    let mut chrome = Arc::new(chrome);
     let churn = tokio::spawn(open_and_close_foreign_tabs(Arc::clone(&chrome), FOREIGN_TABS));
     let (configured, seen) = spawn_named_proxy("served-by-the-configured-proxy").await;
     let mut config = render_config(proxy_at(configured, None, None));
@@ -768,7 +768,17 @@ async fn an_external_owners_tab_teardown_does_not_abort_a_proxy_interaction() {
             break;
         }
     }
-    let closed = churn.await.expect("churn task");
+    let closed = match churn.await {
+        Ok(closed) => closed,
+        Err(error) => {
+            let references = Arc::strong_count(&chrome);
+            let exit = Arc::get_mut(&mut chrome).map(chromiumoxide::Browser::try_wait);
+            panic!(
+                "churn task: {error:?}; handler_finished={}; references={references}; chrome_exit={exit:?}",
+                owner_handler.is_finished()
+            );
+        }
+    };
     let removed = foreign_targets_are_absent(&chrome, &closed).await;
     assert!(removed, "every acknowledged foreign close must remove its target");
     assert_eq!(

@@ -135,8 +135,16 @@ pub fn spawn_handler(mut handler: chromiumoxide::Handler) -> tokio::task::JoinHa
     tokio::spawn(async move {
         loop {
             let event = tokio::time::timeout(std::time::Duration::from_secs(1), handler.next()).await;
-            if matches!(event, Ok(None | Some(Err(chromiumoxide::error::CdpError::Ws(_))))) {
-                break;
+            match event {
+                Ok(None) => {
+                    eprintln!("test Chrome CDP handler reached EOF");
+                    break;
+                }
+                Ok(Some(Err(chromiumoxide::error::CdpError::Ws(error)))) => {
+                    eprintln!("test Chrome CDP handler websocket failed: {error:?}");
+                    break;
+                }
+                _ => {}
             }
         }
     })
