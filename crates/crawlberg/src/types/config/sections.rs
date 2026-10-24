@@ -177,7 +177,12 @@ impl Default for ContentConfig {
         "session_affinity",
         "chrome_path",
         "chrome_args"
-    ])
+    ], constructor_history = [[
+        "mode", "backend", "endpoint", "timeout", "overall_timeout", "shutdown_timeout",
+        "wait", "wait_selector", "extra_wait", "proxy", "block_url_patterns", "eval_script",
+        "robots_user_agent", "capture_network_events", "session_affinity", "chrome_path",
+        "chrome_args", "scroll_containers", "dom_quiet_window"
+    ]])
 )]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
@@ -219,7 +224,7 @@ pub struct BrowserConfig {
     /// Extra time to wait after the wait condition is met.
     ///
     /// The default `network_idle` wait returns once the page has loaded and its DOM has been
-    /// unchanged for `dom_quiet_window` (at most four seconds, and never past `timeout`, counted
+    /// unchanged for `dom_quiet_window` (at most `dom_quiet_cap`, and never past `timeout`, counted
     /// from the start of the navigation). An app that draws after a longer quiet period needs
     /// a larger `dom_quiet_window` or `extra_wait`; for
     /// example `3000` waits three more seconds.
@@ -311,11 +316,17 @@ pub struct BrowserConfig {
     pub scroll_containers: bool,
     /// How long the DOM must stay unchanged after page load for `network_idle` to return,
     /// in milliseconds when serialized. Default: 150 ms. Every mutation restarts this window;
-    /// the whole wait stays bounded to four seconds and the remaining navigation timeout.
+    /// the whole wait stays bounded to `dom_quiet_cap` and the remaining navigation timeout.
     /// A page whose first delayed render follows a longer quiet gap needs a larger value
     /// or `extra_wait`. Chromiumoxide backend only.
     #[serde(with = "duration_ms")]
     pub dom_quiet_window: Duration,
+    /// Maximum time spent waiting for DOM quiet after page load, in milliseconds when serialized.
+    /// Default: 4000 ms. Lower this for pages with continuous mutations; zero skips the quiet wait.
+    /// The remaining navigation timeout also bounds this wait, independently of the quiet window.
+    /// Chromiumoxide backend only.
+    #[serde(with = "duration_ms")]
+    pub dom_quiet_cap: Duration,
 }
 
 impl std::fmt::Debug for BrowserConfig {
@@ -352,6 +363,7 @@ impl std::fmt::Debug for BrowserConfig {
             private_pipe,
             scroll_containers,
             dom_quiet_window,
+            dom_quiet_cap,
         } = self;
         f.debug_struct("BrowserConfig")
             .field("mode", mode)
@@ -380,6 +392,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("private_pipe", private_pipe)
             .field("scroll_containers", scroll_containers)
             .field("dom_quiet_window", dom_quiet_window)
+            .field("dom_quiet_cap", dom_quiet_cap)
             .finish()
     }
 }
@@ -407,6 +420,7 @@ impl Default for BrowserConfig {
             private_pipe: false,
             scroll_containers: false,
             dom_quiet_window: Duration::from_millis(150),
+            dom_quiet_cap: Duration::from_secs(4),
         }
     }
 }

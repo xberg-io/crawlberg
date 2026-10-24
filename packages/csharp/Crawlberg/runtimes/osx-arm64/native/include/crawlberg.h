@@ -289,6 +289,10 @@ typedef struct CBERGSitemapUrl CBERGSitemapUrl;
  * SSRF policy configuration.
  */
 typedef struct CBERGSsrfPolicy CBERGSsrfPolicy;
+/**
+ * Structured context for a WAF-blocked response. <!-- -->
+ */
+typedef struct CBERGWafBlockDetails CBERGWafBlockDetails;
 
 enum CBERGAlefFfiErrorCode
 #if __STDC_VERSION__ >= 202311L
@@ -1053,6 +1057,20 @@ char *cberg_browser_config_chrome_args(CBERGAlefHandle handle);
 int32_t cberg_browser_config_scroll_containers(CBERGAlefHandle handle);
 
 /**
+ * Get the `dom_quiet_window` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_browser_config_dom_quiet_window(CBERGAlefHandle handle);
+
+/**
+ * Get the `dom_quiet_cap` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_browser_config_dom_quiet_cap(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
@@ -1388,6 +1406,34 @@ char *cberg_content_config_keep_inline_images_in(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_content_config_keep_hidden(CBERGAlefHandle handle);
+
+/**
+ * Get the `expand_abbreviations` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_expand_abbreviations(CBERGAlefHandle handle);
+
+/**
+ * Get the `escape_misc` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_escape_misc(CBERGAlefHandle handle);
+
+/**
+ * Get the `escape_asterisks` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_escape_asterisks(CBERGAlefHandle handle);
+
+/**
+ * Get the `include_icon_labels` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_include_icon_labels(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
@@ -2068,6 +2114,22 @@ int32_t
 cberg_crawl_config_has_ssrf_deny_private_explicit(CBERGAlefHandle handle);
 
 /**
+ * Get the `danger_accept_invalid_certs` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_danger_accept_invalid_certs(CBERGAlefHandle handle);
+
+/**
+ * Get the `subdomain_header_allowlist` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_config_subdomain_header_allowlist(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
@@ -2457,6 +2519,15 @@ int32_t cberg_crawl_result_stayed_on_domain(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_crawl_result_browser_used(CBERGAlefHandle handle);
+
+/**
+ * Get the `waf_block` field from a `CrawlResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_waf_block_details_free`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+CBERGAlefHandle cberg_crawl_result_waf_block(CBERGAlefHandle handle);
 
 /**
  * Returns the count of unique normalized URLs encountered during crawling.
@@ -4354,6 +4425,67 @@ CBERGAlefHandle cberg_ssrf_policy_default(void);
  * Returned pointers must be freed with the appropriate free function.
  */
 CBERGAlefHandle cberg_ssrf_policy_from_env(void);
+
+/**
+ * Create a `WafBlockDetails` from a JSON string. Returns null on failure.
+ * # Safety
+ * JSON string must be valid UTF-8 and null-terminated.
+ * Returned handle must be freed with `cberg_waf_block_details_free`.
+ */
+CBERGAlefHandle cberg_waf_block_details_from_json(const char *json);
+
+/**
+ * Serialize a `WafBlockDetails` to a JSON string. Returns null on failure.
+ * # Safety
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_waf_block_details_to_json(CBERGAlefHandle handle);
+
+/**
+ * Free a `WafBlockDetails` handle.
+ * # Safety
+ * Handle must have been returned by this library, or be zero.
+ */
+void cberg_waf_block_details_free(CBERGAlefHandle handle);
+
+/**
+ * Get the `vendor` field from a `WafBlockDetails`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_waf_block_details_vendor(CBERGAlefHandle handle);
+
+/**
+ * Get the `status` field from a `WafBlockDetails`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint16_t cberg_waf_block_details_status(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `status` field on a `WafBlockDetails` is `Some`.
+ *
+ * `cberg_waf_block_details_status` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null
+ * representation for a numeric return, so both collapse to the same sentinel.
+ * Call this function first: `1` means the field getter's return value is
+ * meaningful, `0` means the field is absent and the getter's sentinel must be
+ * ignored, `-1` reports an invalid handle (see `cberg_last_error_code`). #
+ * Safety Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_waf_block_details_has_status(CBERGAlefHandle handle);
+
+/**
+ * Get the `body_prefix` field from a `WafBlockDetails`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_waf_block_details_body_prefix(CBERGAlefHandle handle);
 
 /**
  * Convert an integer to a `AssetCategory` variant. Returns -1 on invalid input.

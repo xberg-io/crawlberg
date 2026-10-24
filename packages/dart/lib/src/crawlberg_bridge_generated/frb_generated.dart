@@ -3032,8 +3032,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 19)
-      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
+    if (arr.length != 20)
+      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -3054,6 +3054,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chromeArgs: dco_decode_list_String(arr[16]),
       scrollContainers: dco_decode_bool(arr[17]),
       domQuietWindow: dco_decode_i_64(arr[18]),
+      domQuietCap: dco_decode_i_64(arr[19]),
     );
   }
 
@@ -4722,6 +4723,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_chromeArgs = sse_decode_list_String(deserializer);
     var var_scrollContainers = sse_decode_bool(deserializer);
     var var_domQuietWindow = sse_decode_i_64(deserializer);
+    var var_domQuietCap = sse_decode_i_64(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4742,6 +4744,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chromeArgs: var_chromeArgs,
       scrollContainers: var_scrollContainers,
       domQuietWindow: var_domQuietWindow,
+      domQuietCap: var_domQuietCap,
     );
   }
 
@@ -6954,6 +6957,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_String(self.chromeArgs, serializer);
     sse_encode_bool(self.scrollContainers, serializer);
     sse_encode_i_64(self.domQuietWindow, serializer);
+    sse_encode_i_64(self.domQuietCap, serializer);
   }
 
   @protected

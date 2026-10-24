@@ -335,3 +335,55 @@ async fn each_dom_mutation_restarts_the_default_quiet_window() {
     let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
     assert!(page.html.contains(NEEDLE), "{test_name}: {}", page.html);
 }
+
+#[test]
+fn quiet_cap_defaults_to_four_seconds_and_accepts_zero_and_short_milliseconds() {
+    let default = serde_json::to_value(BrowserConfig::default()).expect("serialize config");
+    assert_eq!(default["dom_quiet_cap"], serde_json::json!(4000));
+    for cap in [0, 200, 7000] {
+        let config: BrowserConfig =
+            serde_json::from_value(serde_json::json!({"dom_quiet_cap": cap})).expect("deserialize configurable cap");
+        assert_eq!(config.timeout, Duration::from_secs(30));
+        let serialized = serde_json::to_value(config).expect("serialize configured cap");
+        assert_eq!(serialized["dom_quiet_cap"], serde_json::json!(cap));
+    }
+}
+
+#[tokio::test]
+async fn configured_quiet_cap_returns_a_ticker_without_shortening_page_load_timeout() {
+    let test_name = "configured_quiet_cap_returns_a_ticker_without_shortening_page_load_timeout";
+    for cap in [0, 200] {
+        let site = ticker().await;
+        let mut options = config(Duration::from_secs(30));
+        options.browser = serde_json::from_value(serde_json::json!({
+            "mode": "always", "dom_quiet_cap": cap, "timeout": 30000
+        }))
+        .expect("deserialize short cap");
+        let Some((result, elapsed)) = scrape_default(test_name, &site, options).await else {
+            return;
+        };
+        let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+        assert!(page.html.contains("ticker"));
+        assert!(page.markdown.expect("markdown").warnings.is_empty());
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "{test_name}: cap {cap} took {elapsed:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn remaining_navigation_timeout_bounds_a_long_configured_quiet_cap() {
+    let test_name = "remaining_navigation_timeout_bounds_a_long_configured_quiet_cap";
+    let site = ticker().await;
+    let mut options = config(Duration::from_millis(800));
+    options.browser.dom_quiet_window = Duration::from_secs(10);
+    options.browser.dom_quiet_cap = Duration::from_secs(10);
+    let Some((result, elapsed)) = scrape_default(test_name, &site, options).await else {
+        return;
+    };
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: {error:?}"));
+    assert!(page.html.contains("ticker"));
+    assert!(page.markdown.expect("markdown").warnings.is_empty());
+    assert!(elapsed < Duration::from_secs(3), "{test_name}: took {elapsed:?}");
+}

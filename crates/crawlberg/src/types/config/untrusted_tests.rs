@@ -356,6 +356,7 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         private_pipe: _,
         scroll_containers: _,
         dom_quiet_window: _,
+        dom_quiet_cap: _,
     } = browser;
 }
 

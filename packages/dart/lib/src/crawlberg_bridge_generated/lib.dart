@@ -656,7 +656,7 @@ class BrowserConfig {
   /// Extra time to wait after the wait condition is met.
   ///
   /// The default `network_idle` wait returns once the page has loaded and its DOM has been
-  /// unchanged for `dom_quiet_window` (at most four seconds, and never past `timeout`, counted
+  /// unchanged for `dom_quiet_window` (at most `dom_quiet_cap`, and never past `timeout`, counted
   /// from the start of the navigation). An app that draws after a longer quiet period needs
   /// a larger `dom_quiet_window` or `extra_wait`; for
   /// example `3000` waits three more seconds.
@@ -734,10 +734,16 @@ class BrowserConfig {
 
   /// How long the DOM must stay unchanged after page load for `network_idle` to return,
   /// in milliseconds when serialized. Default: 150 ms. Every mutation restarts this window;
-  /// the whole wait stays bounded to four seconds and the remaining navigation timeout.
+  /// the whole wait stays bounded to `dom_quiet_cap` and the remaining navigation timeout.
   /// A page whose first delayed render follows a longer quiet gap needs a larger value
   /// or `extra_wait`. Chromiumoxide backend only.
   final PlatformInt64 domQuietWindow;
+
+  /// Maximum time spent waiting for DOM quiet after page load, in milliseconds when serialized.
+  /// Default: 4000 ms. Lower this for pages with continuous mutations; zero skips the quiet wait.
+  /// The remaining navigation timeout also bounds this wait, independently of the quiet window.
+  /// Chromiumoxide backend only.
+  final PlatformInt64 domQuietCap;
 
   const BrowserConfig({
     required this.mode,
@@ -759,6 +765,7 @@ class BrowserConfig {
     required this.chromeArgs,
     this.scrollContainers = false,
     this.domQuietWindow = 150,
+    this.domQuietCap = 4000,
   });
 
   @override
@@ -781,7 +788,8 @@ class BrowserConfig {
       chromePath.hashCode ^
       chromeArgs.hashCode ^
       scrollContainers.hashCode ^
-      domQuietWindow.hashCode;
+      domQuietWindow.hashCode ^
+      domQuietCap.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -806,7 +814,8 @@ class BrowserConfig {
           chromePath == other.chromePath &&
           chromeArgs == other.chromeArgs &&
           scrollContainers == other.scrollContainers &&
-          domQuietWindow == other.domQuietWindow;
+          domQuietWindow == other.domQuietWindow &&
+          domQuietCap == other.domQuietCap;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.

@@ -32,9 +32,6 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 
-/// The longest the quiescence wait runs for a page that keeps mutating (a ticker, a carousel).
-const DOM_QUIET_CAP: Duration = Duration::from_secs(4);
-
 /// How often the quiescence wait looks for a response the navigation stopped on.
 const DOM_QUIET_STOP_POLL: Duration = Duration::from_millis(25);
 
@@ -263,7 +260,14 @@ async fn render(
         // ~keep navigation timeout, on what is left of the budget, so a page that loaded is never
         // ~keep reported partial because it was still settling.
         let remaining = timeout.saturating_sub(navigation_started.elapsed());
-        wait_for_dom_quiet(page, watch, config.browser.dom_quiet_window, remaining).await;
+        wait_for_dom_quiet(
+            page,
+            watch,
+            config.browser.dom_quiet_window,
+            config.browser.dom_quiet_cap,
+            remaining,
+        )
+        .await;
     }
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -680,14 +684,20 @@ async fn wait_for_ready(
     Ok(())
 }
 
-/// Wait until the document has had no DOM mutation for `quiet_window`, or [`DOM_QUIET_CAP`]
+/// Wait until the document has had no DOM mutation for `quiet_window`, or `configured_cap`
 /// (at most `budget`) has passed, whichever comes first. It returns silently when the budget ends.
 ///
 /// ~keep Failing to observe (a navigation destroyed the script's context, or Chrome did not
 /// ~keep answer) falls back to the fixed settle delay the wait used before: the page is still
 /// ~keep read, and the failure is not a reason to fail the fetch.
-async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, quiet_window: Duration, budget: Duration) {
-    let cap = DOM_QUIET_CAP.min(budget);
+async fn wait_for_dom_quiet(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    quiet_window: Duration,
+    configured_cap: Duration,
+    budget: Duration,
+) {
+    let cap = configured_cap.min(budget);
     if cap.is_zero() {
         return;
     }
@@ -731,7 +741,7 @@ async fn wait_for_dom_quiet(page: &chromiumoxide::Page, watch: &Watch, quiet_win
     };
     // ~keep The bound is the cap plus a margin for the round trip: a renderer too busy to run the
     // ~keep script must not hold the fetch past the budget this wait was given.
-    let observe = tokio::time::timeout(cap + DOM_QUIET_ANSWER_MARGIN, page.evaluate(params));
+    let observe = tokio::time::timeout(cap.saturating_add(DOM_QUIET_ANSWER_MARGIN), page.evaluate(params));
     tokio::select! {
         observed = observe => {
             if let Ok(Err(error)) = observed {

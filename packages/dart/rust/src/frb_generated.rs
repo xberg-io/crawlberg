@@ -1939,6 +1939,7 @@ const _: fn() = || {
         let _: Vec<String> = BrowserConfig.chrome_args;
         let _: bool = BrowserConfig.scroll_containers;
         let _: i64 = BrowserConfig.dom_quiet_window;
+        let _: i64 = BrowserConfig.dom_quiet_cap;
     }
     {
         let BrowserExtras = None::<crate::BrowserExtras>.unwrap();
@@ -2839,6 +2840,7 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_chromeArgs = <Vec<String>>::sse_decode(deserializer);
         let mut var_scrollContainers = <bool>::sse_decode(deserializer);
         let mut var_domQuietWindow = <i64>::sse_decode(deserializer);
+        let mut var_domQuietCap = <i64>::sse_decode(deserializer);
         return crate::BrowserConfig {
             mode: var_mode,
             backend: var_backend,
@@ -2859,6 +2861,7 @@ impl SseDecode for crate::BrowserConfig {
             chrome_args: var_chromeArgs,
             scroll_containers: var_scrollContainers,
             dom_quiet_window: var_domQuietWindow,
+            dom_quiet_cap: var_domQuietCap,
         };
     }
 }
@@ -5046,6 +5049,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.chrome_args.into_into_dart().into_dart(),
             self.0.scroll_containers.into_into_dart().into_dart(),
             self.0.dom_quiet_window.into_into_dart().into_dart(),
+            self.0.dom_quiet_cap.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6426,6 +6430,7 @@ impl SseEncode for crate::BrowserConfig {
         <Vec<String>>::sse_encode(self.chrome_args, serializer);
         <bool>::sse_encode(self.scroll_containers, serializer);
         <i64>::sse_encode(self.dom_quiet_window, serializer);
+        <i64>::sse_encode(self.dom_quiet_cap, serializer);
     }
 }
 

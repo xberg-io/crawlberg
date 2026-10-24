@@ -8,12 +8,152 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.11.2] - 2026-10-16
+## [1.12.2] - 2026-10-24
 
 ### Fixed
 
+- Keep custom request headers on the seed host by default, independently of whether subdomains can be crawled.
+- Scope custom `User-Agent` overrides to the request host instead of forwarding them as a global crawl identity.
+- Keep caller-specific page responses and redirected robots rules out of shared caches.
+- Judge robots rules against the actual User-Agent when typed authentication and rotation are both configured.
+- Native JavaScript module requests preserve one custom User-Agent on the seed host.
+- Preserve word boundaries around whitespace-only links with html-to-markdown 3.18.6. (#806)
+
+### Added
+
+- `browser.dom_quiet_cap` limits the DOM quiet wait independently of page-load timeout, defaulting to 4000 ms. (#808)
+- `subdomain_header_allowlist` explicitly opts individual custom headers into forwarding to admitted subdomains.
+  Configured authentication and standard credential headers remain on the seed host.
+  The native browser keeps all custom headers on the seed host.
+- Content options expose abbreviation expansion and literal Markdown escaping without changing their defaults.
+  (#804, #807)
+- `content.include_icon_labels=false` omits decorative SVG labels and associated link tooltips while retaining visible
+  text, link destinations, and image alt text. (#805)
+
+### Changed
+
+- Upgrade fancy-regex to 0.20 and liter-llm to 2.4.
+- Regenerate language bindings with Alef 0.114.2, preserving released Java and Swift constructor signatures.
+- Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
+  Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.
+
+## [1.12.1] - 2026-10-23
+
+This release was withdrawn. Its changes are included in 1.12.2.
+
+### Fixed
+
+- Python tagged enum factories are declared once in type stubs, allowing typed calls to every
+  `AuthConfig` and `HostMatcher` constructor. (#803)
+- Python constructors reject malformed JSON field values instead of silently dropping their data.
+- Ruby screenshot actions accept the `fullPage` wire key and the existing `full_page` alias.
+- Failed redirect destinations retain the final URL and completed redirect count in crawl results.
+- Swift, Dart, and WebAssembly errors preserve their display messages and structured fields.
+- Generated redirect tests use the correct mock origin for response bodies loaded from files.
+- The Hermes bridge supports MCP Python SDK 2 and preserves protocol field names.
+- Release-contract CI installs the Task runner required by its package checks.
+- Documentation generation uses a compatible matcher without the vulnerable brace-expansion dependency.
+
+### Changed
+
+- Regenerate language bindings with Alef 0.113.4, preserving released error payloads and all Node runtime exports.
+- Upgrade html-to-markdown to 3.18.6, ICU to 2.4, uuid to 1.29.0, Rollup to 4.65.0,
+  Schemathesis to 4.32.4, RuboCop to 1.92.1, and compatible package dependencies.
+- Remove exact package requirements and restrictive upper bounds where supported; the Dart
+  bridge runtime and generator retain their required matching version.
+
+## [1.12.0] - 2026-10-22
+
+### Added
+
+- `danger_accept_invalid_certs` accepts invalid TLS certificates for HTTP pages, robots.txt, and browser
+  navigation when explicitly enabled. It defaults to `false`; browser navigation now verifies certificates too. (#797)
+- `browser.dom_quiet_window` configures the DOM quiet period in milliseconds, defaulting to 150 ms.
+  Increase it or set `browser.extra_wait` for pages whose first DOM update occurs later. (#795)
+- `CrawlResult.waf_block` exposes the vendor, origin status, and bounded body prefix of the first WAF block,
+  while preserving the existing error message. (#794)
+- `browser.scroll_containers` (off by default) scrolls overflowing containers in browser mode and keeps the items a
+  virtualised list mounts, so a list rendered by window returns every item. (#768)
+- Browser page-open timeout warnings report whether page creation or security-watch setup timed out,
+  the browser generation, and elapsed and timeout milliseconds without logging connection or page details.
+
+### Changed
+
+- Upgrade the embedded JavaScript runtime to `deno_core` 0.413.0, including its isolate-teardown lifetime fix.
+- Upgrade `libc` to 0.2.191, which restores the iOS Mach bindings removed in 0.2.190, and refresh dependency
+  lockfiles, including html-to-markdown 3.18.5 and updated TLS trust validation. The browser fork moves to 0.9.4 and uses base64 0.23.
+- Use getrandom 0.4.3 while retaining older aliases required by transitive WebAssembly backends.
+- Refresh Rust and language-package dependencies, including Tokio 1.54.1, ureq 3.5.0, NAPI CLI 3.10.9,
+  Astro 7.4.2, Vitest 5.0.5, Testify 1.12.1, and pnpm 12.14.0.
+- Pin the repository's Rust toolchain to 1.99.1.
+- The Python binding builds against PyO3 0.30 and the PHP extension against ext-php-rs 0.16.3; bindings are
+  regenerated with alef 0.112.0.
+
+### Fixed
+
+- Renderer stalls no longer count as DOM quiet, and delayed scroll notifications preserve virtual-list rows.
+- Retire an absent unowned Chrome session only after an all-target census and unchanged ownership,
+  session and context evidence, preserving owned-page security checks.
+- Preserve unowned-target absence proofs when an unrelated browser context is created or retired.
+- Keep an original unowned-session removal witness when Chrome detaches it before replying to its pending arm.
+- Retire an acknowledged unowned tab and its pending child only after proving both targets absent,
+  while preserving unrelated interception commands and owned-page readiness.
+- Include browser and tab targets in foreign-session retirement censuses.
+- Malformed percent escapes keep a stable normalized URL across repeated normalization and query sorting. (#799)
+
+- Page titles decode HTML character references once, using the same text rules as a browser tab. (#798)
+- Window-scrolled virtual lists and lists using spacer elements retain their final items. (#789, #790)
+- Virtual lists that replace their list element retain ordered rows without rewriting surrounding content.
+- WAF errors in the REST API expose structured vendor, status, and body-prefix fields and retain an origin
+  error status such as 429 or 503 instead of always returning 403. (#796)
+- Bare mentions of DataDome, BigIPServer, and AWS WAF on successful pages no longer count as blocks. (#793)
+- Overlapping WAF body signatures no longer hide one another; explicit DataDome block pages remain blocked,
+  including when served as robots.txt.
+- With `soft_http_errors`, readable bodies survive 401, 403, 429, and server-error responses. (#791)
+- `scrape`, `crawl`, and `map` require `soft_http_errors` to accept redirected 404/410 responses;
+  the flag is no longer silently overridden. (#792)
+- Python `WafBlockedError` retains its `vendor`, `status`, and `body` attributes. (#794)
+- PHP WAF exceptions retain their typed class and response payload; Java nullable WAF status values remain null. (#794)
+- Java configuration and crawl-result constructors retain their released signatures as new fields are added.
+- Release dry runs hold registry-dependent package builds until the core version is available on crates.io.
+- PHP release packaging installs the pinned Alef generator and honors dry-run mode.
+- Python development builds use the development profile even when package builds default to release mode.
 - Browser-backed pages wait for required Chrome startup acknowledgements before reporting readiness,
   avoiding premature use and teardown.
+- Chrome installed as a snap launches again with snapd 2.77 and later, where `/usr/bin/snap` links to
+  `/usr/lib/snapd/snapd`; the launch resolved the link and started the snapd daemon instead of Chrome.
+- The default browser wait returns once the DOM has been unchanged for `browser.dom_quiet_window` after load
+  (at most four seconds, and never past `browser.timeout`), instead of a fixed sleep. DOM changes restart the
+  quiet period; `browser.extra_wait` remains the escape hatch for apps that render later. (#769, #795)
+- A browser timeout with content already rendered returns that content, with a `partial` warning on the page's
+  markdown and a tracing warning, instead of a `browser_timeout` error. A page with no visible content still fails. The read of a partial page takes up to 5 s beyond
+  `browser.timeout`, within what is left of `browser.overall_timeout`; when none is left the page fails with `browser_timeout`. (#779)
+- WAF block errors name the HTTP status in their message (`detected on 403: cloudflare`), and the Rust `CrawlError::WafBlocked` carries the `status` and a bounded prefix of the response `body`. (#770)
+- **Source break (Rust):** `CrawlError::WafBlocked` gains `status` and `body` fields. Code that constructs it literally, or matches it without `..`, must be updated. The message also changed from `detected: <vendor>` to `detected on <status>: <vendor>`. (#770)
+- A small 2xx page that only names Sucuri, Incapsula or PerimeterX in its text is kept instead of rejected as a WAF block; those bare vendor names now count only on 403, 429 and 503. (#778)
+- A retry after a 429 or 503 waits for the response's `Retry-After` (delta-seconds or HTTP-date) when it is
+  longer than the backoff; a `Retry-After` beyond `retry_max_delay_ms` ends the retries with a warning (so `retry_max_delay_ms = 0` abandons the retry on any positive
+  `Retry-After`). (#774)
+- With `allow_subdomains`, `custom_headers` such as `Accept` now reach the admitted subdomains. Credential headers
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Amz-Security-Token`) and `auth` stay with the
+  seed host. (#771)
+- A seed URL that matches `exclude_paths` is fetched, as a seed that misses `include_paths` already was. (#773)
+- Handle missing-session replies after Chrome acknowledges browser-context disposal while requiring independent
+  confirmation that the context and its targets are gone. (#765)
+- Release dry runs leave Go module tags and republish tags unchanged.
+- With `soft_http_errors`, a 404 or 410 answering with a body comes back as a page with converted
+  markdown, and a 410 no longer fails as `gone`; browser-rendered 404 and 410 pages keep their
+  body likewise. (#772)
+- A linked URL that redirects to an error status such as 404 is reported as an error event, as the
+  same URL as seed is, instead of an empty page. (#777)
+- A seed that redirects to a 4xx status the fetch does not fail on, such as 418 or 451, is now
+  returned as a page, as a linked page is, instead of failing the crawl. (#777)
+- With `soft_http_errors`, links on a 404 or 410 page are not followed. (#772)
+- `CrawlEvent::Page` documents that a link redirecting to a URL the crawl already holds gives no
+  event of its own. (#776)
+- An image with alt text and an empty or missing source converts to `![alt](<>)` again rather than bare alt text
+  (html-to-markdown 3.18.4).
+- Markdown keeps the text of pages nested 61 or more elements deep; the converter's default depth limit of 64 emptied them without an error. `content.max_depth` still overrides the new default of 1024. (#775)
 
 ## [1.11.1] - 2026-10-16
 

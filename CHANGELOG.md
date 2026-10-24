@@ -17,6 +17,7 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- `browser.dom_quiet_cap` limits the DOM quiet wait independently of page-load timeout, defaulting to 4000 ms. (#808)
 - `subdomain_header_allowlist` explicitly opts individual custom headers into forwarding to admitted subdomains.
   Configured authentication and standard credential headers remain on the seed host.
   The native browser keeps all custom headers on the seed host.
@@ -28,7 +29,7 @@ All notable changes to crawlberg are documented here.
 ### Changed
 
 - Upgrade fancy-regex to 0.20 and liter-llm to 2.4.
-- Regenerate language bindings with Alef 0.114.1, preserving released Java and Swift constructor signatures.
+- Regenerate language bindings with Alef 0.114.2, preserving released Java and Swift constructor signatures.
 - Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
   Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.
 

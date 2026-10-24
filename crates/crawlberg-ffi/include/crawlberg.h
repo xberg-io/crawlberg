@@ -1034,6 +1034,13 @@ int32_t cberg_browser_config_scroll_containers(CBERGAlefHandle handle);
 uint64_t cberg_browser_config_dom_quiet_window(CBERGAlefHandle handle);
 
 /**
+ * Get the `dom_quiet_cap` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_browser_config_dom_quiet_cap(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
