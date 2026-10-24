@@ -374,11 +374,16 @@ mod tests {
 
     /// Map an already-clean test URL, as the engine does after admission.
     async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-        let engine = crate::CrawlEngine::builder()
+        let mut engine = crate::CrawlEngine::builder()
             .config(config.clone())
             .build()
             .expect("the engine builds");
-        super::map(&engine, &crate::engine::SeedUrl::for_test(url)).await
+        let seed = crate::engine::SeedUrl::for_test(url);
+        // ~keep Internal map receives an admitted engine; preserve explicitly supplied URL credentials.
+        if engine.config.credential_scope.is_none() {
+            engine.config.credential_scope = crate::net::CredentialScope::for_seed(seed.url(), None);
+        }
+        super::map(&engine, &seed).await
     }
 
     /// A `CrawlConfig` that allows fetching the wiremock server on `127.0.0.1`

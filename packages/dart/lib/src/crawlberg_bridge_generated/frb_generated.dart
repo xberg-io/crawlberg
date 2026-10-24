@@ -3111,8 +3111,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 20)
-      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
+    if (arr.length != 24)
+      throw Exception('unexpected arr length: expect 24 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -3134,6 +3134,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       compactTables: dco_decode_bool(arr[17]),
       keepInlineImagesIn: dco_decode_list_String(arr[18]),
       keepHidden: dco_decode_bool(arr[19]),
+      expandAbbreviations: dco_decode_bool(arr[20]),
+      escapeMisc: dco_decode_bool(arr[21]),
+      escapeAsterisks: dco_decode_bool(arr[22]),
+      includeIconLabels: dco_decode_bool(arr[23]),
     );
   }
 
@@ -3161,8 +3165,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 56)
-      throw Exception('unexpected arr length: expect 56 but see ${arr.length}');
+    if (arr.length != 57)
+      throw Exception('unexpected arr length: expect 57 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -3221,6 +3225,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ssrf: dco_decode_ssrf_policy(arr[53]),
       ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[54]),
       dangerAcceptInvalidCerts: dco_decode_bool(arr[55]),
+      subdomainHeaderAllowlist: dco_decode_list_String(arr[56]),
     );
   }
 
@@ -4809,6 +4814,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_compactTables = sse_decode_bool(deserializer);
     var var_keepInlineImagesIn = sse_decode_list_String(deserializer);
     var var_keepHidden = sse_decode_bool(deserializer);
+    var var_expandAbbreviations = sse_decode_bool(deserializer);
+    var var_escapeMisc = sse_decode_bool(deserializer);
+    var var_escapeAsterisks = sse_decode_bool(deserializer);
+    var var_includeIconLabels = sse_decode_bool(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4830,6 +4839,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       compactTables: var_compactTables,
       keepInlineImagesIn: var_keepInlineImagesIn,
       keepHidden: var_keepHidden,
+      expandAbbreviations: var_expandAbbreviations,
+      escapeMisc: var_escapeMisc,
+      escapeAsterisks: var_escapeAsterisks,
+      includeIconLabels: var_includeIconLabels,
     );
   }
 
@@ -4921,6 +4934,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_dangerAcceptInvalidCerts = sse_decode_bool(deserializer);
+    var var_subdomainHeaderAllowlist = sse_decode_list_String(deserializer);
     return CrawlConfig(
       maxDepth: var_maxDepth,
       maxPages: var_maxPages,
@@ -4978,6 +4992,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ssrf: var_ssrf,
       ssrfDenyPrivateExplicit: var_ssrfDenyPrivateExplicit,
       dangerAcceptInvalidCerts: var_dangerAcceptInvalidCerts,
+      subdomainHeaderAllowlist: var_subdomainHeaderAllowlist,
     );
   }
 
@@ -7005,6 +7020,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.compactTables, serializer);
     sse_encode_list_String(self.keepInlineImagesIn, serializer);
     sse_encode_bool(self.keepHidden, serializer);
+    sse_encode_bool(self.expandAbbreviations, serializer);
+    sse_encode_bool(self.escapeMisc, serializer);
+    sse_encode_bool(self.escapeAsterisks, serializer);
+    sse_encode_bool(self.includeIconLabels, serializer);
   }
 
   @protected
@@ -7090,6 +7109,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_ssrf_policy(self.ssrf, serializer);
     sse_encode_opt_box_autoadd_bool(self.ssrfDenyPrivateExplicit, serializer);
     sse_encode_bool(self.dangerAcceptInvalidCerts, serializer);
+    sse_encode_list_String(self.subdomainHeaderAllowlist, serializer);
   }
 
   @protected

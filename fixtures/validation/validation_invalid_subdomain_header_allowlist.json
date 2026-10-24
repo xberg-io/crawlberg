@@ -1,0 +1,27 @@
+{
+	"id": "validation_invalid_subdomain_header_allowlist",
+	"description": "Subdomain header allowlist entries must be valid HTTP header names",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-subdomain-header-allowlist",
+		"title": "Subdomain header allowlist entries must be valid HTTP header names"
+	},
+	"tags": ["validation", "headers"],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"body_inline": "<html><body>Header validation sentinel</body></html>"
+			}
+		],
+		"config": {
+			"subdomain_header_allowlist": ["invalid header name"]
+		}
+	},
+	"assertions": [
+		{
+			"type": "error",
+			"value": "subdomain_header_allowlist entries must be valid HTTP header names"
+		}
+	]
+}

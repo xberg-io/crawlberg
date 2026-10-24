@@ -2,7 +2,7 @@
 //!
 //! The engine fixes the scope once, when it admits the seed URL, and every fetch asks
 //! [`seed_host_headers`] for the headers to send. Only a request to the seed's host gets any
-//! credential; with `allow_subdomains`, its subdomains get the non-credential custom headers.
+//! credential; admitted subdomains receive only explicitly allowlisted custom headers.
 
 use base64::Engine as _;
 use url::Url;
@@ -95,8 +95,7 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
 
 /// The headers a request for `url` carries: the custom headers, then the credential
 /// header, which replaces a custom header of the same name. Empty unless `url` is on the
-/// seed's host or, with `allow_subdomains`, one of its subdomains, which gets only the
-/// non-credential custom headers.
+/// seed's host or an admitted subdomain explicitly authorized for each custom header.
 ///
 /// ~keep A blank `user-agent` entry is dropped here, not just at the judging side
 /// (`crate::helpers::custom_user_agent_header`): every consumer of this function (the HTTP
@@ -130,61 +129,51 @@ pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String,
     headers
 }
 
-/// The custom headers an admitted subdomain of the seed host receives (crawlberg#771).
-///
-/// ~keep Content-negotiation headers (`Accept`, `Accept-Language`) belong to the crawl, so they
-/// follow it onto the subdomains `allow_subdomains` admits. Credentials stay with the seed host:
-/// a subdomain can be run by a different party (user pages, a vendor), so every header in
-/// `SENSITIVE_HEADERS` is withheld, and so is the header the configured `AuthConfig::Header`
-/// names, and `auth` itself never reaches `credential_header` for these hosts. So is any header
-/// whose name looks credential-bearing (`X-Auth-Token`, `Private-Token`, `X-Csrf-Token`): before
-/// crawlberg#771 every custom header was seed-host only, so a secret a caller put in an arbitrary
-/// header must not start leaking to subdomains. A host admitted any other way (a redirect
-/// off-site, an external link) is not a subdomain and gets nothing.
+/// Whether an individual custom header is authorized for a request to `url`.
+pub(crate) fn custom_header_is_scoped(config: &CrawlConfig, url: &Url, name: &str) -> bool {
+    config.credential_scope.as_ref().is_some_and(|scope| {
+        scope.covers(url) || (scope.covers_subdomain(url) && subdomain_header_is_allowed(config, name))
+    })
+}
+
+fn subdomain_header_is_allowed(config: &CrawlConfig, name: &str) -> bool {
+    config.allow_subdomains
+        && config
+            .subdomain_header_allowlist
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(name))
+        && !super::redact::is_sensitive_header(name)
+        && !matches!(&config.auth, Some(AuthConfig::Header { name: own, .. }) if own.eq_ignore_ascii_case(name))
+}
+
+/// Headers explicitly authorized for an admitted subdomain, excluding credential headers.
 fn subdomain_headers(config: &CrawlConfig) -> Vec<(String, String)> {
-    let auth_header = match &config.auth {
-        Some(AuthConfig::Header { name, .. }) => Some(name.as_str()),
-        _ => None,
-    };
     config
         .custom_headers
         .iter()
         .filter(|(name, value)| !crate::helpers::is_blank_user_agent_override(name, value))
-        .filter(|(name, _)| !super::redact::is_sensitive_header(name) && !looks_credential_bearing(name))
-        .filter(|(name, _)| auth_header.is_none_or(|own| !own.eq_ignore_ascii_case(name)))
+        .filter(|(name, _)| subdomain_header_is_allowed(config, name))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect()
 }
 
-/// Name fragments that mark a header as carrying a secret, matched case-insensitively.
-const CREDENTIAL_NAME_FRAGMENTS: [&str; 22] = [
-    "auth",
-    "token",
-    "key",
-    "secret",
-    "session",
-    "cookie",
-    "csrf",
-    "xsrf",
-    "password",
-    "signature",
-    "credential",
-    "passwd",
-    "pwd",
-    "pass",
-    "jwt",
-    "bearer",
-    "otp",
-    "assertion",
-    "hmac",
-    "private",
-    "sso",
-    "sig",
-];
-
-fn looks_credential_bearing(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    CREDENTIAL_NAME_FRAGMENTS.iter().any(|fragment| name.contains(fragment))
+/// Whether a browser request header may have been injected from the caller's configuration.
+#[cfg(feature = "browser")]
+pub(crate) fn is_configured_header(config: &CrawlConfig, name: &str) -> bool {
+    config
+        .custom_headers
+        .iter()
+        .any(|(own, value)| own.eq_ignore_ascii_case(name) && !crate::helpers::is_blank_user_agent_override(own, value))
+        || match &config.auth {
+            Some(AuthConfig::Header { name: own, .. }) => own.eq_ignore_ascii_case(name),
+            Some(AuthConfig::Basic { .. } | AuthConfig::Bearer { .. }) => name.eq_ignore_ascii_case("authorization"),
+            None => false,
+        }
+        || (name.eq_ignore_ascii_case("authorization")
+            && config
+                .credential_scope
+                .as_ref()
+                .is_some_and(CredentialScope::has_url_credentials))
 }
 
 /// The seed-host headers for the native browser, scoped to the seed's host.
@@ -201,13 +190,33 @@ pub(crate) fn origin_headers(config: &CrawlConfig) -> Option<crawlberg_browser::
     })
 }
 
-/// Whether a request to `url` carries credentials, which keeps it out of shared caches.
+/// Whether a request carries caller-specific headers, excluding it from URL-only caches.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_credentialed(config: &CrawlConfig, url: &Url) -> bool {
     config
         .credential_scope
         .as_ref()
         .is_some_and(|scope| scope.covers(url) && (scope.has_url_credentials() || config.auth.is_some()))
+        || config.custom_headers.iter().any(|(name, value)| {
+            !crate::helpers::is_blank_user_agent_override(name, value) && custom_header_is_scoped(config, url, name)
+        })
+}
+
+/// Whether a redirect-capable request could send caller-specific headers on any hop.
+///
+/// ~keep A robots fetch can start on an uncredentialed host and redirect back to the seed.
+/// ~keep Its URL-only cache must therefore consider the whole possible chain, not just its start.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn may_send_scoped_headers(config: &CrawlConfig) -> bool {
+    config.auth.is_some()
+        || config
+            .credential_scope
+            .as_ref()
+            .is_some_and(CredentialScope::has_url_credentials)
+        || config
+            .custom_headers
+            .iter()
+            .any(|(name, value)| !crate::helpers::is_blank_user_agent_override(name, value))
 }
 
 fn basic_header(username: &str, password: &str) -> (String, String) {
@@ -378,6 +387,7 @@ mod tests {
     fn subdomain_config(allow_subdomains: bool, auth: Option<AuthConfig>) -> CrawlConfig {
         CrawlConfig {
             allow_subdomains,
+            subdomain_header_allowlist: vec!["Accept".to_owned()],
             custom_headers: std::collections::HashMap::from([
                 ("Accept".to_owned(), "text/html".to_owned()),
                 ("Authorization".to_owned(), "custom".to_owned()),
@@ -390,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn a_subdomain_gets_the_non_credential_custom_headers_when_subdomains_are_allowed() {
+    fn a_subdomain_gets_only_explicitly_allowlisted_custom_headers() {
         let config = subdomain_config(
             true,
             Some(AuthConfig::Header {
@@ -402,12 +412,13 @@ mod tests {
         headers.sort();
         assert_eq!(headers, [("Accept".to_owned(), "text/html".to_owned())]);
         assert_eq!(credential_header(&config, &url("http://docs.example.com/")), None);
-        assert!(!is_credentialed(&config, &url("http://docs.example.com/")));
+        assert!(is_credentialed(&config, &url("http://docs.example.com/")));
     }
 
     #[test]
-    fn a_subdomain_gets_no_header_whose_name_looks_credential_bearing() {
+    fn unlisted_custom_headers_stay_on_the_seed_host_regardless_of_their_names() {
         let config = CrawlConfig {
+            subdomain_header_allowlist: vec!["accept-language".to_owned()],
             custom_headers: std::collections::HashMap::from([
                 ("Accept-Language".to_owned(), "en".to_owned()),
                 ("X-Auth-Token".to_owned(), "a".to_owned()),
@@ -427,57 +438,39 @@ mod tests {
     }
 
     #[test]
-    fn credential_fragments_cover_more_names_and_spare_standard_headers() {
-        for name in [
-            "X-Credentials",
-            "X-Passwd",
-            "X-Pwd",
-            "X-Passcode",
-            "X-Jwt",
-            "X-Bearer",
-            "X-Otp",
-            "X-Saml-Assertion",
-            "X-Hmac",
-            "X-Private-Id",
-            "X-Sso-Id",
-            "X-Sig",
-        ] {
-            assert!(looks_credential_bearing(name), "{name} must be withheld");
-        }
-        for name in [
-            "Accept",
-            "Accept-Language",
-            "Accept-Encoding",
-            "Accept-Charset",
-            "Cache-Control",
-            "User-Agent",
-            "Referer",
-            "DNT",
-            "Origin",
-            "Pragma",
-            "Prefer",
-            "Content-Type",
-            "If-None-Match",
-            "If-Modified-Since",
-            "Range",
-            "Connection",
-            "Keep-Alive",
-            "Upgrade-Insecure-Requests",
-            "Sec-Fetch-Mode",
-            "Sec-CH-UA",
-            "Sec-GPC",
-            "Access-Control-Request-Method",
-            "X-Requested-With",
-            "X-Forwarded-For",
-            "X-Probe",
-        ] {
-            assert!(!looks_credential_bearing(name), "{name} must not be withheld");
-        }
+    fn a_subdomain_gets_no_custom_headers_without_explicit_opt_in() {
+        let config = CrawlConfig {
+            subdomain_header_allowlist: Vec::new(),
+            custom_headers: [
+                ("X-Access-Value".to_owned(), "arbitrary-secret".to_owned()),
+                ("Accept".to_owned(), "text/html".to_owned()),
+            ]
+            .into(),
+            ..subdomain_config(true, None)
+        };
+        assert!(seed_host_headers(&config, &url("http://docs.example.com/")).is_empty());
+        assert_eq!(seed_host_headers(&config, &url("http://example.com/")).len(), 2);
+    }
+
+    #[test]
+    fn explicit_opt_in_never_forwards_standard_credentials() {
+        let mut config = subdomain_config(true, None);
+        config.subdomain_header_allowlist = config.custom_headers.keys().cloned().collect();
+        let mut headers = seed_host_headers(&config, &url("http://docs.example.com/"));
+        headers.sort();
+        assert_eq!(
+            headers,
+            [
+                ("Accept".to_owned(), "text/html".to_owned()),
+                ("x-token".to_owned(), "tok".to_owned()),
+            ]
+        );
     }
 
     #[test]
     fn the_header_named_by_header_auth_is_withheld_from_a_subdomain_even_without_a_credential_name() {
         let config = CrawlConfig {
+            subdomain_header_allowlist: vec!["Accept".to_owned(), "X-Tenant".to_owned()],
             custom_headers: std::collections::HashMap::from([
                 ("X-Tenant".to_owned(), "t".to_owned()),
                 ("Accept".to_owned(), "text/html".to_owned()),
@@ -490,7 +483,7 @@ mod tests {
                 }),
             )
         };
-        assert!(!looks_credential_bearing("X-Tenant"));
+
         assert_eq!(
             seed_host_headers(&config, &url("http://docs.example.com/")),
             [("Accept".to_owned(), "text/html".to_owned())]

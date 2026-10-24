@@ -78,7 +78,7 @@ pub(crate) async fn scrape_from_crawl_response<'a>(
     let sent_user_agent = resp
         .sent_user_agent
         .as_deref()
-        .unwrap_or_else(|| default_robots_user_agent(config));
+        .unwrap_or_else(|| default_robots_user_agent(config, &parsed_url));
     let robots = resolve_robots_status(url, &parsed_url, &context, &client, sent_user_agent).await;
     let response_meta = crate::http::extract_response_meta_from_hashmap(&resp.headers);
     let content_type = resp.content_type.clone();

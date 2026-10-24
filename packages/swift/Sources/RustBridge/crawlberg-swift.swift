@@ -801,7 +801,7 @@ extension ArticleMetadataRef {
         { let val = __swift_bridge__$ArticleMetadata$section(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func tags() -> RustVec<RustString> {
+    public func __alef_owned_vec_tags() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ArticleMetadata$tags(ptr))
     }
 }
@@ -979,7 +979,7 @@ public class BatchCrawlResultsRef {
     }
 }
 extension BatchCrawlResultsRef {
-    public func results() -> RustVec<BatchCrawlResult> {
+    public func __alef_owned_vec_results() -> RustVec<BatchCrawlResult> {
         RustVec(ptr: __swift_bridge__$BatchCrawlResults$results(ptr))
     }
 
@@ -1076,7 +1076,7 @@ public class BatchCrawlStreamRequestRef {
     }
 }
 extension BatchCrawlStreamRequestRef {
-    public func urls() -> RustVec<RustString> {
+    public func __alef_owned_vec_urls() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$BatchCrawlStreamRequest$urls(ptr))
     }
 }
@@ -1254,7 +1254,7 @@ public class BatchScrapeResultsRef {
     }
 }
 extension BatchScrapeResultsRef {
-    public func results() -> RustVec<BatchScrapeResult> {
+    public func __alef_owned_vec_results() -> RustVec<BatchScrapeResult> {
         RustVec(ptr: __swift_bridge__$BatchScrapeResults$results(ptr))
     }
 
@@ -1396,7 +1396,7 @@ extension BrowserConfigRef {
         { let val = __swift_bridge__$BrowserConfig$proxy(ptr); if val != nil { return ProxyConfig(ptr: val!) } else { return nil } }()
     }
 
-    public func blockUrlPatterns() -> RustVec<RustString> {
+    public func __alef_owned_vec_block_url_patterns() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$BrowserConfig$block_url_patterns(ptr))
     }
 
@@ -1420,7 +1420,7 @@ extension BrowserConfigRef {
         { let val = __swift_bridge__$BrowserConfig$chrome_path(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func chromeArgs() -> RustVec<RustString> {
+    public func __alef_owned_vec_chrome_args() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$BrowserConfig$chrome_args(ptr))
     }
 
@@ -1517,11 +1517,11 @@ extension BrowserExtrasRef {
         { let val = __swift_bridge__$BrowserExtras$eval_result(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func networkEvents() -> RustVec<ResponseMeta> {
+    public func __alef_owned_vec_network_events() -> RustVec<ResponseMeta> {
         RustVec(ptr: __swift_bridge__$BrowserExtras$network_events(ptr))
     }
 
-    public func cookies() -> RustVec<CookieInfo> {
+    public func __alef_owned_vec_cookies() -> RustVec<CookieInfo> {
         RustVec(ptr: __swift_bridge__$BrowserExtras$cookies(ptr))
     }
 }
@@ -1703,7 +1703,7 @@ extension CitationResultRef {
         RustString(ptr: __swift_bridge__$CitationResult$content(ptr))
     }
 
-    public func references() -> RustVec<RustString> {
+    public func __alef_owned_vec_references() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CitationResult$references(ptr))
     }
 }
@@ -1779,6 +1779,10 @@ extension ContentConfig {
     class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool, _ strip_newlines: Bool, _ bullets: GenericIntoRustString, _ list_indent_width: UInt, _ strong_em_symbol: GenericIntoRustString, _ compact_tables: Bool, _ keep_inline_images_in: RustVec<GenericIntoRustString>, _ keep_hidden: Bool) -> ContentConfig {
         ContentConfig(ptr: __swift_bridge__$ContentConfig$new_with_fields({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata, strip_newlines, { let rustString = bullets.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), list_indent_width, { let rustString = strong_em_symbol.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), compact_tables, { let val = keep_inline_images_in; val.isOwned = false; return val.ptr }(), keep_hidden))
     }
+
+    class public func new_with_fields<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool, _ strip_newlines: Bool, _ bullets: GenericIntoRustString, _ list_indent_width: UInt, _ strong_em_symbol: GenericIntoRustString, _ compact_tables: Bool, _ keep_inline_images_in: RustVec<GenericIntoRustString>, _ keep_hidden: Bool, _ expand_abbreviations: Bool, _ escape_misc: Bool, _ escape_asterisks: Bool, _ include_icon_labels: Bool) -> ContentConfig {
+        ContentConfig(ptr: __swift_bridge__$ContentConfig$__alef_constructor_history_1({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata, strip_newlines, { let rustString = bullets.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), list_indent_width, { let rustString = strong_em_symbol.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), compact_tables, { let val = keep_inline_images_in; val.isOwned = false; return val.ptr }(), keep_hidden, expand_abbreviations, escape_misc, escape_asterisks, include_icon_labels))
+    }
 }
 public class ContentConfigRefMut: ContentConfigRef {
     public override init(ptr: UnsafeMutableRawPointer) {
@@ -1809,15 +1813,15 @@ extension ContentConfigRef {
         __swift_bridge__$ContentConfig$remove_forms(ptr)
     }
 
-    public func stripTags() -> RustVec<RustString> {
+    public func __alef_owned_vec_strip_tags() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ContentConfig$strip_tags(ptr))
     }
 
-    public func preserveTags() -> RustVec<RustString> {
+    public func __alef_owned_vec_preserve_tags() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ContentConfig$preserve_tags(ptr))
     }
 
-    public func excludeSelectors() -> RustVec<RustString> {
+    public func __alef_owned_vec_exclude_selectors() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ContentConfig$exclude_selectors(ptr))
     }
 
@@ -1865,12 +1869,28 @@ extension ContentConfigRef {
         __swift_bridge__$ContentConfig$compact_tables(ptr)
     }
 
-    public func keepInlineImagesIn() -> RustVec<RustString> {
+    public func __alef_owned_vec_keep_inline_images_in() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ContentConfig$keep_inline_images_in(ptr))
     }
 
     public func keepHidden() -> Bool {
         __swift_bridge__$ContentConfig$keep_hidden(ptr)
+    }
+
+    public func expandAbbreviations() -> Bool {
+        __swift_bridge__$ContentConfig$expand_abbreviations(ptr)
+    }
+
+    public func escapeMisc() -> Bool {
+        __swift_bridge__$ContentConfig$escape_misc(ptr)
+    }
+
+    public func escapeAsterisks() -> Bool {
+        __swift_bridge__$ContentConfig$escape_asterisks(ptr)
+    }
+
+    public func includeIconLabels() -> Bool {
+        __swift_bridge__$ContentConfig$include_icon_labels(ptr)
     }
 }
 extension ContentConfig: Vectorizable {
@@ -2098,11 +2118,11 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$allow_subdomains(ptr)
     }
 
-    public func includePaths() -> RustVec<RustString> {
+    public func __alef_owned_vec_include_paths() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$include_paths(ptr))
     }
 
-    public func excludePaths() -> RustVec<RustString> {
+    public func __alef_owned_vec_exclude_paths() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$exclude_paths(ptr))
     }
 
@@ -2122,7 +2142,7 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$strip_tracking_params(ptr)
     }
 
-    public func trackingParams() -> RustVec<RustString> {
+    public func __alef_owned_vec_tracking_params() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$tracking_params(ptr))
     }
 
@@ -2174,7 +2194,7 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$max_body_size(ptr).intoSwiftRepr()
     }
 
-    public func removeTags() -> RustVec<RustString> {
+    public func __alef_owned_vec_remove_tags() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$remove_tags(ptr))
     }
 
@@ -2194,7 +2214,7 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$download_assets(ptr)
     }
 
-    public func assetTypes() -> RustVec<RustString> {
+    public func __alef_owned_vec_asset_types() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$asset_types(ptr))
     }
 
@@ -2210,7 +2230,7 @@ extension CrawlConfigRef {
         { let val = __swift_bridge__$CrawlConfig$proxy(ptr); if val != nil { return ProxyConfig(ptr: val!) } else { return nil } }()
     }
 
-    public func userAgents() -> RustVec<RustString> {
+    public func __alef_owned_vec_user_agents() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$user_agents(ptr))
     }
 
@@ -2234,7 +2254,7 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$document_max_size(ptr).intoSwiftRepr()
     }
 
-    public func documentMimeTypes() -> RustVec<RustString> {
+    public func __alef_owned_vec_document_mime_types() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$document_mime_types(ptr))
     }
 
@@ -2268,6 +2288,10 @@ extension CrawlConfigRef {
 
     public func dangerAcceptInvalidCerts() -> Bool {
         __swift_bridge__$CrawlConfig$danger_accept_invalid_certs(ptr)
+    }
+
+    public func __alef_owned_vec_subdomain_header_allowlist() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$CrawlConfig$subdomain_header_allowlist(ptr))
     }
 }
 extension CrawlConfig: Vectorizable {
@@ -2384,19 +2408,19 @@ extension CrawlPageResultRef {
         PageMetadata(ptr: __swift_bridge__$CrawlPageResult$metadata(ptr))
     }
 
-    public func links() -> RustVec<LinkInfo> {
+    public func __alef_owned_vec_links() -> RustVec<LinkInfo> {
         RustVec(ptr: __swift_bridge__$CrawlPageResult$links(ptr))
     }
 
-    public func images() -> RustVec<ImageInfo> {
+    public func __alef_owned_vec_images() -> RustVec<ImageInfo> {
         RustVec(ptr: __swift_bridge__$CrawlPageResult$images(ptr))
     }
 
-    public func feeds() -> RustVec<FeedInfo> {
+    public func __alef_owned_vec_feeds() -> RustVec<FeedInfo> {
         RustVec(ptr: __swift_bridge__$CrawlPageResult$feeds(ptr))
     }
 
-    public func jsonLd() -> RustVec<JsonLdEntry> {
+    public func __alef_owned_vec_json_ld() -> RustVec<JsonLdEntry> {
         RustVec(ptr: __swift_bridge__$CrawlPageResult$json_ld(ptr))
     }
 
@@ -2456,7 +2480,7 @@ extension CrawlPageResultRef {
         __swift_bridge__$CrawlPageResult$nofollow_detected(ptr)
     }
 
-    public func ssrfRefusedUrls() -> RustVec<RustString> {
+    public func __alef_owned_vec_ssrf_refused_urls() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$CrawlPageResult$ssrf_refused_urls(ptr))
     }
 
@@ -2550,7 +2574,7 @@ public class CrawlResultRef {
     }
 }
 extension CrawlResultRef {
-    public func pages() -> RustVec<CrawlPageResult> {
+    public func __alef_owned_vec_pages() -> RustVec<CrawlPageResult> {
         RustVec(ptr: __swift_bridge__$CrawlResult$pages(ptr))
     }
 
@@ -2570,7 +2594,7 @@ extension CrawlResultRef {
         { let val = __swift_bridge__$CrawlResult$error(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func cookies() -> RustVec<CookieInfo> {
+    public func __alef_owned_vec_cookies() -> RustVec<CookieInfo> {
         RustVec(ptr: __swift_bridge__$CrawlResult$cookies(ptr))
     }
 
@@ -3539,7 +3563,7 @@ public class InteractionResultRef {
     }
 }
 extension InteractionResultRef {
-    public func actionResults() -> RustVec<ActionResult> {
+    public func __alef_owned_vec_action_results() -> RustVec<ActionResult> {
         RustVec(ptr: __swift_bridge__$InteractionResult$action_results(ptr))
     }
 
@@ -3555,7 +3579,7 @@ extension InteractionResultRef {
         { let val = __swift_bridge__$InteractionResult$screenshot_base64(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func ssrfRefusedUrls() -> RustVec<RustString> {
+    public func __alef_owned_vec_ssrf_refused_urls() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$InteractionResult$ssrf_refused_urls(ptr))
     }
 }
@@ -3843,7 +3867,7 @@ public class MapResultRef {
     }
 }
 extension MapResultRef {
-    public func urls() -> RustVec<RustString> {
+    public func __alef_owned_vec_urls() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$MapResult$urls(ptr))
     }
 }
@@ -3936,11 +3960,11 @@ extension MarkdownResultRef {
         { let val = __swift_bridge__$MarkdownResult$document_structure(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func tables() -> RustVec<RustString> {
+    public func __alef_owned_vec_tables() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$MarkdownResult$tables(ptr))
     }
 
-    public func warnings() -> RustVec<RustString> {
+    public func __alef_owned_vec_warnings() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$MarkdownResult$warnings(ptr))
     }
 
@@ -4507,19 +4531,19 @@ extension ScrapeResultRef {
         PageMetadata(ptr: __swift_bridge__$ScrapeResult$metadata(ptr))
     }
 
-    public func links() -> RustVec<LinkInfo> {
+    public func __alef_owned_vec_links() -> RustVec<LinkInfo> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$links(ptr))
     }
 
-    public func images() -> RustVec<ImageInfo> {
+    public func __alef_owned_vec_images() -> RustVec<ImageInfo> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$images(ptr))
     }
 
-    public func feeds() -> RustVec<FeedInfo> {
+    public func __alef_owned_vec_feeds() -> RustVec<FeedInfo> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$feeds(ptr))
     }
 
-    public func jsonLd() -> RustVec<JsonLdEntry> {
+    public func __alef_owned_vec_json_ld() -> RustVec<JsonLdEntry> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$json_ld(ptr))
     }
 
@@ -4563,7 +4587,7 @@ extension ScrapeResultRef {
         { let val = __swift_bridge__$ScrapeResult$response_meta(ptr); if val != nil { return ResponseMeta(ptr: val!) } else { return nil } }()
     }
 
-    public func assets() -> RustVec<DownloadedAsset> {
+    public func __alef_owned_vec_assets() -> RustVec<DownloadedAsset> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$assets(ptr))
     }
 
@@ -4599,7 +4623,7 @@ extension ScrapeResultRef {
         { let val = __swift_bridge__$ScrapeResult$browser(ptr); if val != nil { return BrowserExtras(ptr: val!) } else { return nil } }()
     }
 
-    public func ssrfRefusedUrls() -> RustVec<RustString> {
+    public func __alef_owned_vec_ssrf_refused_urls() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$ScrapeResult$ssrf_refused_urls(ptr))
     }
 }
@@ -4785,11 +4809,11 @@ extension SsrfPolicyRef {
         __swift_bridge__$SsrfPolicy$deny_private(ptr)
     }
 
-    public func allowlist() -> RustVec<RustString> {
+    public func __alef_owned_vec_allowlist() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$SsrfPolicy$allowlist(ptr))
     }
 
-    public func denylist() -> RustVec<RustString> {
+    public func __alef_owned_vec_denylist() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$SsrfPolicy$denylist(ptr))
     }
 
@@ -4797,7 +4821,7 @@ extension SsrfPolicyRef {
         __swift_bridge__$SsrfPolicy$max_redirects(ptr)
     }
 
-    public func schemeAllowlist() -> RustVec<RustString> {
+    public func __alef_owned_vec_scheme_allowlist() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$SsrfPolicy$scheme_allowlist(ptr))
     }
 }

@@ -620,7 +620,7 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         .map(|(_, value)| value.as_str());
     req = req.header(
         USER_AGENT,
-        extra_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(context.config)),
+        crate::helpers::request_user_agent(context.config, current_url, extra_user_agent),
     );
 
     // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own

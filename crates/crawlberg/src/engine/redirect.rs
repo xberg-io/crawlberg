@@ -251,7 +251,7 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep `follow_redirects` pins onto its `CrawlRequest` afterward are the same pick
         // ~keep (crawlberg#423). Without a configured rotation list this is exactly
         // ~keep `default_robots_user_agent`, so a non-rotating crawl sees no change.
-        let user_agent = self.engine.choose_request_user_agent();
+        let user_agent = self.engine.choose_request_user_agent(&parsed);
         let origin = RobotsCacheKey::new(&parsed, &user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         let outcome = match self.robots_refusal(&origin, &parsed, url, &user_agent).await {
@@ -418,7 +418,7 @@ impl crate::http::HopPolicy for RedirectPolicy<'_> {
             Err(refusal) => Some(refusal),
             Ok(parsed) => {
                 let engine = self.engine;
-                let user_agent = crate::helpers::default_robots_user_agent(&engine.config);
+                let user_agent = crate::helpers::default_robots_user_agent(&engine.config, &parsed);
                 let origin = RobotsCacheKey::new(&parsed, user_agent);
                 match self.robots_refusal(&origin, &parsed, url.as_str(), user_agent).await {
                     Err(refusal) => Some(refusal),
@@ -482,7 +482,7 @@ async fn resolve_robots_outcome_with_limiter(
     }
     // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
     // ~keep would hand it to the next crawl of the same origin.
-    if crate::net::credentials::is_credentialed(&engine.config, parsed) {
+    if crate::net::credentials::may_send_scoped_headers(&engine.config) {
         return Arc::new(fetch().await);
     }
     let key = RobotsCacheKey::new(parsed, agent);
@@ -1134,6 +1134,58 @@ mod tests {
             cookies.is_empty(),
             "an intervening HTTP hop must prevent Auto mode from reviving the prior browser jar"
         );
+    }
+
+    #[tokio::test]
+    async fn custom_headers_bypass_shared_robots_cache_while_anonymous_requests_reuse_it() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut observed_cases = 0;
+        let mut observed_requests = 0;
+        for custom in [false, true] {
+            let site = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/robots.txt"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("User-agent: *\nDisallow:\n"))
+                .mount(&site)
+                .await;
+            let seed = Url::parse(&site.uri()).expect("seed URL");
+            let mut config = crate::types::CrawlConfig {
+                respect_robots_txt: true,
+                rate_limit_ms: Some(0),
+                ..Default::default()
+            };
+            config.ssrf.deny_private = false;
+            config.ssrf_deny_private_explicit = Some(false);
+            if custom {
+                config
+                    .custom_headers
+                    .insert("X-Access-Value".to_owned(), "synthetic-secret".to_owned());
+            }
+            let mut engine = CrawlEngine::builder().config(config).build().expect("engine");
+            engine.config.credential_scope = crate::net::CredentialScope::for_seed(&seed, None);
+            let client = crate::http::build_client(&engine.config).expect("HTTP client");
+            for _ in 0..2 {
+                let outcome = resolve_robots_outcome(&engine, &client, &seed, seed.as_str(), "PublicAgent").await;
+                assert!(outcome.disallow_all_reason().is_none());
+            }
+            let requests = site.received_requests().await.expect("received requests");
+            assert_eq!(requests.len(), if custom { 2 } else { 1 });
+            for request in &requests {
+                assert_eq!(
+                    request
+                        .headers
+                        .get("x-access-value")
+                        .map(|v| v.to_str().expect("header value")),
+                    custom.then_some("synthetic-secret")
+                );
+            }
+            observed_cases += 1;
+            observed_requests += requests.len();
+        }
+        assert_eq!(observed_cases, 2);
+        assert_eq!(observed_requests, 3);
     }
 
     const MAX_REDIRECTS: usize = 5;
@@ -2005,3 +2057,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "redirect_header_tests.rs"]
+mod header_redirect_tests;

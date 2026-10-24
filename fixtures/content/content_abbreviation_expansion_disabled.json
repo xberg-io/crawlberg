@@ -1,0 +1,38 @@
+{
+	"id": "content_abbreviation_expansion_disabled",
+	"description": "Disabling abbreviation expansion keeps tooltip titles out of page text",
+	"docs": {
+		"topic": "content",
+		"stem": "content-abbreviation-expansion-disabled",
+		"title": "Disabling abbreviation expansion keeps tooltip titles out of page text"
+	},
+	"tags": [
+		"content",
+		"regression"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<p>The <abbr title=\"World Health Organization\">WHO</abbr> said so.</p>"
+			}
+		],
+		"config": {
+			"respect_robots_txt": false,
+			"content": {
+				"extract_metadata": false,
+				"expand_abbreviations": false
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "markdown.content",
+			"value": "The WHO said so.\n"
+		}
+	]
+}

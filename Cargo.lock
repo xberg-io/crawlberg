@@ -178,7 +178,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -189,7 +189,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -416,7 +416,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-harness"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "ahash",
  "async-trait",
@@ -496,7 +496,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.3",
  "shlex 2.0.1",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1312,14 +1312,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bindings-common"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
 ]
 
 [[package]]
 name = "crawlberg-browser"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bypass"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "async-trait",
  "crawlberg",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-cli"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "clap",
  "crawlberg",
@@ -1415,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-dart"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
  "flutter_rust_bridge",
@@ -1426,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-ffi"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "ahash",
  "cbindgen",
@@ -1440,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-jni"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-node"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
  "futures-util",
@@ -1467,7 +1467,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-php"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
  "ext-php-rs",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-py"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1492,11 +1492,11 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.12.1"
+version = "1.12.2"
 
 [[package]]
 name = "crawlberg-swift"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-wasm"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1643,7 +1643,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2009,7 +2009,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2131,7 +2131,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2189,9 +2189,9 @@ checksum = "efa29f09b08e644d5dc1e76a318f758afc9dccbe92ccf84b4778e0433a78eecc"
 
 [[package]]
 name = "fancy-regex"
-version = "0.19.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+checksum = "20ed7f62ce0ae0da1a8b93c3c7104ab7e0760a74491e097c701fff966e945390"
 dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
@@ -3409,9 +3409,9 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "liter-llm"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5f9f824cdcdc30166e374c848c8ef718f463a1a7561ed1daaa87d6522cb2d24"
+checksum = "df6a21569073eeeae3ea1d26441c521f373d454fa141bdab6b0140fc0e85af46"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3422,6 +3422,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "gcp_auth",
+ "getrandom 0.3.4",
  "hex",
  "http",
  "httpdate",
@@ -3446,6 +3447,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "url",
+ "web-time",
 ]
 
 [[package]]
@@ -3785,7 +3787,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4553,7 +4555,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.3",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4592,9 +4594,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5003,7 +5005,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5062,7 +5064,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5524,7 +5526,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5865,10 +5867,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6943,7 +6945,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

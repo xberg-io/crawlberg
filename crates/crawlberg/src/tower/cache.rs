@@ -843,6 +843,55 @@ mod tests {
         );
     }
 
+    fn scoped_custom_header_config() -> Arc<CrawlConfig> {
+        let seed = url::Url::parse("http://a.com").expect("seed URL");
+        Arc::new(CrawlConfig {
+            custom_headers: [("X-Access-Value".to_owned(), "synthetic-secret".to_owned())].into(),
+            credential_scope: crate::net::credentials::CredentialScope::for_seed(&seed, None),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn custom_header_requests_do_not_read_a_shared_cached_response() {
+        let cache = RecordingCache::default();
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut public = CrawlCacheLayer::new(Arc::new(cache.clone())).layer(CountingService(counter.clone()));
+        public
+            .call(CrawlRequest::new("http://a.com"))
+            .await
+            .expect("cache warmup");
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(cache.has("http://a.com").await.expect("warm cache"));
+        let mut private = CrawlCacheLayer::new(Arc::new(cache))
+            .bypassing_credentials(scoped_custom_header_config())
+            .layer(CountingService(counter.clone()));
+
+        private
+            .call(CrawlRequest::new("http://a.com"))
+            .await
+            .expect("private request");
+
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn custom_header_requests_do_not_write_a_shared_cached_response() {
+        let cache = RecordingCache::default();
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut private = CrawlCacheLayer::new(Arc::new(cache.clone()))
+            .bypassing_credentials(scoped_custom_header_config())
+            .layer(CountingService(counter.clone()));
+
+        private
+            .call(CrawlRequest::new("http://a.com"))
+            .await
+            .expect("private request");
+
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(!cache.has("http://a.com").await.expect("cache lookup"));
+    }
+
     #[tokio::test]
     async fn test_noop_cache_always_forwards() {
         let layer = CrawlCacheLayer::new(std::sync::Arc::new(NoopCache));

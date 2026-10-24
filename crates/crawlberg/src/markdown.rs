@@ -79,6 +79,9 @@ fn conversion_options(
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
         strip_newlines: config.strip_newlines,
+        expand_abbreviations: config.expand_abbreviations,
+        escape_misc: config.escape_misc,
+        escape_asterisks: config.escape_asterisks,
         bullets: config.bullets.clone(),
         list_indent_width: config.list_indent_width,
         strong_em_symbol: strong_em_symbol(&config.strong_em_symbol)?,
@@ -98,6 +101,11 @@ fn convert_html_to_markdown(
     config: &ContentConfig,
 ) -> Result<MarkdownResult, ConversionError> {
     let (html, effective_base) = crate::html::sanitize_url_attributes(html, page_scan, document_url);
+    let html = if config.include_icon_labels {
+        html
+    } else {
+        std::borrow::Cow::Owned(crate::html::omit_linked_icon_labels(&html).into_owned())
+    };
     let structure_base = effective_base.as_ref().unwrap_or(document_url);
     let options = conversion_options(config, document_url)?;
 
@@ -1167,5 +1175,233 @@ mod tests {
         )
         .await;
         assert_eq!(md, "![a](https://example.com/docs/a,)\n");
+    }
+    fn linked_icon_cases() -> [(&'static str, &'static str, &'static str); 3] {
+        [
+            (
+                concat!(
+                    r#"<p><span><a href="https://example.com/v" title="Minimum version"><span>"#,
+                    r#"<svg width="16" height="16" viewBox="0 0 16 16"><path d="M0 0h16v16z"></path></svg>"#,
+                    r#"</span></a></span><span><a href="https://example.com/c">0.2.0</a></span> rest</p>"#
+                ),
+                "[Minimum version](https://example.com/v \"Minimum version\")[0.2.0](https://example.com/c) rest\n",
+                "[](https://example.com/v)[0.2.0](https://example.com/c) rest\n",
+            ),
+            (
+                concat!(
+                    r#"<p>alpha <a href="https://example.com/h" aria-label="View commit history for this file.">"#,
+                    r#"<svg width="16" height="16"><path d="M0 0h16v16z"></path></svg></a> omega</p>"#
+                ),
+                "alpha [View commit history for this file.](https://example.com/h) omega\n",
+                "alpha [](https://example.com/h) omega\n",
+            ),
+            (
+                concat!(
+                    r#"<p>see <a href="https://example.com/x">GitHub"#,
+                    r#"<svg aria-label="(opens in new tab)" width="13" height="13">"#,
+                    r##"<use href="#ext"></use></svg></a> now</p>"##
+                ),
+                "see [GitHub (opens in new tab)](https://example.com/x) now\n",
+                "see [GitHub](https://example.com/x) now\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn should_omit_icon_names_only_when_the_content_option_is_disabled() {
+        for (html, with_names, without_names) in linked_icon_cases() {
+            for (include_icon_labels, expected) in [(true, with_names), (false, without_names)] {
+                let config = ContentConfig {
+                    include_icon_labels,
+                    keep_hidden: true,
+                    remove_navigation: false,
+                    ..ContentConfig::default()
+                };
+                let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert report input");
+                assert_eq!(result.content, expected, "include_icon_labels={include_icon_labels}");
+                assert!(!result.content.contains("data:"), "inline payload must stay omitted");
+            }
+        }
+    }
+
+    #[test]
+    fn should_preserve_the_space_of_each_whitespace_only_link() {
+        for whitespace in [" ", "&nbsp;", "\n", "\t"] {
+            let html = format!("<p>alpha<a href=\"https://example.com/x\"><span>{whitespace}</span></a>omega</p>");
+            let result = convert_html_to_markdown(&html, None, &page(), &ContentConfig::default())
+                .expect("convert whitespace-only link");
+            assert_eq!(
+                result.content, "alpha [](https://example.com/x)omega\n",
+                "input={whitespace:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_not_invent_a_url_label_for_an_icon_in_an_inline_wrapper() {
+        for wrapper in ["span", "b", "em", "strong"] {
+            let html = format!(
+                "<p>alpha<a href=\"https://example.com/x\" title=\"Icon\"><{wrapper}>\
+                 <svg><path/></svg></{wrapper}></a>omega</p>"
+            );
+            let config = ContentConfig {
+                include_icon_labels: false,
+                ..ContentConfig::default()
+            };
+            let result = convert_html_to_markdown(&html, None, &page(), &config).expect("convert wrapped icon");
+            assert_eq!(
+                result.content, "alpha[](https://example.com/x)omega\n",
+                "wrapper={wrapper}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_keep_all_released_icon_names_by_default() {
+        let config = ContentConfig {
+            keep_hidden: true,
+            remove_navigation: false,
+            ..ContentConfig::default()
+        };
+        assert!(config.include_icon_labels);
+        for (html, expected, _) in linked_icon_cases() {
+            let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert default icon input");
+            assert_eq!(result.content, expected);
+        }
+    }
+    fn icon_ordinary_control_cases() -> [(&'static str, &'static str); 5] {
+        [
+            (
+                "<p><a href=\"https://example.com/x\" title=\"Tooltip\" aria-label=\"Accessible\">GitHub</a></p>",
+                "[GitHub](https://example.com/x \"Tooltip\")\n",
+            ),
+            (
+                concat!(
+                    "<p><a href=\"https://example.com/x\" title=\"Logo\"><img src=\"https://example.com/logo.pn",
+                    "g\" alt=\"Logo\"></a></p>",
+                ),
+                "[![Logo](https://example.com/logo.png)](https://example.com/x \"Logo\")\n",
+            ),
+            (
+                "<p><a href=\"https://example.com/x\" title=\"Graph\"><svg><text>12 kg</text></svg></a></p>",
+                "[12 kg](https://example.com/x \"Graph\")\n",
+            ),
+            (
+                "<p><svg aria-label=\"Diagram\"><title>Diagram</title><path/></svg></p>",
+                "Diagram\n",
+            ),
+            (
+                "<p><a href=\"https://example.com/x\" aria-label=\"Menu\"></a></p>",
+                "[Menu](https://example.com/x)\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn should_preserve_ordinary_content_when_icon_names_are_disabled() {
+        let config = ContentConfig {
+            include_icon_labels: false,
+            keep_hidden: true,
+            remove_navigation: false,
+            ..ContentConfig::default()
+        };
+        for (html, expected) in icon_ordinary_control_cases() {
+            let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert icon control");
+            assert_eq!(result.content, expected, "input={html}");
+        }
+    }
+
+    fn icon_markup_control_cases() -> [(&'static str, &'static str); 5] {
+        [
+            (
+                concat!(
+                    "<script>const x = '<a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></svg></a",
+                    ">';</script><p>keep</p>",
+                ),
+                "keep\n",
+            ),
+            (
+                "<textarea><a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></svg></a></textarea>",
+                "<a href=\"https://example.com/x\" title=\"Icon\"><svg><path /></svg></a>\n",
+            ),
+            (
+                concat!(
+                    "<svg><![CDATA[<a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></svg></a>]]><",
+                    "/svg><p>keep</p>",
+                ),
+                "keep\n",
+            ),
+            (
+                "<p><a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></a></svg>tail</p>",
+                "[Icon](https://example.com/x \"Icon\")tail\n",
+            ),
+            (
+                "<p><A HREF=\"https://example.com/x\" TITLE=\"Icon\"><B><SVG><PATH/></SVG></B></A></p>",
+                "[](https://example.com/x)\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn should_preserve_markup_content_when_icon_names_are_disabled() {
+        let config = ContentConfig {
+            include_icon_labels: false,
+            keep_hidden: true,
+            remove_navigation: false,
+            ..ContentConfig::default()
+        };
+        for (html, expected) in icon_markup_control_cases() {
+            let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert icon control");
+            assert_eq!(result.content, expected, "input={html}");
+        }
+    }
+
+    #[test]
+    fn should_not_use_a_hidden_sibling_to_keep_an_icon_label() {
+        let html = concat!(
+            r#"<p>alpha <a href="https://example.com/x" title="Icon"><span hidden>Hidden</span>"#,
+            "<svg><path></path></svg></a> omega</p>"
+        );
+        let config = ContentConfig {
+            include_icon_labels: false,
+            ..ContentConfig::default()
+        };
+        let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert hidden icon sibling");
+        assert_eq!(result.content, "alpha [](https://example.com/x) omega\n");
+    }
+
+    #[test]
+    fn should_keep_image_alt_text_when_omitting_the_adjacent_icon_and_its_tooltip() {
+        let html = concat!(
+            r#"<p><a href="https://example.com/x" title="Logo"><svg><path/></svg>"#,
+            r#"<img src="https://example.com/logo.png" alt="Logo"></a></p>"#
+        );
+        let config = ContentConfig {
+            include_icon_labels: false,
+            ..ContentConfig::default()
+        };
+        let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert image beside icon");
+        assert_eq!(
+            result.content,
+            "[![Logo](https://example.com/logo.png)](https://example.com/x)\n"
+        );
+    }
+
+    #[test]
+    fn should_omit_a_self_closing_icon_without_changing_adjacent_unicode_text() {
+        let html = concat!(
+            r##"<p>α<a href="https://example.com/x" title="Icon"><svg data-note="a/>b">"##,
+            r##"<path/><use href="#x"/></svg></a>中"##,
+            r#"<a href="https://example.com/y" title="Next"><svg/></a>ω</p>"#
+        );
+        let config = ContentConfig {
+            include_icon_labels: false,
+            ..ContentConfig::default()
+        };
+        let result = convert_html_to_markdown(html, None, &page(), &config).expect("convert Unicode icon boundaries");
+        assert_eq!(
+            result.content,
+            "α[](https://example.com/x)中[](https://example.com/y)ω\n"
+        );
     }
 }

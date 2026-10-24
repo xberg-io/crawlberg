@@ -124,6 +124,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
     caller
         .custom_headers
         .insert("x-caller-key".to_owned(), "caller-secret".to_owned());
+    caller.subdomain_header_allowlist = vec!["X-Caller-Public".to_owned()];
 
     let mut operator = CrawlConfig {
         auth: Some(AuthConfig::Bearer {
@@ -157,6 +158,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
     operator
         .custom_headers
         .insert("x-operator-key".to_owned(), "operator-secret".to_owned());
+    operator.subdomain_header_allowlist = vec!["X-Operator-Public".to_owned()];
 
     caller.adopt_operator_egress(&operator);
 
@@ -186,6 +188,7 @@ fn should_adopt_every_serializable_operator_owned_field() {
         caller.custom_headers,
         [("x-caller-key".to_owned(), "caller-secret".to_owned())].into()
     );
+    assert_eq!(caller.subdomain_header_allowlist, ["X-Caller-Public"]);
     match caller.auth {
         Some(AuthConfig::Bearer { token }) => assert_eq!(token, "caller-token"),
         other => panic!("caller authentication must be retained, got {other:?}"),
@@ -286,6 +289,7 @@ fn adding_a_config_field_requires_an_explicit_trust_classification() {
         strip_tracking_params: _,
         tracking_params: _,
         custom_headers: _,
+        subdomain_header_allowlist: _,
         request_timeout: _,
         rate_limit_ms: _,
         max_redirects: _,

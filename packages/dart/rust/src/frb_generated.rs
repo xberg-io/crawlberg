@@ -1979,6 +1979,10 @@ const _: fn() = || {
         let _: bool = ContentConfig.compact_tables;
         let _: Vec<String> = ContentConfig.keep_inline_images_in;
         let _: bool = ContentConfig.keep_hidden;
+        let _: bool = ContentConfig.expand_abbreviations;
+        let _: bool = ContentConfig.escape_misc;
+        let _: bool = ContentConfig.escape_asterisks;
+        let _: bool = ContentConfig.include_icon_labels;
     }
     {
         let CookieInfo = None::<crate::CookieInfo>.unwrap();
@@ -2045,6 +2049,7 @@ const _: fn() = || {
         let _: crate::SsrfPolicy = CrawlConfig.ssrf;
         let _: Option<bool> = CrawlConfig.ssrf_deny_private_explicit;
         let _: bool = CrawlConfig.danger_accept_invalid_certs;
+        let _: Vec<String> = CrawlConfig.subdomain_header_allowlist;
     }
     match None::<crate::CrawlError>.unwrap() {
         crate::CrawlError::NotFound { message } => {
@@ -2948,6 +2953,10 @@ impl SseDecode for crate::ContentConfig {
         let mut var_compactTables = <bool>::sse_decode(deserializer);
         let mut var_keepInlineImagesIn = <Vec<String>>::sse_decode(deserializer);
         let mut var_keepHidden = <bool>::sse_decode(deserializer);
+        let mut var_expandAbbreviations = <bool>::sse_decode(deserializer);
+        let mut var_escapeMisc = <bool>::sse_decode(deserializer);
+        let mut var_escapeAsterisks = <bool>::sse_decode(deserializer);
+        let mut var_includeIconLabels = <bool>::sse_decode(deserializer);
         return crate::ContentConfig {
             output_format: var_outputFormat,
             preprocessing_preset: var_preprocessingPreset,
@@ -2969,6 +2978,10 @@ impl SseDecode for crate::ContentConfig {
             compact_tables: var_compactTables,
             keep_inline_images_in: var_keepInlineImagesIn,
             keep_hidden: var_keepHidden,
+            expand_abbreviations: var_expandAbbreviations,
+            escape_misc: var_escapeMisc,
+            escape_asterisks: var_escapeAsterisks,
+            include_icon_labels: var_includeIconLabels,
         };
     }
 }
@@ -3059,6 +3072,7 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_ssrf = <crate::SsrfPolicy>::sse_decode(deserializer);
         let mut var_ssrfDenyPrivateExplicit = <Option<bool>>::sse_decode(deserializer);
         let mut var_dangerAcceptInvalidCerts = <bool>::sse_decode(deserializer);
+        let mut var_subdomainHeaderAllowlist = <Vec<String>>::sse_decode(deserializer);
         return crate::CrawlConfig {
             max_depth: var_maxDepth,
             max_pages: var_maxPages,
@@ -3116,6 +3130,7 @@ impl SseDecode for crate::CrawlConfig {
             ssrf: var_ssrf,
             ssrf_deny_private_explicit: var_ssrfDenyPrivateExplicit,
             danger_accept_invalid_certs: var_dangerAcceptInvalidCerts,
+            subdomain_header_allowlist: var_subdomainHeaderAllowlist,
         };
     }
 }
@@ -5150,6 +5165,10 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.compact_tables.into_into_dart().into_dart(),
             self.0.keep_inline_images_in.into_into_dart().into_dart(),
             self.0.keep_hidden.into_into_dart().into_dart(),
+            self.0.expand_abbreviations.into_into_dart().into_dart(),
+            self.0.escape_misc.into_into_dart().into_dart(),
+            self.0.escape_asterisks.into_into_dart().into_dart(),
+            self.0.include_icon_labels.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5253,6 +5272,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.ssrf.into_into_dart().into_dart(),
             self.0.ssrf_deny_private_explicit.into_into_dart().into_dart(),
             self.0.danger_accept_invalid_certs.into_into_dart().into_dart(),
+            self.0.subdomain_header_allowlist.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6493,6 +6513,10 @@ impl SseEncode for crate::ContentConfig {
         <bool>::sse_encode(self.compact_tables, serializer);
         <Vec<String>>::sse_encode(self.keep_inline_images_in, serializer);
         <bool>::sse_encode(self.keep_hidden, serializer);
+        <bool>::sse_encode(self.expand_abbreviations, serializer);
+        <bool>::sse_encode(self.escape_misc, serializer);
+        <bool>::sse_encode(self.escape_asterisks, serializer);
+        <bool>::sse_encode(self.include_icon_labels, serializer);
     }
 }
 
@@ -6580,6 +6604,7 @@ impl SseEncode for crate::CrawlConfig {
         <crate::SsrfPolicy>::sse_encode(self.ssrf, serializer);
         <Option<bool>>::sse_encode(self.ssrf_deny_private_explicit, serializer);
         <bool>::sse_encode(self.danger_accept_invalid_certs, serializer);
+        <Vec<String>>::sse_encode(self.subdomain_header_allowlist, serializer);
     }
 }
 

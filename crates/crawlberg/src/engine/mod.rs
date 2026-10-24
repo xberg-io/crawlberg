@@ -235,14 +235,13 @@ impl CrawlEngine {
     /// never a rotated pick -- so robots decisions for it must judge that same agent, not one
     /// the browser will never send (crawlberg#423). wasm32 has no browser tier, so there every
     /// request takes the rotation pick (crawlberg#483).
-    pub(crate) fn choose_request_user_agent(&self) -> String {
+    pub(crate) fn choose_request_user_agent(&self, url: &url::Url) -> String {
         #[cfg(not(target_arch = "wasm32"))]
         if self.request_will_use_browser() {
-            return crate::helpers::default_robots_user_agent(&self.config).to_owned();
+            return crate::helpers::default_robots_user_agent(&self.config, url).to_owned();
         }
-        self.ua_rotation
-            .choose_next()
-            .unwrap_or_else(|| crate::helpers::default_robots_user_agent(&self.config).to_owned())
+        let selected = self.ua_rotation.choose_next();
+        crate::helpers::request_user_agent(&self.config, url, selected.as_deref()).to_owned()
     }
 
     /// Execute browser actions on a single page.

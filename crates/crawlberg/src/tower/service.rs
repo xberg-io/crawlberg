@@ -60,15 +60,10 @@ impl HttpFetchService {
 /// layer upstream of this service. Callers that need to judge robots rules against the agent a
 /// request actually sent (crawlberg#423) must read this same value back off the response
 /// (`CrawlResponse::sent_user_agent`) rather than recomputing the engine's configured default.
-fn resolved_user_agent(config: &CrawlConfig, crawl_req: &CrawlRequest) -> String {
-    crawl_req
-        .headers
-        .get("user-agent")
-        .cloned()
-        .unwrap_or_else(|| crate::helpers::default_robots_user_agent(config).to_owned())
+fn resolved_user_agent(config: &CrawlConfig, crawl_req: &CrawlRequest, url: &url::Url) -> String {
+    crate::helpers::request_user_agent(config, url, crawl_req.headers.get("user-agent").map(String::as_str)).to_owned()
 }
 
-/// Helper to apply auth and custom headers to a request builder.
 fn apply_headers(
     mut req: reqwest::RequestBuilder,
     config: &CrawlConfig,
@@ -76,12 +71,10 @@ fn apply_headers(
     url: &url::Url,
     sent_user_agent: &str,
 ) -> reqwest::RequestBuilder {
-    if !crawl_req.headers.contains_key("user-agent") {
-        req = req.header(reqwest::header::USER_AGENT, sent_user_agent);
-    }
+    req = req.header(reqwest::header::USER_AGENT, sent_user_agent);
 
     // ~keep A `user-agent` custom header is already reflected in `sent_user_agent`
-    // (`default_robots_user_agent` reads it, crawlberg#423), which the branch above already
+    // (`request_user_agent` scopes it, crawlberg#423), which the line above already
     // set on the request; re-adding it here would append a second, redundant `User-Agent`
     // header line rather than replacing the first one.
     for (name, value) in seed_host_headers(config, url) {
@@ -92,7 +85,9 @@ fn apply_headers(
     }
 
     for (k, v) in &crawl_req.headers {
-        req = req.header(k.as_str(), v.as_str());
+        if !k.eq_ignore_ascii_case("user-agent") {
+            req = req.header(k.as_str(), v.as_str());
+        }
     }
 
     req
@@ -258,7 +253,7 @@ async fn do_fetch(service: &HttpFetchService, req: &CrawlRequest) -> Result<Craw
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
-    let sent_user_agent = resolved_user_agent(config, req);
+    let sent_user_agent = resolved_user_agent(config, req, &url);
     let client = crate::http::request_client(client, config, &url)?;
     let http_req = apply_headers(client.get(url.to_string()), config, req, &url, &sent_user_agent);
     #[cfg(feature = "browser-native")]

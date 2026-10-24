@@ -1,0 +1,39 @@
+{
+	"id": "content_markdown_literal_escaping",
+	"description": "Literal Markdown punctuation is escaped while converted emphasis and code stay formatted",
+	"docs": {
+		"topic": "content",
+		"stem": "content-markdown-literal-escaping",
+		"title": "Literal Markdown punctuation is escaped while converted emphasis and code stay formatted"
+	},
+	"tags": [
+		"content",
+		"regression"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<p>I`am [beta](gamma) 350*250 <em>emphasis</em> <code>code</code></p>"
+			}
+		],
+		"config": {
+			"respect_robots_txt": false,
+			"content": {
+				"extract_metadata": false,
+				"escape_misc": true,
+				"escape_asterisks": true
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "markdown.content",
+			"value": "I\\`am \\[beta\\](gamma) 350\\*250 *emphasis* `code`\n"
+		}
+	]
+}

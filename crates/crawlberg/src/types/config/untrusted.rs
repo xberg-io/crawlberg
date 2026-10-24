@@ -49,7 +49,8 @@ pub fn reject_untrusted_fields(value: &Value) -> Result<(), CrawlError> {
 impl CrawlConfig {
     /// Replace every egress, browser-launch, and filesystem-output setting with operator policy.
     ///
-    /// Caller-owned request credentials (`auth` and `custom_headers`) are intentionally retained:
+    /// Caller-owned credentials and header policy (`auth`, `custom_headers`, and
+    /// `subdomain_header_allowlist`) are intentionally retained:
     /// they authenticate to the selected target but do not select a target, proxy, executable, or
     /// output path. Call this after deserializing caller input and before constructing an engine.
     #[cfg_attr(alef, alef(skip))]

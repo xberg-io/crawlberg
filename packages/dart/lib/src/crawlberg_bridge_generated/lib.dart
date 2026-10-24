@@ -1028,6 +1028,18 @@ class ContentConfig {
   /// Scripts and styles remain excluded; explicit exclusions and image settings still apply.
   final bool keepHidden;
 
+  /// Append abbreviation titles in parentheses. Default: `true`.
+  final bool expandAbbreviations;
+
+  /// Escape literal Markdown metacharacters such as backticks and brackets. Default: `false`.
+  final bool escapeMisc;
+
+  /// Escape literal asterisks in text. Default: `false`.
+  final bool escapeAsterisks;
+
+  /// Include names and anchor tooltips of decorative linked SVG icons. Default: `true`.
+  final bool includeIconLabels;
+
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -1049,6 +1061,10 @@ class ContentConfig {
     this.compactTables = false,
     this.keepInlineImagesIn = const [],
     this.keepHidden = false,
+    this.expandAbbreviations = true,
+    this.escapeMisc = false,
+    this.escapeAsterisks = false,
+    this.includeIconLabels = true,
   });
 
   @override
@@ -1072,7 +1088,11 @@ class ContentConfig {
       strongEmSymbol.hashCode ^
       compactTables.hashCode ^
       keepInlineImagesIn.hashCode ^
-      keepHidden.hashCode;
+      keepHidden.hashCode ^
+      expandAbbreviations.hashCode ^
+      escapeMisc.hashCode ^
+      escapeAsterisks.hashCode ^
+      includeIconLabels.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1098,7 +1118,11 @@ class ContentConfig {
           strongEmSymbol == other.strongEmSymbol &&
           compactTables == other.compactTables &&
           keepInlineImagesIn == other.keepInlineImagesIn &&
-          keepHidden == other.keepHidden;
+          keepHidden == other.keepHidden &&
+          expandAbbreviations == other.expandAbbreviations &&
+          escapeMisc == other.escapeMisc &&
+          escapeAsterisks == other.escapeAsterisks &&
+          includeIconLabels == other.includeIconLabels;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.
@@ -1256,17 +1280,9 @@ class CrawlConfig {
   /// enabled.
   final List<String> trackingParams;
 
-  /// Custom HTTP headers to send with each request to the seed URL's host. With
-  /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries the
-  /// non-credential headers too, whatever its scheme or port. Credential headers stay with the
-  /// seed host: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
-  /// `X-Amz-Security-Token`, `Authentication-Info`, the header [`Self::auth`] names, and any
-  /// header whose name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`,
-  /// `xsrf`, `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`,
-  /// `otp`, `assertion`, `hmac`, `private`, `sso` or `sig`. A secret in a header whose name
-  /// matches none of these reaches subdomains, so name secret headers recognisably. A request
-  /// to any other host does not carry any of them. Subdomain forwarding applies to the HTTP and
-  /// chromiumoxide backends; the native browser backend sends them to the seed host only.
+  /// Custom HTTP headers sent only to the seed URL's host by default, on any scheme or port.
+  /// Explicitly authorize individual headers for admitted subdomains with
+  /// [`Self::subdomain_header_allowlist`]. Other hosts never receive these headers.
   final Map<String, String> customHeaders;
 
   /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -1448,6 +1464,13 @@ class CrawlConfig {
   /// implementation controls certificate validation.
   final bool dangerAcceptInvalidCerts;
 
+  /// Custom header names explicitly authorized for proper subdomains when
+  /// [`Self::allow_subdomains`] is true. Empty by default; names match case-insensitively.
+  /// Authorization, cookies, other standard credential headers, and the header named by
+  /// [`Self::auth`] remain seed-host-only even when listed. HTTP and Chromiumoxide honor
+  /// this opt-in; the native browser backend keeps every custom header seed-host-only.
+  final List<String> subdomainHeaderAllowlist;
+
   const CrawlConfig({
     this.maxDepth,
     this.maxPages,
@@ -1505,6 +1528,7 @@ class CrawlConfig {
     required this.ssrf,
     this.ssrfDenyPrivateExplicit,
     this.dangerAcceptInvalidCerts = false,
+    this.subdomainHeaderAllowlist = const [],
   });
 
   @override
@@ -1564,7 +1588,8 @@ class CrawlConfig {
       saveBrowserProfile.hashCode ^
       ssrf.hashCode ^
       ssrfDenyPrivateExplicit.hashCode ^
-      dangerAcceptInvalidCerts.hashCode;
+      dangerAcceptInvalidCerts.hashCode ^
+      subdomainHeaderAllowlist.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1626,7 +1651,8 @@ class CrawlConfig {
           saveBrowserProfile == other.saveBrowserProfile &&
           ssrf == other.ssrf &&
           ssrfDenyPrivateExplicit == other.ssrfDenyPrivateExplicit &&
-          dangerAcceptInvalidCerts == other.dangerAcceptInvalidCerts;
+          dangerAcceptInvalidCerts == other.dangerAcceptInvalidCerts &&
+          subdomainHeaderAllowlist == other.subdomainHeaderAllowlist;
 }
 
 @freezed

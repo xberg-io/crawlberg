@@ -34,6 +34,7 @@ impl std::fmt::Debug for CrawlConfig {
             strip_tracking_params,
             tracking_params,
             custom_headers,
+            subdomain_header_allowlist,
             request_timeout,
             rate_limit_ms,
             max_redirects,
@@ -101,6 +102,7 @@ impl std::fmt::Debug for CrawlConfig {
         debug.field("strip_tracking_params", strip_tracking_params);
         debug.field("tracking_params", tracking_params);
         debug.field("custom_headers", &crate::net::redact::RedactedValues(custom_headers));
+        debug.field("subdomain_header_allowlist", subdomain_header_allowlist);
         debug.field("request_timeout", request_timeout);
         debug.field("rate_limit_ms", rate_limit_ms);
         debug.field("max_redirects", max_redirects);

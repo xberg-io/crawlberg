@@ -62,7 +62,7 @@ async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Resu
             crate::net::redact_url_credentials(url)
         )));
     };
-    let agent = crate::helpers::default_robots_user_agent(&engine.config);
+    let agent = crate::helpers::default_robots_user_agent(&engine.config, &parsed);
     let client = crate::http::build_client(&engine.config)?;
     let outcome = super::redirect::resolve_robots_outcome(engine, &client, &parsed, url, agent).await;
     Ok(super::redirect::robots_block_reason(&outcome, &parsed))

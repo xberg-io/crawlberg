@@ -953,3 +953,29 @@ fn wasm_transport_refuses_an_unsupported_certificate_bypass() {
         Err(CrawlError::Unsupported { .. })
     ));
 }
+
+#[test]
+fn subdomain_header_allowlist_defaults_to_empty_and_has_an_explicit_builder() {
+    assert!(CrawlConfig::default().subdomain_header_allowlist.is_empty());
+    let config: CrawlConfig = serde_json::from_str("{}").expect("legacy configuration");
+    assert!(config.subdomain_header_allowlist.is_empty());
+    let config = CrawlConfig::builder()
+        .subdomain_header_allowlist(vec!["Accept-Language".to_owned()])
+        .build();
+    assert_eq!(config.subdomain_header_allowlist, ["Accept-Language"]);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn subdomain_header_allowlist_rejects_invalid_names_without_echoing_them() {
+    for name in ["", "*", "bad name", "Accept: text/html", "X-Test\r\nInjected", "\u{e9}"] {
+        let config = CrawlConfig {
+            subdomain_header_allowlist: vec![name.to_owned()],
+            ..Default::default()
+        };
+        assert_eq!(
+            config.validate().expect_err("invalid header name").to_string(),
+            "invalid_config: subdomain_header_allowlist entries must be valid HTTP header names, without wildcards"
+        );
+    }
+}

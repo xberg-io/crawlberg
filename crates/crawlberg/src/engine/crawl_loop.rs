@@ -1198,8 +1198,10 @@ async fn extract_outcome(
     // ~keep page against the wrong origin.
     let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
-    let robots_user_agent =
-        sent_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(&engine.config).to_owned());
+    let parsed_final_url = Url::parse(&final_url)
+        .map_err(|error| Box::new((entry.clone(), CrawlError::other(format!("invalid final URL: {error}")))))?;
+    let robots_user_agent = sent_user_agent
+        .unwrap_or_else(|| crate::helpers::default_robots_user_agent(&engine.config, &parsed_final_url).to_owned());
     let header_robots =
         crate::scrape::RobotsDirectives::from_header_values(headers.get("x-robots-tag"), &robots_user_agent);
 
@@ -1217,8 +1219,7 @@ async fn extract_outcome(
     .map_err(|e| Box::new((entry.clone(), CrawlError::other(format!("extraction task failed: {e}")))))?;
 
     if !page_ext.is_binary && !page_ext.is_pdf {
-        let document_url = Url::parse(&final_url)
-            .map_err(|error| Box::new((entry.clone(), CrawlError::other(format!("invalid final URL: {error}")))))?;
+        let document_url = parsed_final_url;
         crate::html::append_refresh_header_link(&mut page_ext.extraction.links, &headers, &document_url);
     }
     Ok(FetchOutcome::Fetched(Box::new(FetchResult {

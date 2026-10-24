@@ -5530,22 +5530,35 @@ async fn ssrf_verdict_for_browser(
 /// ~keep again and gets its own decision.
 fn headers_with_seed_host_headers(config: &CrawlConfig, url: &url::Url, headers: &Headers) -> Option<Vec<HeaderEntry>> {
     let added = seed_host_headers(config, url);
-    if added.is_empty() && config.cookies_enabled {
+    let original = headers.inner().as_object();
+    let has_configured = original.is_some_and(|values| {
+        values
+            .keys()
+            .any(|name| crate::net::credentials::is_configured_header(config, name))
+    });
+    if added.is_empty() && config.cookies_enabled && !has_configured {
         return None;
     }
-    let mut entries: Vec<HeaderEntry> = headers
-        .inner()
-        .as_object()
+    let mut entries: Vec<HeaderEntry> = original
         .into_iter()
         .flatten()
-        // ~keep Omission is not a Cookie override: Chrome's network stack adds stored cookies
-        // ~keep afterward. Disabled cookies require an explicit empty Cookie header below.
-        .filter(|(existing, _)| config.cookies_enabled || !existing.eq_ignore_ascii_case("cookie"))
-        .filter(|(existing, _)| !added.iter().any(|(name, _)| existing.eq_ignore_ascii_case(name)))
-        .filter_map(|(existing, value)| value.as_str().map(|value| HeaderEntry::new(existing.clone(), value)))
+        // ~keep A redirected paused request may retain headers injected on the seed request.
+        // ~keep Remove configuration-owned headers before reapplying this target's policy.
+        .filter(|(name, _)| !crate::net::credentials::is_configured_header(config, name))
+        .filter(|(name, _)| config.cookies_enabled || !name.eq_ignore_ascii_case("cookie"))
+        .filter_map(|(name, value)| value.as_str().map(|value| HeaderEntry::new(name.clone(), value)))
         .collect();
     let explicit_cookie = added.iter().any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+    let agent_withheld = !added.iter().any(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        && crate::net::credentials::is_configured_header(config, "user-agent")
+        && original.is_some_and(|values| values.keys().any(|name| name.eq_ignore_ascii_case("user-agent")));
     entries.extend(added.into_iter().map(|(name, value)| HeaderEntry::new(name, value)));
+    if agent_withheld {
+        entries.push(HeaderEntry::new(
+            "User-Agent",
+            crate::helpers::default_robots_user_agent(config, url),
+        ));
+    }
     if !config.cookies_enabled && !explicit_cookie {
         entries.push(HeaderEntry::new("Cookie", ""));
     }
@@ -10443,7 +10456,11 @@ mod tests {
         assert_eq!(custom, vec![&("X-Custom", "configured")], "{pairs:?}");
 
         let other = url::Url::parse("http://other.test/").expect("test URL must parse");
-        assert!(headers_with_seed_host_headers(&config, &other, &headers).is_none());
+        let other_headers = headers_with_seed_host_headers(&config, &other, &headers)
+            .expect("inherited configuration headers must be removed outside the seed host");
+        assert_eq!(other_headers.len(), 1);
+        assert_eq!(other_headers[0].name, "Cookie");
+        assert_eq!(other_headers[0].value, "a=b");
     }
 
     #[test]

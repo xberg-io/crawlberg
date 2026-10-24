@@ -13,6 +13,15 @@
 		"description": {
 			"type": "string"
 		},
+		"preserve_input_urls": {
+			"type": "boolean",
+			"description": "Keep the fixture's input URLs instead of replacing their origin with the mock server."
+		},
+		"test_timeout_ms": {
+			"type": "integer",
+			"minimum": 0,
+			"description": "Timeout for the generated test in milliseconds."
+		},
 		"tags": {
 			"type": "array",
 			"items": { "type": "string" }
@@ -172,6 +181,11 @@
 						"max_concurrent": { "type": "integer" },
 						"rate_limit_ms": { "type": "integer", "minimum": 0 },
 						"custom_headers": { "type": "object", "additionalProperties": { "type": "string" } },
+						"subdomain_header_allowlist": {
+							"type": "array",
+							"items": { "type": "string" },
+							"description": "Custom header names explicitly permitted on admitted subdomains; empty by default. Authentication remains seed-host-only."
+						},
 						"cookies_enabled": { "type": "boolean" },
 						"auth": {
 							"type": "object",
@@ -229,6 +243,22 @@
 							"type": "object",
 							"description": "Content extraction configuration",
 							"properties": {
+								"expand_abbreviations": {
+									"type": "boolean",
+									"description": "Append abbreviation titles in parentheses. Default: true"
+								},
+								"escape_misc": {
+									"type": "boolean",
+									"description": "Escape literal Markdown metacharacters. Default: false"
+								},
+								"include_icon_labels": {
+									"type": "boolean",
+									"description": "Include names and anchor tooltips of decorative linked SVG icons. Default: true"
+								},
+								"escape_asterisks": {
+									"type": "boolean",
+									"description": "Escape literal asterisks in text. Default: false"
+								},
 								"extract_metadata": {
 									"type": "boolean",
 									"description": "Prepend a YAML frontmatter block to markdown.content. Default: true"

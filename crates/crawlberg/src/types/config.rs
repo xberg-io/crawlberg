@@ -131,7 +131,64 @@ pub(crate) use primitives::duration_ms;
         "save_browser_profile",
         "ssrf",
         "ssrf_deny_private_explicit",
-    ])
+    ], constructor_history = [[
+        "max_depth",
+        "max_pages",
+        "max_links_per_page",
+        "max_concurrent",
+        "crawl_strategy",
+        "content_filter",
+        "bm25_query",
+        "bm25_threshold",
+        "respect_robots_txt",
+        "soft_http_errors",
+        "user_agent",
+        "stay_on_domain",
+        "allow_subdomains",
+        "include_paths",
+        "exclude_paths",
+        "path_patterns_match_query",
+        "path_patterns_match_url",
+        "dedup_include_query",
+        "strip_tracking_params",
+        "tracking_params",
+        "custom_headers",
+        "request_timeout",
+        "rate_limit_ms",
+        "max_redirects",
+        "retry_count",
+        "retry_codes",
+        "retry_initial_delay_ms",
+        "retry_max_delay_ms",
+        "rate_limit_jitter_ratio",
+        "cookies_enabled",
+        "auth",
+        "max_body_size",
+        "remove_tags",
+        "content",
+        "map_limit",
+        "map_search",
+        "download_assets",
+        "asset_types",
+        "max_asset_size",
+        "browser",
+        "proxy",
+        "user_agents",
+        "capture_screenshot",
+        "follow_document_urls",
+        "document_url_depth",
+        "download_documents",
+        "document_max_size",
+        "document_mime_types",
+        "document_output_dir",
+        "document_content_encoding",
+        "warc_output",
+        "browser_profile",
+        "save_browser_profile",
+        "ssrf",
+        "ssrf_deny_private_explicit",
+        "danger_accept_invalid_certs",
+    ]])
 )]
 #[serde(deny_unknown_fields, default)]
 pub struct CrawlConfig {
@@ -226,17 +283,9 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request to the seed URL's host. With
-    /// [`Self::allow_subdomains`], a request to a subdomain of the seed host carries the
-    /// non-credential headers too, whatever its scheme or port. Credential headers stay with the
-    /// seed host: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
-    /// `X-Amz-Security-Token`, `Authentication-Info`, the header [`Self::auth`] names, and any
-    /// header whose name contains `auth`, `token`, `key`, `secret`, `session`, `cookie`, `csrf`,
-    /// `xsrf`, `password`, `signature`, `credential`, `passwd`, `pwd`, `pass`, `jwt`, `bearer`,
-    /// `otp`, `assertion`, `hmac`, `private`, `sso` or `sig`. A secret in a header whose name
-    /// matches none of these reaches subdomains, so name secret headers recognisably. A request
-    /// to any other host does not carry any of them. Subdomain forwarding applies to the HTTP and
-    /// chromiumoxide backends; the native browser backend sends them to the seed host only.
+    /// Custom HTTP headers sent only to the seed URL's host by default, on any scheme or port.
+    /// Explicitly authorize individual headers for admitted subdomains with
+    /// [`Self::subdomain_header_allowlist`]. Other hosts never receive these headers.
     #[serde(default)]
     #[cfg_attr(alef, alef(sensitive))]
     pub custom_headers: HashMap<String, String>,
@@ -455,6 +504,13 @@ pub struct CrawlConfig {
     /// implementation controls certificate validation.
     #[serde(default)]
     pub danger_accept_invalid_certs: bool,
+    /// Custom header names explicitly authorized for proper subdomains when
+    /// [`Self::allow_subdomains`] is true. Empty by default; names match case-insensitively.
+    /// Authorization, cookies, other standard credential headers, and the header named by
+    /// [`Self::auth`] remain seed-host-only even when listed. HTTP and Chromiumoxide honor
+    /// this opt-in; the native browser backend keeps every custom header seed-host-only.
+    #[serde(default)]
+    pub subdomain_header_allowlist: Vec<String>,
 }
 
 impl Default for CrawlConfig {
@@ -482,6 +538,7 @@ impl Default for CrawlConfig {
             strip_tracking_params: false,
             tracking_params: default_tracking_params(),
             custom_headers: HashMap::new(),
+            subdomain_header_allowlist: Vec::new(),
             request_timeout: Duration::from_secs(30),
             rate_limit_ms: None,
             max_redirects: 10,
@@ -564,6 +621,7 @@ impl CrawlConfig {
         self.validate_browser_endpoint()?;
         self.validate_browser_launch()?;
         self.validate_content_formatting()?;
+        self.validate_subdomain_header_allowlist()?;
         #[cfg(target_arch = "wasm32")]
         self.validate_wasm_transport()?;
         Ok(())
@@ -703,6 +761,17 @@ impl CrawlConfig {
             ),
             _ => Ok(()),
         }
+    }
+
+    fn validate_subdomain_header_allowlist(&self) -> Result<(), CrawlError> {
+        for name in &self.subdomain_header_allowlist {
+            if name == "*" || reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err() {
+                return Err(CrawlError::invalid_config(
+                    "subdomain_header_allowlist entries must be valid HTTP header names, without wildcards",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate_path_patterns(&self) -> Result<(), CrawlError> {

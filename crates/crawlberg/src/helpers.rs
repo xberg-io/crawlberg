@@ -396,29 +396,37 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
 /// becomes invisible to them. Unifying it changes which rules apply to every caller of
 /// those two functions, so it is deferred out of this patch release rather than folded
 /// into a robots *correctness* fix.
-pub(crate) fn default_robots_user_agent(config: &CrawlConfig) -> &str {
-    if let Some(value) = custom_user_agent_header(config) {
-        return value;
-    }
-    config
-        .user_agent
-        .as_deref()
+pub(crate) fn default_robots_user_agent<'a>(config: &'a CrawlConfig, url: &Url) -> &'a str {
+    request_user_agent(config, url, None)
+}
+
+/// Resolve a per-request agent without carrying a scoped override onto another host.
+pub(crate) fn request_user_agent<'a>(config: &'a CrawlConfig, url: &Url, selected: Option<&'a str>) -> &'a str {
+    let custom = custom_user_agent_header(config);
+    let auth = match &config.auth {
+        Some(crate::types::AuthConfig::Header { name, value }) if name.eq_ignore_ascii_case("user-agent") => {
+            Some(value.as_str())
+        }
+        _ => None,
+    };
+    let scoped_custom = custom.filter(|_| crate::net::credentials::custom_header_is_scoped(config, url, "user-agent"));
+    let scoped_auth = auth.filter(|_| {
+        config
+            .credential_scope
+            .as_ref()
+            .is_some_and(|scope| scope.covers(url) && !scope.has_url_credentials())
+    });
+    let selected = selected.filter(|value| {
+        (scoped_custom.is_some() || Some(*value) != custom) && (scoped_auth.is_some() || Some(*value) != auth)
+    });
+    scoped_auth
+        .or(selected)
+        .or(scoped_custom)
+        .or(config.user_agent.as_deref())
         .unwrap_or(concat!("crawlberg/", env!("CARGO_PKG_VERSION")))
 }
 
-/// A `user-agent` entry in `config.custom_headers`, matched case-insensitively as HTTP
-/// header names are. Blank (empty or whitespace-only) counts as absent: a caller who unsets
-/// the header by emptying its value, rather than removing the key, gets the configured or
-/// default agent instead of an empty one (crawlberg#423).
-///
-/// ~keep `apply_headers` (tower/service.rs) always layers `custom_headers` onto the request
-/// to the seed's host, so a caller-set `user-agent` there is the agent that actually goes out
-/// on the wire, ahead of `config.user_agent` and the rotation layer's own default. Every
-/// caller of `default_robots_user_agent` -- the engine's robots.txt group selection, the
-/// header realized on the wire, and the fallback `scrape()`/crawl-loop directive matching use
-/// when no rotation pinned a value -- reads this one function, so this is the single place a
-/// custom-header agent needs to be taken into account for robots decisions to judge the agent
-/// actually sent (crawlberg#423).
+/// Read a nonblank custom agent before applying its per-target header scope.
 fn custom_user_agent_header(config: &CrawlConfig) -> Option<&str> {
     config
         .custom_headers

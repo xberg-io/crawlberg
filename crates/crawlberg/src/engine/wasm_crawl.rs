@@ -227,7 +227,9 @@ impl CrawlEngine {
             // ~keep that advances the UA rotation counter is the one whose result both judges
             // ~keep this page's robots decision and is sent on the wire below (crawlberg#483),
             // ~keep mirroring native's `redirect.rs::admits`.
-            let agent = self.choose_request_user_agent();
+            let parsed_url = url::Url::parse(&entry.url)
+                .map_err(|error| CrawlError::other(format!("invalid crawl URL: {error}")))?;
+            let agent = self.choose_request_user_agent(&parsed_url);
             let robots = self
                 .wasm_robots_outcome_for(&entry.url, &agent, &mut robots_cache)
                 .await?;

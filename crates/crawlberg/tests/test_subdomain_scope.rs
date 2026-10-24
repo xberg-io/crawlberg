@@ -311,10 +311,9 @@ async fn should_reject_a_cross_host_document_link_when_stay_on_domain_is_true() 
     drop(mock);
 }
 
-/// crawlberg#771: with `allow_subdomains`, `custom_headers` reach an admitted subdomain too, but
-/// credentials never do: neither the configured `auth` nor a credential-bearing custom header.
+/// ~keep Explicit header opt-in preserves crawlberg#771 while configured and standard credentials stay seed-only.
 #[tokio::test]
-async fn should_send_custom_headers_but_no_credentials_to_an_admitted_subdomain() {
+async fn should_send_allowlisted_headers_but_no_credentials_to_an_admitted_subdomain() {
     let mock = MockServer::start().await;
     let port = mock.address().port();
     mount_html(
@@ -345,6 +344,16 @@ async fn should_send_custom_headers_but_no_credentials_to_an_admitted_subdomain(
                 ("Proxy-Authorization".to_owned(), "Basic c2VjcmV0".to_owned()),
                 ("X-Api-Key".to_owned(), "secret".to_owned()),
             ]),
+            subdomain_header_allowlist: [
+                "X-Probe",
+                "Accept",
+                "Authorization",
+                "Cookie",
+                "Proxy-Authorization",
+                "X-Api-Key",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
             ..CrawlConfig::default()
         },
     ));
@@ -393,10 +402,9 @@ async fn should_send_custom_headers_but_no_credentials_to_an_admitted_subdomain(
     }
 }
 
-/// crawlberg#771 on a redirect hop: the seed redirects to an admitted subdomain, and that hop
-/// carries the non-credential custom headers but none of the seed host's credentials.
+/// ~keep Redirect hops honor crawlberg#771 opt-in without broadening the seed host's credential boundary.
 #[tokio::test]
-async fn should_send_custom_headers_but_no_credentials_on_a_redirect_hop_to_an_admitted_subdomain() {
+async fn should_send_allowlisted_headers_but_no_credentials_on_a_redirect_hop_to_an_admitted_subdomain() {
     let mock = MockServer::start().await;
     let port = mock.address().port();
     Mock::given(method("GET"))
@@ -422,6 +430,9 @@ async fn should_send_custom_headers_but_no_credentials_on_a_redirect_hop_to_an_a
                 ("Cookie".to_owned(), "sid=secret".to_owned()),
                 ("X-Api-Key".to_owned(), "secret".to_owned()),
             ]),
+            subdomain_header_allowlist: ["X-Probe", "Authorization", "Cookie", "X-Api-Key"]
+                .map(str::to_owned)
+                .to_vec(),
             ..CrawlConfig::default()
         },
     ));

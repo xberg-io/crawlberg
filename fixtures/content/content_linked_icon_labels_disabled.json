@@ -1,0 +1,38 @@
+{
+	"id": "content_linked_icon_labels_disabled",
+	"description": "Disabling linked icon labels keeps accessible names out of visible link text",
+	"docs": {
+		"topic": "content",
+		"stem": "content-linked-icon-labels-disabled",
+		"title": "Omitting decorative linked icon labels"
+	},
+	"tags": [
+		"content",
+		"regression"
+	],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<p>see <a href=\"https://example.com/x\">GitHub<svg aria-label=\"(opens in new tab)\"><use href=\"#ext\"></use></svg></a> now</p>"
+			}
+		],
+		"config": {
+			"respect_robots_txt": false,
+			"content": {
+				"extract_metadata": false,
+				"include_icon_labels": false
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "markdown.content",
+			"value": "see [GitHub](https://example.com/x) now\n"
+		}
+	]
+}

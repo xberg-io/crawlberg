@@ -33,7 +33,13 @@ use super::primitives::{BrowserBackend, BrowserMode, BrowserWait, duration_ms, o
         "wrap_width",
         "include_document_structure",
         "extract_metadata"
-    ])
+    ], constructor_history = [[
+        "output_format", "preprocessing_preset", "remove_navigation", "remove_forms",
+        "strip_tags", "preserve_tags", "exclude_selectors", "skip_images", "max_depth",
+        "wrap", "wrap_width", "include_document_structure", "extract_metadata",
+        "strip_newlines", "bullets", "list_indent_width", "strong_em_symbol",
+        "compact_tables", "keep_inline_images_in", "keep_hidden"
+    ]])
 )]
 pub struct ContentConfig {
     /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
@@ -104,6 +110,14 @@ pub struct ContentConfig {
     /// Keep hidden elements, including body templates, in converted output. Default: `false`.
     /// Scripts and styles remain excluded; explicit exclusions and image settings still apply.
     pub keep_hidden: bool,
+    /// Append abbreviation titles in parentheses. Default: `true`.
+    pub expand_abbreviations: bool,
+    /// Escape literal Markdown metacharacters such as backticks and brackets. Default: `false`.
+    pub escape_misc: bool,
+    /// Escape literal asterisks in text. Default: `false`.
+    pub escape_asterisks: bool,
+    /// Include names and anchor tooltips of decorative linked SVG icons. Default: `true`.
+    pub include_icon_labels: bool,
 }
 
 impl Default for ContentConfig {
@@ -127,6 +141,10 @@ impl Default for ContentConfig {
             compact_tables: false,
             keep_inline_images_in: Vec::new(),
             keep_hidden: false,
+            expand_abbreviations: true,
+            escape_misc: false,
+            escape_asterisks: false,
+            include_icon_labels: true,
             include_document_structure: true,
             extract_metadata: true,
         }

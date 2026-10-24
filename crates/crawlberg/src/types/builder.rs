@@ -157,6 +157,12 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Authorize named custom headers for admitted subdomains; empty keeps them seed-host-only.
+    pub fn subdomain_header_allowlist(mut self, value: Vec<String>) -> Self {
+        self.inner.subdomain_header_allowlist = value;
+        self
+    }
+
     /// Set the timeout for individual HTTP requests.
     pub fn request_timeout(mut self, value: Duration) -> Self {
         self.inner.request_timeout = value;

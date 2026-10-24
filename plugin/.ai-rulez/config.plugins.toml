@@ -1,6 +1,6 @@
 [plugin]
 name = "crawlberg"
-version = "1.12.1"
+version = "1.12.2"
 runtimes = [
   "claude",
   "cursor",

@@ -1,10 +1,10 @@
 {
 	"id": "crawl_custom_headers",
-	"description": "Sends custom headers on all crawl requests",
+	"description": "Sends custom headers on same-host crawl requests",
 	"docs": {
 		"topic": "crawl",
 		"stem": "crawl-custom-headers",
-		"title": "Sends custom headers on all crawl requests"
+		"title": "Sends custom headers on same-host crawl requests"
 	},
 	"tags": ["crawl", "headers"],
 	"input": {
@@ -34,6 +34,7 @@
 				"X-Custom-Header": "test-value",
 				"Accept-Language": "en-US"
 			},
+			"subdomain_header_allowlist": ["Accept-Language"],
 			"respect_robots_txt": false
 		}
 	},

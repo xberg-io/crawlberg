@@ -1371,6 +1371,34 @@ char *cberg_content_config_keep_inline_images_in(CBERGAlefHandle handle);
 int32_t cberg_content_config_keep_hidden(CBERGAlefHandle handle);
 
 /**
+ * Get the `expand_abbreviations` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_expand_abbreviations(CBERGAlefHandle handle);
+
+/**
+ * Get the `escape_misc` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_escape_misc(CBERGAlefHandle handle);
+
+/**
+ * Get the `escape_asterisks` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_escape_asterisks(CBERGAlefHandle handle);
+
+/**
+ * Get the `include_icon_labels` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_include_icon_labels(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
@@ -2051,6 +2079,15 @@ int32_t cberg_crawl_config_has_ssrf_deny_private_explicit(CBERGAlefHandle handle
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_crawl_config_danger_accept_invalid_certs(CBERGAlefHandle handle);
+
+/**
+ * Get the `subdomain_header_allowlist` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_config_subdomain_header_allowlist(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be

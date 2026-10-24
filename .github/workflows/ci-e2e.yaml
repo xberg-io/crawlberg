@@ -532,6 +532,10 @@ jobs:
         shell: bash
         run: task ${{ matrix.lang }}:build:dev
 
+      - name: Run Java package tests
+        if: matrix.lang == 'java'
+        run: task java:test:ci
+
       - name: Check released Node runtime exports
         if: matrix.lang == 'node'
         run: task node:test:released-exports

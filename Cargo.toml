@@ -18,7 +18,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.12.1"
+version = "1.12.2"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>", "Tobias Perlstein <tobias@xberg.io>"]
 license = "MIT"
@@ -59,9 +59,9 @@ chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.12.1" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.12.1" }
-crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.12.1" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.12.2" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.12.2" }
+crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.12.2" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
 # ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched
@@ -75,7 +75,7 @@ encoding_rs = "0.8"
 
 # Binding framework dependencies
 ext-php-rs = "0.16.3"
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 flate2 = "1"
 futures = "0.3"
 html-escape = "0.3.0"
@@ -90,7 +90,7 @@ idna = "1"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2.191"
-liter-llm = { version = "2.3", features = ["native-http"] }
+liter-llm = { version = "2.4", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
 minijinja = "3"

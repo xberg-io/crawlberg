@@ -187,9 +187,17 @@ impl ModuleLoader for BrowserModuleLoader {
                         request = request.header(reqwest::header::COOKIE, cookie_header);
                     }
                 }
+                let mut scoped_overrides = reqwest::header::HeaderMap::new();
                 for (name, value) in origin_headers.iter().flat_map(|scoped| scoped.headers_for(&current)) {
-                    request = request.header(name.as_str(), value.as_str());
+                    let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                        .map_err(|error| io_err(format!("Invalid scoped module header name: {error}")))?;
+                    let value = reqwest::header::HeaderValue::from_str(value)
+                        .map_err(|error| io_err(format!("Invalid scoped module header value: {error}")))?;
+                    scoped_overrides.insert(name, value);
                 }
+                // ~keep Scoped headers replace defaults; RequestBuilder::header would append a
+                // ~keep second User-Agent or Cookie value and leave the public default first.
+                request = request.headers(scoped_overrides);
                 let resp = request
                     .send()
                     .await

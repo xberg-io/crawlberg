@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -618,11 +618,11 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.12.1"
+version = "1.12.2"
 
 [[package]]
 name = "crawlberg_nif"
-version = "1.12.1"
+version = "1.12.2"
 dependencies = [
  "alloc-no-stdlib 3.0.0",
  "alloc-stdlib 0.3.0",
@@ -787,9 +787,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.19.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+checksum = "20ed7f62ce0ae0da1a8b93c3c7104ab7e0760a74491e097c701fff966e945390"
 dependencies = [
  "bit-set",
  "regex-automata",

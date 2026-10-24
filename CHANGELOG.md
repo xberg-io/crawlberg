@@ -4,7 +4,37 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-24
+
+### Fixed
+
+- Keep custom request headers on the seed host by default, independently of whether subdomains can be crawled.
+- Scope custom `User-Agent` overrides to the request host instead of forwarding them as a global crawl identity.
+- Keep caller-specific page responses and redirected robots rules out of shared caches.
+- Judge robots rules against the actual User-Agent when typed authentication and rotation are both configured.
+- Native JavaScript module requests preserve one custom User-Agent on the seed host.
+- Preserve word boundaries around whitespace-only links with html-to-markdown 3.18.6. (#806)
+
+### Added
+
+- `subdomain_header_allowlist` explicitly opts individual custom headers into forwarding to admitted subdomains.
+  Configured authentication and standard credential headers remain on the seed host.
+  The native browser keeps all custom headers on the seed host.
+- Content options expose abbreviation expansion and literal Markdown escaping without changing their defaults.
+  (#804, #807)
+- `content.include_icon_labels=false` omits decorative SVG labels and associated link tooltips while retaining visible
+  text, link destinations, and image alt text. (#805)
+
+### Changed
+
+- Upgrade fancy-regex to 0.20 and liter-llm to 2.4.
+- Regenerate language bindings with Alef 0.114.1, preserving released Java and Swift constructor signatures.
+- Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
+  Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.
+
 ## [1.12.1] - 2026-10-23
+
+This release was withdrawn. Its changes are included in 1.12.2.
 
 ### Fixed
 
