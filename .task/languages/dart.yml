@@ -117,6 +117,13 @@ tasks:
     cmds:
       - dart pub upgrade
 
+  e2e:install:
+    desc: Resolve Dart E2E dependencies and package language version
+    dir: e2e/dart
+    precondition: "command -v dart >/dev/null 2>&1"
+    cmds:
+      - dart pub get
+
   e2e:generate:
     desc: Generate and format Dart E2E tests from fixtures
     cmds:
