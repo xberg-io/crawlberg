@@ -356,7 +356,20 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.modifiedTime()?.toString(), "modified_time-optional")
     XCTAssertEqual(value.author()?.toString(), "author-optional")
     XCTAssertEqual(value.section()?.toString(), "section-optional")
-    XCTAssertEqual(value.tags().len(), 0)
+    XCTAssertEqual(value.tags().count, 0)
+  }
+
+  func testOwnedStringArrayGetterPreservesOrderAcrossReads() {
+    let tags = RustBridge.RustVec<RustBridge.RustString>()
+    tags.push(value: RustBridge.RustString("first-tag"))
+    tags.push(value: RustBridge.RustString("second-tag"))
+    let value = RustBridge.ArticleMetadata(nil, nil, nil, nil, tags)
+
+    let firstRead = value.tags()
+    let secondRead = value.tags()
+
+    XCTAssertEqual(firstRead.map { $0.toString() }, ["first-tag", "second-tag"])
+    XCTAssertEqual(secondRead.map { $0.toString() }, ["first-tag", "second-tag"])
   }
 
   func testReleasedNativeBatchCrawlResultValues() throws {
@@ -375,7 +388,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       2,
       3,
       4)
-    XCTAssertEqual(value.results().len(), 0)
+    XCTAssertEqual(value.results().count, 0)
     XCTAssertEqual(value.totalCount(), 2)
     XCTAssertEqual(value.completedCount(), 3)
     XCTAssertEqual(value.failedCount(), 4)
@@ -384,7 +397,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
   func testReleasedNativeBatchCrawlStreamRequestValues() throws {
     let value = RustBridge.BatchCrawlStreamRequest(
       RustBridge.RustVec<RustBridge.RustString>())
-    XCTAssertEqual(value.urls().len(), 0)
+    XCTAssertEqual(value.urls().count, 0)
   }
 
   func testReleasedNativeBatchScrapeResultValues() throws {
@@ -403,7 +416,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       2,
       3,
       4)
-    XCTAssertEqual(value.results().len(), 0)
+    XCTAssertEqual(value.results().count, 0)
     XCTAssertEqual(value.totalCount(), 2)
     XCTAssertEqual(value.completedCount(), 3)
     XCTAssertEqual(value.failedCount(), 4)
@@ -438,13 +451,13 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.waitSelector()?.toString(), "wait_selector-optional")
     XCTAssertEqual(value.extraWait(), 9)
     XCTAssertEqual(value.proxy() == nil, true)
-    XCTAssertEqual(value.blockUrlPatterns().len(), 0)
+    XCTAssertEqual(value.blockUrlPatterns().count, 0)
     XCTAssertEqual(value.evalScript()?.toString(), "eval_script-optional")
     XCTAssertEqual(value.robotsUserAgent()?.toString(), "robots_user_agent-optional")
     XCTAssertEqual(value.captureNetworkEvents(), true)
     XCTAssertEqual(value.sessionAffinity(), false)
     XCTAssertEqual(value.chromePath()?.toString(), "chrome_path-optional")
-    XCTAssertEqual(value.chromeArgs().len(), 0)
+    XCTAssertEqual(value.chromeArgs().count, 0)
   }
 
   func testReleasedNativeBrowserExtrasValues() throws {
@@ -453,8 +466,8 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       RustBridge.RustVec<RustBridge.ResponseMeta>(),
       RustBridge.RustVec<RustBridge.CookieInfo>())
     XCTAssertEqual(value.evalResult()?.toString(), "\"eval_result-optional\"")
-    XCTAssertEqual(value.networkEvents().len(), 0)
-    XCTAssertEqual(value.cookies().len(), 0)
+    XCTAssertEqual(value.networkEvents().count, 0)
+    XCTAssertEqual(value.cookies().count, 0)
   }
 
   func testReleasedNativeCitationReferenceValues() throws {
@@ -472,7 +485,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       RustBridge.RustString("content-sentinel"),
       RustBridge.RustVec<RustBridge.CitationReference>())
     XCTAssertEqual(value.content().toString(), "content-sentinel")
-    XCTAssertEqual(value.references().len(), 0)
+    XCTAssertEqual(value.references().count, 0)
   }
 
   func testReleasedNativeContentConfigValues() throws {
@@ -494,9 +507,9 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.preprocessingPreset().toString(), "preprocessing_preset-sentinel")
     XCTAssertEqual(value.removeNavigation(), false)
     XCTAssertEqual(value.removeForms(), true)
-    XCTAssertEqual(value.stripTags().len(), 0)
-    XCTAssertEqual(value.preserveTags().len(), 0)
-    XCTAssertEqual(value.excludeSelectors().len(), 0)
+    XCTAssertEqual(value.stripTags().count, 0)
+    XCTAssertEqual(value.preserveTags().count, 0)
+    XCTAssertEqual(value.excludeSelectors().count, 0)
     XCTAssertEqual(value.skipImages(), true)
     XCTAssertEqual(value.maxDepth(), 9)
     XCTAssertEqual(value.wrap(), true)
@@ -552,10 +565,10 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.html().toString(), "html-sentinel")
     XCTAssertEqual(value.bodySize(), 6)
     XCTAssertEqual(value.metadata().title()?.toString(), nil)
-    XCTAssertEqual(value.links().len(), 0)
-    XCTAssertEqual(value.images().len(), 0)
-    XCTAssertEqual(value.feeds().len(), 0)
-    XCTAssertEqual(value.jsonLd().len(), 0)
+    XCTAssertEqual(value.links().count, 0)
+    XCTAssertEqual(value.images().count, 0)
+    XCTAssertEqual(value.feeds().count, 0)
+    XCTAssertEqual(value.jsonLd().count, 0)
     XCTAssertEqual(value.depth(), 12)
     XCTAssertEqual(value.stayedOnDomain(), false)
     XCTAssertEqual(value.wasSkipped(), true)
@@ -570,7 +583,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.redirectCount(), 23)
     XCTAssertEqual(value.noindexDetected(), true)
     XCTAssertEqual(value.nofollowDetected(), false)
-    XCTAssertEqual(value.ssrfRefusedUrls().len(), 0)
+    XCTAssertEqual(value.ssrfRefusedUrls().count, 0)
   }
 
   func testReleasedNativeCrawlResultValues() throws {
@@ -583,12 +596,12 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       RustBridge.RustVec<RustBridge.CookieInfo>(),
       false,
       true)
-    XCTAssertEqual(value.pages().len(), 0)
+    XCTAssertEqual(value.pages().count, 0)
     XCTAssertEqual(value.finalUrl().toString(), "final_url-sentinel")
     XCTAssertEqual(value.redirectCount(), 3)
     XCTAssertEqual(value.wasSkipped(), true)
     XCTAssertEqual(value.error()?.toString(), "error-optional")
-    XCTAssertEqual(value.cookies().len(), 0)
+    XCTAssertEqual(value.cookies().count, 0)
     XCTAssertEqual(value.stayedOnDomain(), false)
     XCTAssertEqual(value.browserUsed(), true)
   }
@@ -688,11 +701,11 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       RustBridge.RustString("final_url-sentinel"),
       RustBridge.RustString("screenshot_base64-optional"),
       RustBridge.RustVec<RustBridge.RustString>())
-    XCTAssertEqual(value.actionResults().len(), 0)
+    XCTAssertEqual(value.actionResults().count, 0)
     XCTAssertEqual(value.finalHtml().toString(), "final_html-sentinel")
     XCTAssertEqual(value.finalUrl().toString(), "final_url-sentinel")
     XCTAssertEqual(value.screenshotBase64()?.toString(), "screenshot_base64-optional")
-    XCTAssertEqual(value.ssrfRefusedUrls().len(), 0)
+    XCTAssertEqual(value.ssrfRefusedUrls().count, 0)
   }
 
   func testReleasedNativeJsonLdEntryValues() throws {
@@ -722,7 +735,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
   func testReleasedNativeMapResultValues() throws {
     let value = RustBridge.MapResult(
       RustBridge.RustVec<RustBridge.SitemapUrl>())
-    XCTAssertEqual(value.urls().len(), 0)
+    XCTAssertEqual(value.urls().count, 0)
   }
 
   func testReleasedNativeMarkdownResultValues() throws {
@@ -735,8 +748,8 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       RustBridge.RustString("fit_content-optional"))
     XCTAssertEqual(value.content().toString(), "content-sentinel")
     XCTAssertEqual(value.documentStructure()?.toString(), "\"document_structure-optional\"")
-    XCTAssertEqual(value.tables().len(), 0)
-    XCTAssertEqual(value.warnings().len(), 0)
+    XCTAssertEqual(value.tables().count, 0)
+    XCTAssertEqual(value.warnings().count, 0)
     XCTAssertEqual(value.citations(), false)
     XCTAssertEqual(value.fitContent()?.toString(), "fit_content-optional")
   }
@@ -807,10 +820,10 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.html().toString(), "html-sentinel")
     XCTAssertEqual(value.bodySize(), 5)
     XCTAssertEqual(value.metadata().title()?.toString(), nil)
-    XCTAssertEqual(value.links().len(), 0)
-    XCTAssertEqual(value.images().len(), 0)
-    XCTAssertEqual(value.feeds().len(), 0)
-    XCTAssertEqual(value.jsonLd().len(), 0)
+    XCTAssertEqual(value.links().count, 0)
+    XCTAssertEqual(value.images().count, 0)
+    XCTAssertEqual(value.feeds().count, 0)
+    XCTAssertEqual(value.jsonLd().count, 0)
     XCTAssertEqual(value.isAllowed(), false)
     XCTAssertEqual(value.crawlDelay(), 12)
     XCTAssertEqual(value.noindexDetected(), false)
@@ -821,7 +834,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.detectedCharset()?.toString(), "detected_charset-optional")
     XCTAssertEqual(value.authHeaderSent(), false)
     XCTAssertEqual(value.responseMeta() == nil, true)
-    XCTAssertEqual(value.assets().len(), 0)
+    XCTAssertEqual(value.assets().count, 0)
     XCTAssertEqual(value.jsRenderHint(), true)
     XCTAssertEqual(value.browserUsed(), false)
     XCTAssertEqual(value.markdown() == nil, true)
@@ -830,7 +843,7 @@ final class ReleasedConstructorTestsNative: XCTestCase {
     XCTAssertEqual(value.screenshotBase64()?.toString(), "screenshot_base64-optional")
     XCTAssertEqual(value.downloadedDocument() == nil, true)
     XCTAssertEqual(value.browser() == nil, true)
-    XCTAssertEqual(value.ssrfRefusedUrls().len(), 0)
+    XCTAssertEqual(value.ssrfRefusedUrls().count, 0)
   }
 
   func testReleasedNativeSitemapUrlValues() throws {
@@ -853,9 +866,9 @@ final class ReleasedConstructorTestsNative: XCTestCase {
       4,
       RustBridge.RustVec<RustBridge.RustString>())
     XCTAssertEqual(value.denyPrivate(), false)
-    XCTAssertEqual(value.allowlist().len(), 0)
-    XCTAssertEqual(value.denylist().len(), 0)
+    XCTAssertEqual(value.allowlist().count, 0)
+    XCTAssertEqual(value.denylist().count, 0)
     XCTAssertEqual(value.maxRedirects(), 4)
-    XCTAssertEqual(value.schemeAllowlist().len(), 0)
+    XCTAssertEqual(value.schemeAllowlist().count, 0)
   }
 }
