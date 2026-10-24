@@ -158,7 +158,7 @@ fn subdomain_headers(config: &CrawlConfig) -> Vec<(String, String)> {
 }
 
 /// Whether a browser request header may have been injected from the caller's configuration.
-#[cfg(feature = "browser")]
+#[cfg(feature = "browser-chromiumoxide")]
 pub(crate) fn is_configured_header(config: &CrawlConfig, name: &str) -> bool {
     config
         .custom_headers
