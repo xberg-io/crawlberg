@@ -4,7 +4,7 @@
 version = 1
 ai_rulez_version = '5.6.3'
 scope = 'all'
-tree = 'sha256:95ac6620e0b68743618041a207bc740a4bb4bbd027639f1514f2c01be1fa05ae'
+tree = 'sha256:6c6980cdede20396c2825fb114f76eb7e07be13dfd50b11a5cd4d52d052995b7'
 
 [[include]]
 name = 'xberg-cicd'
@@ -87,7 +87,7 @@ digest = 'sha256:6f2fdbd9135cc10f3f511e5daf3545070a31dd7afd7715621c1bbe02f8b338a
 name = 'build'
 source = ''
 commit = ''
-digest = 'sha256:041a31783d65fa4357d3b4e70103b6ecbc1ea3eca6fec5cd91c756dbd715d08a'
+digest = 'sha256:a5a32329cf4e74179cdf057b6b08e82d2c1677b2151e938b32eb87b4df29e9e9'
 
 [[served]]
 name = 'cicd-pipeline-standards'
@@ -114,6 +114,12 @@ commit = 'bca4b4e8f1f198bef25308aaabf7a2c238a387a3'
 digest = 'sha256:2771e0eede80e54ce3a1d5be2375ece50b965ae20d7d4cbe935749b7d1202b82'
 
 [[served]]
+name = 'crawl-engine-map'
+source = '.ai-rulez/skills/crawl-engine-map/SKILL.md'
+commit = ''
+digest = 'sha256:c54454437f1db78348b5fcb0e9015c3b968df904ab0e3b9c02fd238198f2f09c'
+
+[[served]]
 name = 'create-e2e-fixture'
 source = 'include:xberg-e2e-generator/skills/create-e2e-fixture/SKILL.md'
 commit = 'bca4b4e8f1f198bef25308aaabf7a2c238a387a3'
@@ -129,7 +135,7 @@ digest = 'sha256:e108ed344fe20948fcbda61b96266026bb9b2318df089964c088c0455294f8d
 name = 'dev-cycle'
 source = '.ai-rulez/skills/dev-cycle/SKILL.md'
 commit = ''
-digest = 'sha256:08354556f1d05c9bd491b148bfb238d6f0e7deef0e7292ae387f9165539e2b57'
+digest = 'sha256:be2390fccc394bd43085c0cc61b370ed95d8530d6247df262bd5bfa21e73b2f8'
 
 [[served]]
 name = 'e2e-generator-conventions'
@@ -153,7 +159,7 @@ digest = 'sha256:2de39f639c38a6fc839c172413e5bc208de3ca62480dc65728be937a5f2871a
 name = 'fix'
 source = ''
 commit = ''
-digest = 'sha256:a1df6d32346b86adff87db3e668dc4da1c96fc38ee0f609807eb10e95e0ac488'
+digest = 'sha256:21857f4d795bcf35d5cee656f0255524d086f3f6986578c0e4cbf38a71725522'
 
 [[served]]
 name = 'fixture-schema-design'
@@ -183,7 +189,7 @@ digest = 'sha256:5cb87728d1449fadda6d8557501fcc0823509c60a37058ce4d2dda123296f67
 name = 'lint'
 source = ''
 commit = ''
-digest = 'sha256:06d04c1d3eb9845bf0ff4132184f18eb226313bfabd01ae55f8a38c28843f477'
+digest = 'sha256:4560bf8826d6324b9f7cb4463f4acbd3ffdaf8afe546e7273600a60063a2b674'
 
 [[served]]
 name = 'owasp-quick-reference'
@@ -213,7 +219,7 @@ digest = 'sha256:aa68a45c3048919d797ccb16245cc1feaf721bab8c1102519793eb9cf523c82
 name = 'review'
 source = ''
 commit = ''
-digest = 'sha256:3ab7a9682ff34a5180c2e04c0f42bf4bb15bc479f23cb2f22f13139aa60a47f6'
+digest = 'sha256:ab262eed89cb34705f2067fd9c07f50bef0fd2dae28cb71cab8679e23beb803e'
 
 [[served]]
 name = 'scoop-distribution'
@@ -249,7 +255,7 @@ digest = 'sha256:a07f0dd7b07b37533acbd76b571f831a9854935b817d5e5de1e94865052176c
 name = 'test'
 source = ''
 commit = ''
-digest = 'sha256:4bdc5a01d73e0c7cf3309237eb065fe9de8ca3624f1260558703ee875942b1bf'
+digest = 'sha256:200a31665fb1a89bd219de3827a93af31e0878fbeb9929030826994f627493aa'
 
 [[served]]
 name = 'testing-conventions'
@@ -270,52 +276,40 @@ commit = 'bca4b4e8f1f198bef25308aaabf7a2c238a387a3'
 digest = 'sha256:552648a1d89cccb6bc3d47cb25f3b6355f75a104936fc70668fdb6167868c965'
 
 [[item]]
-kind = 'agent'
-id = 'crawl-engineer'
-path = 'agents/crawl-engineer.md'
-digest = 'sha256:4271e31269fd120d75004d74094125e938a2d9b8ca8f0443cb2cd87ca9ae9d75'
-
-[[item]]
 kind = 'command'
 id = 'build'
 path = 'commands/build.md'
-digest = 'sha256:8a24d00bc789d74be879338479b8879d418532c99d7eafe64e0a683283784654'
+digest = 'sha256:012b329e6088b421ba4d834f8700a3dc857dde09cc4464c4bf79094184e87b55'
 
 [[item]]
 kind = 'command'
 id = 'fix'
 path = 'commands/fix.md'
-digest = 'sha256:c4eee7afb64b8faf99dde01b2db5eb6e560a275977ce54459852277462d213f4'
+digest = 'sha256:38f466ab38b3ddade146334849eb5399de6c7da6762e64cf30a6d73295129216'
 
 [[item]]
 kind = 'command'
 id = 'lint'
 path = 'commands/lint.md'
-digest = 'sha256:319892efb50a94b69298385eaba76da122ae25a0ef69de4f9e427512fd837a48'
+digest = 'sha256:f6bd4c7b71899b30745960143b1268856ca6096fa5dff13d3d164ba1ce95d964'
 
 [[item]]
 kind = 'command'
 id = 'review'
 path = 'commands/review.md'
-digest = 'sha256:5f05c78db5f2f6b4d4c8b5c137aa1be542903c94952ff25f562601690a7496cc'
+digest = 'sha256:ab2a4add5d1ddb850222e867081302017c301152ff7cda9e9b4d233ef4734e55'
 
 [[item]]
 kind = 'command'
 id = 'test'
 path = 'commands/test.md'
-digest = 'sha256:b2640641feaa874ad9b2e11293027fbbe37096f5ed8b37362574a863d8f87f9c'
+digest = 'sha256:41b039f8f76258f4064aa42473c5ac8b5eea329fbdc82796d185b53e7f2d881f'
 
 [[item]]
 kind = 'rule'
 id = 'generated-code-policy'
 path = 'rules/generated-code-policy.md'
-digest = 'sha256:f03a29db5d1f2e51036848fcf20ac1a472ccede5ae5e29fdd6ab56f77ee5dc4c'
-
-[[item]]
-kind = 'rule'
-id = 'typescript-conventions'
-path = 'rules/typescript-conventions.md'
-digest = 'sha256:0dc2cd57a3b548383c7de9945ad7d8b31f2e6470c7af6027ea483dd1a6182eaa'
+digest = 'sha256:33ca9bd324fb3dad1c7ebb9c0c265cb2f43b4c681071e10a7474f860dd1c6125'
 
 [[item]]
 kind = 'settings'
@@ -324,6 +318,12 @@ digest = 'sha256:0c3ec1142275bddbddcc03caadc03358528d1b6a97aca401bc75e4471ba346c
 
 [[item]]
 kind = 'skill'
+id = 'crawl-engine-map'
+path = 'skills/crawl-engine-map'
+digest = 'sha256:b6ed792172aa6e9a74d792323f697679b4d3ad35373694a48cff35c2b28d3931'
+
+[[item]]
+kind = 'skill'
 id = 'dev-cycle'
 path = 'skills/dev-cycle'
-digest = 'sha256:1c8da54be72556cc4877c2deb3b8276c6a138f7d5f9af69c33f51220975e5b23'
+digest = 'sha256:618d2b0faf0da81ecee88adc348c9e6e1f413aa35234299661ebae7b15127844'
