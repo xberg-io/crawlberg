@@ -2,6 +2,7 @@
 type: Reference
 title: Test
 description: Run the project test suite and report results
+disable-model-invocation: true
 x-ai-rulez:
   kind: command
   id: test

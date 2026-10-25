@@ -2,6 +2,7 @@
 type: Reference
 title: Review
 description: Review current changes for correctness, style, and potential issues
+disable-model-invocation: true
 x-ai-rulez:
   kind: command
   id: review
