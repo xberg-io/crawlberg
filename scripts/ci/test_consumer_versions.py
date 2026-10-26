@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -36,6 +38,19 @@ class ConsumerVersionTests(unittest.TestCase):
                     start, end = match.span("version")
                     content = content[:start] + NEXT_VERSION + content[end:]
             destination.write_text(content)
+
+        self.node_path = self.root / "crates/crawlberg-node/package.json"
+        self.node_path.parent.mkdir(parents=True, exist_ok=True)
+        node = json.loads((ROOT / "crates/crawlberg-node/package.json").read_text())
+        node["version"] = NEXT_VERSION
+        for name in node["optionalDependencies"]:
+            node["optionalDependencies"][name] = NEXT_VERSION
+        self.node_path.write_text(json.dumps(node))
+        shutil.copytree(ROOT / "crates/crawlberg-node/npm", self.node_path.parent / "npm")
+        for manifest in (self.node_path.parent / "npm").glob("*/package.json"):
+            package = json.loads(manifest.read_text())
+            package["version"] = NEXT_VERSION
+            manifest.write_text(json.dumps(package))
 
     def contents(self) -> dict[str, str]:
         return {pin.path: (self.root / pin.path).read_text() for pin in SYNC.PINS}
@@ -91,6 +106,67 @@ class ConsumerVersionTests(unittest.TestCase):
         assert "test_apps/python/pyproject.toml" in SYNC.synchronize(self.root, check=True)
         self.assert_sync_error("regenerate with Alef")
         assert self.contents() == before
+
+    def assert_check_error(self, expected: str) -> None:
+        try:
+            SYNC.synchronize(self.root, check=True)
+        except ValueError as error:
+            actual = str(error)
+        else:
+            self.fail("Consumer validation should reject the invalid native package")
+        assert SYNC.re.search(expected, actual), actual
+
+    def test_unrelated_optional_dependencies_and_inactive_platforms_are_allowed(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        node["optionalDependencies"]["unrelated-helper"] = "0.1.0"
+        self.node_path.write_text(json.dumps(node))
+        manifest = self.node_path.parent / "npm/linux-x64-musl/package.json"
+        package = json.loads(manifest.read_text())
+        package["version"] = "0.1.0"
+        manifest.write_text(json.dumps(package))
+        SYNC.synchronize(self.root, check=False)
+        assert SYNC.synchronize(self.root, check=True) == []
+
+    def test_stale_native_optional_dependency_is_rejected_without_writing(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        name = next(iter(node["optionalDependencies"]))
+        node["optionalDependencies"][name] = "1.0.0"
+        self.node_path.write_text(json.dumps(node))
+        before = self.node_path.read_text()
+        self.assert_check_error("native.*version")
+        assert self.node_path.read_text() == before
+
+    def test_missing_native_optional_dependency_is_rejected(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        node["optionalDependencies"].pop(next(iter(node["optionalDependencies"])))
+        self.node_path.write_text(json.dumps(node))
+        self.assert_check_error("native.*packages")
+
+    def test_empty_native_targets_are_rejected(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        node["napi"]["targets"] = []
+        self.node_path.write_text(json.dumps(node))
+        self.assert_check_error("native.*targets")
+
+    def test_stale_native_platform_manifest_is_rejected(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        name = next(iter(node["optionalDependencies"]))
+        suffix = name.removeprefix(node["name"] + "-")
+        manifest = self.node_path.parent / "npm" / suffix / "package.json"
+        package = json.loads(manifest.read_text())
+        package["version"] = "1.0.0"
+        manifest.write_text(json.dumps(package))
+        self.assert_check_error("native.*version")
+
+    def test_wrong_native_platform_package_name_is_rejected(self) -> None:
+        node = json.loads(self.node_path.read_text())
+        name = next(iter(node["optionalDependencies"]))
+        suffix = name.removeprefix(node["name"] + "-")
+        manifest = self.node_path.parent / "npm" / suffix / "package.json"
+        package = json.loads(manifest.read_text())
+        package["name"] = "unrelated-native-package"
+        manifest.write_text(json.dumps(package))
+        self.assert_check_error("native.*name")
 
     def test_duplicate_dependency_fails_instead_of_silently_rewriting(self) -> None:
         path = self.root / "test_apps/ruby/Gemfile"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,8 +49,48 @@ PINS = (
 )
 
 
+def native_package_suffix(target: str) -> str:
+    architectures = {"x86_64": "x64", "aarch64": "arm64"}
+    platforms = {
+        "apple-darwin": "darwin",
+        "unknown-linux-gnu": "linux-{architecture}-gnu",
+        "unknown-linux-musl": "linux-{architecture}-musl",
+        "pc-windows-msvc": "win32-{architecture}-msvc",
+    }
+    architecture, platform = target.split("-", 1)
+    architecture = architectures[architecture]
+    suffix = platforms[platform]
+    return f"{suffix}-{architecture}" if platform == "apple-darwin" else suffix.format(architecture=architecture)
+
+
+def validate_native_node_versions(root: Path, version: str) -> None:
+    directory = root / "crates/crawlberg-node"
+    package = json.loads((directory / "package.json").read_text())
+    targets = package["napi"]["targets"]
+    if not targets:
+        raise ValueError("Node native targets must not be empty")
+    prefix = package["name"] + "-"
+    expected = {prefix + native_package_suffix(target) for target in targets}
+    optional = package["optionalDependencies"]
+    actual = {name for name in optional if name.startswith(prefix)}
+    if actual != expected:
+        raise ValueError(
+            f"Node native packages do not match configured targets: expected {sorted(expected)}, got {sorted(actual)}"
+        )
+    if package["version"] != version:
+        raise ValueError(f"Node native wrapper version must be {version}; regenerate with Alef")
+    for name in sorted(expected):
+        manifest = directory / "npm" / name.removeprefix(prefix) / "package.json"
+        platform_package = json.loads(manifest.read_text())
+        if platform_package["name"] != name:
+            raise ValueError(f"Node native package name mismatch in {manifest.relative_to(root)}")
+        if optional[name] != version or platform_package["version"] != version:
+            raise ValueError(f"Node native package {name} version must be {version}; regenerate with Alef")
+
+
 def synchronize(root: Path, *, check: bool) -> list[str]:
     version = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+    validate_native_node_versions(root, version)
     changes: dict[str, str] = {}
     for pin in PINS:
         original = changes.get(pin.path, (root / pin.path).read_text())
