@@ -1,7 +1,7 @@
 ---
 type: Playbook
 title: Dev Cycle
-description: Crawlberg iteration loops codified as Taskfile tasks — alef install/generate/format/bump, core and binding builds, e2e generate/build/test cycles, cleanup tiers, and the mock-server / stale-.so / precompiled-NIF / generated-e2e gotchas. Load when running or debugging crawlberg build, alef regeneration, or e2e workflows, or when unsure which task to run.
+description: Crawlberg Taskfile loops for alef regeneration, core and binding builds, e2e generate/build/test and cleanup, plus known e2e gotchas. Use when unsure which task to run, or when a crawlberg build, alef regen or e2e run misbehaves.
 x-ai-rulez:
   kind: skill
   id: dev-cycle

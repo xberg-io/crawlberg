@@ -2,6 +2,7 @@
 type: Reference
 title: Build
 description: Build the project and verify compiled artifacts
+disable-model-invocation: true
 x-ai-rulez:
   kind: command
   id: build

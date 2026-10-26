@@ -2,6 +2,7 @@
 type: Reference
 title: Lint
 description: Run linting and formatting checks via poly
+disable-model-invocation: true
 x-ai-rulez:
   kind: command
   id: lint

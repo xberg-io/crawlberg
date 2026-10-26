@@ -2,6 +2,7 @@
 type: Reference
 title: Fix
 description: Auto-fix linting, formatting, and common issues
+disable-model-invocation: true
 x-ai-rulez:
   kind: command
   id: fix
