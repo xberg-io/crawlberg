@@ -1,14 +1,15 @@
 [package]
 include = [
-    "/Cargo.toml",
-    "/Cargo.lock",
-    "/src/**",
-    "/NOTICE",
-    "/build.rs",
-    "/js/bootstrap.js",
-    "!/src/page/tests.rs",
-    "!/src/adapter/tests.rs",
-    "!/src/js/runtime/tests/**",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/src/**",
+  "/NOTICE",
+  "/LICENSE-WREQ-UTIL",
+  "/build.rs",
+  "/js/bootstrap.js",
+  "!/src/page/tests.rs",
+  "!/src/adapter/tests.rs",
+  "!/src/js/runtime/tests/**",
 ]
 name = "crawlberg-browser"
 version.workspace = true
@@ -21,11 +22,12 @@ description = "Internal headless-browser fallback used by the crawlberg crawler.
 
 [features]
 default = []
-stealth = ["wreq", "wreq-util"]
+stealth = ["wreq", "dep:brotli"]
 
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
+brotli = { version = "9.1", optional = true }
 cookie_store = { workspace = true }
 crawlberg-robots = { workspace = true }
 cssparser = { workspace = true }
@@ -46,7 +48,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
-wreq-util = { version = "3.0.0-rc.14", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 wreq = { version = "6.0.0-rc.31", optional = true, features = ["prefix-symbols"] }

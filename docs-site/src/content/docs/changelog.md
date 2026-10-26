@@ -8,7 +8,7 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.2] - 2026-10-24
+## [1.12.2] - 2026-10-26
 
 ### Fixed
 
@@ -18,6 +18,7 @@ All notable changes to crawlberg are documented here.
 - Judge robots rules against the actual User-Agent when typed authentication and rotation are both configured.
 - Native JavaScript module requests preserve one custom User-Agent on the seed host.
 - Preserve word boundaries around whitespace-only links with html-to-markdown 3.18.6. (#806)
+- Preserve the Chrome 145 stealth fingerprint without the vulnerable, unused Zstandard dependency chain.
 
 ### Added
 
@@ -32,8 +33,8 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
-- Upgrade fancy-regex to 0.20 and liter-llm to 2.4.
-- Regenerate language bindings with Alef 0.114.2, preserving released Java and Swift constructor signatures.
+- Upgrade fancy-regex to 0.20, liter-llm to 2.4, and saphyr to 0.3.1; refresh dependency lockfiles.
+- Regenerate language bindings with Alef 0.115.0, preserving released Java and Swift constructor signatures.
 - Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
   Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.
 

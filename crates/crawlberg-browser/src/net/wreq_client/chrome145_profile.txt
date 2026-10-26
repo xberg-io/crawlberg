@@ -1,0 +1,181 @@
+Emulation {
+    group: Group(
+        {
+            Emulate: Emulate(
+                Group(
+                    {
+                        Named: Named(
+                            Borrowed(
+                                "v132",
+                            ),
+                        ),
+                    },
+                ),
+            ),
+        },
+    ),
+    headers: {
+        "sec-ch-ua": "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Linux\"",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language": "en-US,en;q=0.9",
+        "priority": "u=0, i",
+    },
+    orig_headers: OrigHeaderMap(
+        {},
+    ),
+    tls_options: Some(
+        TlsOptions {
+            alpn_protocols: Some(
+                [
+                    AlpnProtocol(
+                        [
+                            104,
+                            50,
+                        ],
+                    ),
+                    AlpnProtocol(
+                        [
+                            104,
+                            116,
+                            116,
+                            112,
+                            47,
+                            49,
+                            46,
+                            49,
+                        ],
+                    ),
+                ],
+            ),
+            alps_protocols: Some(
+                [
+                    AlpsProtocol(
+                        [
+                            104,
+                            50,
+                        ],
+                    ),
+                ],
+            ),
+            alps_use_new_codepoint: true,
+            session_ticket: true,
+            min_tls_version: Some(
+                TlsVersion(
+                    TLS1_2,
+                ),
+            ),
+            max_tls_version: Some(
+                TlsVersion(
+                    TLS1_3,
+                ),
+            ),
+            pre_shared_key: true,
+            enable_ech_grease: true,
+            permute_extensions: Some(
+                true,
+            ),
+            grease_enabled: Some(
+                true,
+            ),
+            enable_ocsp_stapling: true,
+            enable_signed_cert_timestamps: true,
+            record_size_limit: None,
+            psk_skip_session_ticket: false,
+            key_shares: None,
+            psk_dhe_ke: true,
+            renegotiation: true,
+            delegated_credentials: None,
+            curves_list: Some(
+                "X25519MLKEM768:X25519:P-256:P-384",
+            ),
+            sigalgs_list: Some(
+                "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256:rsa_pkcs1_sha256:ecdsa_secp384r1_sha384:rsa_pss_rsae_sha384:rsa_pkcs1_sha384:rsa_pss_rsae_sha512:rsa_pkcs1_sha512",
+            ),
+            cipher_list: Some(
+                "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:TLS_RSA_WITH_AES_128_GCM_SHA256:TLS_RSA_WITH_AES_256_GCM_SHA384:TLS_RSA_WITH_AES_128_CBC_SHA:TLS_RSA_WITH_AES_256_CBC_SHA",
+            ),
+            preserve_tls13_cipher_list: None,
+            certificate_compressors: Some(
+                [
+                    BrotliCompressor,
+                ],
+            ),
+            extension_permutation: None,
+            aes_hw_override: Some(
+                true,
+            ),
+            random_aes_hw_override: false,
+        },
+    ),
+    http1_options: None,
+    http2_options: Some(
+        Http2Options {
+            adaptive_window: false,
+            initial_stream_id: None,
+            initial_conn_window_size: 15728640,
+            initial_window_size: 6291456,
+            initial_max_send_streams: 100,
+            max_frame_size: None,
+            keep_alive_interval: None,
+            keep_alive_timeout: 20s,
+            keep_alive_while_idle: false,
+            max_concurrent_reset_streams: None,
+            max_send_buffer_size: 1048576,
+            max_concurrent_streams: None,
+            max_header_list_size: Some(
+                262144,
+            ),
+            max_pending_accept_reset_streams: None,
+            enable_push: Some(
+                false,
+            ),
+            header_table_size: Some(
+                65536,
+            ),
+            enable_connect_protocol: None,
+            no_rfc7540_priorities: None,
+            headers_pseudo_order: Some(
+                PseudoOrder {
+                    ids: [
+                        Method,
+                        Authority,
+                        Scheme,
+                        Path,
+                        Protocol,
+                        Status,
+                    ],
+                },
+            ),
+            headers_stream_dependency: Some(
+                StreamDependency {
+                    dependency_id: StreamId(
+                        0,
+                    ),
+                    weight: 219,
+                    is_exclusive: true,
+                },
+            ),
+            settings_order: Some(
+                SettingsOrder {
+                    ids: [
+                        HeaderTableSize,
+                        EnablePush,
+                        MaxConcurrentStreams,
+                        InitialWindowSize,
+                        MaxFrameSize,
+                        MaxHeaderListSize,
+                        EnableConnectProtocol,
+                        NoRfc7540Priorities,
+                    ],
+                },
+            ),
+            priorities: None,
+        },
+    ),
+}

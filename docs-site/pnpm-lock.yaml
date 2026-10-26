@@ -7,153 +7,153 @@ importers:
     configDependencies: {}
     packageManagerDependencies:
       pnpm:
-        specifier: 12.14.0
-        version: 12.14.0
+        specifier: 12.15.0
+        version: 12.15.0
 
 packages:
 
-  '@pnpm/exe.android-arm64@12.14.0':
-    resolution: {integrity: sha512-+iSh7x21C3A2hqc+Z0ZmbKTcn6YNlzrXM142PsnQH/dLj0DYxFzoBvc6XAnL/yfQ5nnH2ebBiRj/zVxr61fZbQ==}
+  '@pnpm/exe.android-arm64@12.15.0':
+    resolution: {integrity: sha512-eVCqmscY70LGvgRzu3mi8IBWBFGix+a6mNZoWmXxESsBdeiKEF9xQSuaeel10yn+zI7TXy2jlI63vFLzETk+aQ==}
     cpu: [arm64]
     os: [android]
 
-  '@pnpm/exe.android-x64@12.14.0':
-    resolution: {integrity: sha512-qT+0LqEr2wBVaxcG2T8cX/R8SSRz2Rvpp8nRR4fh8tnGUZRch87gFmsHUAoSQh7w6j1h0qTjrA384j4xi8frvw==}
+  '@pnpm/exe.android-x64@12.15.0':
+    resolution: {integrity: sha512-Gx/WbkFcdUFUg8g8AShezcS9EiQxfYvdAm2hfKLO8sfJmJvKOCt5fzlgHWDzmGhoclibgW+tUGZ/KF4F4wOTCA==}
     cpu: [x64]
     os: [android]
 
-  '@pnpm/exe.darwin-arm64@12.14.0':
-    resolution: {integrity: sha512-tnrdUB8ecJoehuKKqi1YHCBVl61xtJ9XVGcx5EviC6fWO4DeGI8GtXrjvJxDBM3nuVjJeWistgsUp/N142x4sw==}
+  '@pnpm/exe.darwin-arm64@12.15.0':
+    resolution: {integrity: sha512-N0ZykiDWCvqSBJvt71j7cSoBR993FqvYZFtmpCtqvW3pguiI+NAgraLPA5OTwu5mV+/d8hYpVcPktJA3xFDLtA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@pnpm/exe.darwin-x64@12.14.0':
-    resolution: {integrity: sha512-vlBfGkruqQRsEHTW43cPwpYd7QlbIJ//cvpAdb3bVXkI8SgTPoXhCnc05m+ZNiPrrEkBsX/t7KHw9aXpkzPm3Q==}
+  '@pnpm/exe.darwin-x64@12.15.0':
+    resolution: {integrity: sha512-7Ntr2HlBUxzwWOg7NwDxCbRW/3vXuqKO+hcXm+w3SBi9rrHY53li1wLqWVT7Gjxd+lVEHM1QJZo6WJEGFU8C6A==}
     cpu: [x64]
     os: [darwin]
 
-  '@pnpm/exe.freebsd-x64@12.14.0':
-    resolution: {integrity: sha512-Qg5rxBrGYl6Tfso+EyygPf84fY1Fzy55E/0or+iuYKtnf0vc0MlHJfVIlT7pBukMRntQHRik7hUi0Z4s7AlJsw==}
+  '@pnpm/exe.freebsd-x64@12.15.0':
+    resolution: {integrity: sha512-btOiyL7fL7W4uQGH0aqFai2TNC3IoKcZ7gNHBVbEFZt2dWrnrD0SufL3iGs3fLlmb4OtuU35uf4Zpr9V9Jh9mA==}
     cpu: [x64]
     os: [freebsd]
 
-  '@pnpm/exe.linux-arm64-musl@12.14.0':
-    resolution: {integrity: sha512-DRIe4yQkXBGA/PhVJdzlbnllxBdAtnMMvTVLLcGpsK5FvJz9kxD2Hyxtn68ovmNkVX06f6p45cQwfm3wx2jn1A==}
+  '@pnpm/exe.linux-arm64-musl@12.15.0':
+    resolution: {integrity: sha512-pNC38k+O+90FOjbPNSnw0E7apq1PKTmz3fFe1amn+lys/U5kL++uzir8bRiho8ONcyA3d9EU7wdqcY0DKkj+JA==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@pnpm/exe.linux-arm64@12.14.0':
-    resolution: {integrity: sha512-7joGShZ44Nk3WpNU+60JoOPjCXlgxhJAq11S2UiVtwCUDgTer1yTPPfxGW8pxaD6046actYLIYDbZNlubHWs0A==}
+  '@pnpm/exe.linux-arm64@12.15.0':
+    resolution: {integrity: sha512-qML/8aCXslh8td/w4U+HJNqUcZ2+m6EfTbWScIzZRmyPsRFN+xB4LP1U/hymxc1iSJiKtG56HJx2fvUErWFIGw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@pnpm/exe.linux-ppc64@12.14.0':
-    resolution: {integrity: sha512-gSoryn7ySdXd//gjgf3MvvA8ZerJayaSbuMZMtAWq4vb2/wlVEgpl0Kvqt54y58TRj533Qjq2txKgnxd4JyoAQ==}
+  '@pnpm/exe.linux-ppc64@12.15.0':
+    resolution: {integrity: sha512-tjRDUUl7RCJ6T/6eoNPxOqkwU4Mzi5RtTXmSAxujyz37OTwwsMU7Ps087Zk4gHcUvRSeyF40ZFsew3vtE+nmUA==}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
 
-  '@pnpm/exe.linux-riscv64@12.14.0':
-    resolution: {integrity: sha512-EMjew1H9WqQ7pL+tYqCPwiuB+0PeCiJRV7fyWeuFw0wwYUajFBjcaPO3IGAVu9sdmJDU+e+HYv/Zey6aKae0Vw==}
+  '@pnpm/exe.linux-riscv64@12.15.0':
+    resolution: {integrity: sha512-bF1uBWEfbwaeryz6lIiaJ8AWD082otZfvzGX5l+6LZRpRwUEpJHUsJrORaYP5/cNMv5ZR2p6TvvcJcQzwtDzmw==}
     cpu: [riscv64]
     os: [linux]
     libc: [glibc]
 
-  '@pnpm/exe.linux-s390x@12.14.0':
-    resolution: {integrity: sha512-shYOj/SFoXD35fHe0pWr2JofwSXulC0BnEIXLj2QokDi0EF//AfKsui35yKIkTEl+s2VJybc3PO4iJNhKIj5Qw==}
+  '@pnpm/exe.linux-s390x@12.15.0':
+    resolution: {integrity: sha512-zKMhIzsexYMToeLmqV5jPsvV/f9vwsJb2kUH2NFYzalbxImeBrlA4kL7GwF8gD4pagV6jYYcJb8RjbZIdjHptg==}
     cpu: [s390x]
     os: [linux]
     libc: [glibc]
 
-  '@pnpm/exe.linux-x64-musl@12.14.0':
-    resolution: {integrity: sha512-btZiZ2Ot0llKK1ndSfA5i3IRX7/S0VrmzseNH/BJ4c+Cady+S81H6vvU1zByggHMyqQhC8OgxO5PiIY7D9bH0Q==}
+  '@pnpm/exe.linux-x64-musl@12.15.0':
+    resolution: {integrity: sha512-A9J0Jg0Rdx+qQU4qXtwyST5tto9IOu1zi4fDk35nbc6DWahggbcKtFvZPKFwL2qgUXGXOX//hXv6z/sp6emO8A==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@pnpm/exe.linux-x64@12.14.0':
-    resolution: {integrity: sha512-F6K8e/jWxiuEYJaQtRRUG9ynBSTEHa+t7Lf86MKuOO5UA7WVVMbi+oB8nY6iKW++ncWS2yG6T9faXZGxqNsfoQ==}
+  '@pnpm/exe.linux-x64@12.15.0':
+    resolution: {integrity: sha512-yc+QlZR+9+nr29J4fRzhMoapgxTBDndq/+peyoq1XUufnQFnfbXUMFudDIKzHi545linGqmOmXfn0NoufNgcOg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@pnpm/exe.win32-arm64@12.14.0':
-    resolution: {integrity: sha512-DOjlkVB6TtTKeAAe0hNZXn5S7YqESmo1Z6SGbR4BZNQ4isRg31XVHjX2RFTbY8gnZq68IwzyLmPqlEjMmYxofg==}
+  '@pnpm/exe.win32-arm64@12.15.0':
+    resolution: {integrity: sha512-fPXZxuY1VclkOga9bc53qNCXcegfeoBR8+Ue+AospDwKzuGGSHll0oDxkLfkmpjyRqpe7bH5DyQPYp/xSMaIVA==}
     cpu: [arm64]
     os: [win32]
 
-  '@pnpm/exe.win32-x64@12.14.0':
-    resolution: {integrity: sha512-/LSX6mew/sLf08XqcjemuklNKf1K/Ftpgj4//hK/HKzI2dKbmxDB27a/2OaQ5a0O3/3OFzlssXDziZsi+yVBwQ==}
+  '@pnpm/exe.win32-x64@12.15.0':
+    resolution: {integrity: sha512-nrd+Tp1We1DGj4DGG5Bea9lZNh9y1PjlLBdEwdInS4D0h0UIDtM7JaGGGDJhNzIwcHASyihWI7HLV+dtG+fhYg==}
     cpu: [x64]
     os: [win32]
 
-  pnpm@12.14.0:
-    resolution: {integrity: sha512-wYum2HmT09Fky16JSPMrLAbuhUSH4GzY2GeBNC+z5btGNDZwNHEehoArqpw3vqkGzhkprQjXCITJfYAd8TOJpg==}
-    engines: {node: '>=18.*'}
+  pnpm@12.15.0:
+    resolution: {integrity: sha512-s5UdbW/0qfE9x89WzSjSuOs328ycaOUuHhGRhz6p+CoBcoerULqtxczElPA2xnwOR+sTYIwvo29HcRth6hKOYQ==}
+    engines: {node: '>=18'}
     hasBin: true
 
 snapshots:
 
-  '@pnpm/exe.android-arm64@12.14.0':
+  '@pnpm/exe.android-arm64@12.15.0':
     optional: true
 
-  '@pnpm/exe.android-x64@12.14.0':
+  '@pnpm/exe.android-x64@12.15.0':
     optional: true
 
-  '@pnpm/exe.darwin-arm64@12.14.0':
+  '@pnpm/exe.darwin-arm64@12.15.0':
     optional: true
 
-  '@pnpm/exe.darwin-x64@12.14.0':
+  '@pnpm/exe.darwin-x64@12.15.0':
     optional: true
 
-  '@pnpm/exe.freebsd-x64@12.14.0':
+  '@pnpm/exe.freebsd-x64@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-arm64-musl@12.14.0':
+  '@pnpm/exe.linux-arm64-musl@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-arm64@12.14.0':
+  '@pnpm/exe.linux-arm64@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-ppc64@12.14.0':
+  '@pnpm/exe.linux-ppc64@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-riscv64@12.14.0':
+  '@pnpm/exe.linux-riscv64@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-s390x@12.14.0':
+  '@pnpm/exe.linux-s390x@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-x64-musl@12.14.0':
+  '@pnpm/exe.linux-x64-musl@12.15.0':
     optional: true
 
-  '@pnpm/exe.linux-x64@12.14.0':
+  '@pnpm/exe.linux-x64@12.15.0':
     optional: true
 
-  '@pnpm/exe.win32-arm64@12.14.0':
+  '@pnpm/exe.win32-arm64@12.15.0':
     optional: true
 
-  '@pnpm/exe.win32-x64@12.14.0':
+  '@pnpm/exe.win32-x64@12.15.0':
     optional: true
 
-  pnpm@12.14.0:
+  pnpm@12.15.0:
     optionalDependencies:
-      '@pnpm/exe.android-arm64': 12.14.0
-      '@pnpm/exe.android-x64': 12.14.0
-      '@pnpm/exe.darwin-arm64': 12.14.0
-      '@pnpm/exe.darwin-x64': 12.14.0
-      '@pnpm/exe.freebsd-x64': 12.14.0
-      '@pnpm/exe.linux-arm64': 12.14.0
-      '@pnpm/exe.linux-arm64-musl': 12.14.0
-      '@pnpm/exe.linux-ppc64': 12.14.0
-      '@pnpm/exe.linux-riscv64': 12.14.0
-      '@pnpm/exe.linux-s390x': 12.14.0
-      '@pnpm/exe.linux-x64': 12.14.0
-      '@pnpm/exe.linux-x64-musl': 12.14.0
-      '@pnpm/exe.win32-arm64': 12.14.0
-      '@pnpm/exe.win32-x64': 12.14.0
+      '@pnpm/exe.android-arm64': 12.15.0
+      '@pnpm/exe.android-x64': 12.15.0
+      '@pnpm/exe.darwin-arm64': 12.15.0
+      '@pnpm/exe.darwin-x64': 12.15.0
+      '@pnpm/exe.freebsd-x64': 12.15.0
+      '@pnpm/exe.linux-arm64': 12.15.0
+      '@pnpm/exe.linux-arm64-musl': 12.15.0
+      '@pnpm/exe.linux-ppc64': 12.15.0
+      '@pnpm/exe.linux-riscv64': 12.15.0
+      '@pnpm/exe.linux-s390x': 12.15.0
+      '@pnpm/exe.linux-x64': 12.15.0
+      '@pnpm/exe.linux-x64-musl': 12.15.0
+      '@pnpm/exe.win32-arm64': 12.15.0
+      '@pnpm/exe.win32-x64': 12.15.0
 
 ---
 lockfileVersion: '9.0'
@@ -170,11 +170,11 @@ importers:
   .:
     dependencies:
       '@astrojs/starlight':
-        specifier: ^0.42.6
-        version: 0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
+        specifier: ^0.42.7
+        version: 0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
       '@xberg-io/docs-theme':
         specifier: ^0.4.1
-        version: 0.4.1(@astrojs/starlight@0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
+        version: 0.4.1(@astrojs/starlight@0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
       astro:
         specifier: ^7.4.2
         version: 7.4.2(@types/node@24.19.2)(yaml@2.9.1)
@@ -183,7 +183,7 @@ importers:
         version: 0.35.5(@types/node@24.19.2)
       starlight-llms-txt:
         specifier: ^0.12.0
-        version: 0.12.0(@astrojs/markdown-satteri@0.4.5)(@astrojs/starlight@0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
+        version: 0.12.0(@astrojs/markdown-satteri@0.4.5)(@astrojs/starlight@0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
 
 packages:
 
@@ -282,8 +282,8 @@ packages:
   '@astrojs/sitemap@3.7.4':
     resolution: {integrity: sha512-LbKNC24bdUWcQf/pThB6qLlSqHojxGjZDURIzFocY8rlWnAn2t74nnhnK6S5x0NHriHoAduLEpVjRykmeGiVvA==}
 
-  '@astrojs/starlight@0.42.6':
-    resolution: {integrity: sha512-Cfs7GdgzgNRCauDxQVsFUVL1thrGHK/rQdbv/SURv/xhGBXx+j5ypOHW9ENPraQxbIzUC8KAnJV7L9mvEVRuyQ==}
+  '@astrojs/starlight@0.42.7':
+    resolution: {integrity: sha512-mlbit5iRjLx5eIcLf84Q2CwkrrsEgZrQwKKBK+vRf+ZGiSrwy1UGdT1hUfAIaHrMfcvkDpL+gw3aua7HobiKFg==}
     peerDependencies:
       '@astrojs/markdown-remark': ^7.3.0
       astro: ^7.2.10
@@ -295,21 +295,21 @@ packages:
     resolution: {integrity: sha512-SMkvMsGOpM0FMAoT5pzhgI3LZC0JSPWf7Evwop+fZ3N6UkusPM7lI+sOJjMNI5OJrVoiei1/AGo1cY7sikTc5A==}
     engines: {node: '>=22.23.4'}
 
-  '@babel/helper-string-parser@7.29.7':
-    resolution: {integrity: sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw==}
+  '@babel/helper-string-parser@7.29.11':
+    resolution: {integrity: sha512-snZbO7MEDOof+hvNa97EjEY7qD7h2kwvQr5AJC3ZhQudKW5dnej6k3kP9NQV88hJwaS8vDqRLFo9rivLEhle2g==}
     engines: {node: '>=6.9.0'}
 
   '@babel/helper-validator-identifier@7.29.7':
     resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/parser@7.29.9':
-    resolution: {integrity: sha512-CjXrNHTnvqBVqHgdBysY3vk2T8tpJHb5/RMeHJBTyVa9xgugCB0CJTx/3oO8RV2QRQP391RWpB7D6hLjm8V9uA==}
+  '@babel/parser@7.29.11':
+    resolution: {integrity: sha512-OZ6+oaK7GMyg3IfCpj8JOmn8n+w2rJbDT0LLfVDTLb1ZFeKDh3AiNELgCMUw175IJHSkLl74hG0M0VLsvx+gag==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  '@babel/types@7.29.8':
-    resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
+  '@babel/types@7.29.11':
+    resolution: {integrity: sha512-WCsemW40Cpc6gouC1SrY6PBaZ+oLRlEVY9XBvZBI7il/HyUrb2nJ505wE1MHEFyDZNnrWDEuy4jL50WVHfTTSQ==}
     engines: {node: '>=6.9.0'}
 
   '@bruits/satteri-darwin-arm64@0.10.5':
@@ -572,12 +572,12 @@ packages:
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
-  '@napi-rs/wasm-runtime@1.2.5':
-    resolution: {integrity: sha512-HshSvXzmBxNzqejd3k/KemgQ3hdREUYFRRrgxOZ+gPljDIsO2SDZrVZMd4Z/HsxudQbE62OVyVFE8z9BCurfjA==}
+  '@napi-rs/wasm-runtime@1.2.6':
+    resolution: {integrity: sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
     peerDependencies:
-      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
-      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+      '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
+      '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
 
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
@@ -1102,8 +1102,8 @@ packages:
   hast-util-to-string@3.0.1:
     resolution: {integrity: sha512-XelQVTDWvqcl3axRfI0xSeoVKzyIFPwsAGSLIsKdJKQMXDYJS4WYrBNF/8J7RdhIcFI2BOHgAifggsvsxp/3+A==}
 
-  hast-util-to-text@4.0.2:
-    resolution: {integrity: sha512-KK6y/BN8lbaq654j7JgBydev7wuNMcID54lkRav1P0CaE1e47P72AWWPiGKXTJU271ooYzcvTAn/Zt0REnvc7A==}
+  hast-util-to-text@4.0.3:
+    resolution: {integrity: sha512-5yrlWOvGFs6CqHriUpSsNrjzT/Tdo+IOQudbznxOn8K5qblp18MJyzOg8IgDOKQ8MYgQcJA7SusuCjSpDr8mSA==}
 
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
@@ -1123,8 +1123,8 @@ packages:
   http-cache-semantics@4.3.0:
     resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
-  i18next@26.5.4:
-    resolution: {integrity: sha512-Wg0O1u2xmnsve9gICDwGekLkMe9SIC7+ZiuLYfWUGb/A3TQdRKygQ4OY9ros4raf5D66ZnW9JMrTDtGP2b8a7Q==}
+  i18next@26.5.11:
+    resolution: {integrity: sha512-Wc0klBPKxqZ2tL2qdAnF8xvvnWgr1IMGSY2ikTiAvaFVbz7xiFARtkoU4RidBDw1SyziGROp0qxu6qnJ7l2Wug==}
     peerDependencies:
       typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
@@ -1259,8 +1259,8 @@ packages:
   mdast-util-directive@3.1.1:
     resolution: {integrity: sha512-Gqpa3MHorXYEZ0VfbroyvBlVKUfz371V6mIERqOYMcb0W1D3LwmFq1ZW4O2TDrbn+4ZmGLwMWeFRJgYZ+bc5fQ==}
 
-  mdast-util-find-and-replace@3.0.3:
-    resolution: {integrity: sha512-xPgpDNl0/OXHsI7TlaIs22lWnH3KlpvZdXG1ET/m/YT2Hhdkx8lJV4kLphE6l9simyM4KPDFBwas08BgEob6Jw==}
+  mdast-util-find-and-replace@3.0.4:
+    resolution: {integrity: sha512-z4B5c6jrnJ1ltOQemhWYPBSAo6y42Z8Gt2yEgfgNTMcLSU59B8bfj8Z8AnAlJrBGLnqkdAUZ7jdDEqQw3KuipQ==}
 
   mdast-util-from-markdown@2.1.0:
     resolution: {integrity: sha512-KRLgmPaP2H1ul2bpoJkOS+9pAcDAAj9Nu1mqLnh8NLeJG5tlvj42TH80PIGBpROWlRXLk0lDrWNuZCFy/tsB4A==}
@@ -1664,9 +1664,6 @@ packages:
   unifont@1.0.3:
     resolution: {integrity: sha512-XGnEwj5sWdCbiBX01mWLSBncS0yMRjnLygau3IfdOlfjMacNIQvTGW4VH7pWBq+gGWArfSef/CensMLjMmIr/A==}
 
-  unist-util-find-after@5.0.0:
-    resolution: {integrity: sha512-amQa0Ep2m6hE2g72AugUItjbuM8X8cGQnFoHk0pGfrFeT9GZhzN5SW8nRsiGKK7Aif4CrACPENkA6P/Lw6fHGQ==}
-
   unist-util-is@6.0.1:
     resolution: {integrity: sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==}
 
@@ -1679,11 +1676,11 @@ packages:
   unist-util-stringify-position@4.0.0:
     resolution: {integrity: sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==}
 
-  unist-util-visit-parents@6.0.2:
-    resolution: {integrity: sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==}
+  unist-util-visit-parents@6.1.0:
+    resolution: {integrity: sha512-vKXxz6O38sKDj1mtx/k2cWvkkFBuYGx6uGrlzBkVeWCRF/F8sdI0j3Wbkz/5rVNRRuVc8UrgRdbCxNhmYXgP3w==}
 
-  unist-util-visit@5.1.0:
-    resolution: {integrity: sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==}
+  unist-util-visit@5.2.0:
+    resolution: {integrity: sha512-fpsYs/VVoZxfGY9/j3FQpZmN8wdLJaV1Pt38AaJNZu9uKIHcFU3halCdBveEq1HGKO1OEfJY65w1zvoFV1b3qQ==}
 
   unstorage@1.17.6:
     resolution: {integrity: sha512-gjKtcmn/KwZuJZO9o2sc0esAQnhmTw0LviDHwevTXbJMYs0dRTp8ZEEWXHU0vTpzbN3cA0yxlTeyXssMp3zDqw==}
@@ -1870,7 +1867,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.3
       '@emnapi/runtime': 1.11.3
-      '@napi-rs/wasm-runtime': 1.2.5(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)
     optional: true
 
   '@astrojs/compiler-binding-win32-arm64-msvc@0.5.2':
@@ -1930,7 +1927,7 @@ snapshots:
       sitemap: 9.0.1
       zod: 4.6.7
 
-  '@astrojs/starlight@0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))':
+  '@astrojs/starlight@0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))':
     dependencies:
       '@astrojs/markdown-satteri': 0.4.5
       '@astrojs/mdx': 8.1.1(@astrojs/markdown-satteri@0.4.5)(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
@@ -1947,7 +1944,7 @@ snapshots:
       hast-util-to-html: 9.0.5
       hast-util-to-string: 3.0.1
       hastscript: 9.0.1
-      i18next: 26.5.4
+      i18next: 26.5.11
       js-yaml: 4.3.2
       klona: 2.0.6
       magic-string: 1.4.3
@@ -1959,7 +1956,7 @@ snapshots:
       satteri: 0.10.5
       ultrahtml: 1.7.0
       unified: 11.0.5
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
@@ -1972,17 +1969,17 @@ snapshots:
       is-docker: 4.0.0
       package-manager-detector: 1.9.0
 
-  '@babel/helper-string-parser@7.29.7': {}
+  '@babel/helper-string-parser@7.29.11': {}
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@babel/parser@7.29.9':
+  '@babel/parser@7.29.11':
     dependencies:
-      '@babel/types': 7.29.8
+      '@babel/types': 7.29.11
 
-  '@babel/types@7.29.8':
+  '@babel/types@7.29.11':
     dependencies:
-      '@babel/helper-string-parser': 7.29.7
+      '@babel/helper-string-parser': 7.29.11
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bruits/satteri-darwin-arm64@0.10.5':
@@ -2007,7 +2004,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.5(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@bruits/satteri-win32-arm64-msvc@0.10.5':
@@ -2071,12 +2068,12 @@ snapshots:
       '@ctrl/tinycolor': 4.2.1
       hast-util-select: 6.0.4
       hast-util-to-html: 9.0.5
-      hast-util-to-text: 4.0.2
+      hast-util-to-text: 4.0.3
       hastscript: 9.0.1
       postcss: 8.5.31
       postcss-nested: 7.0.2(postcss@8.5.31)
-      unist-util-visit: 5.1.0
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit: 5.2.0
+      unist-util-visit-parents: 6.1.0
 
   '@expressive-code/plugin-frames@0.44.3':
     dependencies:
@@ -2199,14 +2196,14 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
-  '@napi-rs/wasm-runtime@1.2.5(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+  '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
       '@tybys/wasm-util': 0.10.4
     optional: true
 
-  '@napi-rs/wasm-runtime@1.2.5(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)':
+  '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)':
     dependencies:
       '@emnapi/core': 1.11.3
       '@emnapi/runtime': 1.11.3
@@ -2378,9 +2375,9 @@ snapshots:
 
   '@ungap/structured-clone@1.4.0': {}
 
-  '@xberg-io/docs-theme@0.4.1(@astrojs/starlight@0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))':
+  '@xberg-io/docs-theme@0.4.1(@astrojs/starlight@0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))':
     dependencies:
-      '@astrojs/starlight': 0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
+      '@astrojs/starlight': 0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
       astro: 7.4.2(@types/node@24.19.2)(yaml@2.9.1)
 
   am-i-vibing@0.5.0:
@@ -2692,7 +2689,7 @@ snapshots:
       hast-util-phrasing: 3.0.1
       hast-util-whitespace: 3.0.0
       html-whitespace-sensitive-tag-names: 3.0.1
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
 
   hast-util-from-html@2.0.3:
     dependencies:
@@ -2761,7 +2758,7 @@ snapshots:
       nth-check: 2.1.1
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       zwitch: 2.0.4
 
   hast-util-to-html@9.0.5:
@@ -2785,7 +2782,7 @@ snapshots:
       '@ungap/structured-clone': 1.4.0
       hast-util-phrasing: 3.0.1
       hast-util-to-html: 9.0.5
-      hast-util-to-text: 4.0.2
+      hast-util-to-text: 4.0.3
       hast-util-whitespace: 3.0.0
       mdast-util-phrasing: 4.1.0
       mdast-util-to-hast: 13.2.1
@@ -2793,18 +2790,15 @@ snapshots:
       rehype-minify-whitespace: 6.0.2
       trim-trailing-lines: 2.1.0
       unist-util-position: 5.0.0
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
 
   hast-util-to-string@3.0.1:
     dependencies:
       '@types/hast': 3.0.5
 
-  hast-util-to-text@4.0.2:
+  hast-util-to-text@4.0.3:
     dependencies:
       '@types/hast': 3.0.5
-      '@types/unist': 3.0.3
-      hast-util-is-element: 3.0.0
-      unist-util-find-after: 5.0.0
 
   hast-util-whitespace@3.0.0:
     dependencies:
@@ -2826,7 +2820,7 @@ snapshots:
 
   http-cache-semantics@4.3.0: {}
 
-  i18next@26.5.4: {}
+  i18next@26.5.11: {}
 
   iron-webcrypto@1.2.1: {}
 
@@ -2912,8 +2906,8 @@ snapshots:
 
   magicast@0.5.5:
     dependencies:
-      '@babel/parser': 7.29.9
-      '@babel/types': 7.29.8
+      '@babel/parser': 7.29.11
+      '@babel/types': 7.29.11
       source-map-js: 1.2.2
 
   markdown-table@3.0.4: {}
@@ -2929,16 +2923,16 @@ snapshots:
       micromark-util-character: 2.1.1
       parse-entities: 4.0.2
       stringify-entities: 4.0.4
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-find-and-replace@3.0.3:
+  mdast-util-find-and-replace@3.0.4:
     dependencies:
       '@types/mdast': 4.0.4
       escape-string-regexp: 5.0.0
       unist-util-is: 6.0.1
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
 
   mdast-util-from-markdown@2.1.0:
     dependencies:
@@ -2962,7 +2956,7 @@ snapshots:
       '@types/mdast': 4.0.4
       ccount: 2.0.1
       devlop: 1.1.0
-      mdast-util-find-and-replace: 3.0.3
+      mdast-util-find-and-replace: 3.0.4
       micromark-util-character: 2.1.1
 
   mdast-util-gfm-footnote@2.1.0:
@@ -3028,7 +3022,7 @@ snapshots:
       micromark-util-sanitize-uri: 2.0.1
       trim-lines: 3.0.1
       unist-util-position: 5.0.0
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       vfile: 6.0.3
 
   mdast-util-to-markdown@2.2.0:
@@ -3042,7 +3036,7 @@ snapshots:
       micromark-util-classify-character: 2.0.1
       micromark-util-decode-string: 2.0.1
       micromark-util-html-tag-name: 2.0.1
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       zwitch: 2.0.4
 
   mdast-util-to-string@4.0.0:
@@ -3443,7 +3437,7 @@ snapshots:
     dependencies:
       '@types/nlcst': 2.0.3
       nlcst-to-string: 4.0.0
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
 
   rolldown@1.2.15:
     dependencies:
@@ -3546,10 +3540,10 @@ snapshots:
 
   space-separated-tokens@2.0.2: {}
 
-  starlight-llms-txt@0.12.0(@astrojs/markdown-satteri@0.4.5)(@astrojs/starlight@0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)):
+  starlight-llms-txt@0.12.0(@astrojs/markdown-satteri@0.4.5)(@astrojs/starlight@0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)))(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1)):
     dependencies:
       '@astrojs/mdx': 8.1.1(@astrojs/markdown-satteri@0.4.5)(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
-      '@astrojs/starlight': 0.42.6(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
+      '@astrojs/starlight': 0.42.7(astro@7.4.2(@types/node@24.19.2)(yaml@2.9.1))
       '@types/hast': 3.0.5
       '@types/micromatch': 4.0.10
       astro: 7.4.2(@types/node@24.19.2)(yaml@2.9.1)
@@ -3633,11 +3627,6 @@ snapshots:
       std-env: 4.3.0
       undici: 8.12.3
 
-  unist-util-find-after@5.0.0:
-    dependencies:
-      '@types/unist': 3.0.3
-      unist-util-is: 6.0.1
-
   unist-util-is@6.0.1:
     dependencies:
       '@types/unist': 3.0.3
@@ -3650,22 +3639,22 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
 
   unist-util-stringify-position@4.0.0:
     dependencies:
       '@types/unist': 3.0.3
 
-  unist-util-visit-parents@6.0.2:
+  unist-util-visit-parents@6.1.0:
     dependencies:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
 
-  unist-util-visit@5.1.0:
+  unist-util-visit@5.2.0:
     dependencies:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
 
   unstorage@1.17.6:
     dependencies:

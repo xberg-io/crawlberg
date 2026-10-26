@@ -1,4 +1,7 @@
 #[cfg(feature = "stealth")]
+mod chrome145;
+
+#[cfg(feature = "stealth")]
 use std::collections::HashMap;
 #[cfg(feature = "stealth")]
 use std::error::Error;
@@ -141,13 +144,8 @@ impl StealthHttpClient {
             .build()
             .expect("Failed to load system CA certificates");
 
-        let emulation_opts = wreq_util::Emulation::builder()
-            .profile(wreq_util::Profile::Chrome145)
-            .platform(wreq_util::Platform::Linux)
-            .build();
-
         let mut builder = wreq::Client::builder()
-            .emulation(emulation_opts)
+            .emulation(chrome145::emulation())
             .tls_cert_store(cert_store)
             .tls_cert_verification(!danger_accept_invalid_certs)
             .tls_verify_hostname(!danger_accept_invalid_certs)

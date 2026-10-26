@@ -6,7 +6,7 @@ name: crawlberg-automating-the-browser
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:a333d7ec586948ca3e195c02441494ee99272b227c25bf6037f920dc15d80b5b
-Source-Hash: blake3:4b18f96f8bf0da5fa02f0e2c5c6ad57db3a523b7eb72186f504977e42807760d
+Source-Hash: blake3:3ef58b0c0deea7bbbbcd5860415fa2cccb5aa09d38ad6f7822d1f81b2c7e3e72
 Schema-Version: v1
 -->
 

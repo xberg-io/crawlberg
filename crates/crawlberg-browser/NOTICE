@@ -6,3 +6,10 @@ licensed under Apache License 2.0).
 
 Original copyright (c) the Obscura authors.
 Modifications copyright (c) the xberg.io maintainers.
+
+The Chrome145/Linux stealth transport profile in src/net/wreq_client/chrome145.rs
+is adapted from wreq-util 3.0.0-rc.14 (https://github.com/0x676e67/wreq-util),
+licensed under Apache License 2.0; see LICENSE-WREQ-UTIL.
+
+Copyright 2026 0x676e67 <gngppz@gmail.com>.
+Modifications: retain only Chrome145/Linux and the Brotli certificate codec.
