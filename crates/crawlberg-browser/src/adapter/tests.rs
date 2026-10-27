@@ -75,7 +75,7 @@ fn sharing_cookies_does_not_change_header_authorization_and_the_policy_can_be_cl
     };
     state.set_subdomain_headers(Some(headers.clone()));
     state.share_cookies_from(&NativeRenderState::new(&[]));
-    assert_eq!(state.subdomain_headers, Some(headers));
+    assert_eq!(state.subdomain_headers.as_deref(), Some(&headers));
     state.set_subdomain_headers(None);
     assert_eq!(state.subdomain_headers, None);
 }

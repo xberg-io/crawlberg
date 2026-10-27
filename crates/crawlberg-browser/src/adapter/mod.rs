@@ -49,7 +49,7 @@ pub struct NativeCookie {
 pub struct NativeRenderState {
     cookie_jar: Arc<CookieJar>,
     site_for_cookies: Option<url::Url>,
-    subdomain_headers: Option<OriginHeaders>,
+    subdomain_headers: Option<Box<OriginHeaders>>,
 }
 
 impl NativeRenderState {
@@ -69,7 +69,7 @@ impl NativeRenderState {
     /// Set explicitly public headers for proper DNS subdomains of the carrier's host.
     /// The embedder must exclude credentials; `None` clears any earlier authorization.
     pub fn set_subdomain_headers(&mut self, headers: Option<OriginHeaders>) {
-        self.subdomain_headers = headers;
+        self.subdomain_headers = headers.map(Box::new);
     }
 
     /// Share a crawl's complete cookie jar while retaining this navigation's initiating site.
@@ -512,7 +512,12 @@ async fn render_url_local_with_state(
     config: &NativeBrowserConfig,
     state: NativeRenderState,
 ) -> Result<RenderedPage, PageError> {
-    let context = create_context_with_cookie_jar(config, state.cookie_jar, state.subdomain_headers).await?;
+    let context = create_context_with_cookie_jar(
+        config,
+        state.cookie_jar,
+        state.subdomain_headers.map(|headers| *headers),
+    )
+    .await?;
     render_with_context(url, config, context, state.site_for_cookies).await
 }
 
@@ -523,7 +528,12 @@ async fn interact_url_local(
     post_navigation_wait: Option<Duration>,
     state: NativeRenderState,
 ) -> Result<NativeInteractionResult, PageError> {
-    let context = create_context_with_cookie_jar(config, state.cookie_jar, state.subdomain_headers).await?;
+    let context = create_context_with_cookie_jar(
+        config,
+        state.cookie_jar,
+        state.subdomain_headers.map(|headers| *headers),
+    )
+    .await?;
     let mut page = Page::new("page-1".to_string(), context);
     page.url = state.site_for_cookies;
     page.document_decoder = config.document_decoder;
