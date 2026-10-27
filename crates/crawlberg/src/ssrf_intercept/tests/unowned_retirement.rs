@@ -1,5 +1,7 @@
 use super::super::{
-    ChildPending, ChildPendingKind, RootWaiter, StructuralTarget, child_pending, unowned_arm_is_independent,
+    CHILD_CONTROLLER_PENDING_LIMIT, ChildPending, ChildPendingKind, Registry, RootWaiter, StructuralTarget,
+    UnownedArmProof, adopt_target, child_pending, reconcile_destroyed, unowned_arm_is_independent,
+    unowned_arm_registry_matches, unowned_arm_retirement_registry_matches,
 };
 use super::*;
 use async_tungstenite::tungstenite::Message;
@@ -772,4 +774,400 @@ async fn an_ended_session_still_requires_absence_before_its_original_pending_arm
         }
     }
     assert_eq!(executed, 16);
+}
+
+async fn end_unowned_child_session(fixture: &mut CensusFixture, detach_first: bool) {
+    let events = if detach_first {
+        ["Target.detachedFromTarget", "Target.targetDestroyed"]
+    } else {
+        ["Target.targetDestroyed", "Target.detachedFromTarget"]
+    };
+    for event in events {
+        let params = if event == "Target.detachedFromTarget" {
+            json!({"sessionId": "S-UI", "targetId": "OTHER"})
+        } else {
+            json!({"targetId": "OTHER"})
+        };
+        reply(&mut fixture.socket, json!({"method": event, "params": params})).await;
+    }
+}
+
+async fn assert_owned_root_can_arm(mut fixture: CensusFixture) {
+    let (done, armed) = oneshot::channel();
+    fixture
+        ._commands
+        .send(super::super::ChildCommand::Arm {
+            root: fixture.page.root.clone(),
+            done,
+        })
+        .await
+        .unwrap();
+    let owned = lock(&fixture.shared.registry).context_targets[&fixture.page.root].clone();
+    send_attached_target_with_waiting(&mut fixture.socket, "S-ROOT", "ROOT", "page", None, &owned, false).await;
+    let root_arm = next_child_message(&mut fixture.socket).await;
+    assert_eq!(root_arm["method"], "Target.setAutoAttach");
+    assert_eq!(root_arm["sessionId"], "S-ROOT");
+    answer_child_command(&mut fixture.socket, &root_arm).await;
+    tokio::time::timeout(Duration::from_secs(1), armed)
+        .await
+        .expect("owned root arm acknowledgement")
+        .expect("root arm waiter")
+        .expect("owned root stays armed");
+    fixture._commands.send(super::super::ChildCommand::Stop).await.unwrap();
+    assert!(
+        fixture
+            .controller
+            .await
+            .expect("absence-proved controller must stay healthy")
+    );
+}
+
+#[tokio::test]
+async fn authoritative_primary_removal_preserves_a_pending_unowned_absence_census() {
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_test_writer()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let mut executed = 0;
+    for primary_first in [false, true] {
+        for detach_first in [false, true] {
+            let mut fixture = census_fixture().await;
+            let target = TargetId::new("OTHER");
+            if primary_first {
+                assert!(reconcile_destroyed(&mut lock(&fixture.shared.registry), &target, false));
+            }
+            end_unowned_child_session(&mut fixture, detach_first).await;
+            if !primary_first {
+                send_attached_target_with_waiting(
+                    &mut fixture.socket,
+                    "S-BARRIER",
+                    "BARRIER",
+                    "worker",
+                    None,
+                    &BrowserContextId::new("UNRELATED"),
+                    false,
+                )
+                .await;
+                let barrier = next_child_message(&mut fixture.socket).await;
+                assert_eq!(barrier["sessionId"], "S-BARRIER");
+                answer_child_command(&mut fixture.socket, &barrier).await;
+                assert!(reconcile_destroyed(&mut lock(&fixture.shared.registry), &target, false));
+            }
+            {
+                let registry = lock(&fixture.shared.registry);
+                assert!(!registry.ownership.contains_key(&target));
+                assert!(!registry.target_generations.contains_key(&target));
+            }
+            reply(
+                &mut fixture.socket,
+                json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+            )
+            .await;
+            assert_owned_root_can_arm(fixture).await;
+            executed += 1;
+        }
+    }
+    assert_eq!(executed, 4);
+}
+
+#[tokio::test]
+async fn primary_retirement_history_cannot_outlive_any_intervening_owner_or_context_claim() {
+    let mut executed = 0;
+    for change in 0..7 {
+        let mut fixture = census_fixture().await;
+        let target = TargetId::new("OTHER");
+        let context = BrowserContextId::new("DEFAULT");
+        {
+            let mut registry = lock(&fixture.shared.registry);
+            assert!(reconcile_destroyed(&mut registry, &target, false));
+            match change {
+                0 => registry.register_watched(target.clone(), Arc::clone(&fixture.page)),
+                1 => registry.register_pending(target.clone(), context.clone()),
+                2 => registry.register_pending_shared(target.clone()),
+                3 => registry.register_quarantined(target.clone(), Some(context.clone())),
+                4 => registry.register_other(target.clone()),
+                5 => {
+                    registry.register_context(context.clone(), None);
+                    registry.contexts.remove(&context);
+                }
+                6 => registry.remove_target(&target),
+                _ => unreachable!(),
+            }
+            if change != 5 {
+                assert!(
+                    !registry.unowned_arm_observers.contains_key(&target),
+                    "registration case {change}"
+                );
+                assert!(reconcile_destroyed(&mut registry, &target, false));
+            }
+        }
+        reply(
+            &mut fixture.socket,
+            json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+        )
+        .await;
+        assert_closed(fixture.controller).await;
+        executed += 1;
+    }
+    assert_eq!(executed, 7);
+}
+
+#[tokio::test]
+async fn direct_iframe_adoption_invalidates_primary_retirement_history() {
+    let mut fixture = census_fixture().await;
+    let target = TargetId::new("OTHER");
+    assert!(reconcile_destroyed(&mut lock(&fixture.shared.registry), &target, false));
+    let context = lock(&fixture.shared.registry).context_targets[&fixture.page.root].clone();
+    let info = serde_json::from_value(json!({"targetId": "OTHER", "type": "iframe", "title": "", "url": "",
+        "attached": true, "canAccessOpener": false, "browserContextId": context.inner()}))
+    .unwrap();
+    assert!(adopt_target(&fixture.shared, &info).is_none());
+    {
+        let mut registry = lock(&fixture.shared.registry);
+        assert!(matches!(
+            registry.ownership.get(&target),
+            Some(TargetOwnership::Watched(_))
+        ));
+        assert!(!registry.unowned_arm_observers.contains_key(&target));
+        assert!(reconcile_destroyed(&mut registry, &target, false));
+    }
+    reply(
+        &mut fixture.socket,
+        json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+    )
+    .await;
+    assert_closed(fixture.controller).await;
+}
+
+#[tokio::test]
+async fn a_primary_tab_replacement_invalidates_retirement_history_without_an_ownership_entry() {
+    let mut fixture = census_fixture().await;
+    let target = TargetId::new("OTHER");
+    assert!(reconcile_destroyed(&mut lock(&fixture.shared.registry), &target, false));
+    let info = serde_json::from_value(json!({"targetId": "OTHER", "type": "tab", "title": "", "url": "",
+        "attached": true, "canAccessOpener": false, "browserContextId": "DEFAULT"}))
+    .unwrap();
+    assert!(adopt_target(&fixture.shared, &info).is_none());
+    assert!(
+        !lock(&fixture.shared.registry)
+            .unowned_arm_observers
+            .contains_key(&target)
+    );
+    reply(
+        &mut fixture.socket,
+        json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+    )
+    .await;
+    assert_closed(fixture.controller).await;
+}
+
+#[tokio::test]
+async fn primary_retirement_still_requires_a_fresh_census_proving_target_absence() {
+    let mut fixture = census_fixture().await;
+    assert!(reconcile_destroyed(
+        &mut lock(&fixture.shared.registry),
+        &TargetId::new("OTHER"),
+        false
+    ));
+    reply(
+        &mut fixture.socket,
+        json!({"id": fixture.census["id"], "result": {"targetInfos": [{
+            "targetId": "OTHER", "type": "browser_ui", "title": "", "url": "", "attached": false,
+            "canAccessOpener": false, "browserContextId": "DEFAULT"
+        }]}}),
+    )
+    .await;
+    assert_closed(fixture.controller).await;
+}
+
+#[test]
+fn retirement_observers_bound_live_proofs_and_reclaim_dead_entries() {
+    let mut registry = Registry::default();
+    let generation = Arc::new(());
+    let mut tokens = Vec::new();
+    for index in 0..CHILD_CONTROLLER_PENDING_LIMIT {
+        tokens.push(
+            registry
+                .observe_unowned_arm(&TargetId::new(index.to_string()), &generation)
+                .expect("proof below capacity"),
+        );
+    }
+    assert_eq!(registry.unowned_arm_observers.len(), CHILD_CONTROLLER_PENDING_LIMIT);
+    assert!(
+        registry
+            .observe_unowned_arm(&TargetId::new("OVERFLOW"), &generation)
+            .is_none()
+    );
+    tokens.clear();
+    assert!(
+        registry
+            .observe_unowned_arm(&TargetId::new("RECLAIMED"), &generation)
+            .is_some()
+    );
+    assert_eq!(registry.unowned_arm_observers.len(), 1);
+}
+
+#[tokio::test]
+async fn rejected_retirement_diagnostics_identify_the_failed_predicate_without_target_payloads() {
+    use tracing::instrument::WithSubscriber as _;
+    let captured = tempfile::NamedTempFile::new().unwrap();
+    let writer = captured.reopen().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .without_time()
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || writer.try_clone().unwrap())
+        .finish();
+    async {
+        let mut fixture = census_fixture().await;
+        assert!(reconcile_destroyed(
+            &mut lock(&fixture.shared.registry),
+            &TargetId::new("OTHER"),
+            false
+        ));
+        lock(&fixture.shared.registry).register_context(BrowserContextId::new("DEFAULT"), None);
+        reply(
+            &mut fixture.socket,
+            json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+        )
+        .await;
+        assert_closed(fixture.controller).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
+    let text = std::fs::read_to_string(captured.path()).unwrap();
+    let events: Vec<Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["fields"],
+        json!({
+            "message": "browser child-target controller failed closed", "phase": "child_target_controller",
+            "reason": "unowned_retirement_unproved", "browser_handler_task_id": "None", "acknowledged": true,
+            "launched": true, "target_absent": true, "registry_matches": false, "context_draining": false,
+            "independent": true, "ownership_present": false, "generation_present": false
+        })
+    );
+    assert!(!text.contains("OTHER"));
+    assert!(!text.contains("DEFAULT"));
+}
+
+async fn primary_removed_before_error_fixture(waiting: bool) -> CensusFixture {
+    let page = watched("ROOT");
+    let mut state = shared_with(&page, "OTHER");
+    state.origin = BrowserOrigin::Launched;
+    let shared = Arc::new(state);
+    register_owned_context(&shared, &page);
+    let (mut socket, commands, controller) = test_child_controller(Arc::clone(&shared), Duration::from_secs(1)).await;
+    send_attached_target_with_waiting(
+        &mut socket,
+        "S-UI",
+        "OTHER",
+        "browser_ui",
+        None,
+        &BrowserContextId::new("DEFAULT"),
+        waiting,
+    )
+    .await;
+    let arm = next_child_message(&mut socket).await;
+    assert_eq!(arm["sessionId"], "S-UI");
+    assert!(reconcile_destroyed(
+        &mut lock(&shared.registry),
+        &TargetId::new("OTHER"),
+        false
+    ));
+    reply(
+        &mut socket,
+        json!({"method": "Target.detachedFromTarget", "params": {
+            "sessionId": "S-UI", "targetId": "OTHER"
+        }}),
+    )
+    .await;
+    reply(&mut socket, json!({"id": arm["id"], "error": {"code": -32001}})).await;
+    let census = next_child_message(&mut socket).await;
+    assert_eq!(census["method"], "Target.getTargets");
+    assert_eq!(census["params"], json!({"filter": [{}]}));
+    CensusFixture {
+        shared,
+        page,
+        socket,
+        _commands: commands,
+        controller,
+        census,
+    }
+}
+
+#[tokio::test]
+async fn primary_removal_before_the_recursive_arm_error_keeps_only_the_original_absence_proof() {
+    let mut executed = 0;
+    for waiting in [false, true] {
+        let mut fixture = primary_removed_before_error_fixture(waiting).await;
+        assert!(reconcile_destroyed(
+            &mut lock(&fixture.shared.registry),
+            &TargetId::new("OTHER"),
+            false
+        ));
+        reply(
+            &mut fixture.socket,
+            json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+        )
+        .await;
+        assert_owned_root_can_arm(fixture).await;
+        executed += 1;
+    }
+    assert_eq!(executed, 2);
+}
+
+#[tokio::test]
+async fn historical_retirement_never_authorizes_a_live_resume_or_an_invalid_session() {
+    let mut fixture = census_fixture().await;
+    let target = TargetId::new("OTHER");
+    let context = BrowserContextId::new("DEFAULT");
+    {
+        let mut registry = lock(&fixture.shared.registry);
+        let proof = UnownedArmProof {
+            target_generation: Arc::clone(&registry.target_generations[&target]),
+            retirement_observer: registry.unowned_arm_observers[&target].proof.upgrade().unwrap(),
+            context_generation: registry.unowned_context_observers[&context].upgrade().unwrap(),
+            session_lifecycle: Arc::new(std::sync::atomic::AtomicU8::new(UnownedArmProof::ATTACHED)),
+            parent_generation: None,
+        };
+        assert!(unowned_arm_registry_matches(&registry, Some(&context), &target, &proof));
+        let observer = registry.unowned_arm_observers.remove(&target).unwrap();
+        assert!(unowned_arm_registry_matches(&registry, Some(&context), &target, &proof));
+        assert!(
+            !unowned_arm_retirement_registry_matches(&registry, Some(&context), &target, &proof),
+            "invalidating the observed generation must reject retirement even while Other remains"
+        );
+        registry.unowned_arm_observers.insert(target.clone(), observer);
+        assert!(reconcile_destroyed(&mut registry, &target, false));
+        assert!(!unowned_arm_registry_matches(
+            &registry,
+            Some(&context),
+            &target,
+            &proof
+        ));
+        assert!(unowned_arm_retirement_registry_matches(
+            &registry,
+            Some(&context),
+            &target,
+            &proof
+        ));
+        proof
+            .session_lifecycle
+            .store(UnownedArmProof::INVALID, Ordering::Release);
+        assert!(!unowned_arm_retirement_registry_matches(
+            &registry,
+            Some(&context),
+            &target,
+            &proof
+        ));
+    }
+    reply(
+        &mut fixture.socket,
+        json!({"id": fixture.census["id"], "result": {"targetInfos": []}}),
+    )
+    .await;
+    fixture._commands.send(super::super::ChildCommand::Stop).await.unwrap();
+    assert!(fixture.controller.await.unwrap());
 }

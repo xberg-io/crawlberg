@@ -445,6 +445,8 @@ struct Registry {
     unowned_context_observers: HashMap<BrowserContextId, std::sync::Weak<()>>,
     /// ~keep These weak tokens retain ownership history without attributing frames to tab targets.
     unowned_structural_observers: HashMap<TargetId, std::sync::Weak<AtomicBool>>,
+    // ~keep Primary-socket destruction must retain only a pending proof’s exact Other generation.
+    unowned_arm_observers: HashMap<TargetId, UnownedArmObserver>,
     /// Recently retired context ids, bounded because authoritative absence is the ordering
     /// barrier for older events and known target ids remain in `context_targets`. ~keep
     retired_contexts: VecDeque<BrowserContextId>,
@@ -567,7 +569,31 @@ enum Owner {
     Other,
 }
 
+struct UnownedArmObserver {
+    generation: std::sync::Weak<()>,
+    proof: std::sync::Weak<()>,
+    retired: bool,
+}
+
 impl Registry {
+    fn observe_unowned_arm(&mut self, target: &TargetId, generation: &Arc<()>) -> Option<Arc<()>> {
+        self.unowned_arm_observers
+            .retain(|_, observer| observer.proof.strong_count() != 0);
+        if self.unowned_arm_observers.len() >= CHILD_CONTROLLER_PENDING_LIMIT {
+            return None;
+        }
+        let proof = Arc::new(());
+        self.unowned_arm_observers.insert(
+            target.clone(),
+            UnownedArmObserver {
+                generation: Arc::downgrade(generation),
+                proof: Arc::downgrade(&proof),
+                retired: false,
+            },
+        );
+        Some(proof)
+    }
+
     fn observe_unowned_context(&mut self, context: &BrowserContextId) -> Option<Arc<()>> {
         if let Some(generation) = self
             .unowned_context_observers
@@ -656,6 +682,7 @@ impl Registry {
     }
 
     fn register_watched(&mut self, target: TargetId, owner: Arc<WatchedPage>) {
+        self.unowned_arm_observers.remove(&target);
         self.invalidate_unowned_structural(&target);
         self.invalidate_frames_from(&target);
         self.others.remove(&target);
@@ -677,6 +704,7 @@ impl Registry {
         {
             return;
         }
+        self.unowned_arm_observers.remove(&target);
         self.invalidate_frames_from(&target);
         self.others.insert(target.clone());
         self.invalidate_unowned_structural(&target);
@@ -688,6 +716,7 @@ impl Registry {
     }
 
     fn register_pending(&mut self, target: TargetId, context: BrowserContextId) {
+        self.unowned_arm_observers.remove(&target);
         self.invalidate_unowned_structural(&target);
         self.invalidate_frames_from(&target);
         self.others.remove(&target);
@@ -698,6 +727,7 @@ impl Registry {
     }
 
     fn register_pending_shared(&mut self, target: TargetId) {
+        self.unowned_arm_observers.remove(&target);
         self.invalidate_unowned_structural(&target);
         self.invalidate_frames_from(&target);
         self.others.remove(&target);
@@ -707,6 +737,7 @@ impl Registry {
     }
 
     fn remove_target(&mut self, target: &TargetId) {
+        self.unowned_arm_observers.remove(target);
         self.invalidate_frames_from(target);
         self.targets.retain(|(id, _)| id != target);
         self.others.remove(target);
@@ -724,6 +755,7 @@ impl Registry {
     }
 
     fn register_quarantined(&mut self, target: TargetId, context: Option<BrowserContextId>) {
+        self.unowned_arm_observers.remove(&target);
         self.invalidate_unowned_structural(&target);
         self.invalidate_frames_from(&target);
         self.others.remove(&target);
@@ -770,6 +802,7 @@ impl Registry {
                 {
                     token.store(false, Ordering::Release);
                 }
+                self.unowned_arm_observers.remove(target);
                 *ownership = TargetOwnership::Quarantined;
             }
         }
@@ -2167,6 +2200,7 @@ enum ChildPendingKind {
 #[derive(Clone)]
 struct UnownedArmProof {
     target_generation: Arc<()>,
+    retirement_observer: Arc<()>,
     context_generation: Arc<()>,
     // ~keep Cleanup may precede the arm error; reuse invalidates this original removal witness.
     session_lifecycle: Arc<AtomicU8>,
@@ -3029,6 +3063,20 @@ fn unowned_arm_registry_matches(
     target: &TargetId,
     proof: &UnownedArmProof,
 ) -> bool {
+    unowned_arm_registry_is_unclaimed(registry, context, target, proof)
+        && matches!(registry.ownership.get(target), Some(TargetOwnership::Other))
+        && registry
+            .target_generations
+            .get(target)
+            .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))
+}
+
+fn unowned_arm_registry_is_unclaimed(
+    registry: &Registry,
+    context: Option<&BrowserContextId>,
+    target: &TargetId,
+    proof: &UnownedArmProof,
+) -> bool {
     proof.session_lifecycle.load(Ordering::Acquire) != UnownedArmProof::INVALID
         && context.is_some_and(|context| {
             !registry.shared_context
@@ -3042,13 +3090,38 @@ fn unowned_arm_registry_matches(
                     .frames
                     .values()
                     .any(|frame| frame.source == *target && frame.owner.is_some())
-                && matches!(registry.ownership.get(target), Some(TargetOwnership::Other))
-                && registry
-                    .target_generations
-                    .get(target)
-                    .is_some_and(|current| Arc::ptr_eq(current, &proof.target_generation))
                 && registry.unowned_context_matches(context, &proof.context_generation)
         })
+}
+
+fn unowned_arm_retirement_registry_matches(
+    registry: &Registry,
+    context: Option<&BrowserContextId>,
+    target: &TargetId,
+    proof: &UnownedArmProof,
+) -> bool {
+    let Some(observer) = registry.unowned_arm_observers.get(target) else {
+        return false;
+    };
+    if !observer
+        .proof
+        .upgrade()
+        .is_some_and(|token| Arc::ptr_eq(&token, &proof.retirement_observer))
+        || !observer
+            .generation
+            .upgrade()
+            .is_some_and(|generation| Arc::ptr_eq(&generation, &proof.target_generation))
+    {
+        return false;
+    }
+    if observer.retired {
+        unowned_arm_registry_is_unclaimed(registry, context, target, proof)
+            && !registry.ownership.contains_key(target)
+            && !registry.target_generations.contains_key(target)
+            && !registry.others.contains(target)
+    } else {
+        unowned_arm_registry_matches(registry, context, target, proof)
+    }
 }
 
 fn unowned_context_is_draining(pending: &HashMap<u64, ChildPending>, context: Option<&BrowserContextId>) -> bool {
@@ -3152,7 +3225,7 @@ fn record_unowned_session_end(
         };
         if original == target
             && original_session == session
-            && unowned_arm_registry_matches(registry, command.context.as_ref(), target, proof)
+            && unowned_arm_retirement_registry_matches(registry, command.context.as_ref(), target, proof)
             && proof.parent_matches(registry, command.context.as_ref(), parent, structural)
             && unowned_arm_dependencies_clear((target, session, Some(*id)), pending, roots, armed, structural)
             && proof
@@ -3563,7 +3636,7 @@ where
                         && !unowned_context_is_draining(&pending, command_context.as_ref())
                         && proof.independent((target, session), &pending, &root_waiters,
                             &armed_targets, &session_targets, &structural_sessions)
-                        && unowned_arm_registry_matches(&lock(&shared.registry), command_context.as_ref(), target, proof)
+                        && unowned_arm_retirement_registry_matches(&lock(&shared.registry), command_context.as_ref(), target, proof)
                     {
                         let Some(census_id) = child_command_id(&mut next_id) else { return child_fail(shared, "id_exhausted") };
                         if child_socket_write(socket, child_message(census_id, "Target.getTargets",
@@ -3780,13 +3853,24 @@ where
                             let Ok(infos) = serde_json::from_value::<Vec<TargetInfo>>(value["result"]["targetInfos"].clone())
                                 else { return child_fail(shared, "unowned_census_parse") };
                             let registry = lock(&shared.registry);
-                            if !acknowledged || shared.origin != BrowserOrigin::Launched
-                                || infos.iter().any(|info| info.target_id == target)
-                                || !unowned_arm_registry_matches(&registry, command_context.as_ref(), &target, &proof)
-                                || unowned_context_is_draining(&pending, command_context.as_ref())
-                                || !proof.independent((&target, &session), &pending, &root_waiters,
-                                    &armed_targets, &session_targets, &structural_sessions) {
-                                return child_fail(shared, "unowned_retirement_unproved");
+                            let launched = shared.origin == BrowserOrigin::Launched;
+                            let target_absent = !infos.iter().any(|info| info.target_id == target);
+                            let registry_matches = unowned_arm_retirement_registry_matches(
+                                &registry, command_context.as_ref(), &target, &proof);
+                            let context_draining = unowned_context_is_draining(&pending, command_context.as_ref());
+                            let independent = proof.independent((&target, &session), &pending, &root_waiters,
+                                &armed_targets, &session_targets, &structural_sessions);
+                            if !acknowledged || !launched || !target_absent || !registry_matches || context_draining || !independent {
+                                if !shared.stopping.load(Ordering::Acquire) {
+                                    tracing::error!(target: "crawlberg::ssrf_intercept",
+                                        phase = "child_target_controller", reason = "unowned_retirement_unproved",
+                                        browser_handler_task_id = ?shared.handler_abort.as_ref().map(tokio::task::AbortHandle::id),
+                                        acknowledged, launched, target_absent, registry_matches, context_draining, independent,
+                                        ownership_present = registry.ownership.contains_key(&target),
+                                        generation_present = registry.target_generations.contains_key(&target),
+                                        "browser child-target controller failed closed");
+                                }
+                                return false;
                             }
                             session_targets.remove(&session);
                             session_evidence.remove(&session);
@@ -4286,6 +4370,7 @@ where
                     generation.and_then(|generation| {
                         let context = attached.target_info.browser_context_id.as_ref()?;
                         let proof = UnownedArmProof {
+                            retirement_observer: registry.observe_unowned_arm(&target, &generation)?,
                             target_generation: generation,
                             context_generation: registry.observe_unowned_context(context)?,
                             session_lifecycle: Arc::new(AtomicU8::new(UnownedArmProof::ATTACHED)),
@@ -4706,7 +4791,24 @@ fn reconcile_destroyed(registry: &mut Registry, target: &TargetId, live: bool) -
     if live {
         return false;
     }
+    let observer = registry.unowned_arm_observers.remove(target).filter(|observer| {
+        (matches!(registry.ownership.get(target), Some(TargetOwnership::Other))
+            && registry.target_generations.get(target).is_some_and(|current| {
+                observer
+                    .generation
+                    .upgrade()
+                    .is_some_and(|generation| Arc::ptr_eq(current, &generation))
+            }))
+            || (observer.retired
+                && !registry.ownership.contains_key(target)
+                && !registry.target_generations.contains_key(target)
+                && !registry.others.contains(target))
+    });
     registry.remove_target(target);
+    if let Some(mut observer) = observer {
+        observer.retired = true;
+        registry.unowned_arm_observers.insert(target.clone(), observer);
+    }
     true
 }
 
@@ -4791,6 +4893,7 @@ fn adopt_target(shared: &Shared, info: &TargetInfo) -> Option<TargetId> {
 
 fn adopt_target_in_registry(registry: &mut Registry, info: &TargetInfo) -> Option<TargetId> {
     if info.r#type == "tab" {
+        registry.unowned_arm_observers.remove(&info.target_id);
         return None;
     }
     if info.r#type == "iframe" {
@@ -4855,6 +4958,7 @@ fn adopt_target_in_registry(registry: &mut Registry, info: &TargetInfo) -> Optio
         return None;
     };
     if info.r#type == "iframe" || frame_owner.is_some() {
+        registry.unowned_arm_observers.remove(&info.target_id);
         registry.invalidate_unowned_structural(&info.target_id);
         registry
             .ownership
