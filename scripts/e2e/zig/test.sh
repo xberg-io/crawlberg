@@ -58,7 +58,7 @@ for k, v in d.items():
 fi
 
 cd "$E2E_ZIG_DIR"
-zig build test \
+zig build test --summary all \
   -Dffi_path="$FFI_PATH" \
   -Dffi_include_path="$FFI_INCLUDE" \
   "$@"

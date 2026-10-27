@@ -13,6 +13,7 @@ on:
       - "Cargo.lock"
       - "Taskfile.yml"
       - ".task/**"
+      - "scripts/e2e/**"
       - "scripts/ci/**"
       - "scripts/ci/prepare-chrome-runtime.sh"
       - "scripts/ci/test_chrome_runtime.py"
