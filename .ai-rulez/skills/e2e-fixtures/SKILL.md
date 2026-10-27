@@ -18,4 +18,4 @@ x-ai-rulez:
 - Fields: `docs {topic, stem, title}`, `tags`, `input`, `assertions`, and optionally `skip {languages, reason}`, `mock_response`, `call`, `preserve_input_urls`, `test_timeout_ms`.
 - `input.mock_responses[]` serves the pages (`status_code`, `headers`, `body_inline`); `input.config` is a `CrawlConfig` (for example `auth`, `respect_robots_txt`).
 - `call` defaults to `scrape`; other calls: `batch_scrape`, `crawl`, `map_urls`, `interact`, `batch_crawl`, `crawl_stream`, `batch_crawl_stream`.
-- Assertion types in use: `equals`, `error`, `contains`, `not_contains`, `contains_all`, `not_empty`, `is_empty`, `is_true`, `greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`. Each assertion is `{type, field, value}` (`values` for `contains_all`); `field` is a dotted path into the call result. An assertion can carry its own `skip {languages, kind, reason}` to skip just that check for a language limitation.
+- Assertion types in use: `equals`, `error`, `contains`, `not_contains`, `contains_all`, `not_empty`, `is_empty`, `is_true`, `greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`.
