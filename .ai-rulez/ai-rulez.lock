@@ -4,7 +4,7 @@
 version = 1
 ai_rulez_version = '5.7.0'
 scope = 'all'
-tree = 'sha256:b318c9dfe4315e43faa2189dc55728f4d5d30e555321e6866c75b3545d992f98'
+tree = 'sha256:42be411d8b5b29e7c89c81e4b5bc7cfc77f9d70fbc26aee9f4584ac384d899c5'
 
 [[include]]
 name = 'xberg-cicd'
@@ -258,12 +258,6 @@ commit = ''
 digest = 'sha256:5cb87728d1449fadda6d8557501fcc0823509c60a37058ce4d2dda123296f67c'
 
 [[served]]
-name = 'lint'
-source = ''
-commit = ''
-digest = 'sha256:4560bf8826d6324b9f7cb4463f4acbd3ffdaf8afe546e7273600a60063a2b674'
-
-[[served]]
 name = 'mcp'
 source = '.agents/skills/mcp'
 commit = ''
@@ -462,12 +456,6 @@ commit = '923818e1ce9b71ebe68306c7a551caeaf7b27106'
 digest = 'sha256:aa68a45c3048919d797ccb16245cc1feaf721bab8c1102519793eb9cf523c821'
 
 [[served]]
-name = 'review'
-source = ''
-commit = ''
-digest = 'sha256:ab262eed89cb34705f2067fd9c07f50bef0fd2dae28cb71cab8679e23beb803e'
-
-[[served]]
 name = 'scoop-distribution'
 source = 'include:xberg-cicd/skills/scoop-distribution/SKILL.md'
 commit = '923818e1ce9b71ebe68306c7a551caeaf7b27106'
@@ -498,12 +486,6 @@ commit = ''
 digest = 'sha256:6086fe4a492fd695490fc26dc917bf8af08046a695a4eba5dc8dbbd1f71bd852'
 
 [[served]]
-name = 'test'
-source = ''
-commit = ''
-digest = 'sha256:200a31665fb1a89bd219de3827a93af31e0878fbeb9929030826994f627493aa'
-
-[[served]]
 name = 'testing-conventions'
 source = 'builtin://universal/testing/skills/testing-conventions/SKILL.md'
 commit = ''
@@ -532,24 +514,6 @@ kind = 'command'
 id = 'fix'
 path = 'commands/fix.md'
 digest = 'sha256:38f466ab38b3ddade146334849eb5399de6c7da6762e64cf30a6d73295129216'
-
-[[item]]
-kind = 'command'
-id = 'lint'
-path = 'commands/lint.md'
-digest = 'sha256:f6bd4c7b71899b30745960143b1268856ca6096fa5dff13d3d164ba1ce95d964'
-
-[[item]]
-kind = 'command'
-id = 'review'
-path = 'commands/review.md'
-digest = 'sha256:ab2a4add5d1ddb850222e867081302017c301152ff7cda9e9b4d233ef4734e55'
-
-[[item]]
-kind = 'command'
-id = 'test'
-path = 'commands/test.md'
-digest = 'sha256:41b039f8f76258f4064aa42473c5ac8b5eea329fbdc82796d185b53e7f2d881f'
 
 [[item]]
 kind = 'context'
