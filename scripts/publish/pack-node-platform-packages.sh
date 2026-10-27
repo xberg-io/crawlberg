@@ -50,7 +50,7 @@ for dir in */; do
   fi
 
   echo "✓ Found .node binary: ${node_bins[0]}"
-  echo "  File size: $(stat -f%z "${dir}${node_bins[0]}" 2>/dev/null || stat -c%s "${dir}${node_bins[0]}")"
+  echo "  File size: $(stat -f%z "${node_bins[0]}" 2>/dev/null || stat -c%s "${node_bins[0]}")"
 
   echo "Running pnpm pack..."
   if (cd "$dir" && pnpm pack && mv ./*.tgz ..); then

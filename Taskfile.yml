@@ -78,6 +78,7 @@ includes:
 
 vars:
   RUST_LOG: info
+  BATS_LIB_REF: 793d3a4d37a17009d91cce29f2825eda570d2abd
 
 tasks:
   ci:chrome:runtime:
@@ -396,11 +397,15 @@ tasks:
 
   test:scripts:lib:sync:
     desc: "Refresh the vendored Bats helper library from xberg-io/actions"
+    env:
+      BATS_LIB_REF: "{{.BATS_LIB_REF}}"
     cmds:
       - scripts/task/sync-bats-lib.sh sync
 
   test:scripts:lib:check:
     desc: "Fail when the vendored Bats helper library has drifted from its pinned source"
+    env:
+      BATS_LIB_REF: "{{.BATS_LIB_REF}}"
     cmds:
       - scripts/task/sync-bats-lib.sh --check
 

@@ -50,6 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Task
+        uses: xberg-io/actions/install-task@v1
+
+      - name: Check the vendored Bats helpers
+        run: task test:scripts:lib:check
+
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
@@ -63,12 +69,8 @@ jobs:
 
       - name: Run the shell contract tests
         uses: xberg-io/actions/run-bats@v1
-        env:
-          # `bats_load_library` searches BATS_LIB_PATH and nothing else. run-bats grew a lib-path
-          # input for this, but it is not in the released v1 yet, so the variable is set directly;
-          # switch to `lib-path: scripts/tests/lib` once actions ships it. ~keep
-          BATS_LIB_PATH: ${{ github.workspace }}/scripts/tests/lib
         with:
+          lib-path: scripts/tests/lib
           path: scripts/tests/bats
           args: |-
             --recursive

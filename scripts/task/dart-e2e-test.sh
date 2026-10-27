@@ -57,4 +57,4 @@ fi
 
 cd "$DART_DIR"
 # ~keep Kernel mode's persistent compiler starts Dart's wait-any-child reaper, stealing native browser child exits.
-exec dart test --compiler=source
+dart test --compiler=source
