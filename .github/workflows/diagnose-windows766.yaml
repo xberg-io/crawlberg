@@ -37,23 +37,23 @@ jobs:
       WINDOWS766_RELEASE_RUN: ${{ inputs.release_run }}
       WINDOWS766_RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
+      - uses: xberg-io/actions/install-task@v1
       - name: Verify evidence guardrails
         run: task ci:windows766:harness-test
-      - uses: xberg-io/actions/setup-rust@23602a93e64f32d552325d5304540927f27d8794
+      - uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: windows766-diagnostic
           use-sccache: "false"
       - name: Setup Chrome without launching it
         id: chrome
-        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-chrome@v1
       - name: Record provenance and apply diagnostic instrumentation
         run: task ci:windows766:prepare
         env:
@@ -71,7 +71,7 @@ jobs:
         run: task ci:windows766:verify
       - name: Preserve complete diagnostic evidence
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@v7
         with:
           name: windows766-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/crawlberg-windows766

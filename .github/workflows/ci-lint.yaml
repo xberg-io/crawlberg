@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v3.0.0
         with:
           repo-token: ${{ github.token }}
       - uses: actions/setup-python@v7
@@ -79,7 +79,7 @@ jobs:
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
-    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@a8b47bd3c3e1a04183885b2c4183f169158bd494
+    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@v1
     with:
       setup-rust: true
       rust-use-sccache: false

@@ -279,7 +279,7 @@ jobs:
 
       - name: Setup Ruby
         if: matrix.ruby-version
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@v1.335.0
         with:
           ruby-version: ${{ matrix.ruby-version }}
           bundler-cache: true
@@ -383,7 +383,7 @@ jobs:
         run: task ci:chrome:runtime
 
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-chrome@v1
 
       - name: Setup library paths for FFI bindings
         if: |

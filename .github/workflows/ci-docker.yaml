@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/install-task@v1
 
       - name: Free disk space
         uses: xberg-io/actions/free-disk-space-linux@v1

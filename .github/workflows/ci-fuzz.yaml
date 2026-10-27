@@ -21,7 +21,9 @@ jobs:
         target: [toml_loader, waf_classify]
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
       - name: Set nightly as default toolchain
         run: rustup default nightly
       - uses: Swatinem/rust-cache@v2

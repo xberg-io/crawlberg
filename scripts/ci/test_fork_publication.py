@@ -6,7 +6,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import subprocess
 import tempfile
 import unittest
@@ -214,13 +213,11 @@ class ForkPublicationTests(unittest.TestCase):
         )
         assert self.steps.index(self.metadata_step()) < self.steps.index(guard) < self.steps.index(publisher)
         installers = [step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/install-task@")]
-        assert len(installers) == 1 and re.fullmatch(
-            r"xberg-io/actions/install-task@[0-9a-f]{40}", installers[0]["uses"]
-        )
+        assert len(installers) == 1 and installers[0]["uses"] == "xberg-io/actions/install-task@v1"
         assert self.steps.index(installers[0]) < self.steps.index(guard)
         tools = [step for step in self.steps if step.get("name") == "Check out workflow publishing tools"]
         assert len(tools) == 1
-        assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", tools[0]["uses"])
+        assert tools[0]["uses"] == "actions/checkout@v7"
         assert self.steps.index(self.metadata_step()) < self.steps.index(tools[0]) < self.steps.index(guard)
         tasks = yaml.safe_load((ROOT / ".task/tools/general.yml").read_text())["tasks"]
         assert tasks["ci:release:fork:check"]["cmds"] == ["python3 scripts/ci/check_browser_fork.py"]

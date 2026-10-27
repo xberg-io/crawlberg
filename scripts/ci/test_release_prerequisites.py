@@ -246,7 +246,7 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         assert len(installers) == len(packagers) == 1
         installer, packager = installers[0], packagers[0]
         assert steps.index(installer) < steps.index(packager)
-        assert re.fullmatch(r"xberg-io/actions/install-alef@[0-9a-f]{40}", installer["uses"])
+        assert installer["uses"] == "xberg-io/actions/install-alef@v1"
         assert installer["with"]["version"] == "latest"
         assert installer["with"].get("allow-unreleased", "false") == "false"
         assert packager["with"]["dry-run"] == "${{ needs.prepare.outputs.dry_run }}"

@@ -833,7 +833,7 @@ jobs:
           use-sccache: "false"
           cache-key-prefix: publish-ruby-${{ matrix.label }}
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1.335.0
         with:
           ruby-version: "3.3"
           bundler: "4.0.3"
@@ -920,7 +920,7 @@ jobs:
           cache-key-prefix: publish-php-${{ matrix.platform.label }}-php${{ matrix.php }}
 
       - name: Install the config-pinned Alef for PIE packaging
-        uses: xberg-io/actions/install-alef@cc89740654cef67b752113ddd87d4f0d23dda3f5
+        uses: xberg-io/actions/install-alef@v1
         with:
           version: latest
 
@@ -971,7 +971,7 @@ jobs:
       ${{ !inputs.plugins-only && (needs.prepare.outputs.release_cli == 'true' && (needs.validate-versions.result == 'success' || needs.validate-versions.result == 'skipped') && (needs.check-cli.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
     permissions:
       contents: write
-    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@d7a9c1a34abcfb73b61c467bf4cdd9d0830d6d6c
+    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@v1
     with:
       rust-use-sccache: false
       package-name: crawlberg-cli
@@ -2025,7 +2025,7 @@ jobs:
           PYTHON
 
       - name: Check out workflow publishing tools
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-workflow
@@ -2036,7 +2036,7 @@ jobs:
             /scripts/ci/check_browser_fork.py
             /scripts/ci/fork-check.Taskfile.yml
 
-      - uses: xberg-io/actions/install-task@e509ab645f16cc3be40131e54243e815bb83dbe5
+      - uses: xberg-io/actions/install-task@v1
 
       - name: Check the browser fork version in crates.io
         id: fork_registry
@@ -2185,7 +2185,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1.335.0
         with:
           ruby-version: "3.3"
           bundler-cache: false
@@ -2742,7 +2742,7 @@ jobs:
           ls -la "$out"
           for d in "$out"/*/; do echo "--- $d ---"; ls -la "$d"; done
 
-      - uses: xberg-io/actions/publish-zig@d46e381fa26536ce63621f8f5a37e722ce60c240
+      - uses: xberg-io/actions/publish-zig@v1
         with:
           working-directory: packages/zig
           tag: ${{ needs.prepare.outputs.tag }}
@@ -3399,7 +3399,7 @@ jobs:
         with:
           config-directory: .ai-rulez
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
       - name: Build Hermes wheel
@@ -3717,7 +3717,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     steps:
-      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      - uses: actions/github-script@v9
         with:
           script: core.setFailed('Plugin-only publication must run from the main branch.')
 
@@ -3812,7 +3812,7 @@ jobs:
         uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           version-sync-script: scripts/sync_plugin_version.py
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
       - name: Read the verified Hermes version

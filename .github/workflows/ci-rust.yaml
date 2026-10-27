@@ -175,7 +175,7 @@ jobs:
 
       - name: Setup Chrome
         id: chrome
-        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-chrome@v1
 
       - name: Prepare Chrome app bundle
         id: prepared_chrome
@@ -231,17 +231,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-rust@v1
         with:
           use-sccache: "false"
           cache-key-prefix: windows-browser
       - name: Install Task
-        uses: xberg-io/actions/install-task@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/install-task@v1
       - name: Setup Chrome
         id: chrome
-        uses: xberg-io/actions/setup-chrome@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-chrome@v1
       - name: Run Windows browser tests
         run: task rust:test:windows-browser
         shell: bash
@@ -340,10 +340,10 @@ jobs:
         run: task rust:lint:check
 
       # ~keep Alef's Poly-owned comparison delegates C and shell formatting to these external
-      # ~keep binaries. The direct action revision and requested versions are pinned, but the action
-      # ~keep still uses a nested setup-uv tag and downloads these tools without repo-pinned digests.
+      # ~keep binaries. The requested versions are pinned, but the action still uses a nested
+      # ~keep setup-uv tag and downloads these tools without repo-pinned digests.
       - name: Install generated-file formatters
-        uses: xberg-io/actions/setup-c-cpp-tools@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-c-cpp-tools@v1
         with:
           clang-format-version: "22.1.8"
           install-cppcheck: "false"
@@ -353,11 +353,11 @@ jobs:
       - name: Run C lint checks
         run: task c:lint:check
 
-      # ~keep Pin the direct action revision and requested Poly version. The installer verifies
+      # ~keep Pin the requested Poly version. The installer verifies
       # ~keep the archive against a checksum fetched from the same release, while its nested cache
       # ~keep action and that mutable checksum asset remain external trust boundaries.
       - name: Install Poly
-        uses: Goldziher/poly@8a85d746736986ce80ae4a2315c15c27e5844d28
+        uses: Goldziher/poly@v0
         with:
           version: "0.29.0"
 
