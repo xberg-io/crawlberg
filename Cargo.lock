@@ -481,7 +481,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.3",
  "shlex 2.0.1",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1607,7 +1607,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5086,9 +5086,9 @@ dependencies = [
 
 [[package]]
 name = "saphyr"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8b95857382fe6ee8f9521a4893736f22a967f38ac1ff237772c4be0ed39fc9b"
+checksum = "beb4eb8711f1bca00b6161efa715419032964f6ca210f750d2f35a533ea5fc2d"
 dependencies = [
  "encoding_rs 0.7.2",
  "hashlink",

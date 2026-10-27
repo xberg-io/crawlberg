@@ -38,6 +38,8 @@ user_owned = [
   "e2e/php/composer.json",
   "e2e/ruby/Gemfile",
   "e2e/wasm/package.json",
+  # ~keep Preserve pnpm's version-scoped release-age exceptions for reviewed dependencies.
+  "e2e/wasm/pnpm-workspace.yaml",
   "e2e/zig/build.zig.zon",
   "packages/go/error_compat.go",
   "packages/go/error_compat_test.go",
@@ -54,6 +56,7 @@ user_owned = [
   "test_apps/php/composer.json",
   "test_apps/ruby/Gemfile",
   "test_apps/wasm/package.json",
+  "test_apps/wasm/pnpm-workspace.yaml",
   "test_apps/zig/build.zig",
   "test_apps/zig/build.zig.zon",
   "test_apps/swift_e2e/Package.swift",

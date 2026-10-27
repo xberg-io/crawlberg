@@ -4,7 +4,7 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.2] - 2026-10-26
+## [1.12.2] - 2026-10-27
 
 ### Fixed
 
@@ -29,7 +29,7 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
-- Upgrade fancy-regex to 0.20, liter-llm to 2.4, and saphyr to 0.3.1; refresh dependency lockfiles.
+- Upgrade fancy-regex to 0.20, liter-llm to 2.4, and saphyr to 0.3.2; refresh dependency lockfiles.
 - Regenerate language bindings with Alef 0.115.0, preserving released Java and Swift constructor signatures.
 - Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
   Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.
