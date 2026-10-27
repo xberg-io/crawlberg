@@ -539,7 +539,7 @@ tasks:
         import tomllib
 
         if shutil.which("ai-rulez") is None:
-            raise SystemExit("Install the reviewed ai-rulez CLI before installing hooks")
+            raise SystemExit("Install the ai-rulez CLI before installing hooks")
         preferences = pathlib.Path("poly.local.toml")
         text = preferences.read_text() if preferences.exists() else ""
         data = tomllib.loads(text)
