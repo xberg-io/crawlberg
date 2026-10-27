@@ -10,7 +10,7 @@
     }
   ],
   "name": "@xberg-io/crawlberg-darwin-arm64",
-  "version": "1.12.2",
+  "version": "1.12.3",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -348,6 +348,50 @@ async fn a_child_from_another_spawner_cannot_signal_its_group() {
     assert_family_ended(&[leaf]).await;
 }
 
+#[tokio::test]
+async fn killing_an_inherited_child_leaves_its_owners_family_running() {
+    let (mut child, leaf) = launch_sleeping_family().await;
+    let root = child.id().expect("owned root");
+    let owner = child.spawner;
+    child.spawner = owner.wrapping_add(1);
+    let start_result = child.start_kill();
+    let wait_result = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
+    let try_result = child.try_wait();
+    let result = child.kill().await;
+    let untouched = alive(root) && alive(leaf);
+    child.spawner = owner;
+    let owner_result = child.kill().await;
+    let owner_reaped = child.id().is_none();
+    drop(child);
+    assert_family_ended(&[root, leaf]).await;
+    assert_eq!(
+        result.expect_err("foreign process cannot kill its owner's family").kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        start_result
+            .expect_err("foreign start_kill must refuse before signaling")
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        wait_result
+            .expect("foreign wait must refuse immediately")
+            .expect_err("foreign wait must not reap")
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        try_result
+            .expect_err("foreign try_wait must not reap")
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert!(untouched, "foreign refusal must preserve the owner's whole family");
+    owner_result.expect("the original owner must still be able to kill its child");
+    assert!(owner_reaped, "the original owner must collect its child's exit status");
+}
+
 #[allow(unsafe_code)]
 fn sleeping_fork_inheritor() -> i32 {
     unsafe extern "C" {

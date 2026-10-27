@@ -1,7 +1,7 @@
 {
   "name": "crawlberg",
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
-  "version": "1.12.2",
+  "version": "1.12.3",
   "author": {
     "name": "Kreuzberg, Inc.",
     "email": "contact@xberg.io",

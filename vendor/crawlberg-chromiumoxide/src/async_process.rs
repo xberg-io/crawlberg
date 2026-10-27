@@ -225,14 +225,27 @@ impl Child {
         self.inner.id()
     }
 
+    fn ensure_spawned_here(&self) -> std::io::Result<()> {
+        if self.spawned_here() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "child belongs to another process",
+            ))
+        }
+    }
+
     /// Signal this child without waiting for its exit status.
     pub fn start_kill(&mut self) -> std::io::Result<()> {
+        self.ensure_spawned_here()?;
         self.inner.start_kill()
     }
 
     /// Kill the child process synchronously and asynchronously wait for the
     /// child to exit
     pub async fn kill(&mut self) -> std::io::Result<()> {
+        self.ensure_spawned_here()?;
         // Tokio already waits internally
         self.inner.kill().await
     }
@@ -261,11 +274,13 @@ impl Child {
 
     /// Asynchronously wait for the child process to exit
     pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        self.ensure_spawned_here()?;
         self.inner.wait().await
     }
 
     /// If the child process has exited, get its status
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.ensure_spawned_here()?;
         self.inner.try_wait()
     }
 

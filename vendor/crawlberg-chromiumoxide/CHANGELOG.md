@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-27
+
+### Fixed
+
+- Refuse `Child::kill`, `start_kill`, `wait`, and `try_wait` in a process that did not spawn the child,
+  preserving the original owner's process and wait status.
+
 ## [0.9.4] - 2026-10-21
 
 ### Changed

@@ -8,7 +8,29 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.2] - 2026-10-26
+## [1.12.3] - 2026-10-27
+
+### Fixed
+
+- Prevent inherited browser child handles from signaling or reaping another process's children.
+- Stop the Dart E2E mock server after successful and failed test runs.
+- Preserve Go formatter failures instead of treating empty output as a clean format check.
+- Report the native binary's actual size when packing Node platform packages.
+
+### Changed
+
+- Cover all handwritten shell scripts with Bats and verify the shared helper's immutable revision in CI. (#811)
+- Upgrade Docker images to Debian Trixie and Alpine 3.24, refreshing system packages during builds.
+- Upgrade liter-llm to 2.4.1, html-to-markdown to 3.19.0 and Saphyr to 0.3.3.
+- Regenerate bindings and test consumers with Alef 0.115.4.
+- Refresh CI actions and AI governance configuration.
+
+### Known limitations
+
+- Some macOS Chrome incognito sessions exceed the five-second graceful shutdown budget.
+- Ruby PageAction RBS constructors are overly strict, and `from_hash` can discard symbol-keyed `false` values.
+
+## [1.12.2] - 2026-10-27
 
 ### Fixed
 
@@ -17,15 +39,16 @@ All notable changes to crawlberg are documented here.
 - Keep caller-specific page responses and redirected robots rules out of shared caches.
 - Judge robots rules against the actual User-Agent when typed authentication and rotation are both configured.
 - Native JavaScript module requests preserve one custom User-Agent on the seed host.
-- Preserve word boundaries around whitespace-only links with html-to-markdown 3.18.6. (#806)
+- Preserve word boundaries around whitespace-only links with html-to-markdown 3.18.7. (#806)
 - Preserve the Chrome 145 stealth fingerprint without the vulnerable, unused Zstandard dependency chain.
+- Keep owned browser sessions healthy when an unrelated target retires during a cross-connection ownership census.
 
 ### Added
 
 - `browser.dom_quiet_cap` limits the DOM quiet wait independently of page-load timeout, defaulting to 4000 ms. (#808)
 - `subdomain_header_allowlist` explicitly opts individual custom headers into forwarding to admitted subdomains.
-  Configured authentication and standard credential headers remain on the seed host.
-  The native browser keeps all custom headers on the seed host.
+  HTTP and both browser backends apply the policy to linked pages and each redirect hop.
+  Configured authentication and standard credential headers remain on the seed host. (#810)
 - Content options expose abbreviation expansion and literal Markdown escaping without changing their defaults.
   (#804, #807)
 - `content.include_icon_labels=false` omits decorative SVG labels and associated link tooltips while retaining visible
@@ -33,7 +56,8 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
-- Upgrade fancy-regex to 0.20, liter-llm to 2.4, and saphyr to 0.3.1; refresh dependency lockfiles.
+- Upgrade html-to-markdown to 3.18.7, fancy-regex to 0.20, liter-llm to 2.4, and saphyr to 0.3.2;
+  refresh dependency lockfiles.
 - Regenerate language bindings with Alef 0.115.0, preserving released Java and Swift constructor signatures.
 - Swift result collection getters return Swift arrays, fixing ownership of values read from Rust vectors.
   Replace `.len()` with `.count`; use `.first` or array subscripting in place of `.get(index:)`.

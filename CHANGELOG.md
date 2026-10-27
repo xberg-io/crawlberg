@@ -4,6 +4,28 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-10-27
+
+### Fixed
+
+- Prevent inherited browser child handles from signaling or reaping another process's children.
+- Stop the Dart E2E mock server after successful and failed test runs.
+- Preserve Go formatter failures instead of treating empty output as a clean format check.
+- Report the native binary's actual size when packing Node platform packages.
+
+### Changed
+
+- Cover all handwritten shell scripts with Bats and verify the shared helper's immutable revision in CI. (#811)
+- Upgrade Docker images to Debian Trixie and Alpine 3.24, refreshing system packages during builds.
+- Upgrade liter-llm to 2.4.1, html-to-markdown to 3.19.0 and Saphyr to 0.3.3.
+- Regenerate bindings and test consumers with Alef 0.115.4.
+- Refresh CI actions and AI governance configuration.
+
+### Known limitations
+
+- Some macOS Chrome incognito sessions exceed the five-second graceful shutdown budget.
+- Ruby PageAction RBS constructors are overly strict, and `from_hash` can discard symbol-keyed `false` values.
+
 ## [1.12.2] - 2026-10-27
 
 ### Fixed
