@@ -1476,8 +1476,8 @@ class CrawlConfig {
   /// Custom header names explicitly authorized for proper subdomains when
   /// [`Self::allow_subdomains`] is true. Empty by default; names match case-insensitively.
   /// Authorization, cookies, other standard credential headers, and the header named by
-  /// [`Self::auth`] remain seed-host-only even when listed. HTTP and Chromiumoxide honor
-  /// this opt-in; the native browser backend keeps every custom header seed-host-only.
+  /// [`Self::auth`] remain seed-host-only even when listed. HTTP, Chromiumoxide, and the
+  /// native browser backend apply this policy to each request and redirect hop.
   final List<String> subdomainHeaderAllowlist;
 
   const CrawlConfig({

@@ -95,6 +95,7 @@ async fn native_browser_fetch_inner(
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
     let native_config = build_native_config(config, url, Vec::new(), ssrf)?;
+    state.set_subdomain_headers(crate::net::credentials::native_subdomain_headers(config));
 
     let timeout = config.browser.timeout;
     let rendered = native_executor
@@ -376,8 +377,75 @@ fn native_header_matches(cookie: &NBCookie, header: &CookieInfo, final_url: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::types::AuthConfig;
     use crate::types::{BrowserConfig, ProxyConfig};
+
+    fn native_public_header_config(
+        receiver: &wiremock::MockServer,
+        admitted: bool,
+        listed: bool,
+        seed: &str,
+    ) -> CrawlConfig {
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.respect_robots_txt = false;
+        config.allow_subdomains = admitted;
+        config.proxy = Some(ProxyConfig {
+            url: receiver.uri(),
+            username: None,
+            password: None,
+        });
+        config.custom_headers.insert("X-Public".to_owned(), "public".to_owned());
+        if listed {
+            config.subdomain_header_allowlist.push("X-Public".to_owned());
+        }
+        let seed = url::Url::parse(seed).expect("seed URL must parse");
+        config.credential_scope = crate::net::CredentialScope::for_seed(&seed, None);
+        config
+    }
+
+    #[tokio::test]
+    async fn reused_render_state_refreshes_public_header_authorization_from_each_config() {
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let receiver = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<p>header policy</p>", "text/html"))
+            .expect(4)
+            .mount(&receiver)
+            .await;
+        let executor =
+            NativeBrowserExecutor::new(crawlberg_browser::adapter::NativeBrowserExecutorConfig::with_workers(1))
+                .expect("native executor must start");
+        let mut state = NativeRenderState::new(&[]);
+        let target = format!("http://sub.localhost:{}/", receiver.address().port());
+        for (admitted, listed, seed) in [
+            (true, true, "http://localhost/"),
+            (false, true, "http://localhost/"),
+            (true, false, "http://localhost/"),
+            (true, true, "http://other.test/"),
+        ] {
+            let config = native_public_header_config(&receiver, admitted, listed, seed);
+            native_browser_render(&target, &config, &mut state, &executor)
+                .await
+                .expect("render must succeed");
+        }
+        let requests = receiver
+            .received_requests()
+            .await
+            .expect("receiver must record requests");
+        assert_eq!(requests.len(), 4);
+        let values: Vec<_> = requests
+            .iter()
+            .map(|request| {
+                request
+                    .headers
+                    .get("x-public")
+                    .map(|value| value.to_str().expect("public header is ASCII"))
+            })
+            .collect();
+        assert_eq!(values, [Some("public"), None, None, None]);
+    }
 
     /// The page every render in these tests is for.
     const PAGE: &str = "http://example.com/";

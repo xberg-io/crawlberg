@@ -112,6 +112,15 @@ impl Page {
         {
             target.clone_from(&source);
         }
+        #[cfg(feature = "stealth")]
+        if let Some(stealth) = &stealth_client
+            && let (Ok(source), Ok(mut target)) = (
+                http_client.subdomain_headers.try_read(),
+                stealth.subdomain_headers.try_write(),
+            )
+        {
+            target.clone_from(&source);
+        }
 
         Page {
             id,

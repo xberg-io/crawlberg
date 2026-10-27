@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use crate::net::cookies::{CookieJar, CookieRequestContext};
-use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
+use crate::net::credential::{OriginHeaders, ScopedHeaders, refuse_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::proxy::UpstreamProxy;
@@ -253,6 +253,7 @@ pub struct HttpClient {
     pub extra_headers: RwLock<HashMap<String, String>>,
     /// The credential header the embedder scoped to one host; sent only to that host.
     pub origin_headers: RwLock<Option<OriginHeaders>>,
+    pub(crate) subdomain_headers: RwLock<Option<OriginHeaders>>,
     pub interceptor: RwLock<Option<Box<dyn RequestInterceptor + Send + Sync>>>,
     pub on_request: RwLock<Vec<RequestCallback>>,
     pub on_response: RwLock<Vec<ResponseCallback>>,
@@ -337,6 +338,7 @@ impl HttpClient {
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
             origin_headers: RwLock::new(None),
+            subdomain_headers: RwLock::new(None),
             interceptor: RwLock::new(None),
             on_request: RwLock::new(Vec::new()),
             on_response: RwLock::new(Vec::new()),
@@ -618,11 +620,13 @@ impl HttpClient {
             }
         }
 
-        if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
-            for (name, value) in origin_headers.headers_for(url) {
-                if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
-                    headers.insert(name, value);
-                }
+        let scoped = ScopedHeaders {
+            origin: self.origin_headers.read().await.clone(),
+            subdomains: self.subdomain_headers.read().await.clone(),
+        };
+        for (name, value) in scoped.headers_for(url) {
+            if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+                headers.insert(name, value);
             }
         }
 
@@ -669,6 +673,22 @@ impl HttpClient {
     /// Scope headers, such as a credential, to one host. See [`OriginHeaders`].
     pub async fn set_origin_headers(&self, origin_headers: Option<OriginHeaders>) {
         *self.origin_headers.write().await = origin_headers;
+    }
+
+    pub(crate) async fn set_subdomain_headers(&self, headers: Option<OriginHeaders>) {
+        *self.subdomain_headers.write().await = headers;
+    }
+
+    pub(crate) fn scoped_headers(&self) -> ScopedHeaders {
+        // ~keep The context installs both policies before page requests and script execution begin.
+        ScopedHeaders {
+            origin: self.origin_headers.try_read().ok().and_then(|headers| headers.clone()),
+            subdomains: self
+                .subdomain_headers
+                .try_read()
+                .ok()
+                .and_then(|headers| headers.clone()),
+        }
     }
 
     pub fn active_requests(&self) -> u32 {

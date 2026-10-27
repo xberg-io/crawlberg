@@ -332,3 +332,83 @@ async fn should_forward_only_allowlisted_public_headers_on_crawled_subdomain_lin
     assert_seed_received_credentials(&requests);
     assert_target_received_only_allowed_public_headers(&requests);
 }
+
+async fn redirect_chain_requests(allowlist: &[&str]) -> Vec<Request> {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    for (from, host, to) in [
+        ("/seed", "sub.localhost", "/subdomain"),
+        ("/subdomain", "127.0.0.1", "/external"),
+        ("/external", "localhost", "/returned"),
+    ] {
+        mount_response(
+            &mock,
+            from,
+            ResponseTemplate::new(302).insert_header("location", format!("http://{host}:{port}{to}")),
+        )
+        .await;
+    }
+    mount_response(
+        &mock,
+        "/returned",
+        ResponseTemplate::new(200).set_body_raw(BODY, "text/html"),
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        engine(&mock, true, false, allowlist).scrape(&format!("http://localhost:{port}/seed")),
+    )
+    .await
+    .expect("redirect chain finishes")
+    .expect("redirect chain succeeds");
+    assert_eq!(result.status_code, 200);
+    assert_eq!(result.final_url, format!("http://localhost:{port}/returned"));
+    assert_eq!(result.html, BODY);
+    let requests = mock.received_requests().await.expect("receiver records chain");
+    assert_eq!(requests.len(), 4, "all four redirect hops must be received");
+    for (route, host) in [
+        ("/seed", "localhost"),
+        ("/subdomain", "sub.localhost"),
+        ("/external", "127.0.0.1"),
+        ("/returned", "localhost"),
+    ] {
+        assert_eq!(requests.iter().filter(|request| request.url.path() == route).count(), 1);
+        assert_eq!(header(&requests, route, "host"), Some(format!("{host}:{port}")));
+    }
+    requests
+}
+
+#[tokio::test]
+async fn should_apply_seed_scope_at_every_http_redirect_chain_hop() {
+    for allowlist in [&[][..], &PUBLIC_ALLOWLIST[..]] {
+        let requests = redirect_chain_requests(allowlist).await;
+        assert_seed_received_credentials(&requests);
+        for (name, value) in CUSTOM_HEADERS
+            .into_iter()
+            .chain([("X-Operator-Capability", "configured-secret-sentinel")])
+        {
+            assert_eq!(
+                header(&requests, "/returned", name).as_deref(),
+                Some(value),
+                "returned seed {name}"
+            );
+            assert_eq!(header(&requests, "/external", name), None, "external hop {name}");
+        }
+        for name in ["X-Access-Value", "Authorization", "X-Operator-Capability"] {
+            assert_eq!(
+                header(&requests, "/subdomain", name),
+                None,
+                "subdomain credential {name}"
+            );
+        }
+        for (name, value) in PUBLIC_HEADERS {
+            let expected = if allowlist.is_empty() { None } else { Some(value) };
+            if expected.is_some() {
+                assert_eq!(header(&requests, "/subdomain", name).as_deref(), expected);
+            } else {
+                assert_ne!(header(&requests, "/subdomain", name).as_deref(), Some(value));
+            }
+            assert_ne!(header(&requests, "/external", name).as_deref(), Some(value));
+        }
+    }
+}

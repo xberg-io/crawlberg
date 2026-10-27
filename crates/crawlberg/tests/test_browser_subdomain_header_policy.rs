@@ -229,8 +229,7 @@ async fn should_withhold_seed_headers_after_a_chrome_unrelated_host_redirect() {
     document_redirect(BrowserBackend::Chromiumoxide, "127.0.0.1", true).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn should_forward_only_explicit_public_headers_after_a_chrome_subdomain_redirect() {
+async fn public_header_redirect(backend: BrowserBackend) {
     let server = MockServer::start().await;
     mount(
         &server,
@@ -239,7 +238,7 @@ async fn should_forward_only_explicit_public_headers_after_a_chrome_subdomain_re
     )
     .await;
     mount(&server, "/target", page("")).await;
-    let mut config = config(&server, BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    let mut config = config(&server, backend, BrowserMode::Always);
     config.subdomain_header_allowlist = OPT_IN_TEST_HEADERS.map(str::to_owned).to_vec();
     config.custom_headers.extend([
         ("Accept".to_owned(), "application/json".to_owned()),
@@ -302,10 +301,15 @@ async fn should_withhold_seed_headers_after_a_chrome_subresource_redirect_to_a_s
 }
 
 #[cfg(feature = "interact")]
-#[tokio::test(flavor = "multi_thread")]
-async fn should_withhold_seed_headers_after_an_interaction_fetch_redirect_to_a_subdomain() {
+async fn interaction_fetch_redirect(backend: BrowserBackend, allow_public: bool) {
     let server = MockServer::start().await;
-    mount(&server, "/seed", page("")).await;
+    let native = backend == BrowserBackend::Native;
+    let contents = if native {
+        "<script>fetch('/fetch-hop').then(response => response.text()).then(() => globalThis.headerDone = 1);</script>"
+    } else {
+        ""
+    };
+    mount(&server, "/seed", page(contents)).await;
     mount(
         &server,
         "/fetch-hop",
@@ -318,32 +322,64 @@ async fn should_withhold_seed_headers_after_an_interaction_fetch_redirect_to_a_s
         ResponseTemplate::new(200).set_body_string("fetch-complete"),
     )
     .await;
-    let engine = crawlberg::create_engine(Some(config(
-        &server,
-        BrowserBackend::Chromiumoxide,
-        BrowserMode::Always,
-    )))
-    .expect("interaction config builds");
+    let mut settings = config(&server, backend, BrowserMode::Always);
+    if allow_public {
+        allow_public_headers(&mut settings);
+    }
+    let engine = crawlberg::create_engine(Some(settings)).expect("interaction config builds");
     let actions = vec![
         crawlberg::PageAction::ExecuteJs {
-            script: "fetch('/fetch-hop', {mode:'no-cors'}); 1".to_owned(),
+            script: if native {
+                "globalThis.headerDone".to_owned()
+            } else {
+                "fetch('/fetch-hop', {mode:'no-cors'}); 1".to_owned()
+            },
         },
         crawlberg::PageAction::Wait {
             milliseconds: Some(500),
             selector: None,
         },
     ];
-    tokio::time::timeout(
+    let result = tokio::time::timeout(
         Duration::from_secs(40),
         crawlberg::interact(&engine, &url(&server, "localhost", "/seed"), actions),
     )
     .await
     .expect("interaction finishes before deadline")
     .expect("interaction succeeds");
+    assert_eq!(result.action_results.len(), 2);
+    assert_eq!(
+        result
+            .action_results
+            .iter()
+            .map(|action| action.success)
+            .collect::<Vec<_>>(),
+        vec![true, true],
+        "all interaction actions must execute successfully"
+    );
+    assert!(
+        result.final_html.contains(MARKER),
+        "complete interaction page must be rendered"
+    );
+    if native {
+        assert_eq!(
+            result.action_results[0].data,
+            Some(serde_json::json!(1.0)),
+            "native page fetch must complete"
+        );
+    }
     let requests = requests(&server, &["/seed", "/fetch-hop", "/target"]).await;
     assert_seed(at(&requests, "/seed"));
     assert_seed(at(&requests, "/fetch-hop"));
-    assert_withheld(at(&requests, "/target"), "sub.localhost");
+    assert_eq!(
+        header(at(&requests, "/target"), "host"),
+        Some(format!("sub.localhost:{}", server.address().port()).as_str())
+    );
+    if allow_public {
+        assert_allowed_public(at(&requests, "/target"));
+    } else {
+        assert_withheld(at(&requests, "/target"), "sub.localhost");
+    }
 }
 
 #[cfg(feature = "browser-native")]
@@ -365,7 +401,7 @@ async fn should_retain_seed_headers_after_a_native_same_host_redirect() {
 }
 
 #[cfg(feature = "browser-native")]
-async fn native_script_redirect(module: bool, mode: BrowserMode) {
+async fn native_script_redirect(module: bool, mode: BrowserMode, allow_public: bool) {
     let server = MockServer::start().await;
     let script = if module {
         "<script type='module' src='/script-hop'></script>"
@@ -387,27 +423,279 @@ async fn native_script_redirect(module: bool, mode: BrowserMode) {
             .set_body_raw("globalThis.headerDone = 1;", "application/javascript"),
     )
     .await;
-    scrape(&server, config(&server, BrowserBackend::Native, mode)).await;
+    let mut settings = config(&server, BrowserBackend::Native, mode);
+    if allow_public {
+        allow_public_headers(&mut settings);
+    }
+    scrape(&server, settings).await;
     let requests = requests(&server, &["/seed", "/script-hop", "/target"]).await;
     assert_seed(at(&requests, "/seed"));
     assert_seed(at(&requests, "/script-hop"));
-    assert_withheld(at(&requests, "/target"), "sub.localhost");
+    assert_eq!(
+        header(at(&requests, "/target"), "host"),
+        Some(format!("sub.localhost:{}", server.address().port()).as_str())
+    );
+    if allow_public {
+        assert_allowed_public(at(&requests, "/target"));
+    } else {
+        assert_withheld(at(&requests, "/target"), "sub.localhost");
+    }
 }
 
 #[cfg(feature = "browser-native")]
 #[tokio::test(flavor = "multi_thread")]
 async fn should_withhold_seed_headers_after_a_native_fetch_redirect_to_a_subdomain() {
-    native_script_redirect(false, BrowserMode::Always).await;
+    native_script_redirect(false, BrowserMode::Always, false).await;
 }
 
 #[cfg(feature = "browser-native")]
 #[tokio::test(flavor = "multi_thread")]
 async fn should_withhold_seed_headers_after_a_native_module_redirect_to_a_subdomain() {
-    native_script_redirect(true, BrowserMode::Always).await;
+    native_script_redirect(true, BrowserMode::Always, false).await;
 }
 
 #[cfg(feature = "browser-native")]
 #[tokio::test(flavor = "multi_thread")]
 async fn should_withhold_seed_headers_after_a_stealth_native_fetch_redirect_to_a_subdomain() {
-    native_script_redirect(false, BrowserMode::Stealth).await;
+    native_script_redirect(false, BrowserMode::Stealth, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_explicit_public_headers_after_a_chrome_subdomain_redirect() {
+    public_header_redirect(BrowserBackend::Chromiumoxide).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_explicit_public_headers_after_a_native_subdomain_redirect() {
+    public_header_redirect(BrowserBackend::Native).await;
+}
+
+fn allow_public_headers(config: &mut CrawlConfig) {
+    config.subdomain_header_allowlist = OPT_IN_TEST_HEADERS
+        .into_iter()
+        .chain(["x-synthetic-public"])
+        .map(str::to_owned)
+        .collect();
+    config.custom_headers.extend([
+        ("Accept".to_owned(), "application/scope-test".to_owned()),
+        ("Accept-Language".to_owned(), "en-GB,scope;q=0.5".to_owned()),
+    ]);
+}
+
+fn assert_allowed_public(request: &Request) {
+    for (name, value) in [
+        ("Accept", "application/scope-test"),
+        ("Accept-Language", "en-GB,scope;q=0.5"),
+        ("X-Synthetic-Public", "browser-public-sentinel"),
+        ("User-Agent", CUSTOM_UA),
+    ] {
+        assert_eq!(
+            header_values(request, name),
+            vec![value],
+            "allowed public header {name}"
+        );
+    }
+    for name in ["X-Access-Value", "Authorization", "X-Operator-Capability"] {
+        assert_eq!(header(request, name), None, "subdomain credential {name}");
+    }
+}
+
+async fn linked_subdomain_crawl(backend: BrowserBackend, allow_public: bool) {
+    let server = MockServer::start().await;
+    let target = url(&server, "sub.localhost", "/target");
+    mount(&server, "/seed", page(&format!("<a href='{target}'>subdomain</a>"))).await;
+    mount(&server, "/target", page("")).await;
+    let mut settings = config(&server, backend, BrowserMode::Always);
+    settings.max_depth = Some(1);
+    if allow_public {
+        allow_public_headers(&mut settings);
+    }
+    let engine = CrawlEngine::builder()
+        .config(settings)
+        .build()
+        .expect("crawl config builds");
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        engine.crawl(&url(&server, "localhost", "/seed")),
+    )
+    .await
+    .expect("linked crawl finishes")
+    .expect("linked crawl succeeds");
+    assert_eq!(result.pages.len(), 2, "seed and linked subdomain must both be crawled");
+    for expected_url in [url(&server, "localhost", "/seed"), target] {
+        let page = result
+            .pages
+            .iter()
+            .find(|page| page.url == expected_url)
+            .expect("expected page exists");
+        assert_eq!(page.status_code, 200);
+        assert!(page.html.contains(MARKER), "complete linked page must be rendered");
+    }
+    let requests = requests(&server, &["/seed", "/target"]).await;
+    assert_seed(at(&requests, "/seed"));
+    assert_eq!(
+        header(at(&requests, "/target"), "host"),
+        Some(format!("sub.localhost:{}", server.address().port()).as_str())
+    );
+    if allow_public {
+        assert_allowed_public(at(&requests, "/target"));
+    } else {
+        assert_withheld(at(&requests, "/target"), "sub.localhost");
+    }
+}
+
+async fn document_redirect_chain(backend: BrowserBackend, allow_public: bool) {
+    let server = MockServer::start().await;
+    for (from, host, to) in [
+        ("/seed", "sub.localhost", "/subdomain"),
+        ("/subdomain", "127.0.0.1", "/external"),
+        ("/external", "localhost", "/returned"),
+    ] {
+        mount(
+            &server,
+            from,
+            ResponseTemplate::new(302).insert_header("location", url(&server, host, to)),
+        )
+        .await;
+    }
+    mount(&server, "/returned", page("")).await;
+    let mut settings = config(&server, backend, BrowserMode::Always);
+    if allow_public {
+        allow_public_headers(&mut settings);
+    }
+    scrape(&server, settings).await;
+    let requests = requests(&server, &["/seed", "/subdomain", "/external", "/returned"]).await;
+    assert_seed(at(&requests, "/seed"));
+    assert_seed(at(&requests, "/returned"));
+    for (route, host) in [
+        ("/seed", "localhost"),
+        ("/subdomain", "sub.localhost"),
+        ("/external", "127.0.0.1"),
+        ("/returned", "localhost"),
+    ] {
+        assert_eq!(
+            header(at(&requests, route), "host"),
+            Some(format!("{host}:{}", server.address().port()).as_str())
+        );
+    }
+    assert_withheld(at(&requests, "/external"), "127.0.0.1");
+    if allow_public {
+        assert_allowed_public(at(&requests, "/subdomain"));
+        for (name, value) in [
+            ("Accept", "application/scope-test"),
+            ("Accept-Language", "en-GB,scope;q=0.5"),
+        ] {
+            assert_ne!(
+                header(at(&requests, "/external"), name),
+                Some(value),
+                "external public {name}"
+            );
+        }
+    } else {
+        assert_withheld(at(&requests, "/subdomain"), "sub.localhost");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_withhold_seed_headers_on_chrome_crawled_subdomain_links_by_default() {
+    linked_subdomain_crawl(BrowserBackend::Chromiumoxide, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_on_chrome_crawled_subdomain_links() {
+    linked_subdomain_crawl(BrowserBackend::Chromiumoxide, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_apply_seed_scope_at_every_chrome_redirect_chain_hop() {
+    for allow_public in [false, true] {
+        document_redirect_chain(BrowserBackend::Chromiumoxide, allow_public).await;
+    }
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_withhold_seed_headers_on_native_crawled_subdomain_links_by_default() {
+    linked_subdomain_crawl(BrowserBackend::Native, false).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_on_native_crawled_subdomain_links() {
+    linked_subdomain_crawl(BrowserBackend::Native, true).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_apply_seed_scope_at_every_native_redirect_chain_hop() {
+    for allow_public in [false, true] {
+        document_redirect_chain(BrowserBackend::Native, allow_public).await;
+    }
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_withhold_seed_headers_after_a_native_unrelated_host_redirect() {
+    document_redirect(BrowserBackend::Native, "127.0.0.1", true).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_after_a_native_fetch_redirect() {
+    native_script_redirect(false, BrowserMode::Always, true).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_after_a_native_module_redirect() {
+    native_script_redirect(true, BrowserMode::Always, true).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_after_a_stealth_native_fetch_redirect() {
+    native_script_redirect(false, BrowserMode::Stealth, true).await;
+}
+
+#[cfg(feature = "interact")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_withhold_seed_headers_after_an_interaction_fetch_redirect_to_a_subdomain() {
+    interaction_fetch_redirect(BrowserBackend::Chromiumoxide, false).await;
+}
+
+#[cfg(all(feature = "interact", feature = "browser-native"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_forward_only_allowed_public_headers_for_a_native_interaction_page_fetch() {
+    interaction_fetch_redirect(BrowserBackend::Native, true).await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+async fn should_ignore_native_public_header_allowlist_when_subdomains_are_disabled() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "/seed",
+        ResponseTemplate::new(302).insert_header("location", url(&server, "sub.localhost", "/target")),
+    )
+    .await;
+    mount(&server, "/target", page("")).await;
+    let mut settings = config(&server, BrowserBackend::Native, BrowserMode::Always);
+    settings.allow_subdomains = false;
+    allow_public_headers(&mut settings);
+    scrape(&server, settings).await;
+    let requests = requests(&server, &["/seed", "/target"]).await;
+    assert_seed(at(&requests, "/seed"));
+    assert_withheld(at(&requests, "/target"), "sub.localhost");
+    for (name, value) in [
+        ("Accept", "application/scope-test"),
+        ("Accept-Language", "en-GB,scope;q=0.5"),
+    ] {
+        assert_ne!(
+            header(at(&requests, "/target"), name),
+            Some(value),
+            "disabled public {name}"
+        );
+    }
 }

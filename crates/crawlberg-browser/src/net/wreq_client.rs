@@ -20,7 +20,7 @@ use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
 use crate::net::cookies::{CookieJar, CookieRequestContext};
 #[cfg(feature = "stealth")]
-use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
+use crate::net::credential::{OriginHeaders, ScopedHeaders, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
 use crate::net::resolver::{
     EnvironmentSystemProxySelector, SystemProxyIdentity, SystemProxySelector, ValidatorResolver,
@@ -48,6 +48,7 @@ pub struct StealthHttpClient {
     pub extra_headers: RwLock<HashMap<String, String>>,
     /// The credential header the embedder scoped to one host; sent only to that host.
     pub origin_headers: RwLock<Option<OriginHeaders>>,
+    pub(crate) subdomain_headers: RwLock<Option<OriginHeaders>>,
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
 }
 
@@ -130,6 +131,7 @@ impl StealthHttpClient {
             cookie_jar,
             extra_headers: RwLock::new(HashMap::new()),
             origin_headers: RwLock::new(None),
+            subdomain_headers: RwLock::new(None),
             in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
@@ -251,11 +253,20 @@ impl StealthHttpClient {
                 req = req.header(k.as_str(), v.as_str());
             }
 
-            if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
-                for (name, value) in origin_headers.headers_for(&current_url) {
-                    req = req.header(name.as_str(), value.as_str());
+            let scoped = ScopedHeaders {
+                origin: self.origin_headers.read().await.clone(),
+                subdomains: self.subdomain_headers.read().await.clone(),
+            };
+            let mut overrides = wreq::header::HeaderMap::new();
+            for (name, value) in scoped.headers_for(&current_url) {
+                if let (Ok(name), Ok(value)) = (
+                    wreq::header::HeaderName::from_bytes(name.as_bytes()),
+                    wreq::header::HeaderValue::from_str(value),
+                ) {
+                    overrides.insert(name, value);
                 }
             }
+            req = req.headers(overrides);
 
             self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let resp = req.send().await.map_err(|e| {

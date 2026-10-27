@@ -90,6 +90,7 @@ enum NativeBrowserJob {
         config: NativeBrowserConfig,
         actions: Vec<NativePageAction>,
         post_navigation_wait: Option<Duration>,
+        state: NativeRenderState,
         reply: tokio::sync::oneshot::Sender<Result<NativeInteractionResult, PageError>>,
     },
 }
@@ -191,18 +192,35 @@ impl NativeBrowserExecutor {
         actions: &[NativePageAction],
         post_navigation_wait: Option<Duration>,
     ) -> Result<NativeInteractionResult, PageError> {
+        let mut state = NativeRenderState::new(&config.prior_cookies);
+        self.interact_url_with_state(url, config, actions, post_navigation_wait, &mut state)
+            .await
+    }
+
+    /// Execute page actions while retaining navigation cookies and public subdomain header policy.
+    pub async fn interact_url_with_state(
+        &self,
+        url: &str,
+        config: &NativeBrowserConfig,
+        actions: &[NativePageAction],
+        post_navigation_wait: Option<Duration>,
+        state: &mut NativeRenderState,
+    ) -> Result<NativeInteractionResult, PageError> {
         let (reply, result) = tokio::sync::oneshot::channel();
         let job = NativeBrowserJob::Interact {
             url: url.to_owned(),
             config: config.clone(),
             actions: actions.to_vec(),
             post_navigation_wait,
+            state: state.clone(),
             reply,
         };
         self.send_job(job).await?;
-        result.await.map_err(|_| {
+        let interaction = result.await.map_err(|_| {
             PageError::NetworkError("native browser worker stopped before returning interact result".to_owned())
-        })?
+        })??;
+        state.site_for_cookies = url::Url::parse(&interaction.final_url).ok();
+        Ok(interaction)
     }
 
     async fn send_job(&self, mut job: NativeBrowserJob) -> Result<(), PageError> {
@@ -286,9 +304,10 @@ fn run_native_worker(
                     config,
                     actions,
                     post_navigation_wait,
+                    state,
                     reply,
                 } => {
-                    let _ = reply.send(interact_url_local(&url, &config, &actions, post_navigation_wait).await);
+                    let _ = reply.send(interact_url_local(&url, &config, &actions, post_navigation_wait, state).await);
                 }
             }
         }

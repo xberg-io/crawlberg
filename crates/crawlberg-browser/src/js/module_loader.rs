@@ -129,7 +129,7 @@ impl ModuleLoader for BrowserModuleLoader {
         let Ok(state) = self.op_state.try_borrow() else {
             return ModuleLoadResponse::Sync(Err(io_err(format!("Module {} refused: page state is busy", url))));
         };
-        let origin_headers = state.origin_headers();
+        let scoped_headers = state.scoped_headers();
         let danger_accept_invalid_certs = state
             .http_client
             .as_ref()
@@ -188,7 +188,7 @@ impl ModuleLoader for BrowserModuleLoader {
                     }
                 }
                 let mut scoped_overrides = reqwest::header::HeaderMap::new();
-                for (name, value) in origin_headers.iter().flat_map(|scoped| scoped.headers_for(&current)) {
+                for (name, value) in scoped_headers.headers_for(&current) {
                     let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
                         .map_err(|error| io_err(format!("Invalid scoped module header name: {error}")))?;
                     let value = reqwest::header::HeaderValue::from_str(value)

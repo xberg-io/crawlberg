@@ -54,7 +54,7 @@ impl CredentialScope {
     /// Whether `url` is on a proper subdomain of the scoped host (`docs.example.com` for a seed
     /// on `example.com`), by the same suffix rule the link scope uses to admit it.
     pub(crate) fn covers_subdomain(&self, url: &Url) -> bool {
-        let (Some(seed), Some(target)) = (self.seed.host_str(), url.host_str()) else {
+        let (Some(url::Host::Domain(seed)), Some(url::Host::Domain(target))) = (self.seed.host(), url.host()) else {
             return false;
         };
         let (seed, target) = (seed.to_ascii_lowercase(), target.to_ascii_lowercase());
@@ -184,6 +184,17 @@ pub(crate) fn is_configured_header(config: &CrawlConfig, name: &str) -> bool {
 pub(crate) fn origin_headers(config: &CrawlConfig) -> Option<crawlberg_browser::adapter::OriginHeaders> {
     let scope = config.credential_scope.as_ref()?;
     let headers = seed_host_headers(config, &scope.seed);
+    (!headers.is_empty()).then(|| crawlberg_browser::adapter::OriginHeaders {
+        host: scope.host().to_owned(),
+        headers,
+    })
+}
+
+/// Public headers authorized for proper subdomains, using the same filter as the HTTP backend.
+#[cfg(feature = "browser-native")]
+pub(crate) fn native_subdomain_headers(config: &CrawlConfig) -> Option<crawlberg_browser::adapter::OriginHeaders> {
+    let scope = config.credential_scope.as_ref()?;
+    let headers = subdomain_headers(config);
     (!headers.is_empty()).then(|| crawlberg_browser::adapter::OriginHeaders {
         host: scope.host().to_owned(),
         headers,
@@ -494,6 +505,57 @@ mod tests {
     fn a_subdomain_gets_no_headers_unless_subdomains_are_allowed() {
         let config = subdomain_config(false, None);
         assert!(seed_host_headers(&config, &url("http://docs.example.com/")).is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "browser-native")]
+    fn native_public_headers_share_the_http_allowlist_and_exclude_auth_case_insensitively() {
+        let mut config = subdomain_config(
+            true,
+            Some(AuthConfig::Header {
+                name: "aCcEpT".to_owned(),
+                value: "auth-secret".to_owned(),
+            }),
+        );
+        config.custom_headers.insert("X-Public".to_owned(), "public".to_owned());
+        config.subdomain_header_allowlist = config.custom_headers.keys().cloned().collect();
+        let mut public = native_subdomain_headers(&config).expect("explicit public header must be scoped");
+        public.headers.sort();
+        assert_eq!(public.host, "example.com");
+        assert_eq!(
+            public.headers,
+            [
+                ("X-Public".to_owned(), "public".to_owned()),
+                ("x-token".to_owned(), "tok".to_owned())
+            ]
+        );
+        config.allow_subdomains = false;
+        assert_eq!(native_subdomain_headers(&config), None);
+        config.allow_subdomains = true;
+        config.subdomain_header_allowlist.clear();
+        assert_eq!(native_subdomain_headers(&config), None);
+        config.subdomain_header_allowlist.push("X-Public".to_owned());
+        config.credential_scope = None;
+        assert_eq!(native_subdomain_headers(&config), None);
+    }
+
+    #[test]
+    fn an_ip_seed_never_scopes_headers_to_an_address_suffix() {
+        let seed = url("http://127.0.0.1/");
+        let config = CrawlConfig {
+            credential_scope: CredentialScope::for_seed(&seed, None),
+            ..subdomain_config(true, None)
+        };
+        assert!(
+            seed_host_headers(&config, &seed)
+                .iter()
+                .any(|(name, _)| name == "Accept")
+        );
+        // ~keep A non-special URL preserves this valid domain instead of rejecting its numeric suffix.
+        let lookalike = url("custom://sub.127.0.0.1/");
+        assert_eq!(lookalike.host_str(), Some("sub.127.0.0.1"));
+        assert_eq!(seed_host_headers(&config, &lookalike), Vec::<(String, String)>::new());
+        assert!(!custom_header_is_scoped(&config, &lookalike, "Accept"));
     }
 
     #[test]

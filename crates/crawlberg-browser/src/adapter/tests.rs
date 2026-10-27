@@ -60,8 +60,24 @@ fn native_browser_executor_futures_are_send() {
 
     assert_send(executor.render_url("http://example.com", &config));
     assert_send(executor.interact_url("http://example.com", &config, &actions, None));
+    let mut state = NativeRenderState::new(&[]);
+    assert_send(executor.interact_url_with_state("http://example.com", &config, &actions, None, &mut state));
     assert_send(render_url("http://example.com", &config));
     assert_send(interact_url("http://example.com", &config, &actions, None));
+}
+
+#[test]
+fn sharing_cookies_does_not_change_header_authorization_and_the_policy_can_be_cleared() {
+    let mut state = NativeRenderState::new(&[]);
+    let headers = OriginHeaders {
+        host: "example.com".to_owned(),
+        headers: vec![("Accept".to_owned(), "application/json".to_owned())],
+    };
+    state.set_subdomain_headers(Some(headers.clone()));
+    state.share_cookies_from(&NativeRenderState::new(&[]));
+    assert_eq!(state.subdomain_headers, Some(headers));
+    state.set_subdomain_headers(None);
+    assert_eq!(state.subdomain_headers, None);
 }
 
 #[tokio::test]

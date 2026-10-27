@@ -21,8 +21,8 @@ All notable changes to crawlberg are documented here.
 
 - `browser.dom_quiet_cap` limits the DOM quiet wait independently of page-load timeout, defaulting to 4000 ms. (#808)
 - `subdomain_header_allowlist` explicitly opts individual custom headers into forwarding to admitted subdomains.
-  Configured authentication and standard credential headers remain on the seed host.
-  The native browser keeps all custom headers on the seed host.
+  HTTP and both browser backends apply the policy to linked pages and each redirect hop.
+  Configured authentication and standard credential headers remain on the seed host. (#810)
 - Content options expose abbreviation expansion and literal Markdown escaping without changing their defaults.
   (#804, #807)
 - `content.include_icon_labels=false` omits decorative SVG labels and associated link tooltips while retaining visible

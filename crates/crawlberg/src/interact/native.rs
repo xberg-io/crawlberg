@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crawlberg_browser::adapter::{
-    NativeActionResult, NativeBrowserExecutor, NativeInteractionResult, NativePageAction, NativeScrollDirection,
-    PageError,
+    NativeActionResult, NativeBrowserExecutor, NativeInteractionResult, NativePageAction, NativeRenderState,
+    NativeScrollDirection, PageError,
 };
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
@@ -27,6 +27,8 @@ pub(super) async fn run(
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
     let native_config = crate::native_browser::build_native_config(config, url, Vec::new(), ssrf)?;
+    let mut native_state = NativeRenderState::new(&native_config.prior_cookies);
+    native_state.set_subdomain_headers(crate::net::credentials::native_subdomain_headers(config));
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();
     let post_navigation_wait = post_navigation_wait(config);
     let timeout = config.browser.timeout;
@@ -44,7 +46,13 @@ pub(super) async fn run(
 
     let native_result = tokio::time::timeout(
         overall_timeout,
-        native_executor.interact_url(url, &native_config, &native_actions, post_navigation_wait),
+        native_executor.interact_url_with_state(
+            url,
+            &native_config,
+            &native_actions,
+            post_navigation_wait,
+            &mut native_state,
+        ),
     )
     .await
     .map_err(|_| {

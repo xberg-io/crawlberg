@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::cookies::CookieRequestContext;
-use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::credential::{ScopedHeaders, has_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::resolver::{EnvironmentSystemProxySelector, SystemProxySelector, reqwest_builder_and_route_for_url};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
@@ -114,12 +114,12 @@ impl JsOpState {
         }
     }
 
-    /// The page client's headers scoped to one host, such as its credential. See [`OriginHeaders`].
-    pub(crate) fn origin_headers(&self) -> Option<OriginHeaders> {
-        let client = self.http_client.as_ref()?;
-        // ~keep The scoped headers are written once, when the context is built, before any
-        // ~keep page runs script, so a busy lock here cannot hide them.
-        client.origin_headers.try_read().ok()?.clone()
+    /// The page client's independently scoped seed-host and public subdomain headers.
+    pub(crate) fn scoped_headers(&self) -> ScopedHeaders {
+        self.http_client
+            .as_ref()
+            .map(|client| client.scoped_headers())
+            .unwrap_or_default()
     }
 }
 
@@ -592,7 +592,7 @@ struct FetchContext {
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
     proxy: Option<crate::net::proxy::UpstreamProxy>,
-    origin_headers: Option<OriginHeaders>,
+    scoped_headers: ScopedHeaders,
     danger_accept_invalid_certs: bool,
 }
 
@@ -628,7 +628,7 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
         in_flight: gs.http_client.as_ref().map(|c| c.in_flight.clone()),
         intercept,
         proxy: gs.http_client.as_ref().and_then(|c| c.proxy().cloned()),
-        origin_headers: gs.origin_headers(),
+        scoped_headers: gs.scoped_headers(),
         danger_accept_invalid_certs: gs
             .http_client
             .as_ref()
@@ -900,21 +900,22 @@ async fn send_one_hop(
         }
     }
 
-    // ~keep Checked per hop, so a redirect to another host never carries the scoped headers.
-    let origin_headers = context
-        .origin_headers
-        .as_ref()
-        .zip(url::Url::parse(current_url).ok())
-        .map(|(origin_headers, url)| origin_headers.headers_for(&url))
-        .unwrap_or_default();
+    // ~keep Each hop independently receives only its authorized seed-host or public subdomain headers.
+    let scoped_headers = context.scoped_headers.headers_for(&parsed);
     for (k, v) in &cors.custom_headers {
-        if !origin_headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(k)) {
+        if !scoped_headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(k)) {
             req = req.header(k.as_str(), v.as_str());
         }
     }
-    for (name, value) in origin_headers {
-        req = req.header(name.as_str(), value.as_str());
+    let mut overrides = reqwest::header::HeaderMap::new();
+    for (name, value) in scoped_headers {
+        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|error| deno_error::JsErrorBox::type_error(error.to_string()))?;
+        let value = reqwest::header::HeaderValue::from_str(value)
+            .map_err(|error| deno_error::JsErrorBox::type_error(error.to_string()))?;
+        overrides.insert(name, value);
     }
+    req = req.headers(overrides);
 
     if !body.is_empty() {
         req = req.body(body.to_string());
@@ -1181,7 +1182,7 @@ mod tests {
             in_flight: None,
             intercept: None,
             proxy: None,
-            origin_headers: None,
+            scoped_headers: ScopedHeaders::default(),
             danger_accept_invalid_certs: false,
         };
         let cors = CorsContext::new("http://origin.test/start", "http://origin.test", "GET", "{}");
