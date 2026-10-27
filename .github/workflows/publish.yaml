@@ -3298,7 +3298,7 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org/"
       - name: Install ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify generated plugin bundles before publishing
@@ -3391,11 +3391,11 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
       - name: Install ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify plugin source and generated artifacts
-        uses: xberg-io/actions/verify-ai-rulez-plugin@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           config-directory: .ai-rulez
       - name: Install uv
@@ -3652,7 +3652,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
       - name: Install ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify public skill exports
@@ -3733,11 +3733,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Install reviewed ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify plugin versions and generated resources
-        uses: xberg-io/actions/verify-ai-rulez-plugin@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           version-sync-script: scripts/sync_plugin_version.py
       - uses: actions/setup-node@v7
@@ -3805,11 +3805,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Install reviewed ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify plugin versions and generated resources
-        uses: xberg-io/actions/verify-ai-rulez-plugin@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           version-sync-script: scripts/sync_plugin_version.py
       - uses: astral-sh/setup-uv@v10.3.0

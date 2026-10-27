@@ -87,8 +87,8 @@ class PluginDispatchTests(unittest.TestCase):
                     actual = evaluate_condition(self.jobs[name]["if"], event=event, plugins_only=plugins_only, ref=ref)
                     assert actual is expected
 
-    def test_plugin_verification_uses_the_reviewed_action_revision(self) -> None:
-        expected = "23602a93e64f32d552325d5304540927f27d8794"
+    def test_plugin_verification_uses_the_v1_actions(self) -> None:
+        expected = "v1"
         for name in PLUGIN_JOBS:
             actions = [
                 step["uses"]

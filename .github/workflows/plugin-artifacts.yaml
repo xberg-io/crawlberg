@@ -24,7 +24,7 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
       - name: Install ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@23602a93e64f32d552325d5304540927f27d8794
+        uses: xberg-io/actions/setup-ai-rulez@v1
         with:
           ai-rulez-version: "latest"
       - name: Verify public skill exports
