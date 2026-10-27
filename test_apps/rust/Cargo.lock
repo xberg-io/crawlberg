@@ -551,9 +551,9 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8949315433622c191e4f83b23041a46f02f6096839149706af09715f75280971"
+checksum = "e9cece970a1c583dc55de73dcbc4d85242c565cd1ab5223eb090aa36632c8f05"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -621,9 +621,9 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-chromiumoxide"
-version = "0.9.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "937d12e969f7090c02cb64dff52375f3e26e669cbdda7bc49ce364fb8ce7bb68"
+checksum = "28a8fa6f75a2a698c099f1defa98fe1dd45367e0574d7f52306a1e54d66bf4df"
 dependencies = [
  "async-tungstenite",
  "base64",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-e2e-rust"
-version = "1.12.2"
+version = "1.12.3"
 dependencies = [
  "axum",
  "brotli",
@@ -664,9 +664,9 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30cb48557123dd4e13fd756b83490faf9aaeb7d70e1bcd74a410c4f12a9b6320"
+checksum = "3a38455515bc47cf5e05e8a02a761d24e2b80970af157bcc828d22a99225962f"
 
 [[package]]
 name = "crc32fast"
@@ -1087,9 +1087,9 @@ checksum = "491194d601b4fa9fac3c9571e014070a0ad1bc3392d1bc10419695196a8b3cc3"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.18.7"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "259eff8de02b67e436fa4ccd377dbf6105d530fc405f20489677f417cf673a7a"
+checksum = "ddada45be32a036999fbda2be5df286dc2001816e60099ec3fd445fc6c3bb69b"
 dependencies = [
  "ahash",
  "astral-tl",

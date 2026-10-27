@@ -4,6 +4,10 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve false and explicit nil values in generated Ruby tagged variants, and retain nullable constructor arguments in RBS.
+
 ## [1.12.3] - 2026-10-27
 
 ### Fixed
