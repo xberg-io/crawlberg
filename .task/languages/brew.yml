@@ -2,15 +2,15 @@ version: "3"
 
 tasks:
   e2e:generate:
-    desc: Generate brew (CLI) E2E shell tests from fixtures
+    desc: Generate brew (CLI) E2E Bats tests from fixtures
     cmds:
-      - alef e2e generate
+      - alef e2e generate --lang brew {{.CLI_ARGS}}
 
   e2e:lint:
-    desc: Lint generated brew E2E shell scripts
+    desc: Lint generated brew E2E launchers and Bats suites
     dir: e2e/brew
     cmds:
-      - shellcheck *.sh
+      - shellcheck *.sh *.bats
 
   e2e:test:
     desc: Run brew E2E tests (crawlberg CLI; auto-builds and prepends to PATH)

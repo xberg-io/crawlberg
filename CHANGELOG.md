@@ -8,6 +8,10 @@ All notable changes to crawlberg are documented here.
 
 - Preserve false and explicit nil values in generated Ruby tagged variants, and retain nullable constructor arguments in RBS.
 
+### Changed
+
+- Generate Brew fixture suites with Bats, load the shared helpers, install Bats in the Brew CI lane, and pin Alef 0.115.5 for regeneration.
+
 ## [1.12.3] - 2026-10-27
 
 ### Fixed

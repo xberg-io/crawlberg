@@ -374,6 +374,16 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
 
+      - name: Install Bats for Brew fixtures
+        if: matrix.lang == 'brew'
+        uses: xberg-io/actions/install-bats@v1
+        with:
+          version: "1.14.0"
+
+      - name: Lint generated Brew fixtures
+        if: matrix.lang == 'brew'
+        run: task brew:e2e:lint
+
       - name: Test Chromium runtime preparation
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
         run: task ci:chrome:runtime:test
