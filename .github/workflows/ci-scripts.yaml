@@ -50,6 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
       - name: Install Bats
         uses: xberg-io/actions/install-bats@v1
         with:
