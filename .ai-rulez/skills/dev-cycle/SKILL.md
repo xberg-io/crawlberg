@@ -15,7 +15,7 @@ Iteration loops are codified as Taskfile tasks. Prefer them over ad-hoc commands
 
 ```text
 task alef:install              # cargo install --path ../alef/crates/alef-cli
-task alef:generate             # alef all --clean --format=false
+task alef:generate             # alef all --clean --skip-snippet-validation
 task alef:format               # explicit Alef formatting; task format excludes this
 VERSION=0.15.30 task alef:bump # bump pin in alef.toml + reinstall + regen
 ```
