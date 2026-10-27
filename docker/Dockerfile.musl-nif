@@ -1,10 +1,11 @@
 # =============================================================================
 # =============================================================================
-FROM alpine:3.21 AS builder
+FROM alpine:3.24 AS builder
 
 WORKDIR /build
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     curl gcc g++ musl-dev cmake make pkgconf \
     openssl-dev openssl-libs-static \
     perl linux-headers git file

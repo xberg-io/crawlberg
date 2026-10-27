@@ -1,9 +1,10 @@
 # =============================================================================
-FROM alpine:3.21 AS builder
+FROM alpine:3.24 AS builder
 
 WORKDIR /build
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     curl gcc g++ musl-dev cmake make pkgconf \
     openssl-dev openssl-libs-static \
     perl linux-headers git file
@@ -32,14 +33,15 @@ RUN . "$HOME/.cargo/env" && \
 RUN file /build/crawlberg && \
     /build/crawlberg --version
 
-FROM alpine:3.21
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.source="https://github.com/xberg-io/crawlberg"
 LABEL org.opencontainers.image.description="Crawlberg — high-performance web crawler CLI"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL io.modelcontextprotocol.server.name="io.github.xberg-io/crawlberg"
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     ca-certificates \
     curl
 

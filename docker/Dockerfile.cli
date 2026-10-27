@@ -1,10 +1,11 @@
 # =============================================================================
 # =============================================================================
-FROM rust:1.99-bookworm AS builder
+FROM rust:1.99-trixie AS builder
 
 WORKDIR /build
 
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends cmake g++ pkg-config libssl-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -25,13 +26,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/crawlberg /build/crawlberg && \
     strip /build/crawlberg
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 LABEL org.opencontainers.image.source="https://github.com/xberg-io/crawlberg"
 LABEL org.opencontainers.image.description="Crawlberg CLI — lightweight web crawler"
 LABEL org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 

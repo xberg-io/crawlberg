@@ -8,7 +8,7 @@ This directory contains Dockerfiles for building crawlberg container images.
 
 ### Features
 
-- **Base**: Alpine Linux 3.21 (minimal)
+- **Base**: Alpine Linux 3.24 (minimal)
 - **Architecture**: Multi-arch (amd64, arm64)
 - **Binary**: Statically compiled with musl
 - **Size**: ~30-50MB (highly portable)
@@ -66,7 +66,7 @@ Full-featured image with Chromium for browser automation, Tesseract OCR, and opt
 
 Minimal CLI image on Debian slim.
 
-- **Base**: Debian bookworm-slim
+- **Base**: Debian trixie-slim
 - **Size**: ~100-150MB
 - **Status**: Superseded by Dockerfile.alpine (better size/portability)
 

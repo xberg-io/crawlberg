@@ -3,7 +3,7 @@ title: "Docker"
 ---
 
 Crawlberg ships two Dockerfile variants: a full API server image and a minimal CLI image.
-Both use multi-stage builds with Debian Bookworm for reproducible, small runtime images.
+Both use multi-stage builds with Debian Trixie for small runtime images.
 
 ## Dockerfile variants
 
@@ -116,7 +116,7 @@ Both images follow container security best practices:
 
 - **Non-root user** -- The runtime stage creates a dedicated `crawlberg` user and group.
   The binary runs as this unprivileged user.
-- **Minimal base** -- The runtime uses `debian:bookworm-slim` with only `ca-certificates`
+- **Minimal base** -- The runtime uses `debian:trixie-slim` with only `ca-certificates`
   (and `curl` for health checks in the API image).
 - **No secrets in image** -- Configuration is passed via environment variables or
   command-line arguments at runtime.
