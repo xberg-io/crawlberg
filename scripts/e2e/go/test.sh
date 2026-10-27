@@ -11,4 +11,5 @@ validate_repo_root "$REPO_ROOT" || exit 1
 setup_go_paths "$REPO_ROOT"
 
 cd "${REPO_ROOT}/e2e/go"
-go test ./...
+# ~keep Go's cache ignores external native library changes; rebuild and execute every E2E test.
+go test -a -count=1 -v ./...
