@@ -14,11 +14,16 @@ Iteration loops are codified as Taskfile tasks. Prefer them over ad-hoc commands
 ## After alef changes
 
 ```text
-task alef:install              # cargo install --path ../alef/crates/alef-cli
+task alef:install              # cargo install --path ../alef --locked
 task alef:generate             # alef all --clean --skip-snippet-validation
 task alef:format               # explicit Alef formatting; task format excludes this
 VERSION=0.15.30 task alef:bump # bump pin in alef.toml + reinstall + regen
 ```
+
+- `alef:generate` has no `--skip-compile`, so it also compiles the Swift bridge and the FFI header
+  gate (cargo over the whole dependency graph). A subagent without build scope must not run it.
+- `alef:install` and `alef:bump` build `../alef`, which exists only from a root checkout. From
+  `.worktrees/crawlberg/<name>`, run `cargo install --path ../../../alef --locked` instead.
 
 ## After crawlberg-core changes
 
@@ -32,9 +37,9 @@ task build:all      # core + all bindings
 
 ```text
 task e2e:generate # regenerate all language test suites from fixtures
-task e2e:build    # build bindings and the generated mock-server for e2e
+task e2e:build    # rebuild the e2e mock-server only (bindings: task build:bindings)
 task e2e:test     # run generated e2e suites
-task e2e:all      # generate + build + run generated e2e suites
+task e2e:all      # e2e:verify: generate + lint + test
 ```
 
 ## Cleanup
