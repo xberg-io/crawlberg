@@ -581,7 +581,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -659,13 +659,13 @@ jobs:
       matrix:
         include:
           - {
-              os: macos-latest,
+              os: macos-26,
               target: aarch64-apple-darwin,
               rust_target: "",
               use_napi_cross: false,
             }
           - {
-              os: macos-15-intel,
+              os: macos-26-intel,
               target: x86_64-apple-darwin,
               rust_target: "",
               use_napi_cross: false,
@@ -810,8 +810,8 @@ jobs:
         include:
           - { os: ubuntu-latest, label: linux, platform: x86_64-linux }
           - { os: ubuntu-24.04-arm, label: linux-aarch64, platform: aarch64-linux }
-          - { os: macos-latest, label: macos-arm64, platform: arm64-darwin }
-          - { os: macos-15-intel, label: macos-x86_64, platform: x86_64-darwin }
+          - { os: macos-26, label: macos-arm64, platform: arm64-darwin }
+          - { os: macos-26-intel, label: macos-x86_64, platform: x86_64-darwin }
           # ~keep windows-x64 was dropped when rb-sys 0.9.127 could not resolve Ruby's
           # mingw headers (`ruby/defines.h:63:11: fatal error: 'sys/select.h' file not
           # found`) and the tracking issue oxidize-rb/rb-sys#268 sat open with no fix
@@ -910,7 +910,7 @@ jobs:
         platform:
           - { os: ubuntu-latest, label: linux-x86_64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, label: linux-arm64, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, label: macos-arm64, target: aarch64-apple-darwin }
+          - { os: macos-26, label: macos-arm64, target: aarch64-apple-darwin }
           # ~keep macos-x86_64 is deliberately absent. `setup-php` provisions PHP through
           # Homebrew, and from 2026-09-01 Homebrew serves no x86_64 macOS bottles after Apple
           # dropped Intel in macOS 27 -- the same cause that retired the Intel Homebrew bottle
@@ -1001,7 +1001,7 @@ jobs:
       build-musl: false
       checksums: true
       extra-cargo-args: --features all
-      extra-targets: '[{"os": "macos-15-intel", "target": "x86_64-apple-darwin"}]'
+      extra-targets: '[{"os": "macos-26-intel", "target": "x86_64-apple-darwin"}]'
 
   # ~keep Must run AFTER `promote-release`: cargo-binstall downloads the release asset over
   # the public `.../releases/download/<tag>/...` URL, which 404s while the release is a
@@ -1082,8 +1082,8 @@ jobs:
         include:
           - { os: ubuntu-latest, platform: linux-x86_64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, platform: linux-aarch64, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, platform: macos-arm64, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, platform: macos-x86_64, target: x86_64-apple-darwin }
+          - { os: macos-26, platform: macos-arm64, target: aarch64-apple-darwin }
+          - { os: macos-26-intel, platform: macos-x86_64, target: x86_64-apple-darwin }
           - { os: windows-latest, platform: windows-x86_64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v7
@@ -1162,8 +1162,8 @@ jobs:
         include:
           - { os: ubuntu-latest, platform: linux-x86_64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, platform: linux-aarch64, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, platform: macos-arm64, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, platform: macos-x86_64, target: x86_64-apple-darwin }
+          - { os: macos-26, platform: macos-arm64, target: aarch64-apple-darwin }
+          - { os: macos-26-intel, platform: macos-x86_64, target: x86_64-apple-darwin }
           - { os: windows-latest, platform: windows-x86_64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v7
@@ -1234,8 +1234,8 @@ jobs:
         include:
           - { os: ubuntu-latest, classifier: linux-x86_64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, classifier: linux-aarch64, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, classifier: macos-arm64, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, classifier: macos-x86_64, target: x86_64-apple-darwin }
+          - { os: macos-26, classifier: macos-arm64, target: aarch64-apple-darwin }
+          - { os: macos-26-intel, classifier: macos-x86_64, target: x86_64-apple-darwin }
           - { os: windows-latest, classifier: windows-x86_64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v7
@@ -1336,8 +1336,8 @@ jobs:
         include:
           - { os: ubuntu-latest, rid: linux-x64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, rid: linux-arm64, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, rid: osx-arm64, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, rid: osx-x64, target: x86_64-apple-darwin }
+          - { os: macos-26, rid: osx-arm64, target: aarch64-apple-darwin }
+          - { os: macos-26-intel, rid: osx-x64, target: x86_64-apple-darwin }
           - { os: windows-latest, rid: win-x64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v7
@@ -1427,10 +1427,10 @@ jobs:
           - { os: ubuntu-latest, label: linux-x86_64, target: x86_64-unknown-linux-gnu, nif: "2.17" }
           - { os: ubuntu-24.04-arm, label: linux-aarch64, target: aarch64-unknown-linux-gnu, nif: "2.16" }
           - { os: ubuntu-24.04-arm, label: linux-aarch64, target: aarch64-unknown-linux-gnu, nif: "2.17" }
-          - { os: macos-latest, label: macos-arm64, target: aarch64-apple-darwin, nif: "2.16" }
-          - { os: macos-latest, label: macos-arm64, target: aarch64-apple-darwin, nif: "2.17" }
-          - { os: macos-15-intel, label: macos-x86_64, target: x86_64-apple-darwin, nif: "2.16" }
-          - { os: macos-15-intel, label: macos-x86_64, target: x86_64-apple-darwin, nif: "2.17" }
+          - { os: macos-26, label: macos-arm64, target: aarch64-apple-darwin, nif: "2.16" }
+          - { os: macos-26, label: macos-arm64, target: aarch64-apple-darwin, nif: "2.17" }
+          - { os: macos-26-intel, label: macos-x86_64, target: x86_64-apple-darwin, nif: "2.16" }
+          - { os: macos-26-intel, label: macos-x86_64, target: x86_64-apple-darwin, nif: "2.17" }
           - { os: windows-latest, label: windows-x86_64, target: x86_64-pc-windows-msvc, nif: "2.16" }
           - { os: windows-latest, label: windows-x86_64, target: x86_64-pc-windows-msvc, nif: "2.17" }
     steps:
@@ -1542,7 +1542,7 @@ jobs:
     needs: prepare
     if: >-
       ${{ !inputs.plugins-only && (needs.prepare.outputs.release_swift == 'true') }}
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1582,7 +1582,7 @@ jobs:
     needs: prepare
     if: >-
       ${{ !inputs.plugins-only && (needs.prepare.outputs.release_swift == 'true') }}
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1778,7 +1778,7 @@ jobs:
     needs: [prepare, validate-versions, upload-swift-release]
     if: >-
       ${{ !inputs.plugins-only && (!cancelled() && needs.upload-swift-release.result == 'success' && needs.validate-versions.result == 'success' && needs.prepare.outputs.release_swift == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true') }}
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/create-github-app-token@v3
         id: app-token
@@ -2955,7 +2955,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, bottle_tag: arm64_sequoia, install_brew: false }
+          - { os: macos-26, bottle_tag: arm64_tahoe, install_brew: false }
           # ~keep The Intel macOS `sequoia` bottle is deliberately absent, not forgotten. From
           # 2026-09-01 Homebrew serves no `openssl@3` bottle for x86_64 macOS -- "We do not
           # provide support for this platform (as-of September 2026, announced August 2025)",

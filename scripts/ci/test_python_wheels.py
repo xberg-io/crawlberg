@@ -12,14 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/publish.yaml"
 
 # ~keep An allowlist rather than a regex on "intel"/"arm": GitHub's runner labels carry no
-# ~keep consistent architecture marker (`macos-latest` and `macos-15` are arm64, `macos-13` is
-# ~keep x86_64), so a rename must force a conscious update here instead of silently passing.
+# ~keep consistent architecture marker (`macos-26` is arm64, `macos-26-intel` is x86_64), so a
+# ~keep rename must force a conscious update here instead of silently passing.
 MACOS_RUNNER_ARCH = {
-    "macos-latest": "arm64",
-    "macos-15": "arm64",
-    "macos-14": "arm64",
-    "macos-15-intel": "x86_64",
-    "macos-13": "x86_64",
+    "macos-26": "arm64",
+    "macos-26-intel": "x86_64",
 }
 
 # ~keep 11.0 is the arm64 floor, so anything above it would also move the published arm64 tag.

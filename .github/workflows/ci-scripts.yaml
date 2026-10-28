@@ -43,7 +43,7 @@ jobs:
       matrix:
         # Both, because the helpers under test branch on RUNNER_OS: the macOS arm sets DYLD_* where
         # the Linux arm sets LD_LIBRARY_PATH, so a Linux-only job never executes half the code.
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-26]
     steps:
       - uses: actions/checkout@v7
 
