@@ -7,6 +7,8 @@ on:
       - "scripts/**"
       - "Taskfile.yml"
       - ".github/workflows/ci-scripts.yaml"
+      - "mise.toml"
+      - "mise.lock"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
   # ~keep before merging any PR that needs its own CI.
@@ -24,15 +26,10 @@ permissions:
   contents: read
 
 env:
-  # The same version task test:scripts:bats expects locally. install-bats defaults to a pin now,
-  # but the input is passed explicitly: a default only helps the caller who omits it, and omitting
-  # it is how a workflow ends up reading as pinned while installing whatever the release API
-  # served that morning.
-  BATS_VERSION: "1.14.0"
   # ~keep The `format` job below shells out to a bare `shfmt`, which no runner image ships and
   # nothing here used to install: the job died with exit 127 ("executable file not found in
   # $PATH") on every run from 2026-09-15 onward and was red, unnoticed, for nine days. Pinned
-  # rather than "latest" for the same reason BATS_VERSION is: shfmt's default indentation is
+  # rather than "latest" for the same reason mise.lock pins Bats: shfmt's default indentation is
   # tabs and the tree is a fixed point of THIS version, so a silent upgrade reformats every
   # file under scripts/tests and turns the check red on bytes nobody touched.
   SHFMT_VERSION: "3.14.1"
@@ -50,22 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+      # ~keep Bats comes from mise.lock at the version task test:scripts:bats expects locally.
+      - name: Install Task, Go and Bats
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task go bats
 
       - name: Check the vendored Bats helpers
         run: task test:scripts:lib:check
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: stable
-          cache: false
-
-      - name: Install Bats
-        uses: xberg-io/actions/install-bats@v1
-        with:
-          version: ${{ env.BATS_VERSION }}
 
       - name: Run the shell contract tests
         uses: xberg-io/actions/run-bats@v1
@@ -83,7 +72,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
 
       # ~keep No org action wraps shfmt and it is not on the runner image, so the binary is
       # fetched directly from its own release. `poly fmt --check` does NOT cover these files --

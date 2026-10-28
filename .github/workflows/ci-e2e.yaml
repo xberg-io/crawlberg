@@ -18,6 +18,8 @@ on:
       - "scripts/ci/prepare-chrome-runtime.sh"
       - "scripts/ci/test_chrome_runtime.py"
       - ".github/workflows/ci-e2e.yaml"
+      - "mise.toml"
+      - "mise.lock"
   # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
   # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
   # ~keep before merging any PR that needs its own CI.
@@ -130,24 +132,27 @@ jobs:
     needs: [build-ffi]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
+    env:
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     strategy:
       fail-fast: false
       matrix:
         include:
           - lang: python
-            python-version: "3.13"
+            mise-tools: python uv
             test-cmd: "task python:e2e:test"
           - lang: node
-            node-version: "24"
+            mise-tools: node pnpm
             test-cmd: "task node:e2e:test"
           - lang: go
-            go-version: "1.26"
+            mise-tools: go
             test-cmd: "task go:e2e:test"
           - lang: ruby
-            ruby-version: "3.4"
+            mise-tools: ruby
             test-cmd: "task ruby:e2e:test"
           - lang: java
-            java-version: "25"
+            mise-tools: java
             test-cmd: "task java:e2e:test"
           - lang: csharp
             dotnet-version: "10.0.x"
@@ -161,7 +166,7 @@ jobs:
             otp-version: "27"
             test-cmd: "task elixir:e2e:test"
           - lang: wasm
-            node-version: "24"
+            mise-tools: node pnpm
             test-cmd: "task wasm:e2e:test"
           - lang: rust
             test-cmd: "task rust:e2e:test"
@@ -177,12 +182,13 @@ jobs:
             swift-version: "6.0"
             test-cmd: "task swift:e2e:test"
           - lang: zig
-            zig-version: "0.17.0"
+            mise-tools: zig
             test-cmd: "task zig:e2e:test"
           - lang: kotlin_android
             gradle: true
             test-cmd: "task kotlin-android:e2e:test"
           - lang: brew
+            mise-tools: bats
             test-cmd: "task brew:e2e:test"
     steps:
       - uses: actions/checkout@v7
@@ -258,39 +264,55 @@ jobs:
           chmod +x target/release/crawlberg 2>/dev/null || true
           chmod +x e2e/rust/target/release/mock-server 2>/dev/null || true
 
-      - name: Setup Python
-        if: matrix.python-version
-        uses: xberg-io/actions/setup-python-env@v1
+      # Each leg installs Task plus its language toolchain (matrix.mise-tools) from mise.lock. ~keep
+      - name: Install Task and the leg's toolchain
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: ${{ matrix.python-version }}
-          cache-prefix: e2e-py-${{ matrix.python-version }}
+          install-args: task ${{ matrix.mise-tools }}
 
-      - name: Setup Node
-        if: matrix.node-version
-        uses: xberg-io/actions/setup-node-workspace@v1
-
-      - name: Setup Go
-        if: matrix.go-version
-        uses: actions/setup-go@v7
+      - name: Resolve the mise Python version
+        if: matrix.lang == 'python'
+        id: mise-python
+        shell: bash
+        run: echo "version=$(python -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+      - name: Cache uv downloads
+        if: matrix.lang == 'python'
+        uses: actions/cache@v6
         with:
-          go-version: ${{ matrix.go-version }}
-          cache: true
-          cache-dependency-path: go.work.sum
+          path: ~/.cache/uv
+          key: e2e-uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: e2e-uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-
+      - name: Install Python dependencies
+        if: matrix.lang == 'python'
+        run: uv sync --all-extras --all-packages --group dev --no-install-project --no-install-workspace
+      - name: Add the virtualenv to PATH
+        if: matrix.lang == 'python'
+        shell: bash
+        run: if [ -d .venv/bin ]; then echo "$PWD/.venv/bin" >> "$GITHUB_PATH"; fi
 
-      - name: Setup Ruby
-        if: matrix.ruby-version
-        uses: ruby/setup-ruby@v1.335.0
-        with:
-          ruby-version: ${{ matrix.ruby-version }}
-          bundler-cache: true
-          working-directory: e2e/ruby
+      - name: Install pnpm workspace dependencies
+        if: matrix.lang == 'node' || matrix.lang == 'wasm'
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        if: matrix.lang == 'node' || matrix.lang == 'wasm'
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
 
-      - name: Setup Java
-        if: matrix.java-version
-        uses: actions/setup-java@v6
+      - name: Cache Go modules and build cache
+        if: matrix.lang == 'go'
+        uses: actions/cache@v6
         with:
-          distribution: temurin
-          java-version: ${{ matrix.java-version }}
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: e2e-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.work.sum') }}
+          restore-keys: e2e-go-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bundle install
+        if: matrix.lang == 'ruby'
+        working-directory: e2e/ruby
+        run: bundle install --jobs 4
 
       - name: Setup .NET
         if: matrix.dotnet-version
@@ -337,12 +359,6 @@ jobs:
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y liblzma-dev libbz2-dev
 
-      - name: Setup Zig
-        if: matrix.zig-version
-        uses: xberg-io/actions/setup-zig@v1
-        with:
-          version: ${{ matrix.zig-version }}
-
       - name: Setup wasm-pack
         if: matrix.lang == 'wasm'
         uses: xberg-io/actions/setup-wasm-pack@v1
@@ -370,15 +386,6 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           packages: "platforms;android-35"
-
-      - name: Install Task
-        uses: xberg-io/actions/install-task@v1
-
-      - name: Install Bats for Brew fixtures
-        if: matrix.lang == 'brew'
-        uses: xberg-io/actions/install-bats@v1
-        with:
-          version: "1.14.0"
 
       - name: Lint generated Brew fixtures
         if: matrix.lang == 'brew'

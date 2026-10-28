@@ -41,10 +41,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v7
+      - name: Install Python and Task
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: "3.13"
-      - uses: xberg-io/actions/install-task@v1
+          install-args: python task
       - name: Verify evidence guardrails
         run: task ci:windows766:harness-test
       - uses: xberg-io/actions/setup-rust@v1

@@ -19,6 +19,8 @@ on:
       - "e2e/rust/Cargo.toml"
       - "e2e/rust/Cargo.lock"
       - "rust-toolchain.toml"
+      - "mise.toml"
+      - "mise.lock"
       - "Taskfile.yml"
       - "scripts/ci/prepare-chrome-runtime.sh"
       - "scripts/ci/test_chrome_runtime.py"
@@ -123,7 +125,9 @@ jobs:
           use-sccache: "false"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
 
       # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
       # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
@@ -238,7 +242,9 @@ jobs:
           use-sccache: "false"
           cache-key-prefix: windows-browser
       - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
       - name: Setup Chrome
         id: chrome
         uses: xberg-io/actions/setup-chrome@v1
@@ -276,7 +282,9 @@ jobs:
           use-sccache: "false"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
 
       - name: Install cargo-hack
         run: cargo install cargo-hack --locked
@@ -326,15 +334,14 @@ jobs:
           cache-key-prefix: validate-rust
           use-sccache: "false"
 
-      - name: Install Task
-        uses: xberg-io/actions/install-task@v1
-
       # ~keep `task rust:lint:check` runs `deps:check` first, which hard-fails when
       # cargo-machete is absent rather than skipping — deliberately, so the 14 curated
       # [package.metadata.cargo-machete] lists cannot go unread. Nothing installed it here,
-      # so the job died on its very first command. Same pattern as ci-fuzz's cargo-fuzz.
-      - name: Install cargo-machete
-        run: cargo install cargo-machete --locked
+      # so the job died on its very first command. Poly serves `task alef:verify` below.
+      - name: Install Task, cargo-machete and Poly
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task github:bnjbvr/cargo-machete github:Goldziher/poly
 
       - name: Run Rust lint checks
         run: task rust:lint:check
@@ -352,14 +359,6 @@ jobs:
 
       - name: Run C lint checks
         run: task c:lint:check
-
-      # ~keep Pin the requested Poly version. The installer verifies
-      # ~keep the archive against a checksum fetched from the same release, while its nested cache
-      # ~keep action and that mutable checksum asset remain external trust boundaries.
-      - name: Install Poly
-        uses: Goldziher/poly@v0
-        with:
-          version: "0.29.0"
 
       - name: Install alef
         uses: xberg-io/actions/install-alef@v1

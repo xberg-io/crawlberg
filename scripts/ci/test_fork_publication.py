@@ -212,8 +212,10 @@ class ForkPublicationTests(unittest.TestCase):
             step for step in self.steps if step.get("name") == "Publish the browser fork before core crates"
         )
         assert self.steps.index(self.metadata_step()) < self.steps.index(guard) < self.steps.index(publisher)
-        installers = [step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/install-task@")]
-        assert len(installers) == 1 and installers[0]["uses"] == "xberg-io/actions/install-task@v1"
+        installers = [step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/setup-mise@")]
+        assert len(installers) == 1 and installers[0]["uses"] == "xberg-io/actions/setup-mise@v1"
+        assert "task" in installers[0]["with"]["install-args"].split()
+        assert installers[0]["with"]["config-ref"] == "${{ github.sha }}"
         assert self.steps.index(installers[0]) < self.steps.index(guard)
         tools = [step for step in self.steps if step.get("name") == "Check out workflow publishing tools"]
         assert len(tools) == 1

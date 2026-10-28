@@ -629,9 +629,11 @@ jobs:
       - uses: xberg-io/actions/setup-rust@v1
         with:
           use-sccache: "false"
-      - uses: actions/setup-python@v7
+      - name: Install Python
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: "3.13"
+          install-args: python
+          config-ref: ${{ github.sha }}
 
       - uses: xberg-io/actions/build-python-sdist@v1
         with:
@@ -709,9 +711,17 @@ jobs:
           target: ${{ matrix.rust_target || matrix.target }}
           cache-key-prefix: publish-node-${{ matrix.target }}
 
-      - uses: xberg-io/actions/setup-node-workspace@v1
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "22"
+          install-args: node pnpm
+          config-ref: ${{ github.sha }}
+      - name: Install pnpm workspace dependencies
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
 
       - name: Build native module
         uses: xberg-io/actions/build-node-napi@v1
@@ -757,9 +767,17 @@ jobs:
           target: wasm32-unknown-unknown
           cache-key-prefix: publish-wasm
 
-      - uses: xberg-io/actions/setup-node-workspace@v1
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "22"
+          install-args: node pnpm
+          config-ref: ${{ github.sha }}
+      - name: Install pnpm workspace dependencies
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
 
       - uses: xberg-io/actions/build-wasm-package@v1
         with:
@@ -2036,7 +2054,11 @@ jobs:
             /scripts/ci/check_browser_fork.py
             /scripts/ci/fork-check.Taskfile.yml
 
-      - uses: xberg-io/actions/install-task@v1
+      - name: Install Task
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
+          config-ref: ${{ github.sha }}
 
       - name: Check the browser fork version in crates.io
         id: fork_registry
@@ -2219,10 +2241,17 @@ jobs:
           path: node-artifacts
           merge-multiple: true
 
-      - uses: xberg-io/actions/setup-node-workspace@v1
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org/"
+          install-args: node pnpm
+          config-ref: ${{ github.sha }}
+      - name: Install pnpm workspace dependencies
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
 
       - name: Stage platform packages and main package
         shell: bash
@@ -2318,10 +2347,17 @@ jobs:
           name: wasm-bundle
           path: crates/crawlberg-wasm
 
-      - uses: xberg-io/actions/setup-node-workspace@v1
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org/"
+          install-args: node pnpm
+          config-ref: ${{ github.sha }}
+      - name: Install pnpm workspace dependencies
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
 
       - uses: xberg-io/actions/publish-npm@v1
         with:
@@ -3293,10 +3329,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
-      - uses: xberg-io/actions/setup-node-workspace@v1
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org/"
+          install-args: node pnpm
+          config-ref: ${{ github.sha }}
+      - name: Install pnpm workspace dependencies
+        shell: bash
+        run: pnpm install --no-frozen-lockfile
+      - name: Add pnpm bin to PATH
+        shell: bash
+        run: pnpm bin >> "$GITHUB_PATH"
       - name: Install ai-rulez
         uses: xberg-io/actions/setup-ai-rulez@v1
         with:
@@ -3386,6 +3429,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
         with:
@@ -3398,10 +3444,11 @@ jobs:
         uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           config-directory: .ai-rulez
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.2
+      - name: Install Python and uv
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: "3.13"
+          install-args: python uv
+          config-ref: ${{ github.sha }}
       - name: Build Hermes wheel
         run: uv build --wheel --out-dir dist-hermes plugin/.hermes/package
       # publish-pypi is idempotent (skips a version already on PyPI). ~keep
@@ -3740,14 +3787,10 @@ jobs:
         uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           version-sync-script: scripts/sync_plugin_version.py
-      - uses: actions/setup-node@v7
+      - name: Install Node and pnpm
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          node-version: "24"
-          registry-url: https://registry.npmjs.org
-      - uses: pnpm/action-setup@v6
-        with:
-          version: "12.11.2"
-          run_install: false
+          install-args: node pnpm
       - name: Read and check the exact npm version
         id: package
         shell: bash
@@ -3800,6 +3843,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
         with:
@@ -3812,9 +3858,10 @@ jobs:
         uses: xberg-io/actions/verify-ai-rulez-plugin@v1
         with:
           version-sync-script: scripts/sync_plugin_version.py
-      - uses: astral-sh/setup-uv@v10.3.2
+      - name: Install Python and uv
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: "3.13"
+          install-args: python uv
       - name: Read the verified Hermes version
         id: package
         shell: bash

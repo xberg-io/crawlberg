@@ -15,6 +15,8 @@ on:
       - ".task/**"
       - "scripts/ci/**"
       - ".github/workflows/ci-binding-compatibility.yaml"
+      - "mise.toml"
+      - "mise.lock"
   push:
     branches: [main]
     paths:
@@ -30,6 +32,8 @@ on:
       - ".task/**"
       - "scripts/ci/**"
       - ".github/workflows/ci-binding-compatibility.yaml"
+      - "mise.toml"
+      - "mise.lock"
   workflow_dispatch:
 
 permissions:
@@ -53,17 +57,27 @@ jobs:
     name: Binding declarations
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v7
+      - name: Install Task, Python and uv
+        uses: xberg-io/actions/setup-mise@v1
         with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@v10.3.2
+          install-args: task python uv
+      - name: Resolve the mise Python version
+        id: mise-python
+        shell: bash
+        run: echo "version=$(python -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+      - name: Cache uv downloads
+        uses: actions/cache@v6
         with:
-          enable-cache: true
-      - uses: xberg-io/actions/install-task@v1
+          path: ~/.cache/uv
+          key: binding-compatibility-declarations-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: binding-compatibility-declarations-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-
       - name: Check released declarations
         run: task binding-compatibility:declarations
 
@@ -71,19 +85,36 @@ jobs:
     name: Binding calls (Python)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: xberg-io/actions/install-task@v1
+      - name: Install Task, Python and uv
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task python uv
       - uses: xberg-io/actions/setup-rust@v1
         with:
           use-sccache: "false"
           cache-key-prefix: binding-compatibility-python
-      - uses: xberg-io/actions/setup-python-env@v1
+      - name: Resolve the mise Python version
+        id: mise-python
+        shell: bash
+        run: echo "version=$(python -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+      - name: Cache uv downloads
+        uses: actions/cache@v6
         with:
-          python-version: "3.13"
-          cache-prefix: binding-compatibility-python
+          path: ~/.cache/uv
+          key: binding-compatibility-python-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: binding-compatibility-python-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-
+      - name: Install Python dependencies
+        run: uv sync --all-extras --all-packages --group dev --no-install-project --no-install-workspace
+      - name: Add the virtualenv to PATH
+        shell: bash
+        run: if [ -d .venv/bin ]; then echo "$PWD/.venv/bin" >> "$GITHUB_PATH"; fi
       - name: Build current Python extension
         run: task binding-compatibility:python-build
       - name: Check released Python calls
@@ -97,7 +128,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: xberg-io/actions/install-task@v1
+      - name: Install Task
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: task
       - uses: xberg-io/actions/setup-rust@v1
         with:
           use-sccache: "false"

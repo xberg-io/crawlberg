@@ -28,6 +28,10 @@ on:
       - "scripts/tests/**"
       - ".task/tools/version-sync.yml"
       - ".github/workflows/ci-plugin.yaml"
+      - "mise.toml"
+      - "mise.lock"
+      - "mise.ci.toml"
+      - "mise.ci.lock"
       # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
       # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
       # ~keep before merging any PR that needs its own CI.
@@ -60,8 +64,27 @@ jobs:
     name: Plugin bundle freshness
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    env:
+      # mise.ci.toml adds Python 3.11 for the Hermes test's `uv run --python 3.11`. ~keep
+      MISE_ENV: ci
+      # uv must use the interpreter mise installed, not download its own. ~keep
+      UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
+      - name: Install Python, uv and Node
+        uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: python uv node
+      - name: Resolve the mise Python version
+        id: mise-python
+        shell: bash
+        run: echo "version=$(python -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+      - name: Cache uv downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-
       - name: Install ai-rulez
         uses: xberg-io/actions/setup-ai-rulez@v1
         with:
@@ -74,13 +97,8 @@ jobs:
       # until `task plugin:generate` is rerun. ~keep
       - name: Verify generated plugin bundles are current
         run: ai-rulez verify --recursive --plugin --if-configured
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
       - name: Verify OpenCode tools and bundled content
         run: node --test scripts/tests/opencode-plugin.test.mjs
-      - name: Install uv for Hermes contract tests
-        uses: astral-sh/setup-uv@v10.3.2
       - name: Validate Hermes distribution metadata
         shell: bash
         run: |
