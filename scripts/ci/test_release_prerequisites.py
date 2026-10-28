@@ -206,10 +206,11 @@ class ReleasePrerequisiteTests(unittest.TestCase):
                         expected = result == "success"
                     results = dict.fromkeys(self.jobs[name]["needs"], "success")
                     results[publisher] = result
+                    states = set(results.values())
                     expression = self.jobs[name]["if"].replace("always()", "true")
                     expression = re.sub(
                         r"contains\(needs\.\*\.result, '([^']+)'\)",
-                        lambda match, states=tuple(results.values()): str(match[1] in states).lower(),
+                        lambda match: str(match[1] in states).lower(),
                         expression,
                     )
                     values = {

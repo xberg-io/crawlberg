@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?"
 CAPTURE = rf"(?P<version>{VERSION})"

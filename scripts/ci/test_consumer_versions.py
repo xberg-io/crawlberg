@@ -7,10 +7,9 @@ import json
 import shutil
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
-
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("sync_consumer_versions", ROOT / "scripts/sync_consumer_versions.py")
