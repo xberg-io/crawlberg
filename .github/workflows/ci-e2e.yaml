@@ -312,7 +312,9 @@ jobs:
       - name: Bundle install
         if: matrix.lang == 'ruby'
         working-directory: e2e/ruby
-        run: bundle install --jobs 4
+        run: |
+          bundle config set frozen true
+          bundle install --jobs 4
 
       - name: Setup .NET
         if: matrix.dotnet-version

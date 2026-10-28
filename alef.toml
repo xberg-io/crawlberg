@@ -281,7 +281,7 @@ include_paths = ["crates/crawlberg-ffi/include"]
 # ~keep validator shells out to `tsc` found on PATH (`which::which("tsc")`) and reports every
 # ~keep snippet Unavailable when it is absent, so this session only does real work in a job
 # ~keep that has installed the workspace -- ci-lint's alef-snippets job now runs
-# ~keep setup-node-workspace, which pnpm-installs and appends `pnpm bin` to PATH.
+# ~keep `pnpm install` and appends `pnpm bin` to PATH.
 [workspace.docs.snippets.sessions.node]
 cwd = "crates/crawlberg-node"
 manifest = "crates/crawlberg-node/package.json"

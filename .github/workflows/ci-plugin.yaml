@@ -71,6 +71,11 @@ jobs:
       UV_PYTHON_PREFERENCE: only-system
     steps:
       - uses: actions/checkout@v7
+      - name: Install ai-rulez
+        uses: xberg-io/actions/setup-ai-rulez@v1
+        with:
+          ai-rulez-version: "latest"
+      # ~keep setup-ai-rulez installs its own uv; mise runs after it so mise.lock's uv wins on PATH.
       - name: Install Python, uv and Node
         uses: xberg-io/actions/setup-mise@v1
         with:
@@ -85,10 +90,6 @@ jobs:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-${{ hashFiles('uv.lock') }}
           restore-keys: uv-${{ runner.os }}-${{ steps.mise-python.outputs.version }}-
-      - name: Install ai-rulez
-        uses: xberg-io/actions/setup-ai-rulez@v1
-        with:
-          ai-rulez-version: "latest"
       # Plugin version must track the core crate version (task version:sync keeps it pinned).
       - name: Verify plugin version tracks core
         run: python3 scripts/sync_plugin_version.py --check
