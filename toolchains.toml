@@ -1,5 +1,1 @@
-baseline = "v1.2.0"
-
-[overrides."github:xberg-io/alef"]
-version = "0.115.5"
-reason = "alef.toml alef_version pins the generator CI verifies the committed bindings against; bump both together after a fixed-point alef all run"
+baseline = "v1.3.1"
