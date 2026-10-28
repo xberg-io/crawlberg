@@ -106,11 +106,11 @@ tasks:
       - python3 scripts/ci/check_released_constructors.py
 
   setup:
-    desc: "Install all dependencies and dev tools"
+    desc: "Install the mise toolchain, all dependencies and dev tools"
     cmds:
+      - mise install
       - task: rust:install
       - alef setup
-      - command -v poly >/dev/null 2>&1 || brew install goldziher/tap/poly
       - task: governance:hooks:install
 
   build:
@@ -389,7 +389,7 @@ tasks:
       BATS_LIB_PATH: "{{.ROOT_DIR}}/scripts/tests/lib"
     preconditions:
       - sh: command -v bats
-        msg: "bats is required: brew install bats-core"
+        msg: "bats is required: run `mise install`"
       - sh: test -f scripts/tests/lib/xberg-bats/load.bash
         msg: "shared Bats helpers are missing; run `task test:scripts:lib:sync`"
     cmds:
