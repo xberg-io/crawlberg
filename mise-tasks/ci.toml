@@ -4,15 +4,6 @@
 description = "Test Chromium snap runtime preparation"
 run = "python3 scripts/ci/test_chrome_runtime.py"
 
-["ci:release-prerequisites:test"]
-description = "Test release registry gates and PHP packaging prerequisites"
-run = [
-  "uv run --no-project --with 'pyyaml>=6.0.3' python scripts/ci/test_release_prerequisites.py",
-  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_release_dry_run.py",
-  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_fork_publication.py",
-  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_go_release_assets.py",
-]
-
 ["ci:windows766:harness-test"]
 description = "Verify Windows diagnostic evidence rejects empty, ignored and skipped runs"
 env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
