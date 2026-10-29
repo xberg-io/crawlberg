@@ -11,6 +11,7 @@ All notable changes to crawlberg are documented here.
 ### Changed
 
 - Generate Brew fixture suites with Bats, load the shared helpers, install Bats in the Brew CI lane, and pin Alef 0.115.5 for regeneration.
+- Move the repository tasks from go-task to mise: run them with `mise run <task>`; task names are unchanged.
 
 ## [1.12.3] - 2026-10-27
 

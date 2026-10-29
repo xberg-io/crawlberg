@@ -11,11 +11,11 @@ Please begin by reading our AI section below, followed by the getting started gu
 Make sure to have [Git](https://git-scm.com/), [rustup](https://rustup.rs/) and [mise](https://mise.jdx.dev/getting-started.html)
 installed, with mise [activated](https://mise.jdx.dev/getting-started.html#activate-mise) in your shell. rustup installs
 the Rust version pinned in `rust-toolchain.toml`; mise installs every other tool at the version pinned in `mise.toml`
-(Task, Python, uv, Node.js, pnpm, Go, Java, Maven, Ruby, .NET, Zig, poly, ai-rulez, alef and the rest).
+(Python, uv, Node.js, pnpm, Go, Java, Maven, Ruby, .NET, Zig, poly, ai-rulez, alef and the rest).
 
 ```bash
 mise install
-task setup
+mise run setup
 ```
 
 This installs the toolchain, the dependencies, and the pre-commit hooks via `poly`.
@@ -37,17 +37,17 @@ This installs the toolchain, the dependencies, and the pre-commit hooks via `pol
 
 ## Quick reference
 
-| Command          | What it does                                    |
-| ---------------- | ----------------------------------------------- |
-| `task setup`     | Install all dependencies (idempotent)           |
-| `task build`     | Build the project                               |
-| `task test`      | Run all test suites                             |
-| `task lint`      | Run all linters (with auto-fix)                 |
-| `task format`    | Format all code                                 |
-| `task check`     | Combined lint + format check (no modifications) |
-| `task benchmark` | Run the benchmark suite                         |
+| Command                  | What it does                                    |
+| ------------------------ | ----------------------------------------------- |
+| `mise run setup`         | Install all dependencies (idempotent)           |
+| `mise run build`         | Build the project                               |
+| `mise run test`          | Run all test suites                             |
+| `mise run lint`          | Run all linters (with auto-fix)                 |
+| `mise run format`        | Format all code                                 |
+| `mise run check`         | Combined lint + format check (no modifications) |
+| `mise run benchmark:run` | Run the benchmark suite                         |
 
-For language-specific commands, use the namespace pattern: `task rust:test`, `task python:build`, `task node:format`, etc.
+For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:build`, `mise run node:format`, etc. `mise tasks` lists every task.
 
 ## What to keep in mind
 
@@ -81,7 +81,7 @@ Crawlberg is written following strict AI engineering practices. That is, its vib
 
 ### Conventions
 
-Use the latest `ai-rulez` release (CI installs `latest`; minimum 5.7.0) to manage agent conventions. Edit authored content under
+Use the `ai-rulez` version pinned in `mise.toml` (`mise install`) to manage agent conventions. Edit authored content under
 `.ai-rulez/`; `AGENTS.md`, `CLAUDE.md` and harness directories are generated outputs.
 The main `config.toml` selects the `plugins` layer through `default_layers`; marketplace and
 plugin settings live separately in `config.plugins.toml`.
@@ -89,11 +89,11 @@ plugin settings live separately in `config.plugins.toml`.
 ```sh
 ai-rulez validate --no-local
 ai-rulez generate --no-local --strict-config
-task governance:check
+mise run governance:check
 ```
 
 The final command checks the materialized local governance files, including ignored harness
-outputs. Installing governance hooks requires Python 3.11 or newer. Run `task governance:hooks:install` to install the repository's reviewed Poly hooks.
+outputs. Installing governance hooks requires Python 3.11 or newer. Run `mise run governance:hooks:install` to install the repository's reviewed Poly hooks.
 The hooks validate staged sources and verify shipped plugin artifacts where present; CI also
 validates the authored content. Shared convention modules come from `xberg-io/agent-conventions`;
 Git credentials are needed when an included repository requires access.

@@ -7,7 +7,7 @@ FIXTURES_DIR="$REPO_ROOT/fixtures"
 DART_DIR="$REPO_ROOT/e2e/dart"
 
 if [ ! -x "$MOCK_SERVER_BIN" ]; then
-  echo "mock-server binary not found at $MOCK_SERVER_BIN — run 'task mock-server:rebuild'" >&2
+  echo "mock-server binary not found at $MOCK_SERVER_BIN — run 'mise run e2e:build'" >&2
   exit 1
 fi
 
