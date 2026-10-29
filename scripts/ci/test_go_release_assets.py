@@ -92,7 +92,12 @@ class GoReleaseAssetsTests(unittest.TestCase):
 
     def test_go_smoke_uses_the_published_setup_command(self) -> None:
         script = ROOT / "mise-tasks/test-apps/app.sh"
-        commands = [line.strip() for line in script.read_text().splitlines()]
+        text = script.read_text()
+        case = re.search(r"^go\)\n(.*?)^  ;;$", text, re.MULTILINE | re.DOTALL)
+        assert case is not None, "test-apps:app has no go) case"
+        smoke = re.search(r'if \[ "\$suite" = smoke \]; then\n(.*?)^  else$', case.group(1), re.MULTILINE | re.DOTALL)
+        assert smoke is not None, "the go) case has no smoke branch"
+        commands = [line.strip() for line in smoke.group(1).splitlines()]
         module = (ROOT / "packages/go/go.mod").read_text().splitlines()[0].removeprefix("module ")
         assert f"go run {module}/cmd/setup" in commands
         assert (ROOT / "packages/go/cmd/setup/main.go").is_file()
