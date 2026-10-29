@@ -27,10 +27,6 @@ run = "mvn -f packages/java/pom.xml clean package -DskipTests -Pproduction"
 description = "Build Java package in CI mode"
 run = "mvn -f packages/java/pom.xml clean package -DskipTests"
 
-["java:build:bindings"]
-description = "Build Java bindings for benchmarking"
-run = "bash scripts/benchmarks/build-java-package.sh"
-
 ["java:test"]
 description = "Run Java tests (parallel execution for 4x speed)"
 dir = "{{config_root}}/packages/java"

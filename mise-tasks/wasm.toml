@@ -57,11 +57,6 @@ run = [{ task = "wasm:pnpm", args = ["build:wasm:deno"] }]
 description = "Build WASM for all targets (web, bundler, nodejs, deno)"
 run = [{ task = "wasm:pnpm", args = ["build:all"] }]
 
-["wasm:build:bindings"]
-description = "Build WASM bindings for benchmarking"
-env = { RUSTFLAGS = "" }
-run = "bash scripts/benchmarks/build-wasm-bindings.sh"
-
 ["wasm:test"]
 description = "Run WASM unit tests with Vitest"
 dir = "{{config_root}}/crates/crawlberg-wasm"

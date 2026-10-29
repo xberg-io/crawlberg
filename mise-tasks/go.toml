@@ -34,11 +34,6 @@ dir = "{{config_root}}/packages/go"
 env = { CGO_ENABLED = "1" }
 run = "go build ./..."
 
-["go:build:bindings"]
-description = "Build Go bindings for benchmarking"
-run = "bash scripts/benchmarks/build-go-bindings.sh"
-run_windows = "{{vars.unix_only}}"
-
 ["go:test"]
 description = "Run Go tests"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }

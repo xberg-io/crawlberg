@@ -126,22 +126,6 @@ run = [{ task = "rust:build:ci" }]
 description = "Build all language bindings"
 run = [{ task = "alef:build" }]
 
-[tasks."build:all"]
-description = "Build all bindings across all languages"
-run = [{ task = "build:each" }]
-
-[tasks."build:all:dev"]
-description = "Build all bindings in debug mode"
-run = [{ task = "build:each", args = ["dev"] }]
-
-[tasks."build:all:release"]
-description = "Build all bindings in release mode (optimized)"
-run = [{ task = "build:each", args = ["release"] }]
-
-[tasks."build:all:ci"]
-description = "Build all bindings in CI mode"
-run = [{ task = "build:each", args = ["ci"] }]
-
 [tasks.test]
 description = "Run Rust tests"
 run = [{ task = "rust:test" }]

@@ -33,11 +33,6 @@ description = "Build Python source distribution (sdist)"
 dir = "{{config_root}}/packages/python"
 run = "uv run maturin sdist --manifest-path ../../crates/crawlberg-py/Cargo.toml --out ../../target/wheels || true"
 
-["python:build:bindings"]
-description = "Build Python bindings for benchmarking"
-dir = "{{config_root}}/packages/python"
-run = "bash ../../scripts/benchmarks/build-python-bindings.sh"
-
 ["python:build:sdist:publish"]
 description = "Build Python source distribution (sdist) for publishing to DIST_DIR (default dist)"
 run = ['mkdir -p "./${DIST_DIR:-dist}"', 'cd packages/python && uv build --sdist --out-dir "../../${DIST_DIR:-dist}"']

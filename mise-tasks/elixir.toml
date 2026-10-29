@@ -31,10 +31,6 @@ dir = "{{config_root}}/packages/elixir"
 env = { MIX_ENV = "test" }
 run = "mix compile --warnings-as-errors"
 
-["elixir:build:bindings"]
-description = "Build Elixir bindings for benchmarking"
-run = "bash scripts/benchmarks/build-elixir-bindings.sh"
-
 ["elixir:test"]
 description = "Run Elixir tests"
 dir = "{{config_root}}/packages/elixir"

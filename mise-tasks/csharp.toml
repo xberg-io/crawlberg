@@ -31,10 +31,6 @@ description = "Pack C# NuGet package for publishing (extra arguments after --)"
 dir = "{{config_root}}/packages/csharp"
 run = "dotnet pack Crawlberg.csproj -c Release"
 
-["csharp:build:bindings"]
-description = "Build C# bindings for benchmarking"
-run = "bash scripts/benchmarks/build-csharp-benchmark.sh"
-
 ["csharp:test"]
 description = "Run C# tests"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }

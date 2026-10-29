@@ -32,10 +32,6 @@ run = [
   "pnpm exec napi build --no-js --platform --dts index.native.d.ts --release",
 ]
 
-["node:build:bindings"]
-description = "Build Node bindings for benchmarking"
-run = "bash scripts/benchmarks/build-node-bindings.sh"
-
 ["node:test"]
 description = "Run Node/TypeScript tests"
 dir = "{{config_root}}/crates/crawlberg-node"
@@ -90,11 +86,6 @@ run = [
   "pnpm up --latest -w || true",
 ]
 
-["node:e2e:generate"]
-description = "Generate and format TypeScript E2E tests"
-run = ["bash scripts/task/e2e-typescript-generate.sh", { task = "node:e2e:lint" }]
-run_windows = "{{vars.unix_only}}"
-
 ["node:e2e:lint"]
 description = "Lint TypeScript E2E code"
 run = ["poly fmt --fix e2e/node", "poly lint e2e/node"]
@@ -104,6 +95,3 @@ description = "Run TypeScript E2E tests"
 dir = "{{config_root}}/e2e/node"
 run = ["pnpm install --silent", "pnpm test"]
 
-["node:e2e:verify"]
-description = "Regenerate and validate TypeScript E2E suite (generate + lint + test)"
-run = [{ task = "node:e2e:generate" }, { task = "node:e2e:lint" }, { task = "node:e2e:test" }]
