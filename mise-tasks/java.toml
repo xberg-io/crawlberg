@@ -10,10 +10,6 @@ description = "Build Java package in debug mode"
 dir = "{{config_root}}/packages/java"
 run = "mvn clean package -DskipTests -DdebugMode=true"
 
-["java:build:ci"]
-description = "Build Java package in CI mode"
-run = "mvn -f packages/java/pom.xml clean package -DskipTests"
-
 ["java:test"]
 description = "Run Java tests (parallel execution for 4x speed)"
 dir = "{{config_root}}/packages/java"
@@ -27,11 +23,6 @@ run = "mvn test -B -q"
 
 ["java:lint"]
 description = "Lint all Java code with auto-fix (spotless + checkstyle + PMD)"
-run = "bash scripts/task/java-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
-["java:format"]
-description = "Format all Java code (spotless)"
 run = "bash scripts/task/java-lint.sh fix"
 run_windows = "{{vars.unix_only}}"
 

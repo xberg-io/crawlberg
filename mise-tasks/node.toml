@@ -29,12 +29,6 @@ dir = "{{config_root}}/crates/crawlberg-node"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "pnpm test"
 
-["node:test:ci"]
-description = "Run Node/TypeScript tests in CI mode"
-dir = "{{config_root}}/crates/crawlberg-node"
-env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
-run = "pnpm test"
-
 ["node:test:released-exports"]
 description = "Check released Node runtime exports through CommonJS and ESM"
 run = "node --test scripts/tests/node-binding-exports.test.mjs"
@@ -43,16 +37,8 @@ run = "node --test scripts/tests/node-binding-exports.test.mjs"
 description = "Auto-fix Node/TypeScript code linting (oxlint)"
 run = "poly lint crates/crawlberg-node"
 
-["node:lint:check"]
-description = "Check Node/TypeScript code linting without modifications (oxlint)"
-run = "poly lint crates/crawlberg-node"
-
 ["node:format"]
 description = "Format Node/TypeScript code with modifications (oxfmt)"
-run = "poly fmt --fix crates/crawlberg-node"
-
-["node:format:check"]
-description = "Check Node/TypeScript code formatting without modifications (oxfmt)"
 run = "poly fmt --fix crates/crawlberg-node"
 
 ["node:clean"]

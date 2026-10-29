@@ -27,7 +27,6 @@ includes = [
   "mise-tasks/docs.toml",
   "mise-tasks/docker.toml",
   "mise-tasks/benchmark.toml",
-  "mise-tasks/test-apps.toml",
 ]
 
 [tools]
@@ -110,22 +109,6 @@ run = 'mise run "$usage_lang:build:${BUILD_PROFILE:-release}"'
 description = "Build core Rust library"
 run = [{ task = "rust:build" }]
 
-[tasks."build:core"]
-description = "Build core Rust library"
-run = [{ task = "rust:build" }]
-
-[tasks."build:release"]
-description = "Build core Rust library in release mode"
-run = [{ task = "rust:build:release" }]
-
-[tasks."build:ci"]
-description = "Build core Rust library in CI mode"
-run = [{ task = "rust:build:ci" }]
-
-[tasks."build:bindings"]
-description = "Build all language bindings"
-run = [{ task = "alef:build" }]
-
 [tasks.test]
 description = "Run Rust tests"
 run = [{ task = "rust:test" }]
@@ -133,10 +116,6 @@ run = [{ task = "rust:test" }]
 [tasks."test:bindings"]
 description = "Run binding test suites only"
 run = "alef test"
-
-[tasks."test:scripts"]
-description = "Run the contract tests for the repo's own shell scripts"
-run = [{ task = "test:scripts:bats" }]
 
 [tasks."test:scripts:lib:sync"]
 description = "Refresh the vendored Bats helper library from xberg-io/actions"
@@ -243,12 +222,6 @@ run = "alef build"
 description = "Format Alef-managed generated outputs"
 run = "alef fmt"
 
-[tasks."alef:sync"]
-description = "Sync the version to all manifests and the plugin version pin"
-# Delegate instead of calling `alef sync-versions` directly: release runs that used the bare
-# command left the plugin version pin behind. ~keep
-run = [{ task = "version:sync" }]
-
 [tasks."alef:snippets"]
 description = "Validate documentation snippets (needs built artifacts; run after alef build)"
 run = "alef snippets check"
@@ -263,10 +236,6 @@ run = "alef e2e generate"
 description = "Build the standalone e2e mock HTTP server binary"
 dir = "{{config_root}}/e2e/rust"
 run = "cargo build --release --bin mock-server"
-
-[tasks."e2e:all"]
-description = "Generate, lint, and run e2e tests across all bindings"
-run = [{ task = "e2e:verify" }]
 
 [tasks."e2e:verify"]
 description = "Full e2e pipeline — generate, lint, test all suites"

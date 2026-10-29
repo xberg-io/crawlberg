@@ -5,27 +5,13 @@
 description = "Build crawlberg-ffi C library (debug)"
 run = "cargo build -p crawlberg-ffi"
 
-["c:build:dev"]
-description = "Build crawlberg-ffi C library in debug mode"
-run = "cargo build -p crawlberg-ffi"
-
 ["c:headers"]
 description = "Regenerate canonical and vendored C headers from the FFI source"
 env = { ALEF_EXPORT_GENERATED_HEADERS = "1" }
 run = "cargo build --locked -p crawlberg-ffi"
 
-["c:build:ci"]
-description = "Build crawlberg-ffi C library in CI mode"
-run = "cargo build -p crawlberg-ffi"
-
 ["c:test"]
 description = "Run C FFI unit tests"
-run = 'make -C crates/crawlberg-ffi/tests/c LIBDIR="$PWD/target/debug" clean all test'
-run_windows = "{{vars.unix_only}}"
-
-["c:test:ci"]
-description = "Run C FFI unit tests in CI mode"
-env = { CI = "true" }
 run = 'make -C crates/crawlberg-ffi/tests/c LIBDIR="$PWD/target/debug" clean all test'
 run_windows = "{{vars.unix_only}}"
 

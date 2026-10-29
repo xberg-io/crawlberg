@@ -5,17 +5,6 @@ description = "Build Elixir package"
 dir = "{{config_root}}/packages/elixir"
 run = "mix compile"
 
-["elixir:build:dev"]
-description = "Build Elixir package (dev mode)"
-dir = "{{config_root}}/packages/elixir"
-run = "mix compile"
-
-["elixir:build:release"]
-description = "Build Elixir package (release mode)"
-dir = "{{config_root}}/packages/elixir"
-env = { MIX_ENV = "prod" }
-run = "mix compile"
-
 ["elixir:test"]
 description = "Run Elixir tests"
 dir = "{{config_root}}/packages/elixir"

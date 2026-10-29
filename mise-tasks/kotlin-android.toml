@@ -23,10 +23,6 @@ description = "Run ktlint with autocorrect"
 dir = "{{config_root}}/packages/kotlin-android"
 run = "gradle ktlintFormat --no-daemon"
 
-["kotlin-android:format"]
-description = "Run ktlint format (alias for lint)"
-run = [{ task = "kotlin-android:lint" }]
-
 ["kotlin-android:e2e:test"]
 description = "Run kotlin-android E2E tests as host JVM unit tests (no emulator) against the AAR's JVM-side wrapper"
 # Tests live in e2e/kotlin_android (generated from fixtures) and read MOCK_SERVER_URL from the

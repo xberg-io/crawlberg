@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Run one published-package test app suite in test_apps/<lang>"
-#MISE hide=true
 #USAGE arg "<suite>" help="smoke or comprehensive"
 #USAGE arg "<lang>" help="test_apps directory name, e.g. python or kotlin_android"
 # shellcheck disable=SC2154 # usage_* are set by mise from the #USAGE lines

@@ -29,16 +29,8 @@ run = "pnpm test"
 description = "Lint WASM TypeScript code with auto-fix (oxlint)"
 run = "poly lint crates/crawlberg-wasm"
 
-["wasm:lint:check"]
-description = "Check WASM TypeScript linting without modifications"
-run = "poly lint crates/crawlberg-wasm"
-
 ["wasm:format"]
 description = "Format WASM TypeScript code with modifications (oxfmt)"
-run = "poly fmt --fix crates/crawlberg-wasm"
-
-["wasm:format:check"]
-description = "Check WASM TypeScript formatting without modifications"
 run = "poly fmt --fix crates/crawlberg-wasm"
 
 ["wasm:clean"]
@@ -53,10 +45,6 @@ run_windows = [
   'crates/crawlberg-wasm/node_modules', 'crates/crawlberg-wasm/.wasm-pack') -Recurse -ErrorAction SilentlyContinue; exit 0\"""",
   "cd crates/crawlberg-wasm && pnpm run clean",
 ]
-
-["wasm:e2e:generate"]
-description = "Generate WASM E2E tests from fixtures (alef)"
-run = "alef e2e generate"
 
 ["wasm:e2e:lint"]
 description = "Lint generated WASM E2E TypeScript"

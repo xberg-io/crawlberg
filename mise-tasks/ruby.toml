@@ -5,36 +5,14 @@ description = "Build Ruby native extension"
 dir = "{{config_root}}/packages/ruby"
 run = "bundle exec rake compile"
 
-["ruby:build:dev"]
-description = "Build Ruby native extension in debug mode"
-dir = "{{config_root}}/packages/ruby"
-run = "bundle exec rake compile"
-
-["ruby:build:release"]
-description = "Build Ruby native extension in release mode (optimized)"
-dir = "{{config_root}}/packages/ruby"
-env = { CFLAGS = "-O3", LDFLAGS = "-s" }
-run = "bundle exec rake compile"
-
 ["ruby:test"]
 description = "Run Ruby tests"
 dir = "{{config_root}}/packages/ruby"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bundle exec rspec"
 
-["ruby:test:ci"]
-description = "Run Ruby tests in CI mode with env setup"
-dir = "{{config_root}}/packages/ruby"
-env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
-run = "bundle exec rspec"
-
 ["ruby:lint"]
 description = "Lint all Ruby code with auto-fix (rubocop + steep across all directories)"
-run = "bash scripts/task/ruby-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
-["ruby:format"]
-description = "Format all Ruby code with modifications (rubocop across all directories)"
 run = "bash scripts/task/ruby-lint.sh fix"
 run_windows = "{{vars.unix_only}}"
 

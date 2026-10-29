@@ -49,11 +49,6 @@ run = 'cargo build --release --package crawlberg-cli ${usage_target:+--target "$
 description = "Build FFI library for language bindings (extra cargo arguments after --)"
 run = "cargo build --release --package crawlberg-ffi"
 
-["rust:ffi:build:ci"]
-description = "Build FFI library in CI mode (with debug info; extra cargo arguments after --)"
-env = { RUSTFLAGS = "-C debuginfo=2" }
-run = "cargo build --release --package crawlberg-ffi"
-
 ["rust:test"]
 description = "Run all Rust tests"
 run = "bash scripts/ci/rust/run-unit-tests.sh"

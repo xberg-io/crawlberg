@@ -4,10 +4,6 @@
 description = "Build documentation"
 run = ["pnpm --dir docs-site install --frozen-lockfile", "pnpm --dir docs-site build"]
 
-["docs:build:strict"]
-description = "Build documentation (CI-equivalent; astro build fails on errors)"
-run = [{ task = "docs:build" }]
-
 ["docs:serve"]
 description = "Serve documentation locally with live reload"
 run = ["pnpm --dir docs-site install", "pnpm --dir docs-site dev"]

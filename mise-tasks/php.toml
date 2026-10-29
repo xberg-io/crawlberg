@@ -33,10 +33,6 @@ run = ["bash ../../scripts/ci/php/create-ci-php-ini.sh", "php -c ../../php-crawl
 description = "Lint all PHP code with poly (mago)"
 run = "poly lint packages/php"
 
-["php:lint:check"]
-description = "Lint all PHP code in check-only mode with poly (mago)"
-run = "poly lint packages/php"
-
 ["php:format"]
 description = "Format PHP code with modifications (poly/mago)"
 run = "poly fmt --fix packages/php"

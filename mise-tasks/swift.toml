@@ -13,18 +13,10 @@ run = [
 description = "Build Swift package (dev mode)"
 run = ["cargo build -p crawlberg-swift", "bash scripts/setup-swift-bridge.sh debug", "cd packages/swift && swift build"]
 
-["swift:build:ci"]
-description = "Build Swift package (CI mode)"
-run = [{ task = "swift:build" }]
-
 ["swift:test"]
 description = "Run Swift tests"
 dir = "{{config_root}}/packages/swift"
 run = "swift test"
-
-["swift:test:ci"]
-description = "Run Swift tests (CI mode)"
-run = [{ task = "swift:test" }]
 
 ["swift:test:released-constructors"]
 description = "Compile and test hand-written Swift calls from v1.10.3 against the current package"
@@ -33,11 +25,6 @@ run = "swift test --filter ReleasedConstructorTests"
 
 ["swift:lint"]
 description = "Lint and format Swift code with auto-fix"
-dir = "{{config_root}}/packages/swift"
-run = "swift format"
-
-["swift:format"]
-description = "Format Swift code"
 dir = "{{config_root}}/packages/swift"
 run = "swift format"
 

@@ -7,18 +7,6 @@ dir = "{{config_root}}/packages/go"
 env = { CGO_ENABLED = "1" }
 run = "go build ./..."
 
-["go:build:dev"]
-description = "Build Go bindings in debug mode (requires Rust FFI to be built first)"
-dir = "{{config_root}}/packages/go"
-env = { CGO_ENABLED = "1" }
-run = "go build ./..."
-
-["go:build:ci"]
-description = "Build Go bindings in CI mode (requires Rust FFI to be built first)"
-dir = "{{config_root}}/packages/go"
-env = { CGO_ENABLED = "1" }
-run = "go build ./..."
-
 ["go:test"]
 description = "Run Go tests"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
@@ -29,11 +17,6 @@ run_windows = 'pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."'
 description = "Lint and format Go code with auto-fix (golangci-lint + gofmt)"
 run = "bash scripts/task/go-lint.sh fix"
 run_windows = "pwsh scripts/task/go-lint.ps1 -Mode fix"
-
-["go:lint:check"]
-description = "Lint and format Go code in check-only mode (golangci-lint + gofmt, no fixes)"
-run = "bash scripts/task/go-lint.sh check"
-run_windows = "pwsh scripts/task/go-lint.ps1 -Mode check"
 
 ["go:format"]
 description = "Format Go code with modifications (gofmt)"

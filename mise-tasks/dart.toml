@@ -20,27 +20,14 @@ run = ["bash ../../scripts/task/frb-codegen-ensure.sh", "dart pub get", "cargo b
 description = "Build Dart package (release mode)"
 run = [{ task = "dart:build" }]
 
-["dart:build:ci"]
-description = "Build Dart package (CI mode)"
-run = [{ task = "dart:build" }]
-
 ["dart:test"]
 description = "Run Dart tests"
 dir = "{{config_root}}/packages/dart"
 env = { DYLD_FALLBACK_LIBRARY_PATH = "{{config_root}}/target/release", LD_LIBRARY_PATH = "{{config_root}}/target/release", FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR = "../../target/release" }
 run = "dart test"
 
-["dart:test:ci"]
-description = "Run Dart tests (CI mode)"
-run = [{ task = "dart:test" }]
-
 ["dart:lint"]
 description = "Lint and format Dart code with auto-fix"
-dir = "{{config_root}}/packages/dart"
-run = "dart format ."
-
-["dart:format"]
-description = "Format Dart code"
 dir = "{{config_root}}/packages/dart"
 run = "dart format ."
 
