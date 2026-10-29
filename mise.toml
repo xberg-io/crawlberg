@@ -4,6 +4,32 @@
 lockfile = true
 lockfile_platforms = ["linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "windows-x64"]
 
+[task_config]
+includes = [
+  "mise-tasks",
+  "mise-tasks/rust.toml",
+  "mise-tasks/python.toml",
+  "mise-tasks/node.toml",
+  "mise-tasks/wasm.toml",
+  "mise-tasks/ruby.toml",
+  "mise-tasks/go.toml",
+  "mise-tasks/java.toml",
+  "mise-tasks/csharp.toml",
+  "mise-tasks/php.toml",
+  "mise-tasks/elixir.toml",
+  "mise-tasks/c.toml",
+  "mise-tasks/brew.toml",
+  "mise-tasks/dart.toml",
+  "mise-tasks/kotlin-android.toml",
+  "mise-tasks/swift.toml",
+  "mise-tasks/zig.toml",
+  "mise-tasks/ci.toml",
+  "mise-tasks/docs.toml",
+  "mise-tasks/docker.toml",
+  "mise-tasks/benchmark.toml",
+  "mise-tasks/test-apps.toml",
+]
+
 [tools]
 python = "3.13.18"
 uv = "0.13.6"
@@ -23,3 +49,456 @@ cargo-deny = "0.20.2"
 actionlint = "1.7.12"
 bats = "1.14.0"
 lychee = "0.24.2"
+
+[vars]
+# run_windows of a task go-task gated to Linux and macOS: inline runs use cmd /c on Windows. ~keep
+unix_only = "echo %MISE_TASK_NAME% needs Linux or macOS 1>&2 & exit 1"
+rust_excludes = "--exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm"
+wasi_sdk = "{{ get_env(name='WASI_SDK_PATH', default=get_env(name='HOME', default='') ~ '/wasi-sdk') }}"
+windows766_artifacts = "{{ get_env(name='RUNNER_TEMP', default='') }}/crawlberg-windows766"
+bats_lib_ref = "793d3a4d37a17009d91cce29f2825eda570d2abd"
+
+# ---- Shared task bodies ------------------------------------------------------------------------
+# From the xberg-io/toolchains tag in toolchains.toml; this file supplies their repo specifics. ~keep
+
+[tasks."governance:hooks:install"]
+description = "Provision machine preferences and install reviewed AI governance hooks"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/governance/hooks-install.sh"
+
+[tasks.deps]
+description = "Update or upgrade one ecosystem's dependencies, or every ecosystem"
+hide = true
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/deps/refresh.sh"
+env.DEPS_LANGS = "rust python node go ruby php elixir dart swift zig"
+env.DEPS_RUST_MANIFESTS = "packages/ruby/ext/crawlberg_rb/native/Cargo.toml"
+env.DEPS_NODE_DIRS = ". crates/crawlberg-node crates/crawlberg-wasm e2e/node"
+# The PHP extension's composer.json is at the repository root. ~keep
+env.DEPS_PHP_DIR = "."
+
+[tasks."alef:pin:check"]
+description = "Fail unless the alef on PATH is the clean release alef.toml pins"
+hide = true
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/alef/pin-check.sh"
+
+[tasks."alef:regenerate"]
+description = "Regenerate every alef output that carries the version"
+hide = true
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/alef/regenerate.sh"
+
+[tasks."alef:verify:strict"]
+description = "Run alef verify and fail on drifted frozen paths too"
+hide = true
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/alef/verify-strict.sh"
+
+[tasks."version:show"]
+description = "Show current version from Cargo.toml"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/version/cargo.sh"
+
+# ---- Entry points ------------------------------------------------------------------------------
+
+[tasks.setup]
+description = "Install the mise toolchain, all dependencies and dev tools"
+run = ["mise install", { task = "rust:install" }, "alef setup", { task = "governance:hooks:install" }]
+
+[tasks."build:profile"]
+description = "Run <lang>:build:<BUILD_PROFILE> (dev, release or ci; default release)"
+hide = true
+usage = 'arg "<lang>" help="Task namespace, e.g. rust or python"'
+run = 'mise run "$usage_lang:build:${BUILD_PROFILE:-release}"'
+
+[tasks.build]
+description = "Build core Rust library"
+run = [{ task = "rust:build" }]
+
+[tasks."build:core"]
+description = "Build core Rust library"
+run = [{ task = "rust:build" }]
+
+[tasks."build:release"]
+description = "Build core Rust library in release mode"
+run = [{ task = "rust:build:release" }]
+
+[tasks."build:ci"]
+description = "Build core Rust library in CI mode"
+run = [{ task = "rust:build:ci" }]
+
+[tasks."build:bindings"]
+description = "Build all language bindings"
+run = [{ task = "alef:build" }]
+
+[tasks."build:all"]
+description = "Build all bindings across all languages"
+run = [{ task = "build:each" }]
+
+[tasks."build:all:dev"]
+description = "Build all bindings in debug mode"
+run = [{ task = "build:each", args = ["dev"] }]
+
+[tasks."build:all:release"]
+description = "Build all bindings in release mode (optimized)"
+run = [{ task = "build:each", args = ["release"] }]
+
+[tasks."build:all:ci"]
+description = "Build all bindings in CI mode"
+run = [{ task = "build:each", args = ["ci"] }]
+
+[tasks.test]
+description = "Run Rust tests"
+run = [{ task = "rust:test" }]
+
+[tasks."test:bindings"]
+description = "Run binding test suites only"
+run = "alef test"
+
+[tasks."test:ci"]
+description = "Run test suites in CI mode"
+run = [{ task = "test:all" }]
+
+[tasks."test:all"]
+description = "Run all tests across all languages (in parallel)"
+depends = [
+  "rust:test",
+  "python:test",
+  "node:test",
+  "go:test",
+  "java:test",
+  "csharp:test",
+  "wasm:test",
+  "ruby:test",
+  "php:test",
+  "elixir:test",
+  "c:test",
+  "dart:test",
+  "swift:test",
+  "zig:test",
+]
+
+[tasks."test:all:parallel"]
+description = "Run all tests in parallel (using deps)"
+run = [{ task = "test:all" }]
+
+[tasks."test:all:ci"]
+description = "Run all tests in CI mode (with extra diagnostics)"
+run = [
+  { task = "rust:test:ci" },
+  { task = "python:test:ci" },
+  { task = "node:test:ci" },
+  { task = "go:test:ci" },
+  { task = "java:test:ci" },
+  { task = "csharp:test:ci" },
+  { task = "wasm:test" },
+  { task = "ruby:test" },
+  { task = "php:test" },
+  { task = "elixir:test" },
+  { task = "c:test:ci" },
+  { task = "dart:test:ci" },
+  { task = "swift:test:ci" },
+  { task = "zig:test:ci" },
+]
+
+[tasks."test:scripts"]
+description = "Run the contract tests for the repo's own shell scripts"
+run = [{ task = "test:scripts:bats" }]
+
+[tasks."test:scripts:lib:sync"]
+description = "Refresh the vendored Bats helper library from xberg-io/actions"
+env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
+run = "scripts/task/sync-bats-lib.sh sync"
+
+[tasks."test:scripts:lib:check"]
+description = "Fail when the vendored Bats helper library has drifted from its pinned source"
+env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
+run = "scripts/task/sync-bats-lib.sh --check"
+
+[tasks.update]
+description = "Update all dependencies within current major versions (no breaking changes)"
+run = [{ task = "deps:all", args = ["update"] }]
+
+[tasks.upgrade]
+description = "Upgrade all dependencies to latest versions including cross-major bumps"
+run = [{ task = "deps:all", args = ["upgrade"] }]
+
+[tasks.clean]
+description = "Clean all build artifacts (per-language only; see `clean:full` for cargo + e2e)"
+run = [
+  { task = "rust:clean" },
+  { task = "python:clean" },
+  { task = "ruby:clean" },
+  { task = "node:clean" },
+  { task = "java:clean" },
+  { task = "go:clean" },
+  { task = "csharp:clean" },
+  { task = "php:clean" },
+  { task = "elixir:clean" },
+  { task = "wasm:clean" },
+  { task = "c:clean" },
+]
+
+[tasks."clean:e2e"]
+description = "Remove per-language e2e test deps (venvs, node_modules, lockfiles, _build, etc.)"
+run = [
+  "rm -rf e2e/python/.venv e2e/python/.pytest_cache",
+  "rm -rf e2e/node/node_modules",
+  "rm -rf e2e/ruby/.bundle e2e/ruby/Gemfile.lock e2e/ruby/spec/coverage",
+  "rm -rf e2e/php/vendor e2e/php/composer.lock",
+  "rm -rf e2e/elixir/_build e2e/elixir/deps",
+  "rm -rf e2e/csharp/bin e2e/csharp/obj",
+  "rm -rf e2e/java/target",
+  "rm -rf e2e/go/.gocache",
+  "rm -rf e2e/rust/target",
+  "rm -rf e2e/wasm/node_modules e2e/wasm/dist",
+  "rm -f .mock-server.pid .mock-server.env .mock-server.out",
+]
+
+[tasks."clean:workspace"]
+description = "Clean Rust workspace target + alef IR cache + legacy mock-server binaries"
+run = ["cargo clean", "rm -rf .alef-cache", "rm -f target/release/mock-server target/debug/mock-server"]
+
+[tasks."clean:full"]
+description = "Total cleanup: per-language clean + cargo workspace target + e2e test deps"
+run = [{ task = "clean" }, { task = "clean:workspace" }, { task = "clean:e2e" }]
+
+[tasks.rebuild]
+description = "Rebuild all language bindings + the alef-generated e2e mock-server binary"
+run = [
+  { task = "rust:ffi:build:dev" },
+  { task = "c:build:dev" },
+  { task = "python:build:dev" },
+  { task = "node:build:dev" },
+  { task = "ruby:build" },
+  { task = "php:build" },
+  { task = "go:build" },
+  { task = "java:build" },
+  { task = "csharp:build" },
+  { task = "wasm:build:dev" },
+  { task = "e2e:build" },
+]
+
+[tasks."rebuild:fast"]
+description = "Fast rebuild: Rust core + Python + Node + mock-server only"
+run = [
+  { task = "rust:ffi:build:dev" },
+  { task = "python:build:dev" },
+  { task = "node:build:dev" },
+  { task = "e2e:build" },
+]
+
+[tasks.lint]
+description = "Run all linters via poly"
+run = "poly lint ."
+
+[tasks."lint:check"]
+description = "Run linting in check mode"
+run = "poly lint ."
+
+[tasks.format]
+description = "Format all code"
+run = "poly fmt --fix ."
+
+[tasks."format:check"]
+description = "Check code formatting without modifications"
+run = "poly fmt --check ."
+
+[tasks.check]
+description = "Run check-only validation"
+run = [{ task = "format:check" }, { task = "lint:check" }]
+
+# ---- alef --------------------------------------------------------------------------------------
+
+[tasks."alef:install"]
+description = "Install the alef CLI from the sibling repo (../alef) at HEAD"
+run = "cargo install --path ../alef --locked"
+
+[tasks."alef:generate"]
+description = "Regenerate all Alef-managed outputs without building"
+# ~keep `alef all` never builds the per-language artifacts that a `compile`/`typecheck`
+# `docs.snippets.validation_level` needs (only `alef build` does), so leaving validation on
+# spawns a doomed toolchain per snippet and cannot pass by construction. Discovery, the
+# reference-page audit and gap detection still run. Use `mise run alef:snippets` after
+# `alef build` when you actually want validation.
+run = "alef all --clean --skip-snippet-validation"
+
+[tasks."alef:verify"]
+description = "Check Alef-generated files are up to date"
+run = "./scripts/ci/check-alef-generated.sh"
+
+[tasks."alef:build"]
+description = "Build all language bindings"
+run = "alef build"
+
+[tasks."alef:format"]
+description = "Format Alef-managed generated outputs"
+run = "alef fmt"
+
+[tasks."alef:sync"]
+description = "Sync the version to all manifests and the plugin version pin"
+# Delegate instead of calling `alef sync-versions` directly: release runs that used the bare
+# command left the plugin version pin behind. ~keep
+run = [{ task = "version:sync" }]
+
+[tasks."alef:docs"]
+description = "Generate API reference documentation"
+run = [{ task = "docs:generate" }]
+
+[tasks."alef:snippets"]
+description = "Validate documentation snippets (needs built artifacts; run after alef build)"
+run = "alef snippets check"
+
+[tasks."docs:generate"]
+description = "Generate API reference documentation"
+run = "alef docs"
+
+[tasks."docs:generate:check"]
+description = "Validate API reference docs are up-to-date"
+run = "alef verify --exit-code"
+
+[tasks."readme:generate"]
+description = "Generate package READMEs"
+run = "alef readme"
+
+[tasks."readme:generate:check"]
+description = "Validate package READMEs are up-to-date"
+run = "alef verify --exit-code"
+
+# ---- E2E ---------------------------------------------------------------------------------------
+
+[tasks."e2e:generate"]
+description = "Generate E2E tests for all languages from fixtures"
+run = "alef e2e generate"
+
+[tasks."e2e:build"]
+description = "Build the standalone e2e mock HTTP server binary"
+dir = "{{config_root}}/e2e/rust"
+run = "cargo build --release --bin mock-server"
+
+[tasks."e2e:all"]
+description = "Generate, lint, and run e2e tests across all bindings"
+run = [{ task = "e2e:verify" }]
+
+[tasks."e2e:verify"]
+description = "Full e2e pipeline — generate, lint, test all suites"
+run = [{ task = "e2e:generate" }, { task = "e2e:lint" }, { task = "e2e:test" }]
+
+[tasks."e2e:lint"]
+description = "Lint all generated E2E test code"
+run = [
+  { task = "rust:e2e:lint" },
+  { task = "python:e2e:lint" },
+  { task = "node:e2e:lint" },
+  { task = "go:e2e:lint" },
+  { task = "java:e2e:lint" },
+  { task = "csharp:e2e:lint" },
+  { task = "wasm:e2e:lint" },
+  { task = "ruby:e2e:lint" },
+  { task = "php:e2e:lint" },
+  { task = "c:e2e:lint" },
+  { task = "brew:e2e:lint" },
+]
+
+[tasks."e2e:reset"]
+description = "Full e2e reset: clean + alef generate + rebuild all bindings + run all e2e"
+run = [{ task = "clean:full" }, { task = "alef:generate" }, { task = "rebuild" }, { task = "e2e:test" }]
+
+[tasks."e2e:refresh"]
+description = "Quick e2e refresh: alef generate + rebuild + run all e2e (no clean)"
+run = [{ task = "alef:generate" }, { task = "rebuild" }, { task = "e2e:test" }]
+
+[tasks."e2e:refresh:fast"]
+description = "Fast e2e feedback: alef generate + rebuild Rust/Python/Node + run their e2e"
+run = [
+  { task = "alef:generate" },
+  { task = "rebuild:fast" },
+  { task = "rust:e2e:test" },
+  { task = "python:cycle" },
+  { task = "node:e2e:test" },
+]
+
+# ---- Governance, plugin and CI gates -----------------------------------------------------------
+
+[tasks."governance:check"]
+description = "Check materialized local governance outputs against shared sources"
+run = "ai-rulez generate --check --no-local --strict-config"
+
+# Coding-agent plugin (Claude Code, Cursor, Codex, Gemini, Kimi, OpenCode, Factory,
+# Hermes, Pi). Single source of truth: plugin/.ai-rulez/config.plugins.toml + plugin/.ai-rulez/skills.
+# ai-rulez generate --plugin fans it out to per-runtime bundles under plugin/ and the
+# repo-root marketplace index. Version tracks core via `mise run version:sync`. ~keep
+[tasks."plugin:generate"]
+description = "Regenerate the plugin bundles + marketplace from plugin/.ai-rulez"
+run = ["ai-rulez generate --plugin", "python3 scripts/sync_public_skills.py"]
+
+[tasks."plugin:verify"]
+description = "Verify generated plugin bundles match source (byte + BLAKE3 provenance)"
+run = ["ai-rulez verify --plugin", "python3 scripts/sync_public_skills.py --check"]
+
+[tasks."plugin:test"]
+description = "Verify OpenCode tools and bundled resources"
+run = "node --test scripts/tests/opencode-plugin.test.mjs"
+
+[tasks."plugin:hermes:test"]
+description = "Verify the Hermes bridge against a real MCP stdio fixture"
+run = "uv run --no-project --python 3.11 --with 'mcp>=2.3.0' --with 'PyYAML>=6.0.3' python scripts/tests/test_hermes_plugin.py"
+
+[tasks."plugin:skills:test"]
+description = "Verify public skill ownership and resource freshness"
+run = ["python3 scripts/tests/test_public_skills.py", "python3 scripts/sync_public_skills.py --check"]
+
+[tasks."plugin:launcher:test"]
+description = "Verify npm launcher preserves caller directory and relative configuration"
+run = "python3 scripts/tests/test_mcp_launcher_cwd.py"
+
+# scripts/ci/test_fork_publication.py asserts that the publish workflow runs this same command. ~keep
+[tasks."ci:release:fork:check"]
+description = "Check whether the browser fork version is already published"
+run = "python3 scripts/ci/check_browser_fork.py"
+
+# ---- Versions ----------------------------------------------------------------------------------
+
+[tasks."version:sync"]
+description = "Sync version from Cargo.toml to all package manifests"
+run = [
+  { task = "alef:pin:check" },
+  "alef sync-versions",
+  { task = "alef:regenerate" },
+  "python3 scripts/sync_consumer_versions.py",
+  "python3 scripts/sync_consumer_versions.py --check",
+  # Pin plugin/.ai-rulez/config.plugins.toml [plugin].version to core, then regenerate the
+  # per-runtime bundles under plugin/ from it. ~keep
+  "python3 scripts/sync_plugin_version.py",
+  "ai-rulez generate --plugin",
+  "python3 scripts/sync_public_skills.py",
+  # ~keep `alef sync-versions` rewrites crates/crawlberg-node/package.json's
+  # optionalDependencies to the new version, but nothing above refreshes the workspace
+  # pnpm-lock.yaml beside it. CI Docs installs with --frozen-lockfile, which then fails
+  # with ERR_PNPM_OUTDATED_LOCKFILE. The lockfile had been pinned at 1.6.0 since that release
+  # -- 1.6.1, 1.6.2 and 1.6.3 each bumped the manifest past it. --lockfile-only resolves
+  # without touching node_modules, so this stays cheap and offline-ish.
+  "pnpm install --lockfile-only --ignore-scripts",
+  # ~keep The uv workspace lock needs the same treatment: `alef sync-versions` rewrites
+  # packages/python/pyproject.toml's version and uv.lock records it alongside, but nothing
+  # above refreshed it. Every 1.6.x release was tagged with a stale lock, and `uv sync
+  # --locked` fails against such a lock with "the lockfile is not up-to-date".
+  "uv lock",
+  { task = "alef:verify:strict" },
+]
+
+[tasks."version:set"]
+description = "Set version explicitly and sync all packages (usage: mise run version:set 0.3.0-rc.44)"
+usage = 'arg "<version>" help="Version to set, e.g. 0.3.0-rc.44"'
+run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
+
+[tasks."version:bump:major"]
+description = "Bump major version and sync all packages"
+run = ["alef sync-versions --bump major", { task = "version:sync" }]
+
+[tasks."version:bump:minor"]
+description = "Bump minor version and sync all packages"
+run = ["alef sync-versions --bump minor", { task = "version:sync" }]
+
+[tasks."version:bump:patch"]
+description = "Bump patch version and sync all packages"
+run = ["alef sync-versions --bump patch", { task = "version:sync" }]
+
+[tasks."version:check"]
+description = "Check consumer versions without modifying files"
+run = "python3 scripts/sync_consumer_versions.py --check"

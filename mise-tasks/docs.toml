@@ -1,0 +1,55 @@
+# Documentation site (docs-site) and alef snippets, included from mise.toml [task_config]. ~keep
+
+["docs:build"]
+description = "Build documentation"
+run = ["pnpm --dir docs-site install --frozen-lockfile", "pnpm --dir docs-site build"]
+
+["docs:build:strict"]
+description = "Build documentation (CI-equivalent; astro build fails on errors)"
+run = [{ task = "docs:build" }]
+
+["docs:serve"]
+description = "Serve documentation locally with live reload"
+run = ["pnpm --dir docs-site install", "pnpm --dir docs-site dev"]
+
+["docs:lint:links"]
+description = "Check links with lychee"
+depends = ["docs:build"]
+run = 'lychee --offline --config .lychee.toml --root-dir "$PWD/docs-site/dist" docs-site/dist README.md'
+
+["docs:lint:prose"]
+description = "Lint prose with textlint"
+run = "pnpm exec textlint 'docs-site/src/content/docs/**/*.{md,mdx}'"
+
+["docs:snippets:list"]
+description = "List all documentation snippets discovered by alef"
+run = "alef snippets list --snippets docs-site/src/snippets"
+
+["docs:snippets:list:lang"]
+description = "List snippets filtered to specific languages (e.g. rust,python)"
+usage = 'arg "<languages>" help="Comma-separated snippet languages"'
+run = 'alef snippets list --snippets docs-site/src/snippets --languages "$usage_languages"'
+
+["docs:snippets:validate"]
+description = "Syntax-validate all snippet entries via alef"
+run = "alef snippets validate --snippets docs-site/src/snippets --timeout 120"
+
+["docs:snippets:validate:lang"]
+description = "Validate snippets for specific languages (e.g. rust,python --level syntax)"
+usage = '''
+arg "<languages>" help="Comma-separated snippet languages"
+flag "--level <level>" default="syntax" help="Validation level"
+'''
+run = 'alef snippets validate --snippets docs-site/src/snippets --languages "$usage_languages" --level "$usage_level"'
+
+["docs:snippets:gaps"]
+description = "Report unreferenced snippets + missing language variants"
+run = "alef snippets gaps --snippets docs-site/src/snippets --docs docs-site/src/content/docs"
+
+["docs:snippets:audit"]
+description = "Audit snippet structure under docs-site/src/snippets"
+run = "alef snippets audit --snippets docs-site/src/snippets"
+
+["docs:snippets:all"]
+description = "Run audit + gaps + validate (canonical docs:snippets gate)"
+run = [{ task = "docs:snippets:audit" }, { task = "docs:snippets:gaps" }, { task = "docs:snippets:validate" }]

@@ -1144,38 +1144,38 @@ type = "BatchCrawlStreamRequest"
 
 [crates.test.python]
 precondition = "command -v python3 >/dev/null 2>&1"
-command = "task python:test"
+command = "mise run python:test"
 e2e = "cd e2e/python && python3 -m pytest tests/ -q"
 
 [crates.test.node]
 precondition = "command -v node >/dev/null 2>&1"
-command = "task node:test"
+command = "mise run node:test"
 e2e = "cd e2e/node && pnpm test"
 
 [crates.test.go]
 precondition = "command -v go >/dev/null 2>&1"
-command = "task go:test"
+command = "mise run go:test"
 e2e = "cd e2e/go && go test ./... -count=1"
 
 [crates.test.ruby]
 precondition = "command -v ruby >/dev/null 2>&1"
-command = "task ruby:test"
+command = "mise run ruby:test"
 
 [crates.test.php]
 precondition = "command -v php >/dev/null 2>&1"
-command = "task php:test"
+command = "mise run php:test"
 
 [crates.test.java]
 precondition = "command -v mvn >/dev/null 2>&1"
-command = "task java:test"
+command = "mise run java:test"
 
 [crates.test.csharp]
 precondition = "command -v dotnet >/dev/null 2>&1"
-command = "task csharp:test"
+command = "mise run csharp:test"
 
 [crates.test.elixir]
 precondition = "command -v mix >/dev/null 2>&1"
-command = "task elixir:test"
+command = "mise run elixir:test"
 e2e = "cd e2e/elixir && mix test"
 
 [crates.test.wasm]

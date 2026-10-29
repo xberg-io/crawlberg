@@ -1,0 +1,101 @@
+# Elixir binding (packages/elixir), included from mise.toml [task_config]. ~keep
+
+["elixir:install"]
+description = "Install Elixir dependencies"
+dir = "{{config_root}}/packages/elixir"
+run = "mix deps.get"
+
+["elixir:setup"]
+description = "Setup Elixir environment"
+run = [{ task = "elixir:install" }]
+
+["elixir:build"]
+description = "Build Elixir package"
+dir = "{{config_root}}/packages/elixir"
+run = "mix compile"
+
+["elixir:build:dev"]
+description = "Build Elixir package (dev mode)"
+dir = "{{config_root}}/packages/elixir"
+run = "mix compile"
+
+["elixir:build:release"]
+description = "Build Elixir package (release mode)"
+dir = "{{config_root}}/packages/elixir"
+env = { MIX_ENV = "prod" }
+run = "mix compile"
+
+["elixir:build:ci"]
+description = "Build Elixir package (CI mode)"
+dir = "{{config_root}}/packages/elixir"
+env = { MIX_ENV = "test" }
+run = "mix compile --warnings-as-errors"
+
+["elixir:build:bindings"]
+description = "Build Elixir bindings for benchmarking"
+run = "bash scripts/benchmarks/build-elixir-bindings.sh"
+
+["elixir:test"]
+description = "Run Elixir tests"
+dir = "{{config_root}}/packages/elixir"
+run = "mix test"
+
+["elixir:test:ci"]
+description = "Run Elixir tests (CI mode)"
+dir = "{{config_root}}/packages/elixir"
+run = "mix test --warnings-as-errors"
+
+["elixir:lint"]
+description = "Lint all Elixir code with auto-fix (format + credo)"
+run = "bash scripts/task/elixir-lint.sh fix"
+run_windows = "{{vars.unix_only}}"
+
+["elixir:lint:check"]
+description = "Check all Elixir code linting without modifications"
+run = "bash scripts/task/elixir-lint.sh check"
+run_windows = "{{vars.unix_only}}"
+
+["elixir:format"]
+description = "Format Elixir code"
+dir = "{{config_root}}/packages/elixir"
+run = "mix format"
+
+["elixir:format:check"]
+description = "Check Elixir code formatting"
+dir = "{{config_root}}/packages/elixir"
+run = "mix format --check-formatted"
+
+["elixir:clean"]
+description = "Clean Elixir build artifacts"
+dir = "{{config_root}}/packages/elixir"
+run = ["mix clean", "rm -rf _build", "rm -rf deps"]
+
+["elixir:update"]
+description = "Update Elixir dependencies to latest versions (including major versions)"
+run = [{ task = "deps", args = ["upgrade", "elixir"] }]
+
+["elixir:docs"]
+description = "Generate Elixir documentation"
+dir = "{{config_root}}/packages/elixir"
+run = "mix docs"
+
+["elixir:e2e:generate"]
+description = "Generate and format Elixir E2E tests from fixtures"
+run = ["bash scripts/task/e2e-generate.sh elixir", { task = "elixir:e2e:format" }]
+run_windows = "{{vars.unix_only}}"
+
+["elixir:e2e:format"]
+description = "Format Elixir E2E code"
+dir = "{{config_root}}/e2e/elixir"
+run = ["mix deps.get --quiet", "mix format"]
+
+["elixir:e2e:test"]
+description = "Run generated Elixir E2E tests"
+dir = "{{config_root}}/e2e/elixir"
+env = { CRAWLBERG_BUILD = "1", CRAWLBERG_ALLOW_PRIVATE_NETWORK = "true" }
+run = ["mix deps.get", "mix test"]
+
+["elixir:e2e:lint"]
+description = "Lint generated Elixir E2E tests"
+dir = "{{config_root}}/e2e/elixir"
+run = "mix format --check-formatted"

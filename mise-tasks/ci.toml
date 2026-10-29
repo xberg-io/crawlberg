@@ -1,0 +1,74 @@
+# CI gates and repository tooling, included from mise.toml [task_config]. ~keep
+
+["ci:chrome:runtime:test"]
+description = "Test Chromium snap runtime preparation"
+run = "python3 scripts/ci/test_chrome_runtime.py"
+
+["ci:release-prerequisites:test"]
+description = "Test release registry gates and PHP packaging prerequisites"
+run = [
+  "uv run --no-project --with 'pyyaml>=6.0.3' python scripts/ci/test_release_prerequisites.py",
+  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_release_dry_run.py",
+  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_fork_publication.py",
+  "uv run --no-project --with 'pyyaml>=6.0.3' python -m unittest discover -s scripts/ci -p test_go_release_assets.py",
+]
+
+["ci:windows766:harness-test"]
+description = "Verify Windows diagnostic evidence rejects empty, ignored and skipped runs"
+env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
+run = "python scripts/ci/rust/test_windows766.py"
+
+["ci:windows766:prepare"]
+description = "Verify completed release and record diagnostic browser and source provenance"
+env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
+run = ["python scripts/ci/rust/windows766.py prepare", "python scripts/ci/rust/test_windows766_sink.py"]
+
+["ci:windows766:build"]
+description = "Compile one locked Windows browser-lifecycle executable"
+env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
+run = "python scripts/ci/rust/windows766.py build"
+
+["ci:windows766:run"]
+description = "Run one capture control and one unchanged real Windows regression"
+env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
+run = "python scripts/ci/rust/windows766.py run"
+
+["ci:windows766:verify"]
+description = "Require two complete diagnostic test executions and report reproduction status"
+env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }
+run = "python scripts/ci/rust/windows766.py verify"
+
+["binding-compatibility:declarations"]
+description = "Test the released-call reader and check tagged Python and Swift declarations"
+run = ["""\
+  uv run --no-project --with-requirements scripts/ci/requirements-released-constructors.txt \
+  python -m unittest discover -s scripts/ci -p 'test_released_constructors.py'""", """\
+  uv run --no-project --with-requirements scripts/ci/requirements-released-constructors.txt \
+  python scripts/ci/check_released_constructors.py"""]
+
+["binding-compatibility:python"]
+description = "Execute the canonical Python released-call gate on the freshly built extension"
+env = { UV_NO_SYNC = "1" }
+run = "mise run python:test:released-constructors"
+
+["binding-compatibility:swift-build"]
+description = "Build only the native archives required by the committed Swift binding"
+run = "cargo build --locked --release -p crawlberg-swift -p crawlberg-ffi"
+
+["binding-compatibility:swift"]
+description = "Execute the canonical Swift released-call gate without regenerating bindings"
+run = ["swift --version", { task = "swift:test:released-constructors" }]
+
+["shell:lint"]
+description = "Lint shell scripts with auto-fix (shfmt + shellcheck)"
+run = "bash scripts/task/shell-lint.sh fix"
+run_windows = "{{vars.unix_only}}"
+
+["shell:lint:check"]
+description = "Lint shell scripts in check-only mode (shfmt + shellcheck)"
+run = "bash scripts/task/shell-lint.sh check"
+run_windows = "{{vars.unix_only}}"
+
+["github:lint"]
+description = "Lint GitHub Actions workflows (actionlint)"
+run = "actionlint || true"

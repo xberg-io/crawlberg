@@ -1,0 +1,158 @@
+# WASM binding (crates/crawlberg-wasm), included from mise.toml [task_config]. The wasm32 C
+# toolchain comes from the WASI SDK at WASI_SDK_PATH (default ~/wasi-sdk). ~keep
+
+["wasm:install"]
+description = "Install WASM dependencies (pnpm)"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = "pnpm install"
+
+["wasm:setup"]
+description = "Setup WASM environment (alias for install)"
+run = [{ task = "wasm:install" }]
+
+["wasm:pnpm"]
+description = "Run one crawlberg-wasm package script with the WASI SDK as the wasm32 C toolchain"
+hide = true
+usage = '''
+arg "<script>" help="package.json script to run"
+flag "--production" help="Set NODE_ENV=production"
+'''
+dir = "{{config_root}}/crates/crawlberg-wasm"
+env = { RUSTFLAGS = "", CC_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/clang", AR_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/ar" }
+run = 'if [ "${usage_production:-false}" = true ]; then export NODE_ENV=production; fi; pnpm run "$usage_script"'
+
+["wasm:build"]
+description = "Build WASM bindings for Node.js target"
+run = [{ task = "wasm:pnpm", args = ["build"] }]
+
+["wasm:build:dev"]
+description = "Build WASM bindings in debug mode"
+run = [{ task = "wasm:pnpm", args = ["build"] }]
+
+["wasm:build:release"]
+description = "Build WASM bindings in release mode (optimized)"
+run = [{ task = "wasm:pnpm", args = ["build", "--production"] }]
+
+["wasm:build:ci"]
+description = "Build WASM bindings in CI mode"
+run = [{ task = "wasm:pnpm", args = ["build:ci", "--production"] }]
+
+["wasm:build:web"]
+description = "Build WASM for web browsers"
+run = [{ task = "wasm:pnpm", args = ["build:wasm:web"] }]
+
+["wasm:build:bundler"]
+description = "Build WASM for bundlers (webpack, rollup, etc)"
+run = [{ task = "wasm:pnpm", args = ["build:wasm:bundler"] }]
+
+["wasm:build:nodejs"]
+description = "Build WASM for Node.js"
+run = [{ task = "wasm:pnpm", args = ["build:wasm:nodejs"] }]
+
+["wasm:build:deno"]
+description = "Build WASM for Deno"
+run = [{ task = "wasm:pnpm", args = ["build:wasm:deno"] }]
+
+["wasm:build:all"]
+description = "Build WASM for all targets (web, bundler, nodejs, deno)"
+run = [{ task = "wasm:pnpm", args = ["build:all"] }]
+
+["wasm:build:bindings"]
+description = "Build WASM bindings for benchmarking"
+env = { RUSTFLAGS = "" }
+run = "bash scripts/benchmarks/build-wasm-bindings.sh"
+
+["wasm:test"]
+description = "Run WASM unit tests with Vitest"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = "pnpm test"
+
+["wasm:test:ci"]
+description = "Run WASM unit tests in CI mode"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = ["pnpm run build:ci", "pnpm test"]
+
+["wasm:test:watch"]
+description = "Run WASM tests in watch mode"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = "pnpm test:watch"
+
+["wasm:test:coverage"]
+description = "Run WASM tests with coverage report"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = "pnpm test:coverage"
+
+["wasm:clippy"]
+description = "Run clippy on crawlberg-wasm crate"
+env = { CC_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/clang", AR_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/ar" }
+run = "cargo clippy -p crawlberg-wasm --target wasm32-unknown-unknown -- -D warnings"
+
+["wasm:lint"]
+description = "Lint WASM TypeScript code with auto-fix (oxlint)"
+run = "poly lint crates/crawlberg-wasm"
+
+["wasm:lint:check"]
+description = "Check WASM TypeScript linting without modifications"
+run = "poly lint crates/crawlberg-wasm"
+
+["wasm:format"]
+description = "Format WASM TypeScript code with modifications (oxfmt)"
+run = "poly fmt --fix crates/crawlberg-wasm"
+
+["wasm:format:check"]
+description = "Check WASM TypeScript formatting without modifications"
+run = "poly fmt --fix crates/crawlberg-wasm"
+
+["wasm:typecheck"]
+description = "Type-check WASM TypeScript code"
+dir = "{{config_root}}/crates/crawlberg-wasm"
+run = "pnpm run typecheck"
+
+["wasm:clean"]
+description = "Clean WASM build artifacts"
+run = [
+  "rm -rf crates/crawlberg-wasm/dist crates/crawlberg-wasm/pkg crates/crawlberg-wasm/node_modules crates/crawlberg-wasm/.wasm-pack",
+  "cd crates/crawlberg-wasm && pnpm run clean || true",
+]
+run_windows = [
+  """\
+  powershell -Command "Remove-Item -Path @('crates/crawlberg-wasm/dist', 'crates/crawlberg-wasm/pkg', \
+  'crates/crawlberg-wasm/node_modules', 'crates/crawlberg-wasm/.wasm-pack') -Recurse -ErrorAction SilentlyContinue; exit 0\"""",
+  "cd crates/crawlberg-wasm && pnpm run clean",
+]
+
+["wasm:update"]
+description = "Update WASM dependencies"
+run = "echo 'WASM dependencies updated via node:update (pnpm workspace)'"
+
+["wasm:e2e:generate"]
+description = "Generate WASM E2E tests from fixtures (alef)"
+run = "alef e2e generate"
+
+["wasm:e2e:lint"]
+description = "Lint generated WASM E2E TypeScript"
+dir = "{{config_root}}/e2e/wasm"
+run = "pnpm dlx oxlint ."
+
+["wasm:e2e:test"]
+description = "Run WASM E2E tests (Node/vitest, alef-generated)"
+dir = "{{config_root}}/e2e/wasm"
+# --no-frozen-lockfile: the e2e builds the binding from source and must not require a frozen
+# lock that references the current, not-yet-published @xberg-io/crawlberg-<platform> version
+# packages (CI defaults install to --frozen-lockfile, which fails pre-publish and on
+# regen-bumped devDeps). ~keep
+run = ["pnpm install --no-frozen-lockfile", "pnpm exec vitest run"]
+
+["wasm:e2e:deno:verify"]
+description = "Regenerate and validate WASM Deno E2E suite (generate + lint + test)"
+run = [{ task = "wasm:e2e:generate" }, { task = "wasm:e2e:lint" }, { task = "wasm:e2e:test" }]
+
+["wasm:e2e:workers:verify"]
+description = "Build, regenerate, and validate Cloudflare Workers WASM E2E suite"
+# ~keep The Workers suite has no generate or test task yet; go-task failed here after the
+# ~keep build on the missing task. Fail before the build instead of passing silently.
+run = "echo 'wasm:e2e:workers:verify: the Workers E2E suite has no generate or test task yet' >&2; exit 1"
+
+["wasm:e2e:verify"]
+description = "Verify all WASM test suites (Deno + Workers)"
+run = [{ task = "wasm:e2e:deno:verify" }, { task = "wasm:e2e:workers:verify" }]

@@ -1,0 +1,105 @@
+# Swift binding (packages/swift), included from mise.toml [task_config]. Swift is not a mise tool;
+# tasks fail with "command not found" when it is missing. ~keep
+
+["swift:install"]
+description = "Install Swift dependencies"
+dir = "{{config_root}}/packages/swift"
+run = "swift package resolve"
+
+["swift:setup"]
+description = "Setup Swift environment"
+run = [{ task = "swift:install" }]
+
+["swift:build"]
+description = "Build Swift package"
+run = [
+  "cargo build --release -p crawlberg-swift",
+  "bash scripts/setup-swift-bridge.sh release",
+  "cd packages/swift && swift build",
+]
+
+["swift:build:dev"]
+description = "Build Swift package (dev mode)"
+run = ["cargo build -p crawlberg-swift", "bash scripts/setup-swift-bridge.sh debug", "cd packages/swift && swift build"]
+
+["swift:build:release"]
+description = "Build Swift package (release mode)"
+run = [
+  "cargo build --release -p crawlberg-swift",
+  "bash scripts/setup-swift-bridge.sh release",
+  "cd packages/swift && swift build -c release",
+]
+
+["swift:build:ci"]
+description = "Build Swift package (CI mode)"
+run = [{ task = "swift:build" }]
+
+["swift:test"]
+description = "Run Swift tests"
+dir = "{{config_root}}/packages/swift"
+run = "swift test"
+
+["swift:test:ci"]
+description = "Run Swift tests (CI mode)"
+run = [{ task = "swift:test" }]
+
+["swift:test:released-constructors"]
+description = "Compile and test hand-written Swift calls from v1.10.3 against the current package"
+dir = "{{config_root}}/packages/swift"
+run = "swift test --filter ReleasedConstructorTests"
+
+["swift:lint"]
+description = "Lint and format Swift code with auto-fix"
+dir = "{{config_root}}/packages/swift"
+run = "swift format"
+
+["swift:lint:check"]
+description = "Check Swift code linting without modifications"
+dir = "{{config_root}}/packages/swift"
+run = "swift format --lint"
+
+["swift:format"]
+description = "Format Swift code"
+dir = "{{config_root}}/packages/swift"
+run = "swift format"
+
+["swift:format:check"]
+description = "Check Swift code formatting"
+dir = "{{config_root}}/packages/swift"
+run = "swift format --lint"
+
+["swift:clean"]
+description = "Clean Swift build artifacts"
+dir = "{{config_root}}/packages/swift"
+run = ["swift package clean", "rm -rf .build"]
+
+["swift:update"]
+description = "Update Swift dependencies to latest versions"
+run = [{ task = "deps", args = ["update", "swift"] }]
+
+["swift:e2e:generate"]
+description = "Generate and format Swift E2E tests from fixtures"
+run = ["bash scripts/task/e2e-generate.sh swift", { task = "swift:e2e:format" }]
+run_windows = "{{vars.unix_only}}"
+
+["swift:e2e:format"]
+description = "Format Swift E2E code"
+run = [{ task = "swift:format" }]
+
+["swift:e2e:lint"]
+description = "Lint Swift E2E code"
+run = [{ task = "swift:lint:check" }]
+
+["swift:e2e:test"]
+description = "Run generated Swift E2E tests"
+run = "bash scripts/e2e/swift/test.sh"
+run_windows = "{{vars.unix_only}}"
+
+["swift:e2e:verify"]
+description = "Regenerate and validate Swift E2E suite (build + generate + lint + test)"
+run = [
+  { task = "swift:build" },
+  { task = "swift:e2e:generate" },
+  { task = "swift:e2e:lint" },
+  { task = "swift:e2e:test" },
+]

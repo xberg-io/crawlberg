@@ -1,0 +1,236 @@
+# Rust workspace, CLI and FFI crates, included from mise.toml [task_config]. The toolchain comes
+# from rust-toolchain.toml. ~keep
+
+["rust:chrome:prepare"]
+description = "Preserve the macOS Chrome app bundle for browser tests"
+run = "bash scripts/ci/rust/prepare-chrome.sh"
+
+["rust:install"]
+description = "Install Rust toolchain and tools (rustup, cargo-deny)"
+run = [
+  "echo 'Rust toolchain is typically installed via rustup'",
+  "rustc --version",
+  { task = "rust:install:cargo-deny" },
+]
+run_windows = [
+  "echo 'Rust toolchain is typically installed via rustup'",
+  "rustc --version",
+  "rustup component add llvm-tools",
+  { task = "rust:install:cargo-deny" },
+]
+
+["rust:install:cargo-deny"]
+description = "Check cargo-deny for license checking (pinned in mise.toml)"
+run = "cargo-deny --version"
+
+["rust:build"]
+description = "Build all Rust crates (BUILD_PROFILE: dev, release or ci; default release)"
+run = [{ task = "build:profile", args = ["rust"] }]
+
+["rust:build:dev"]
+description = "Build all Rust crates in debug mode"
+run = "cargo build --workspace --all-features {{vars.rust_excludes}}"
+
+["rust:build:release"]
+description = "Build all Rust crates in release mode (optimized)"
+run = "cargo build --release --workspace --all-features {{vars.rust_excludes}}"
+
+["rust:build:ci"]
+description = "Build all Rust crates in CI mode (with debug info)"
+env = { RUSTFLAGS = "-C debuginfo=2" }
+run = "cargo build --release --workspace --all-features {{vars.rust_excludes}}"
+
+["rust:build:profiling"]
+description = "Build all Rust crates with profiling features (for flamegraph generation)"
+env = { ENABLE_PROFILING = "true", RUSTFLAGS = "-g" }
+run = "cargo build --workspace --release --features full,profiling,api,mcp,otel {{vars.rust_excludes}}"
+
+["rust:cli:build"]
+description = "Build CLI binary"
+usage = 'flag "--target <triple>" help="Rust target triple to build for"'
+run = 'cargo build --release --package crawlberg-cli ${usage_target:+--target "$usage_target"}'
+
+["rust:cli:build:dev"]
+description = "Build CLI binary in debug mode"
+run = "cargo build --package crawlberg-cli"
+
+["rust:cli:install"]
+description = "Install CLI binary"
+run = "cargo install --path crates/crawlberg-cli"
+
+["rust:ffi:build"]
+description = "Build FFI library for language bindings (extra cargo arguments after --)"
+run = "cargo build --release --package crawlberg-ffi"
+
+["rust:ffi:build:dev"]
+description = "Build FFI library in debug mode (extra cargo arguments after --)"
+run = "cargo build --package crawlberg-ffi"
+
+["rust:ffi:build:ci"]
+description = "Build FFI library in CI mode (with debug info; extra cargo arguments after --)"
+env = { RUSTFLAGS = "-C debuginfo=2" }
+run = "cargo build --release --package crawlberg-ffi"
+
+["rust:test"]
+description = "Run all Rust tests"
+run = "bash scripts/ci/rust/run-unit-tests.sh"
+run_windows = "{{vars.unix_only}}"
+
+["rust:test:ci"]
+description = "Run Rust tests in CI mode with tessdata setup"
+env = { RUST_BACKTRACE = "1", CARGO_TERM_COLOR = "always" }
+# ~keep The vendored driver is not a workspace member, so no workspace command runs its
+# ~keep tests. It runs first: a run list stops at the first failing command. The root lockfile
+# ~keep does not apply to it: `--locked` holds it to the driver's own lockfile.
+run = [
+  "cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --lib",
+  "bash scripts/ci/rust/run-unit-tests.sh",
+]
+run_windows = "{{vars.unix_only}}"
+
+["rust:test:quick"]
+description = "Run fast Rust tests (unit tests only)"
+run = "cargo test --lib --workspace {{vars.rust_excludes}}"
+
+["rust:test:native-only"]
+description = "Execute native browser behavior without the Chromiumoxide feature"
+run = """\
+  cargo test --locked -p crawlberg --no-default-features --features browser-native \
+  --test test_browser_native --test test_native_browser_proxy_provider \
+  --test test_native_crawl_feature_configuration"""
+
+["rust:lint"]
+description = "Auto-fix Rust code linting (cargo fmt + clippy)"
+# ~keep node/wasm need no extra toolchain (napi-build only reads cargo-set env vars;
+# crawlberg-wasm has no build.rs), so they lint cleanly everywhere and are no longer
+# excluded. php stays excluded here: ext-php-rs's build script shells out to a `php`
+# binary, which CI now installs for this job but a local machine may not have.
+run = ["cargo fmt --all", "cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude crawlberg-php"]
+
+["rust:lint:check"]
+description = "Check Rust code linting without modifications"
+# ~keep deps:check runs FIRST deliberately. A run list stops at the first failing command, so
+# wiring it after clippy would mean a clippy failure silently skips it -- which is the
+# exact shape it exists to catch (a sibling repo's equivalent gate aborted before
+# analysing a single crate for weeks, and an unused dependency rode in underneath).
+# It costs seconds; nothing before it can mask it.
+# -A clippy::inherent_to_string: the alef-generated swift-bridge crate emits inherent to_string.
+# ~keep php stays excluded: ext-php-rs's build script shells out to a `php` binary,
+# which is not guaranteed to be present on every local machine (CI installs it).
+run = [
+  { task = "rust:deps:check" },
+  "cargo fmt --all -- --check",
+  "cargo clippy --workspace --all-features --exclude crawlberg-php -- -D warnings -A clippy::inherent_to_string",
+  { task = "rust:fuzz:check" },
+  { task = "rust:config:check" },
+]
+
+["rust:deps:check"]
+description = "Fail on dependencies declared in a manifest but never used in its source"
+# ~keep 14 Cargo.toml files already carry curated
+# [package.metadata.cargo-machete] ignored lists, but nothing read them until this
+# task existed -- the suppressions were maintained for a gate that was never wired.
+# A sibling repo's equivalent gate had been aborting before analysing a single crate
+# for weeks, which let an unused dependency ride in under a familiar-looking error,
+# so treat a bare "no unused dependencies" as unproven: plant one and see it fail.
+run = """\
+  if ! command -v cargo-machete >/dev/null 2>&1; then \
+  echo "cargo-machete not installed; install it with: mise install github:bnjbvr/cargo-machete" >&2; exit 1; fi; \
+  cargo-machete"""
+
+["rust:fuzz:check"]
+description = "Type-check the fuzz targets (separate workspace, not covered by --workspace)"
+# ~keep fuzz/ has its own Cargo.toml and is NOT a workspace member, so
+# `cargo clippy --workspace --all-targets` never compiles it. A field added to
+# HttpResponse broke the fuzz targets and stayed invisible until ci-fuzz went red.
+run = "cargo check --manifest-path fuzz/Cargo.toml --bins"
+
+["rust:config:check"]
+description = "Compile the configurations CI's --all-features lint hides"
+# ~keep Without RUSTFLAGS the check is inert: both failures below were plain warnings
+# locally and only became errors in CI, where setup-rust injects -D warnings.
+# --all-features always enables the browser features, so the default-feature
+# build is never linted. That is how dead code reached the v1.2.0 publish run and
+# broke kotlin-android, WASM and crates.io at once — `cargo publish` verifies the
+# package tarball by compiling it with default features too.
+# wasm32 is likewise never built by --all-features; an unused import that is
+# only unused on wasm32 blocked the WASM package build of v1.2.0.
+env = { RUSTFLAGS = "-D warnings" }
+run = [
+  "cargo check -p crawlberg-jni -p crawlberg",
+  "rustup target add wasm32-unknown-unknown",
+  "cargo check -p crawlberg --target wasm32-unknown-unknown",
+]
+
+["rust:format"]
+description = "Format Rust code with modifications (cargo fmt)"
+run = "cargo fmt --all"
+
+["rust:format:check"]
+description = "Check Rust code formatting without modifications"
+run = "cargo fmt --all -- --check"
+
+["rust:licenses"]
+description = "Check Rust dependency licenses with cargo-deny"
+run = "cargo deny check licenses"
+
+["rust:doc"]
+description = "Generate Rust documentation and open in browser"
+run = "cargo doc --no-deps --open"
+
+["rust:doc:build"]
+description = "Build Rust documentation (without opening)"
+run = "cargo doc --no-deps"
+
+["rust:clean"]
+description = "Clean Rust build artifacts"
+run = "cargo clean"
+
+["rust:cache:cleanup"]
+description = "Clean up large build artifacts to reduce cache size (for CI)"
+run = [
+  "echo 'Cleaning up large build artifacts to reduce cache size...'",
+  'for ext in rlib so dylib dll; do find target -type f -name "*.$ext" -size +10M -exec rm -f {} \; 2>/dev/null || true; done',
+  "rm -rf target/*/incremental 2>/dev/null || true",
+  "echo 'Cleanup completed successfully'",
+  "du -sh target 2>/dev/null || echo 'No target directory found'",
+]
+
+["rust:update"]
+description = "Update Rust dependencies"
+run = [
+  { task = "deps", args = [
+    "upgrade",
+    "rust",
+  ] },
+  "echo 'Updating Rust dependencies (vendored browser driver)...'",
+  "cargo update --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml",
+]
+
+["rust:e2e:generate"]
+description = "Generate and format Rust E2E tests from fixtures"
+run = ["bash scripts/task/e2e-generate.sh rust", { task = "rust:e2e:format" }, { task = "rust:e2e:lint" }]
+run_windows = "{{vars.unix_only}}"
+
+["rust:e2e:format"]
+description = "Format generated Rust E2E sources"
+run = "cargo fmt --manifest-path e2e/rust/Cargo.toml"
+
+["rust:e2e:lint"]
+description = "Lint Rust E2E crate with clippy"
+run = "cargo clippy --manifest-path e2e/rust/Cargo.toml -- -D warnings"
+
+["rust:e2e:test"]
+description = "Run Rust E2E tests"
+dir = "{{config_root}}/e2e/rust"
+env = { RUST_TEST_THREADS = "1" }
+run = "cargo test --release"
+
+["rust:e2e:verify"]
+description = "Regenerate and validate Rust E2E suite (generate + format + lint + test)"
+run = [
+  { task = "rust:e2e:generate" },
+  { task = "rust:e2e:format" },
+  { task = "rust:e2e:lint" },
+  { task = "rust:e2e:test" },
+]

@@ -1,0 +1,109 @@
+# Node binding (crates/crawlberg-node), included from mise.toml [task_config]. ~keep
+
+["node:install"]
+description = "Install Node/TypeScript dependencies"
+dir = "{{config_root}}/crates/crawlberg-node"
+run = ["corepack enable", "pnpm install -r"]
+
+["node:setup"]
+description = "Alias for install task"
+run = [{ task = "node:install" }]
+
+["node:build"]
+description = "Build Node/TypeScript native bindings (BUILD_PROFILE: dev, release or ci; default release)"
+run = [{ task = "build:profile", args = ["node"] }]
+
+["node:build:dev"]
+description = "Build Node/TypeScript native bindings in debug mode"
+dir = "{{config_root}}/crates/crawlberg-node"
+run = "pnpm exec napi build --no-js --platform --dts index.native.d.ts"
+
+["node:build:release"]
+description = "Build Node/TypeScript native bindings in release mode (optimized)"
+dir = "{{config_root}}/crates/crawlberg-node"
+run = "pnpm exec napi build --no-js --platform --dts index.native.d.ts --release --strip"
+
+["node:build:ci"]
+description = "Build Node/TypeScript native bindings in CI mode (with debug info)"
+dir = "{{config_root}}/crates/crawlberg-node"
+run = [
+  "corepack enable",
+  "pnpm install -r",
+  "pnpm exec napi build --no-js --platform --dts index.native.d.ts --release",
+]
+
+["node:build:bindings"]
+description = "Build Node bindings for benchmarking"
+run = "bash scripts/benchmarks/build-node-bindings.sh"
+
+["node:test"]
+description = "Run Node/TypeScript tests"
+dir = "{{config_root}}/crates/crawlberg-node"
+env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
+run = "pnpm test"
+
+["node:test:ci"]
+description = "Run Node/TypeScript tests in CI mode"
+dir = "{{config_root}}/crates/crawlberg-node"
+env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
+run = "pnpm test"
+
+["node:test:released-exports"]
+description = "Check released Node runtime exports through CommonJS and ESM"
+run = "node --test scripts/tests/node-binding-exports.test.mjs"
+
+["node:clippy"]
+description = "Run clippy on crawlberg-node crate"
+run = "cargo clippy -p crawlberg-node -- -D warnings"
+
+["node:lint"]
+description = "Auto-fix Node/TypeScript code linting (oxlint)"
+run = "poly lint crates/crawlberg-node"
+
+["node:lint:check"]
+description = "Check Node/TypeScript code linting without modifications (oxlint)"
+run = "poly lint crates/crawlberg-node"
+
+["node:format"]
+description = "Format Node/TypeScript code with modifications (oxfmt)"
+run = "poly fmt --fix crates/crawlberg-node"
+
+["node:format:check"]
+description = "Check Node/TypeScript code formatting without modifications (oxfmt)"
+run = "poly fmt --fix crates/crawlberg-node"
+
+["node:clean"]
+description = "Clean Node/TypeScript build artifacts"
+dir = "{{config_root}}/crates/crawlberg-node"
+run = [
+  """python -c "import shutil; [shutil.rmtree(d, ignore_errors=True) for d in ['dist', 'build', 'node_modules']]\"""",
+  """python -c "import shutil, os; [shutil.rmtree(os.path.join(r, d), ignore_errors=True) \
+  for r, dirs, _ in os.walk('.') for d in dirs if d == '.turbo']\"""",
+]
+
+["node:update"]
+description = "Update Node/TypeScript dependencies (all workspace packages)"
+run = [
+  "echo 'Updating Node/TypeScript dependencies across workspace...'",
+  "corepack up || true",
+  "pnpm up --latest -r || true",
+  "pnpm up --latest -w || true",
+]
+
+["node:e2e:generate"]
+description = "Generate and format TypeScript E2E tests"
+run = ["bash scripts/task/e2e-typescript-generate.sh", { task = "node:e2e:lint" }]
+run_windows = "{{vars.unix_only}}"
+
+["node:e2e:lint"]
+description = "Lint TypeScript E2E code"
+run = ["poly fmt --fix e2e/node", "poly lint e2e/node"]
+
+["node:e2e:test"]
+description = "Run TypeScript E2E tests"
+dir = "{{config_root}}/e2e/node"
+run = ["pnpm install --silent", "pnpm test"]
+
+["node:e2e:verify"]
+description = "Regenerate and validate TypeScript E2E suite (generate + lint + test)"
+run = [{ task = "node:e2e:generate" }, { task = "node:e2e:lint" }, { task = "node:e2e:test" }]

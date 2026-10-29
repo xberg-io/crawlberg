@@ -1,0 +1,51 @@
+# Docker images and API contract tests, included from mise.toml [task_config]. ~keep
+
+["docker:build"]
+description = "Build Docker image (API server)"
+run = "docker build -f docker/Dockerfile -t crawlberg:dev ."
+
+["docker:build:cli"]
+description = "Build Docker image (CLI only)"
+run = "docker build -f docker/Dockerfile.cli -t crawlberg:cli ."
+
+["docker:run"]
+description = "Run API server in Docker"
+depends = ["docker:build"]
+run = "docker run -p 3000:3000 crawlberg:dev"
+
+["docker:schemathesis"]
+description = "Run schemathesis API contract tests (auto-starts server)"
+usage = 'flag "--max-examples <n>" default="25" help="Examples per operation"'
+dir = "{{config_root}}/tests/api"
+run = ["uv sync", 'SCHEMATHESIS_MAX_EXAMPLES="$usage_max_examples" uv run pytest -v --tb=short']
+
+["docker:schemathesis:cli"]
+description = "Run schemathesis CLI against a running server (default localhost:3000)"
+usage = '''
+flag "--host <host>" default="localhost"
+flag "--port <port>" default="3000"
+flag "--max-examples <n>" default="25"
+'''
+run = """\
+  uv run --with schemathesis schemathesis run "http://$usage_host:$usage_port/openapi.json" \
+  --max-examples="$usage_max_examples" --request-timeout=30000 \
+  --checks not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance,negative_data_rejection"""
+
+["docker:test:config"]
+description = "Test supported server and CLI configuration in a built Docker image"
+usage = 'arg "[image]" default="crawlberg:dev"'
+run = 'python3 scripts/ci/docker/test_config.py --image "$usage_image"'
+
+["docker:test:features"]
+description = "Test CLI features in a built Docker image"
+usage = 'arg "[image]" default="crawlberg:dev"'
+run = 'python3 scripts/ci/docker/test_docker.py --image "$usage_image"'
+
+["docker:save"]
+description = "Save a built Docker image as a compressed archive"
+usage = '''
+arg "<image>" help="Image reference to save"
+arg "<output>" help="Path of the .tar.gz to write"
+'''
+shell = "bash -euo pipefail -c"
+run = 'docker save "$usage_image" | gzip > "$usage_output"'

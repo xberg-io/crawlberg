@@ -1,0 +1,116 @@
+# C# binding (packages/csharp), included from mise.toml [task_config]. The binding needs the Rust
+# FFI library built first. ~keep
+
+["csharp:install"]
+description = "Restore C# dependencies"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet restore Crawlberg.slnx"
+
+["csharp:build"]
+description = "Build C# binding and benchmarks (depends on Rust FFI)"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet build Crawlberg.slnx -c Release"
+
+["csharp:build:dev"]
+description = "Build C# binding in debug mode"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet build Crawlberg.slnx -c Debug"
+
+["csharp:build:release"]
+description = "Build C# binding in release mode (optimized)"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet build Crawlberg.slnx -c Release"
+
+["csharp:build:ci"]
+description = "Build C# binding in CI mode"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet build Crawlberg.slnx -c Release"
+
+["csharp:package"]
+description = "Pack C# NuGet package for publishing (extra arguments after --)"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet pack Crawlberg.csproj -c Release"
+
+["csharp:build:bindings"]
+description = "Build C# bindings for benchmarking"
+run = "bash scripts/benchmarks/build-csharp-benchmark.sh"
+
+["csharp:test"]
+description = "Run C# tests"
+env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
+run = "bash scripts/csharp/test.sh"
+run_windows = "cd packages/csharp && dotnet test Crawlberg.Tests/Crawlberg.Tests.csproj -c Release"
+
+["csharp:test:ci"]
+description = "Run C# tests in CI mode"
+env = { DOTNET_CLI_TELEMETRY_OPTOUT = "true", ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
+run = "bash scripts/csharp/test.sh"
+run_windows = "cd packages/csharp && dotnet test Crawlberg.Tests/Crawlberg.Tests.csproj -c Release"
+
+["csharp:test:verbose"]
+description = "Run C# tests with verbose output"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet test Crawlberg.Tests/Crawlberg.Tests.csproj -c Release --verbosity detailed"
+
+["csharp:lint"]
+description = "Lint all C# code for style violations with auto-fix (dotnet format)"
+run = "bash scripts/task/csharp-lint.sh fix"
+run_windows = "cd packages/csharp && dotnet format Crawlberg.slnx"
+
+["csharp:lint:check"]
+description = "Check all C# code style violations without modifications (dotnet format verify)"
+run = "bash scripts/task/csharp-lint.sh check"
+run_windows = "cd packages/csharp && dotnet restore Crawlberg.slnx && dotnet format Crawlberg.slnx --verify-no-changes"
+
+["csharp:format"]
+description = "Format C# code with automatic style corrections (dotnet format)"
+dir = "{{config_root}}/packages/csharp"
+run = "dotnet format Crawlberg.slnx"
+
+["csharp:format:check"]
+description = "Check C# code formatting without modifications (dotnet format verify)"
+dir = "{{config_root}}/packages/csharp"
+run = ["dotnet restore Crawlberg.slnx", "dotnet format Crawlberg.slnx --verify-no-changes"]
+
+["csharp:clean"]
+description = "Clean C# build artifacts"
+dir = "{{config_root}}/packages/csharp"
+run = [
+  """python3 -c "import shutil; [shutil.rmtree(d, ignore_errors=True) for d in ['bin', 'obj', '.vs']]\"""",
+  "dotnet clean Crawlberg.slnx",
+]
+
+["csharp:update"]
+description = "Update C# dependencies to latest versions (including major versions)"
+dir = "{{config_root}}/packages/csharp"
+run = [
+  "echo 'Updating C# dependencies to latest versions...'",
+  "dotnet tool install --global dotnet-outdated-tool || dotnet tool update --global dotnet-outdated-tool",
+  "dotnet outdated Crawlberg.slnx --upgrade",
+  "echo 'Checking remaining outdated packages...'",
+  "dotnet list Crawlberg.slnx package --outdated || true",
+]
+
+["csharp:e2e:generate"]
+description = "Generate and format C# E2E tests from fixtures"
+run = ["alef e2e generate --lang csharp", { task = "csharp:e2e:format" }]
+
+["csharp:e2e:format"]
+description = "Format C# E2E code"
+dir = "{{config_root}}/e2e/csharp"
+run = "dotnet format Crawlberg.E2eTests.csproj"
+
+["csharp:e2e:lint"]
+description = "Lint C# E2E code"
+dir = "{{config_root}}/e2e/csharp"
+run = "dotnet format --verify-no-changes"
+
+["csharp:e2e:test"]
+description = "Run C# E2E tests"
+env = { CRAWLBERG_ALLOW_PRIVATE_NETWORK = "true" }
+run = "bash scripts/e2e/csharp/test.sh"
+run_windows = "cd e2e/csharp && dotnet test Crawlberg.E2eTests.csproj -c Release"
+
+["csharp:e2e:verify"]
+description = "Regenerate and validate C# E2E suite (generate + lint + test)"
+run = [{ task = "csharp:e2e:generate" }, { task = "csharp:e2e:lint" }, { task = "csharp:e2e:test" }]
