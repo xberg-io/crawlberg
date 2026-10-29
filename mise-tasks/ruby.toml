@@ -95,7 +95,7 @@ run = [
 
 ["ruby:update"]
 description = "Update Ruby dependencies to latest versions (including major versions)"
-run = [{ task = "deps", args = ["upgrade", "ruby"] }]
+run = "mise run deps upgrade ruby"
 
 ["ruby:e2e:generate"]
 description = "Generate and auto-fix Ruby E2E tests from fixtures"

@@ -5,6 +5,10 @@
 set -euo pipefail
 
 version="$usage_version"
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+  echo "version must look like 1.2.3 or 1.2.3-rc.1, got: $version" >&2
+  exit 2
+fi
 # ~keep mise puts its pinned alef first on PATH inside every task, so bumping alef.toml alone
 # ~keep would regenerate with the old release. Both pins move together.
 sed -i.bak "s/^alef_version = .*/alef_version = \"$version\"/" alef.toml

@@ -70,7 +70,7 @@ run = ["rm -rf .dart_tool", "rm -rf build", "rm -rf pubspec.lock"]
 
 ["dart:update"]
 description = "Update Dart dependencies to latest versions"
-run = [{ task = "deps", args = ["update", "dart"] }]
+run = "mise run deps update dart"
 
 ["dart:e2e:install"]
 description = "Resolve Dart E2E dependencies and package language version"

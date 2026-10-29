@@ -72,7 +72,7 @@ run = ["mix clean", "rm -rf _build", "rm -rf deps"]
 
 ["elixir:update"]
 description = "Update Elixir dependencies to latest versions (including major versions)"
-run = [{ task = "deps", args = ["upgrade", "elixir"] }]
+run = "mise run deps upgrade elixir"
 
 ["elixir:docs"]
 description = "Generate Elixir documentation"

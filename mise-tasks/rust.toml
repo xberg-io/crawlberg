@@ -199,10 +199,7 @@ run = [
 ["rust:update"]
 description = "Update Rust dependencies"
 run = [
-  { task = "deps", args = [
-    "upgrade",
-    "rust",
-  ] },
+  "mise run deps upgrade rust",
   "echo 'Updating Rust dependencies (vendored browser driver)...'",
   "cargo update --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml",
 ]

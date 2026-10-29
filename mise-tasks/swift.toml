@@ -75,7 +75,7 @@ run = ["swift package clean", "rm -rf .build"]
 
 ["swift:update"]
 description = "Update Swift dependencies to latest versions"
-run = [{ task = "deps", args = ["update", "swift"] }]
+run = "mise run deps update swift"
 
 ["swift:e2e:generate"]
 description = "Generate and format Swift E2E tests from fixtures"

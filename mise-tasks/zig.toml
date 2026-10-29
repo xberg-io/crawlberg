@@ -63,7 +63,7 @@ run = ["rm -rf zig-cache", "rm -rf zig-out"]
 
 ["zig:update"]
 description = "Update Zig dependencies to latest versions (re-fetches each .url in build.zig.zon)"
-run = [{ task = "deps", args = ["upgrade", "zig"] }]
+run = "mise run deps upgrade zig"
 
 ["zig:e2e:generate"]
 description = "Generate and format Zig E2E tests from fixtures"

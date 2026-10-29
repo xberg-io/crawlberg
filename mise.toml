@@ -485,19 +485,19 @@ run = [
 [tasks."version:set"]
 description = "Set version explicitly and sync all packages (usage: mise run version:set 0.3.0-rc.44)"
 usage = 'arg "<version>" help="Version to set, e.g. 0.3.0-rc.44"'
-run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
+run = [{ task = "alef:pin:check" }, 'alef sync-versions --set "$usage_version"', { task = "version:sync" }]
 
 [tasks."version:bump:major"]
 description = "Bump major version and sync all packages"
-run = ["alef sync-versions --bump major", { task = "version:sync" }]
+run = [{ task = "alef:pin:check" }, "alef sync-versions --bump major", { task = "version:sync" }]
 
 [tasks."version:bump:minor"]
 description = "Bump minor version and sync all packages"
-run = ["alef sync-versions --bump minor", { task = "version:sync" }]
+run = [{ task = "alef:pin:check" }, "alef sync-versions --bump minor", { task = "version:sync" }]
 
 [tasks."version:bump:patch"]
 description = "Bump patch version and sync all packages"
-run = ["alef sync-versions --bump patch", { task = "version:sync" }]
+run = [{ task = "alef:pin:check" }, "alef sync-versions --bump patch", { task = "version:sync" }]
 
 [tasks."version:check"]
 description = "Check consumer versions without modifying files"

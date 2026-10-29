@@ -90,7 +90,7 @@ run = ["go clean", """python -c "import shutil; shutil.rmtree('bin', ignore_erro
 
 ["go:update"]
 description = "Update Go dependencies and linters"
-run = [{ task = "deps", args = ["upgrade", "go"] }]
+run = "mise run deps upgrade go"
 
 ["go:e2e:generate"]
 description = "Generate and format Go E2E tests from fixtures"

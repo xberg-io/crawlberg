@@ -115,7 +115,7 @@ run = [
 
 ["python:update"]
 description = "Update Python dependencies to latest versions (including major versions)"
-run = [{ task = "deps", args = ["upgrade", "python"] }]
+run = "mise run deps upgrade python"
 
 ["python:cycle"]
 description = "Python: rebuild binding + force-refresh e2e venv + run e2e (avoids stale .so)"
