@@ -1,1 +1,21 @@
-baseline = "v1.5.0"
+baseline = "v1.7.0"
+task_sets = [
+  "alef",
+  "alef-bindings",
+  "alef-pin",
+  "alef-version",
+  "bats-lib",
+  "deps-refresh",
+  "docs-site",
+  "governance",
+  "governance-check",
+  "lint-format",
+  "plugin",
+  "rust",
+]
+
+[task_overrides]
+"alef:verify" = "runs scripts/ci/check-alef-generated.sh instead of alef verify --exit-code"
+"version:bump:major" = "runs alef:pin:check before alef sync-versions"
+"version:bump:minor" = "runs alef:pin:check before alef sync-versions"
+"version:bump:patch" = "runs alef:pin:check before alef sync-versions"

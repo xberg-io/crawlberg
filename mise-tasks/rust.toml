@@ -136,14 +136,6 @@ run = [
   "cargo check -p crawlberg --target wasm32-unknown-unknown",
 ]
 
-["rust:format"]
-description = "Format Rust code with modifications (cargo fmt)"
-run = "cargo fmt --all"
-
-["rust:clean"]
-description = "Clean Rust build artifacts"
-run = "cargo clean"
-
 ["rust:e2e:lint"]
 description = "Lint Rust E2E crate with clippy"
 run = "cargo clippy --manifest-path e2e/rust/Cargo.toml -- -D warnings"
