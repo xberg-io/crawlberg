@@ -103,74 +103,74 @@ backend = "core:dotnet"
 specifiers = ["10.0.403"]
 
 [[tools."github:Goldziher/ai-rulez"]]
-version = "5.8.0"
+version = "5.9.2"
 backend = "github:Goldziher/ai-rulez"
-specifiers = ["5.8.0"]
+specifiers = ["5.9.2"]
 
 [tools."github:Goldziher/ai-rulez"."platforms.linux-arm64"]
-checksum = "sha256:6e281649d853980ddc2ac2f7d07ae2974745cb54fd1598ef003732a0bdcf8b4b"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.8.0/ai-rulez_5.8.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/683089776"
+checksum = "sha256:386c8964df5dcd8ca58266e8c787275ed17593979b536c42b47b4277e42a1faf"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477515"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.linux-x64"]
-checksum = "sha256:c54c04282c05e7f811cf11ea7e2938a7fdafce76dd39c2104df961a4cb2fa712"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.8.0/ai-rulez_5.8.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/683089773"
+checksum = "sha256:b6db376cc072a59b9745563006c37cd99ca51a0842c574f3c8d1423299baac1c"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477522"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.macos-arm64"]
-checksum = "sha256:901eac11597a750e4cfdaaf8e4f5a6138d08b496dc70e99566d3f9233c3325d4"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.8.0/ai-rulez_5.8.0_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/683089772"
+checksum = "sha256:6460e06dedbfd8789557f94ef75a382151ea4f4d3448750d376e9b2a2fec136e"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477518"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.macos-x64"]
-checksum = "sha256:b893d7b77578e11b8d921f00c427a8b217f370b8edb2fad97e81dc8459c20ca8"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.8.0/ai-rulez_5.8.0_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/683089771"
+checksum = "sha256:c809462b3490b299e5748170dbed8d3a94f6581805646679bf995016827a2f58"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477517"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.windows-x64"]
-checksum = "sha256:b41f787984ad2f28f8075a1e7a967341bbd7f8bc0dcd940f033cd72ab6f56c8f"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.8.0/ai-rulez_5.8.0_windows_amd64.zip"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/683089774"
+checksum = "sha256:062e717e808453e3c6eb8bad8742fab93a6574830806ab880fbe60cc688efde0"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_windows_amd64.zip"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477519"
 provenance = "github-attestations"
 
 [[tools."github:Goldziher/poly"]]
-version = "0.31.0"
+version = "0.31.2"
 backend = "github:Goldziher/poly"
-specifiers = ["0.31.0"]
+specifiers = ["0.31.2"]
 
 [tools."github:Goldziher/poly"."platforms.linux-arm64"]
-checksum = "sha256:8ec5e3e107bcf4cb04a471422564fdd0e93b206b7391958a03946763fa1364a6"
+checksum = "sha256:e7e8b2db4e0c4e23300dbabd87da37ef578e9469240bd9d0d860115eed81255c"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.31.0/poly-0.31.0-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/685703932"
+url = "https://github.com/Goldziher/poly/releases/download/v0.31.2/poly-0.31.2-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/686239271"
 
 [tools."github:Goldziher/poly"."platforms.linux-x64"]
-checksum = "sha256:e3859bf705c041c82c6f88fc60c16ad1becc47a2e27dc1b7a33c9db9cbb021ca"
+checksum = "sha256:6f4c947b6a6fe5a37e1e5d9bba87919d79a1f1d26c244df6f51111944dbebcb4"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.31.0/poly-0.31.0-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/685717689"
+url = "https://github.com/Goldziher/poly/releases/download/v0.31.2/poly-0.31.2-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/686253634"
 
 [tools."github:Goldziher/poly"."platforms.macos-arm64"]
-checksum = "sha256:201bc9deb255767873b3a1c85472baa3d4d4287e3967fa3bc261c055117bcbbc"
+checksum = "sha256:a0fdc6129ed3f7f9257d6c0bf05573f970c35669cd978292de618299cc050632"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.31.0/poly-0.31.0-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/685743728"
+url = "https://github.com/Goldziher/poly/releases/download/v0.31.2/poly-0.31.2-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/686270380"
 
 [tools."github:Goldziher/poly"."platforms.macos-x64"]
-checksum = "sha256:d793a1b1cb84022922b61be5c2452a794f8f0f1deed65da6666dac9aaa18ea8a"
+checksum = "sha256:20706f42f4cead9778afa20b54b3c63ab954182a54ec155637c51368e173b27a"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.31.0/poly-0.31.0-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/685713255"
+url = "https://github.com/Goldziher/poly/releases/download/v0.31.2/poly-0.31.2-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/686241507"
 
 [tools."github:Goldziher/poly"."platforms.windows-x64"]
-checksum = "sha256:c04c35ffe1109eedb224333633954418170e94e5b77f14e77c3eeb1ae3d22295"
+checksum = "sha256:7b6aada1b8f55c97c8907990f73605bb4d160b9de8eb243b8a2d1eb202835407"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.31.0/poly-0.31.0-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/685748973"
+url = "https://github.com/Goldziher/poly/releases/download/v0.31.2/poly-0.31.2-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/686266048"
 
 [[tools."github:bnjbvr/cargo-machete"]]
 version = "0.9.2"
