@@ -1,15 +1,6 @@
 # Java binding (packages/java), included from mise.toml [task_config]. The package needs the Rust
 # FFI library built first. ~keep
 
-["java:install"]
-description = "Install Java dependencies"
-dir = "{{config_root}}/packages/java"
-run = "mvn clean install -DskipTests"
-
-["java:setup"]
-description = "Setup Java environment (alias for install)"
-run = [{ task = "java:install" }]
-
 ["java:build"]
 description = "Build Java package (depends on Rust FFI)"
 run = "mvn -f packages/java/pom.xml clean package -DskipTests"
@@ -18,10 +9,6 @@ run = "mvn -f packages/java/pom.xml clean package -DskipTests"
 description = "Build Java package in debug mode"
 dir = "{{config_root}}/packages/java"
 run = "mvn clean package -DskipTests -DdebugMode=true"
-
-["java:build:release"]
-description = "Build Java package in release mode (optimized)"
-run = "mvn -f packages/java/pom.xml clean package -DskipTests -Pproduction"
 
 ["java:build:ci"]
 description = "Build Java package in CI mode"
@@ -38,29 +25,14 @@ dir = "{{config_root}}/packages/java"
 env = { MAVEN_OPTS = "-Xmx1024m" }
 run = "mvn test -B -q"
 
-["java:test:verbose"]
-description = "Run Java tests with verbose output"
-dir = "{{config_root}}/packages/java"
-run = "mvn test -X"
-
 ["java:lint"]
 description = "Lint all Java code with auto-fix (spotless + checkstyle + PMD)"
 run = "bash scripts/task/java-lint.sh fix"
 run_windows = "{{vars.unix_only}}"
 
-["java:lint:check"]
-description = "Check all Java code linting without modifications"
-run = "bash scripts/task/java-lint.sh check"
-run_windows = "{{vars.unix_only}}"
-
 ["java:format"]
 description = "Format all Java code (spotless)"
 run = "bash scripts/task/java-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
-["java:format:check"]
-description = "Check all Java code formatting (spotless)"
-run = "bash scripts/task/java-lint.sh check"
 run_windows = "{{vars.unix_only}}"
 
 ["java:clean"]
@@ -82,17 +54,6 @@ run = [
   "mvn -DallowSnapshots=false versions:display-plugin-updates",
 ]
 
-["java:e2e:generate"]
-description = "Generate and format Java E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh java", { task = "java:e2e:format" }]
-run_windows = "{{vars.unix_only}}"
-
-["java:e2e:format"]
-description = "Format Java E2E code"
-dir = "{{config_root}}/e2e/java"
-run = "if grep -q spotless-maven-plugin pom.xml; then mvn -q spotless:apply; fi"
-run_windows = "{{vars.unix_only}}"
-
 ["java:e2e:lint"]
 description = "Lint Java E2E code"
 dir = "{{config_root}}/e2e/java"
@@ -103,6 +64,3 @@ description = "Run Java E2E tests"
 dir = "{{config_root}}/e2e/java"
 run = "mvn -B -DtrimStackTrace=false -Dsurefire.useFile=false test"
 
-["java:e2e:verify"]
-description = "Regenerate and validate Java E2E suite (build + generate + lint + test)"
-run = [{ task = "java:build" }, { task = "java:e2e:generate" }, { task = "java:e2e:lint" }, { task = "java:e2e:test" }]

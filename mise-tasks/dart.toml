@@ -1,15 +1,6 @@
 # Dart binding (packages/dart), included from mise.toml [task_config]. The Dart SDK is not a mise
 # tool; tasks fail with "command not found" when it is missing. ~keep
 
-["dart:install"]
-description = "Install Dart dependencies"
-dir = "{{config_root}}/packages/dart"
-run = "dart pub get"
-
-["dart:setup"]
-description = "Setup Dart environment"
-run = [{ task = "dart:install" }]
-
 ["dart:build"]
 description = "Build Dart package"
 dir = "{{config_root}}/packages/dart"
@@ -48,25 +39,10 @@ description = "Lint and format Dart code with auto-fix"
 dir = "{{config_root}}/packages/dart"
 run = "dart format ."
 
-["dart:lint:check"]
-description = "Check Dart code linting without modifications"
-dir = "{{config_root}}/packages/dart"
-run = "dart format . --set-exit-if-changed"
-
 ["dart:format"]
 description = "Format Dart code"
 dir = "{{config_root}}/packages/dart"
 run = "dart format ."
-
-["dart:format:check"]
-description = "Check Dart code formatting"
-dir = "{{config_root}}/packages/dart"
-run = "dart format . --set-exit-if-changed"
-
-["dart:clean"]
-description = "Clean Dart build artifacts"
-dir = "{{config_root}}/packages/dart"
-run = ["rm -rf .dart_tool", "rm -rf build", "rm -rf pubspec.lock"]
 
 ["dart:update"]
 description = "Update Dart dependencies to latest versions"
@@ -77,27 +53,9 @@ description = "Resolve Dart E2E dependencies and package language version"
 dir = "{{config_root}}/e2e/dart"
 run = "dart pub get"
 
-["dart:e2e:generate"]
-description = "Generate and format Dart E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh dart", { task = "dart:e2e:format" }]
-run_windows = "{{vars.unix_only}}"
-
-["dart:e2e:format"]
-description = "Format Dart E2E code"
-dir = "{{config_root}}/e2e/dart"
-run = ["dart pub get", "dart format ."]
-
-["dart:e2e:lint"]
-description = "Lint Dart E2E code"
-dir = "{{config_root}}/e2e/dart"
-run = "dart format . --set-exit-if-changed"
-
 ["dart:e2e:test"]
 description = "Run generated Dart E2E tests"
 depends = ["e2e:build", "dart:build"]
 env = { DYLD_FALLBACK_LIBRARY_PATH = "{{config_root}}/target/release", LD_LIBRARY_PATH = "{{config_root}}/target/release", FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR = "{{config_root}}/target/release" }
 run = ["cd e2e/dart && dart pub get", "bash scripts/task/dart-e2e-test.sh"]
 
-["dart:e2e:verify"]
-description = "Regenerate and validate Dart E2E suite (generate + lint + test)"
-run = [{ task = "dart:e2e:generate" }, { task = "dart:e2e:lint" }, { task = "dart:e2e:test" }]

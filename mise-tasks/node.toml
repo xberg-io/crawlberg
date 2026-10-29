@@ -1,14 +1,5 @@
 # Node binding (crates/crawlberg-node), included from mise.toml [task_config]. ~keep
 
-["node:install"]
-description = "Install Node/TypeScript dependencies"
-dir = "{{config_root}}/crates/crawlberg-node"
-run = ["corepack enable", "pnpm install -r"]
-
-["node:setup"]
-description = "Alias for install task"
-run = [{ task = "node:install" }]
-
 ["node:build"]
 description = "Build Node/TypeScript native bindings (BUILD_PROFILE: dev, release or ci; default release)"
 run = [{ task = "build:profile", args = ["node"] }]
@@ -48,10 +39,6 @@ run = "pnpm test"
 description = "Check released Node runtime exports through CommonJS and ESM"
 run = "node --test scripts/tests/node-binding-exports.test.mjs"
 
-["node:clippy"]
-description = "Run clippy on crawlberg-node crate"
-run = "cargo clippy -p crawlberg-node -- -D warnings"
-
 ["node:lint"]
 description = "Auto-fix Node/TypeScript code linting (oxlint)"
 run = "poly lint crates/crawlberg-node"
@@ -75,15 +62,6 @@ run = [
   """python -c "import shutil; [shutil.rmtree(d, ignore_errors=True) for d in ['dist', 'build', 'node_modules']]\"""",
   """python -c "import shutil, os; [shutil.rmtree(os.path.join(r, d), ignore_errors=True) \
   for r, dirs, _ in os.walk('.') for d in dirs if d == '.turbo']\"""",
-]
-
-["node:update"]
-description = "Update Node/TypeScript dependencies (all workspace packages)"
-run = [
-  "echo 'Updating Node/TypeScript dependencies across workspace...'",
-  "corepack up || true",
-  "pnpm up --latest -r || true",
-  "pnpm up --latest -w || true",
 ]
 
 ["node:e2e:lint"]

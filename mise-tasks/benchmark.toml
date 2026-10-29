@@ -10,24 +10,3 @@ run = """\
   cargo run -p benchmark-harness --release -- run --fixtures tools/benchmark-harness/datasets \
   --mode cached --output tools/benchmark-harness/results"""
 
-["benchmark:run:live"]
-description = "Run benchmarks against live URLs (rate-limited)"
-run = """\
-  cargo run -p benchmark-harness --release -- run --fixtures tools/benchmark-harness/datasets \
-  --mode live --save-cache --rate-limit-ms 500 --output tools/benchmark-harness/results"""
-
-["benchmark:profile"]
-description = "Profile benchmark with flamegraphs"
-run = """\
-  cargo run -p benchmark-harness --release --features profiling -- profile \
-  --fixtures tools/benchmark-harness/datasets --output tools/benchmark-harness/profiles"""
-
-["benchmark:report"]
-description = "Generate summary report from results"
-run = """\
-  cargo run -p benchmark-harness -- report tools/benchmark-harness/results/results.json \
-  --output tools/benchmark-harness/report"""
-
-["benchmark:validate"]
-description = "Validate fixtures without running benchmarks"
-run = "cargo run -p benchmark-harness -- validate --fixtures tools/benchmark-harness/datasets"

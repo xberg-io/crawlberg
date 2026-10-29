@@ -59,16 +59,3 @@ run = "cargo build --locked --release -p crawlberg-swift -p crawlberg-ffi"
 description = "Execute the canonical Swift released-call gate without regenerating bindings"
 run = ["swift --version", { task = "swift:test:released-constructors" }]
 
-["shell:lint"]
-description = "Lint shell scripts with auto-fix (shfmt + shellcheck)"
-run = "bash scripts/task/shell-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
-["shell:lint:check"]
-description = "Lint shell scripts in check-only mode (shfmt + shellcheck)"
-run = "bash scripts/task/shell-lint.sh check"
-run_windows = "{{vars.unix_only}}"
-
-["github:lint"]
-description = "Lint GitHub Actions workflows (actionlint)"
-run = "actionlint || true"

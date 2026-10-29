@@ -1,14 +1,5 @@
 # Kotlin/Android binding (packages/kotlin-android), included from mise.toml [task_config]. ~keep
 
-["kotlin-android:install"]
-description = "Resolve kotlin-android gradle dependencies"
-dir = "{{config_root}}/packages/kotlin-android"
-run = "gradle dependencies --no-daemon"
-
-["kotlin-android:setup"]
-description = "Setup kotlin-android (alias for install)"
-run = [{ task = "kotlin-android:install" }]
-
 ["kotlin-android:build"]
 description = "Build kotlin-android AAR (BUILD_PROFILE: dev, release or ci; default release)"
 run = [{ task = "build:profile", args = ["kotlin-android"] }]
@@ -32,28 +23,9 @@ description = "Run ktlint with autocorrect"
 dir = "{{config_root}}/packages/kotlin-android"
 run = "gradle ktlintFormat --no-daemon"
 
-["kotlin-android:lint:check"]
-description = "Run ktlint in check-only mode"
-dir = "{{config_root}}/packages/kotlin-android"
-run = "gradle ktlintCheck --no-daemon"
-
 ["kotlin-android:format"]
 description = "Run ktlint format (alias for lint)"
 run = [{ task = "kotlin-android:lint" }]
-
-["kotlin-android:format:check"]
-description = "Run ktlint check (alias for lint:check)"
-run = [{ task = "kotlin-android:lint:check" }]
-
-["kotlin-android:clean"]
-description = "Clean kotlin-android build artefacts"
-dir = "{{config_root}}/packages/kotlin-android"
-run = ["gradle clean --no-daemon || true", "rm -rf build .gradle"]
-
-["kotlin-android:e2e:generate"]
-description = "Generate kotlin-android E2E tests from fixtures"
-run = "bash scripts/task/e2e-generate.sh kotlin_android"
-run_windows = "{{vars.unix_only}}"
 
 ["kotlin-android:e2e:test"]
 description = "Run kotlin-android E2E tests as host JVM unit tests (no emulator) against the AAR's JVM-side wrapper"
@@ -62,6 +34,3 @@ description = "Run kotlin-android E2E tests as host JVM unit tests (no emulator)
 dir = "{{config_root}}/e2e/kotlin_android"
 run = "gradle test --no-daemon"
 
-["kotlin-android:e2e:verify"]
-description = "Regenerate and validate kotlin-android E2E suite (generate + test)"
-run = [{ task = "kotlin-android:e2e:generate" }, { task = "kotlin-android:e2e:test" }]

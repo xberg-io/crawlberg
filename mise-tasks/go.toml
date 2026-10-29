@@ -1,15 +1,6 @@
 # Go binding (packages/go), included from mise.toml [task_config]. The bindings need the Rust FFI
 # library built first. ~keep
 
-["go:install"]
-description = "Install Go tools and modules"
-run = "bash scripts/go/install.sh"
-run_windows = 'pwsh -Command "cd packages/go; go mod download"'
-
-["go:setup"]
-description = "Setup Go tools and modules (alias for install)"
-run = [{ task = "go:install" }]
-
 ["go:build"]
 description = "Build Go bindings (requires Rust FFI to be built first)"
 dir = "{{config_root}}/packages/go"
@@ -22,12 +13,6 @@ dir = "{{config_root}}/packages/go"
 env = { CGO_ENABLED = "1" }
 run = "go build ./..."
 
-["go:build:release"]
-description = "Build Go bindings in release mode (optimized, requires Rust FFI to be built first)"
-dir = "{{config_root}}/packages/go"
-env = { CGO_ENABLED = "1" }
-run = 'go build -ldflags="-s -w" ./...'
-
 ["go:build:ci"]
 description = "Build Go bindings in CI mode (requires Rust FFI to be built first)"
 dir = "{{config_root}}/packages/go"
@@ -38,22 +23,6 @@ run = "go build ./..."
 description = "Run Go tests"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bash scripts/go/test.sh"
-run_windows = 'pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."'
-
-["go:test:ci"]
-description = "Run Go tests in CI mode"
-dir = "{{config_root}}/packages/go"
-env = { RUST_BACKTRACE = "full", RUST_LIB_BACKTRACE = "1", CI = "true", VERBOSE_MODE = "true", CGO_ENABLED = "1", ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
-run = "go test -tags crawlberg_dev -timeout 10m -v ./..."
-
-["go:test:verbose"]
-description = "Run Go tests with verbose output"
-dir = "{{config_root}}/packages/go"
-run = "go test -v ./..."
-
-["go:test:debug"]
-description = "Run Go tests with enhanced debugging (use --help for options)"
-run = "bash scripts/go/test-debug.sh"
 run_windows = 'pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."'
 
 ["go:lint"]
@@ -71,13 +40,6 @@ description = "Format Go code with modifications (gofmt)"
 dir = "{{config_root}}/packages/go"
 run = "gofmt -w ."
 
-["go:format:check"]
-description = "Check Go code formatting without modifications (gofmt)"
-run = "bash scripts/go/format_check.sh"
-run_windows = """\
-  pwsh -Command "cd packages/go; $diff = gofmt -l .; \
-  if ($diff) { Write-Error 'Go formatting issues found'; exit 1 }\""""
-
 ["go:clean"]
 description = "Clean Go build artifacts"
 dir = "{{config_root}}/packages/go"
@@ -86,11 +48,6 @@ run = ["go clean", """python -c "import shutil; shutil.rmtree('bin', ignore_erro
 ["go:update"]
 description = "Update Go dependencies and linters"
 run = "mise run deps upgrade go"
-
-["go:e2e:generate"]
-description = "Generate and format Go E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh go", "bash scripts/e2e/go/format.sh", { task = "go:e2e:lint" }]
-run_windows = "{{vars.unix_only}}"
 
 ["go:e2e:lint"]
 description = "Lint Go E2E code"
@@ -102,6 +59,3 @@ description = "Run Go E2E tests"
 run = "bash scripts/e2e/go/test.sh"
 run_windows = 'pwsh -Command "cd e2e/go; go test -timeout 30m -v ./..."'
 
-["go:e2e:verify"]
-description = "Regenerate and validate Go E2E suite (generate + lint + test)"
-run = [{ task = "go:e2e:generate" }, { task = "go:e2e:lint" }, { task = "go:e2e:test" }]

@@ -1,14 +1,5 @@
 # Python binding (packages/python), included from mise.toml [task_config]. ~keep
 
-["python:install"]
-description = "Install Python dependencies"
-dir = "{{config_root}}/packages/python"
-run = "uv sync --all-extras --no-install-workspace --no-install-project"
-
-["python:setup"]
-description = "Setup alias for install (Install Python dependencies)"
-run = [{ task = "python:install" }]
-
 ["python:build"]
 description = "Build Python extension (BUILD_PROFILE: dev, release or ci; default release)"
 run = [{ task = "build:profile", args = ["python"] }]
@@ -28,30 +19,10 @@ description = "Build Python extension in CI mode (with debug info)"
 dir = "{{config_root}}/packages/python"
 run = 'RUSTFLAGS="${RUSTFLAGS:-} -C debuginfo=2" uv run maturin build --release'
 
-["python:build:sdist"]
-description = "Build Python source distribution (sdist)"
-dir = "{{config_root}}/packages/python"
-run = "uv run maturin sdist --manifest-path ../../crates/crawlberg-py/Cargo.toml --out ../../target/wheels || true"
-
-["python:build:sdist:publish"]
-description = "Build Python source distribution (sdist) for publishing to DIST_DIR (default dist)"
-run = ['mkdir -p "./${DIST_DIR:-dist}"', 'cd packages/python && uv build --sdist --out-dir "../../${DIST_DIR:-dist}"']
-
 ["python:test"]
 description = "Run Python tests"
 dir = "{{config_root}}/packages/python"
 run = "uv run pytest"
-
-["python:test:ci"]
-description = "Run Python tests in CI mode with coverage"
-dir = "{{config_root}}/packages/python"
-env = { RUST_BACKTRACE = "1" }
-run = "uv run pytest --cov --cov-report=html -vv -s --tb=long --log-cli-level=DEBUG"
-
-["python:test:coverage"]
-description = "Run Python tests with coverage report"
-dir = "{{config_root}}/packages/python"
-run = "uv run pytest --cov --cov-report=html"
 
 ["python:test:released-constructors"]
 description = "Type-check and execute released Python constructor and factory calls"
@@ -63,39 +34,15 @@ run = [
   "uv run --with 'pytest>=9.1.1' pytest tests/released_constructor_calls.py",
 ]
 
-["python:clippy"]
-description = "Run clippy on crawlberg-py crate"
-run = "cargo clippy -p crawlberg-py -- -D warnings"
-
 ["python:lint"]
 description = "Auto-fix Python code linting (ruff check + format)"
 dir = "{{config_root}}/packages/python"
 run = ["uv run ruff check --fix", "uv run ruff format"]
 
-["python:lint:check"]
-description = "Check Python code linting without modifications (ruff + Pyrefly)"
-dir = "{{config_root}}/packages/python"
-run = ["uv run ruff check", "uv run ruff format --check", "uv run pyrefly check"]
-
 ["python:format"]
 description = "Format Python code with modifications (ruff format)"
 dir = "{{config_root}}/packages/python"
 run = "uv run ruff format"
-
-["python:format:check"]
-description = "Check Python code formatting without modifications"
-dir = "{{config_root}}/packages/python"
-run = "uv run ruff format --check"
-
-["python:pyproject:format"]
-description = "Format pyproject.toml (pyproject-fmt)"
-dir = "{{config_root}}/packages/python"
-run = "uv run pyproject-fmt pyproject.toml"
-
-["python:pyproject:validate"]
-description = "Validate pyproject.toml (validate-pyproject)"
-dir = "{{config_root}}/packages/python"
-run = "uv run validate-pyproject pyproject.toml"
 
 ["python:clean"]
 description = "Clean Python build artifacts"
@@ -116,11 +63,6 @@ run = "mise run deps upgrade python"
 description = "Python: rebuild binding + force-refresh e2e venv + run e2e (avoids stale .so)"
 run = [{ task = "python:build:dev" }, "cd e2e/python && uv sync --reinstall --quiet", { task = "python:e2e:test" }]
 
-["python:e2e:generate"]
-description = "Generate and format Python E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh python", { task = "python:e2e:lint" }]
-run_windows = "{{vars.unix_only}}"
-
 ["python:e2e:lint"]
 description = "Lint Python E2E test code"
 dir = "{{config_root}}/e2e/python"
@@ -131,6 +73,3 @@ description = "Run Python E2E tests"
 dir = "{{config_root}}/e2e/python"
 run = ["uv run pytest", "uv run pytest ../../packages/python/tests"]
 
-["python:e2e:verify"]
-description = "Regenerate and validate Python E2E suite (generate + lint + test)"
-run = [{ task = "python:e2e:generate" }, { task = "python:e2e:lint" }, { task = "python:e2e:test" }]

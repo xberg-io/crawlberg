@@ -134,52 +134,6 @@ run = [{ task = "rust:test" }]
 description = "Run binding test suites only"
 run = "alef test"
 
-[tasks."test:ci"]
-description = "Run test suites in CI mode"
-run = [{ task = "test:all" }]
-
-[tasks."test:all"]
-description = "Run all tests across all languages (in parallel)"
-depends = [
-  "rust:test",
-  "python:test",
-  "node:test",
-  "go:test",
-  "java:test",
-  "csharp:test",
-  "wasm:test",
-  "ruby:test",
-  "php:test",
-  "elixir:test",
-  "c:test",
-  "dart:test",
-  "swift:test",
-  "zig:test",
-]
-
-[tasks."test:all:parallel"]
-description = "Run all tests in parallel (using deps)"
-run = [{ task = "test:all" }]
-
-[tasks."test:all:ci"]
-description = "Run all tests in CI mode (with extra diagnostics)"
-run = [
-  { task = "rust:test:ci" },
-  { task = "python:test:ci" },
-  { task = "node:test:ci" },
-  { task = "go:test:ci" },
-  { task = "java:test:ci" },
-  { task = "csharp:test:ci" },
-  { task = "wasm:test" },
-  { task = "ruby:test" },
-  { task = "php:test" },
-  { task = "elixir:test" },
-  { task = "c:test:ci" },
-  { task = "dart:test:ci" },
-  { task = "swift:test:ci" },
-  { task = "zig:test:ci" },
-]
-
 [tasks."test:scripts"]
 description = "Run the contract tests for the repo's own shell scripts"
 run = [{ task = "test:scripts:bats" }]
@@ -242,31 +196,6 @@ run = ["cargo clean", "rm -rf .alef-cache", "rm -f target/release/mock-server ta
 description = "Total cleanup: per-language clean + cargo workspace target + e2e test deps"
 run = [{ task = "clean" }, { task = "clean:workspace" }, { task = "clean:e2e" }]
 
-[tasks.rebuild]
-description = "Rebuild all language bindings + the alef-generated e2e mock-server binary"
-run = [
-  { task = "rust:ffi:build:dev" },
-  { task = "c:build:dev" },
-  { task = "python:build:dev" },
-  { task = "node:build:dev" },
-  { task = "ruby:build" },
-  { task = "php:build" },
-  { task = "go:build" },
-  { task = "java:build" },
-  { task = "csharp:build" },
-  { task = "wasm:build:dev" },
-  { task = "e2e:build" },
-]
-
-[tasks."rebuild:fast"]
-description = "Fast rebuild: Rust core + Python + Node + mock-server only"
-run = [
-  { task = "rust:ffi:build:dev" },
-  { task = "python:build:dev" },
-  { task = "node:build:dev" },
-  { task = "e2e:build" },
-]
-
 [tasks.lint]
 description = "Run all linters via poly"
 run = "poly lint ."
@@ -320,29 +249,9 @@ description = "Sync the version to all manifests and the plugin version pin"
 # command left the plugin version pin behind. ~keep
 run = [{ task = "version:sync" }]
 
-[tasks."alef:docs"]
-description = "Generate API reference documentation"
-run = [{ task = "docs:generate" }]
-
 [tasks."alef:snippets"]
 description = "Validate documentation snippets (needs built artifacts; run after alef build)"
 run = "alef snippets check"
-
-[tasks."docs:generate"]
-description = "Generate API reference documentation"
-run = "alef docs"
-
-[tasks."docs:generate:check"]
-description = "Validate API reference docs are up-to-date"
-run = "alef verify --exit-code"
-
-[tasks."readme:generate"]
-description = "Generate package READMEs"
-run = "alef readme"
-
-[tasks."readme:generate:check"]
-description = "Validate package READMEs are up-to-date"
-run = "alef verify --exit-code"
 
 # ---- E2E ---------------------------------------------------------------------------------------
 
@@ -379,24 +288,6 @@ run = [
   { task = "brew:e2e:lint" },
 ]
 
-[tasks."e2e:reset"]
-description = "Full e2e reset: clean + alef generate + rebuild all bindings + run all e2e"
-run = [{ task = "clean:full" }, { task = "alef:generate" }, { task = "rebuild" }, { task = "e2e:test" }]
-
-[tasks."e2e:refresh"]
-description = "Quick e2e refresh: alef generate + rebuild + run all e2e (no clean)"
-run = [{ task = "alef:generate" }, { task = "rebuild" }, { task = "e2e:test" }]
-
-[tasks."e2e:refresh:fast"]
-description = "Fast e2e feedback: alef generate + rebuild Rust/Python/Node + run their e2e"
-run = [
-  { task = "alef:generate" },
-  { task = "rebuild:fast" },
-  { task = "rust:e2e:test" },
-  { task = "python:cycle" },
-  { task = "node:e2e:test" },
-]
-
 # ---- Governance, plugin and CI gates -----------------------------------------------------------
 
 [tasks."governance:check"]
@@ -415,21 +306,9 @@ run = ["ai-rulez generate --plugin", "python3 scripts/sync_public_skills.py"]
 description = "Verify generated plugin bundles match source (byte + BLAKE3 provenance)"
 run = ["ai-rulez verify --plugin", "python3 scripts/sync_public_skills.py --check"]
 
-[tasks."plugin:test"]
-description = "Verify OpenCode tools and bundled resources"
-run = "node --test scripts/tests/opencode-plugin.test.mjs"
-
-[tasks."plugin:hermes:test"]
-description = "Verify the Hermes bridge against a real MCP stdio fixture"
-run = "uv run --no-project --python 3.11 --with 'mcp>=2.3.0' --with 'PyYAML>=6.0.3' python scripts/tests/test_hermes_plugin.py"
-
 [tasks."plugin:skills:test"]
 description = "Verify public skill ownership and resource freshness"
 run = ["python3 scripts/tests/test_public_skills.py", "python3 scripts/sync_public_skills.py --check"]
-
-[tasks."plugin:launcher:test"]
-description = "Verify npm launcher preserves caller directory and relative configuration"
-run = "python3 scripts/tests/test_mcp_launcher_cwd.py"
 
 # scripts/ci/test_fork_publication.py asserts that the publish workflow runs this same command. ~keep
 [tasks."ci:release:fork:check"]

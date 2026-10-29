@@ -40,31 +40,14 @@ description = "Build all Rust crates in CI mode (with debug info)"
 env = { RUSTFLAGS = "-C debuginfo=2" }
 run = "cargo build --release --workspace --all-features {{vars.rust_excludes}}"
 
-["rust:build:profiling"]
-description = "Build all Rust crates with profiling features (for flamegraph generation)"
-env = { ENABLE_PROFILING = "true", RUSTFLAGS = "-g" }
-run = "cargo build --workspace --release --features full,profiling,api,mcp,otel {{vars.rust_excludes}}"
-
 ["rust:cli:build"]
 description = "Build CLI binary"
 usage = 'flag "--target <triple>" help="Rust target triple to build for"'
 run = 'cargo build --release --package crawlberg-cli ${usage_target:+--target "$usage_target"}'
 
-["rust:cli:build:dev"]
-description = "Build CLI binary in debug mode"
-run = "cargo build --package crawlberg-cli"
-
-["rust:cli:install"]
-description = "Install CLI binary"
-run = "cargo install --path crates/crawlberg-cli"
-
 ["rust:ffi:build"]
 description = "Build FFI library for language bindings (extra cargo arguments after --)"
 run = "cargo build --release --package crawlberg-ffi"
-
-["rust:ffi:build:dev"]
-description = "Build FFI library in debug mode (extra cargo arguments after --)"
-run = "cargo build --package crawlberg-ffi"
 
 ["rust:ffi:build:ci"]
 description = "Build FFI library in CI mode (with debug info; extra cargo arguments after --)"
@@ -87,10 +70,6 @@ run = [
   "bash scripts/ci/rust/run-unit-tests.sh",
 ]
 run_windows = "{{vars.unix_only}}"
-
-["rust:test:quick"]
-description = "Run fast Rust tests (unit tests only)"
-run = "cargo test --lib --workspace {{vars.rust_excludes}}"
 
 ["rust:test:native-only"]
 description = "Execute native browser behavior without the Chromiumoxide feature"
@@ -166,52 +145,9 @@ run = [
 description = "Format Rust code with modifications (cargo fmt)"
 run = "cargo fmt --all"
 
-["rust:format:check"]
-description = "Check Rust code formatting without modifications"
-run = "cargo fmt --all -- --check"
-
-["rust:licenses"]
-description = "Check Rust dependency licenses with cargo-deny"
-run = "cargo deny check licenses"
-
-["rust:doc"]
-description = "Generate Rust documentation and open in browser"
-run = "cargo doc --no-deps --open"
-
-["rust:doc:build"]
-description = "Build Rust documentation (without opening)"
-run = "cargo doc --no-deps"
-
 ["rust:clean"]
 description = "Clean Rust build artifacts"
 run = "cargo clean"
-
-["rust:cache:cleanup"]
-description = "Clean up large build artifacts to reduce cache size (for CI)"
-run = [
-  "echo 'Cleaning up large build artifacts to reduce cache size...'",
-  'for ext in rlib so dylib dll; do find target -type f -name "*.$ext" -size +10M -exec rm -f {} \; 2>/dev/null || true; done',
-  "rm -rf target/*/incremental 2>/dev/null || true",
-  "echo 'Cleanup completed successfully'",
-  "du -sh target 2>/dev/null || echo 'No target directory found'",
-]
-
-["rust:update"]
-description = "Update Rust dependencies"
-run = [
-  "mise run deps upgrade rust",
-  "echo 'Updating Rust dependencies (vendored browser driver)...'",
-  "cargo update --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml",
-]
-
-["rust:e2e:generate"]
-description = "Generate and format Rust E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh rust", { task = "rust:e2e:format" }, { task = "rust:e2e:lint" }]
-run_windows = "{{vars.unix_only}}"
-
-["rust:e2e:format"]
-description = "Format generated Rust E2E sources"
-run = "cargo fmt --manifest-path e2e/rust/Cargo.toml"
 
 ["rust:e2e:lint"]
 description = "Lint Rust E2E crate with clippy"
@@ -223,11 +159,3 @@ dir = "{{config_root}}/e2e/rust"
 env = { RUST_TEST_THREADS = "1" }
 run = "cargo test --release"
 
-["rust:e2e:verify"]
-description = "Regenerate and validate Rust E2E suite (generate + format + lint + test)"
-run = [
-  { task = "rust:e2e:generate" },
-  { task = "rust:e2e:format" },
-  { task = "rust:e2e:lint" },
-  { task = "rust:e2e:test" },
-]

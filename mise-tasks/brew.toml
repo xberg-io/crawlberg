@@ -1,9 +1,5 @@
 # Homebrew CLI formula E2E suite (e2e/brew), included from mise.toml [task_config]. ~keep
 
-["brew:e2e:generate"]
-description = "Generate brew (CLI) E2E Bats tests from fixtures (extra alef arguments after --)"
-run = "alef e2e generate --lang brew"
-
 ["brew:e2e:lint"]
 description = "Lint generated brew E2E launchers and Bats suites"
 dir = "{{config_root}}/e2e/brew"
@@ -14,6 +10,3 @@ description = "Run brew E2E tests (crawlberg CLI; auto-builds and prepends to PA
 depends = ["rust:cli:build", "e2e:build"]
 run = 'PATH="$PWD/target/release:$PATH" bash scripts/task/brew-e2e-test.sh'
 
-["brew:e2e:verify"]
-description = "Full brew E2E pipeline (generate + lint + test)"
-run = [{ task = "brew:e2e:generate" }, { task = "brew:e2e:lint" }, { task = "brew:e2e:test" }]

@@ -1,29 +1,10 @@
 # Zig binding (packages/zig), included from mise.toml [task_config]. The package links the Rust
 # FFI library. ~keep
 
-["zig:install"]
-description = "Install Zig dependencies"
-dir = "{{config_root}}/packages/zig"
-run = "zig build"
-
-["zig:setup"]
-description = "Setup Zig environment"
-run = [{ task = "zig:install" }]
-
 ["zig:build"]
 description = "Build Zig package (depends on Rust FFI)"
 dir = "{{config_root}}/packages/zig"
 run = ["cargo build --release -p crawlberg-ffi", "zig build"]
-
-["zig:build:dev"]
-description = "Build Zig package in debug mode"
-dir = "{{config_root}}/packages/zig"
-run = ["cargo build -p crawlberg-ffi", "zig build"]
-
-["zig:build:release"]
-description = "Build Zig package in release mode (optimized)"
-dir = "{{config_root}}/packages/zig"
-run = ["cargo build --release -p crawlberg-ffi", "zig build -Doptimize=ReleaseFast"]
 
 ["zig:build:ci"]
 description = "Build Zig package in CI mode"
@@ -43,48 +24,12 @@ description = "Lint and format Zig code with auto-fix"
 dir = "{{config_root}}/packages/zig"
 run = "zig fmt src"
 
-["zig:lint:check"]
-description = "Check Zig code linting without modifications"
-dir = "{{config_root}}/packages/zig"
-run = "zig fmt --check src"
-
 ["zig:format"]
 description = "Format Zig code"
 run = [{ task = "zig:lint" }]
-
-["zig:format:check"]
-description = "Check Zig code formatting"
-run = [{ task = "zig:lint:check" }]
-
-["zig:clean"]
-description = "Clean Zig build artifacts"
-dir = "{{config_root}}/packages/zig"
-run = ["rm -rf zig-cache", "rm -rf zig-out"]
-
-["zig:update"]
-description = "Update Zig dependencies to latest versions (re-fetches each .url in build.zig.zon)"
-run = "mise run deps upgrade zig"
-
-["zig:e2e:generate"]
-description = "Generate and format Zig E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh zig", { task = "zig:e2e:format" }]
-run_windows = "{{vars.unix_only}}"
-
-["zig:e2e:format"]
-description = "Format Zig E2E code"
-dir = "{{config_root}}/e2e/zig"
-run = "zig fmt src"
-
-["zig:e2e:lint"]
-description = "Lint Zig E2E code"
-dir = "{{config_root}}/e2e/zig"
-run = "zig fmt --check src"
 
 ["zig:e2e:test"]
 description = "Run generated Zig E2E tests"
 run = "bash scripts/e2e/zig/test.sh"
 run_windows = "{{vars.unix_only}}"
 
-["zig:e2e:verify"]
-description = "Regenerate and validate Zig E2E suite (build + generate + lint + test)"
-run = [{ task = "zig:build" }, { task = "zig:e2e:generate" }, { task = "zig:e2e:lint" }, { task = "zig:e2e:test" }]

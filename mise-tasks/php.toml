@@ -1,14 +1,5 @@
 # PHP extension (crates/crawlberg-php, packages/php), included from mise.toml [task_config]. ~keep
 
-["php:install"]
-description = "Install PHP dependencies with Composer"
-dir = "{{config_root}}/packages/php"
-run = "composer install"
-
-["php:setup"]
-description = "Setup PHP dependencies with Composer (alias for install)"
-run = [{ task = "php:install" }]
-
 ["php:build"]
 description = "Build PHP extension (BUILD_PROFILE: dev, release or ci; default release)"
 run = [{ task = "build:profile", args = ["php"] }]
@@ -38,21 +29,6 @@ description = "Run PHP tests in CI mode"
 dir = "{{config_root}}/packages/php"
 run = ["bash ../../scripts/ci/php/create-ci-php-ini.sh", "php -c ../../php-crawlberg.ini vendor/bin/phpunit"]
 
-["php:test:quick"]
-description = "Run PHP unit tests only (no integration tests)"
-dir = "{{config_root}}/packages/php"
-run = "composer exec -- phpunit --testsuite=unit"
-
-["php:test:integration"]
-description = "Run PHP integration tests"
-dir = "{{config_root}}/packages/php"
-run = "composer exec -- phpunit --testsuite=integration"
-
-["php:test:coverage"]
-description = "Run PHP tests with coverage report"
-dir = "{{config_root}}/packages/php"
-run = "composer exec -- phpunit --coverage-html=coverage"
-
 ["php:lint"]
 description = "Lint all PHP code with poly (mago)"
 run = "poly lint packages/php"
@@ -65,29 +41,11 @@ run = "poly lint packages/php"
 description = "Format PHP code with modifications (poly/mago)"
 run = "poly fmt --fix packages/php"
 
-["php:format:check"]
-description = "Check PHP code formatting without modifications (poly/mago)"
-run = "poly fmt --check packages/php"
-
 ["php:clean"]
 description = "Clean PHP build artifacts"
 dir = "{{config_root}}/packages/php"
 run = """python -c "import shutil, glob, os; [shutil.rmtree(d, ignore_errors=True) for d in ['vendor', 'build', 'coverage']]; \
   [os.remove(f) for f in glob.glob('*.so')]\""""
-
-["php:update:check"]
-description = "Check for outdated PHP dependencies"
-dir = "{{config_root}}/packages/php"
-run = "composer outdated"
-
-["php:e2e:generate"]
-description = "Generate and format PHP E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh php", { task = "php:e2e:format" }]
-run_windows = "{{vars.unix_only}}"
-
-["php:e2e:format"]
-description = "Format PHP E2E code with poly"
-run = "poly fmt --fix e2e/php"
 
 ["php:e2e:lint"]
 description = "Lint PHP E2E code with poly (mago)"
@@ -108,6 +66,3 @@ run_windows = [
   'php -c php-crawlberg.ini vendor\bin\phpunit.bat',
 ]
 
-["php:e2e:verify"]
-description = "Regenerate and validate PHP E2E suite (generate + lint + test)"
-run = [{ task = "php:e2e:generate" }, { task = "php:e2e:lint" }, { task = "php:e2e:test" }]

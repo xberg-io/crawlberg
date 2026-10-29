@@ -6,46 +6,6 @@
 description = "Check consumer manifests against the workspace version"
 run = "python3 scripts/sync_consumer_versions.py --check"
 
-["test-apps:run"]
-description = "Run alef test-apps for every registry-mode language + brew (extra alef arguments after --)"
-run = "alef test-apps run"
-
-["test-apps:regenerate:scaffold"]
-description = "Regenerate alef test-app scaffolds for a single language (usage: mise run test-apps:regenerate:scaffold -- python)"
-run = "alef test-apps generate"
-
-["test-apps:regenerate"]
-description = "Regenerate test_apps/ via alef and re-sync versions"
-run = ["alef e2e generate --registry", "alef sync-versions"]
-
-["test-apps:clean"]
-description = "Wipe test_apps/ build artefacts, lockfiles excluded"
-run = """\
-  find test_apps -type d \\( -name node_modules -o -name .venv -o -name _build -o -name vendor \
-  -o -name target -o -name .pytest_cache -o -name .ruff_cache -o -name __pycache__ -o -name .gradle \
-  -o -name bin -o -name obj \\) -prune -exec rm -rf {} + 2>/dev/null || true"""
-
-["test-apps:smoke"]
-description = "Run all test_app smoke tests"
-run = [
-  { task = "test-apps:smoke:rust" },
-  { task = "test-apps:smoke:python" },
-  { task = "test-apps:smoke:node" },
-  { task = "test-apps:smoke:wasm" },
-  { task = "test-apps:smoke:ruby" },
-  { task = "test-apps:smoke:go" },
-  { task = "test-apps:smoke:java" },
-  { task = "test-apps:smoke:elixir" },
-  { task = "test-apps:smoke:php" },
-  { task = "test-apps:smoke:csharp" },
-  { task = "test-apps:smoke:c" },
-  { task = "test-apps:smoke:dart" },
-  { task = "test-apps:smoke:zig" },
-  { task = "test-apps:smoke:kotlin_android" },
-  { task = "test-apps:smoke:swift_e2e" },
-  { task = "test-apps:smoke:brew" },
-]
-
 ["test-apps:smoke:rust"]
 description = "Run Rust test_app smoke test"
 run = [{ task = "test-apps:app", args = ["smoke", "rust"] }]
@@ -109,25 +69,6 @@ run = [{ task = "test-apps:app", args = ["smoke", "swift_e2e"] }]
 ["test-apps:smoke:brew"]
 description = "Run Homebrew CLI formula smoke test"
 run = [{ task = "test-apps:app", args = ["smoke", "brew"] }]
-
-["test-apps:comprehensive"]
-description = "Run all test_app comprehensive tests"
-run = [
-  { task = "test-apps:comprehensive:python" },
-  { task = "test-apps:comprehensive:node" },
-  { task = "test-apps:comprehensive:wasm" },
-  { task = "test-apps:comprehensive:ruby" },
-  { task = "test-apps:comprehensive:go" },
-  { task = "test-apps:comprehensive:java" },
-  { task = "test-apps:comprehensive:csharp" },
-  { task = "test-apps:comprehensive:php" },
-  { task = "test-apps:comprehensive:elixir" },
-  { task = "test-apps:comprehensive:c" },
-  { task = "test-apps:comprehensive:dart" },
-  { task = "test-apps:comprehensive:zig" },
-  { task = "test-apps:comprehensive:kotlin_android" },
-  { task = "test-apps:comprehensive:swift_e2e" },
-]
 
 ["test-apps:comprehensive:python"]
 description = "Run Python test_app comprehensive tests"

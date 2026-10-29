@@ -1,14 +1,5 @@
 # Ruby binding (packages/ruby), included from mise.toml [task_config]. ~keep
 
-["ruby:install"]
-description = "Install Ruby dependencies"
-dir = "{{config_root}}/packages/ruby"
-run = "bundle install"
-
-["ruby:setup"]
-description = "Alias for install"
-run = [{ task = "ruby:install" }]
-
 ["ruby:build"]
 description = "Build Ruby native extension"
 dir = "{{config_root}}/packages/ruby"
@@ -25,12 +16,6 @@ dir = "{{config_root}}/packages/ruby"
 env = { CFLAGS = "-O3", LDFLAGS = "-s" }
 run = "bundle exec rake compile"
 
-["ruby:build:ci"]
-description = "Build Ruby native extension and gem package in CI mode"
-dir = "{{config_root}}/packages/ruby"
-env = { CFLAGS = "-O3 -g" }
-run = ["rm -rf tmp && echo 'Cleaned stale tmp directory'", "bundle exec rake compile", "bundle exec rake build"]
-
 ["ruby:test"]
 description = "Run Ruby tests"
 dir = "{{config_root}}/packages/ruby"
@@ -43,41 +28,15 @@ dir = "{{config_root}}/packages/ruby"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bundle exec rspec"
 
-["ruby:test:verbose"]
-description = "Run Ruby tests with detailed output"
-dir = "{{config_root}}/packages/ruby"
-env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
-run = "bundle exec rspec --format documentation --color"
-
 ["ruby:lint"]
 description = "Lint all Ruby code with auto-fix (rubocop + steep across all directories)"
 run = "bash scripts/task/ruby-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
-["ruby:lint:check"]
-description = "Check all Ruby code linting without modifications (rubocop + steep)"
-run = "bash scripts/task/ruby-lint.sh check"
 run_windows = "{{vars.unix_only}}"
 
 ["ruby:format"]
 description = "Format all Ruby code with modifications (rubocop across all directories)"
 run = "bash scripts/task/ruby-lint.sh fix"
 run_windows = "{{vars.unix_only}}"
-
-["ruby:format:check"]
-description = "Check all Ruby code formatting without modifications (rubocop)"
-run = "bash scripts/task/ruby-lint.sh check"
-run_windows = "{{vars.unix_only}}"
-
-["ruby:typecheck"]
-description = "Run steep type checking"
-dir = "{{config_root}}/packages/ruby"
-run = "bundle exec steep check"
-
-["ruby:console"]
-description = "Open Ruby console with Crawlberg loaded"
-dir = "{{config_root}}/packages/ruby"
-run = "bundle exec pry -r ./lib/crawlberg"
 
 ["ruby:clean"]
 description = "Clean Ruby build artifacts"
@@ -93,11 +52,6 @@ run = [
 description = "Update Ruby dependencies to latest versions (including major versions)"
 run = "mise run deps upgrade ruby"
 
-["ruby:e2e:generate"]
-description = "Generate and auto-fix Ruby E2E tests from fixtures"
-run = ["bash scripts/task/e2e-generate.sh ruby", { task = "ruby:e2e:format" }]
-run_windows = "{{vars.unix_only}}"
-
 ["ruby:e2e:test"]
 description = "Run Ruby E2E tests"
 dir = "{{config_root}}/e2e/ruby"
@@ -108,11 +62,3 @@ description = "Lint Ruby E2E code (check only)"
 dir = "{{config_root}}/e2e/ruby"
 run = "bundle exec rubocop --config .rubocop.yaml"
 
-["ruby:e2e:format"]
-description = "Auto-fix Ruby E2E code formatting"
-dir = "{{config_root}}/e2e/ruby"
-run = "bundle exec rubocop --config .rubocop.yaml --autocorrect-all"
-
-["ruby:e2e:verify"]
-description = "Regenerate and validate Ruby E2E suite (generate + lint + test)"
-run = [{ task = "ruby:e2e:generate" }, { task = "ruby:e2e:lint" }, { task = "ruby:e2e:test" }]
