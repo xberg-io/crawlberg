@@ -179,10 +179,6 @@ run = [{ task = "clean" }, { task = "clean:workspace" }, { task = "clean:e2e" }]
 description = "Run all linters via poly"
 run = "poly lint ."
 
-[tasks."lint:check"]
-description = "Run linting in check mode"
-run = "poly lint ."
-
 [tasks.format]
 description = "Format all code"
 run = "poly fmt --fix ."
@@ -193,7 +189,7 @@ run = "poly fmt --check ."
 
 [tasks.check]
 description = "Run check-only validation"
-run = [{ task = "format:check" }, { task = "lint:check" }]
+run = [{ task = "format:check" }, { task = "lint" }]
 
 # ---- alef --------------------------------------------------------------------------------------
 
