@@ -29,18 +29,17 @@ mise run alef:bump 0.15.30   # bump the alef.toml and mise.toml pins + install +
 ## After crawlberg-core changes
 
 ```text
-mise run build          # core-only
-mise run build:bindings # all bindings
-mise run build:all      # core + all bindings
+mise run build      # core-only
+mise run alef:build # all bindings
 ```
 
 ## E2E cycles
 
 ```text
 mise run e2e:generate # regenerate all language test suites from fixtures
-mise run e2e:build    # rebuild the e2e mock-server only (bindings: mise run build:bindings)
+mise run e2e:build    # rebuild the e2e mock-server only (bindings: mise run alef:build)
 mise run e2e:test     # run generated e2e suites
-mise run e2e:all      # e2e:verify: generate + lint + test
+mise run e2e:verify   # generate + lint + test
 ```
 
 ## Cleanup
