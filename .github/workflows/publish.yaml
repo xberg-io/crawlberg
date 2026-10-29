@@ -2052,12 +2052,11 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /scripts/ci/check_browser_fork.py
-            /scripts/ci/fork-check.Taskfile.yml
 
-      - name: Install Task
+      - name: Install Python
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install-args: python
           config-ref: ${{ github.sha }}
 
       - name: Check the browser fork version in crates.io
@@ -2065,7 +2064,7 @@ jobs:
         env:
           FORK_VERSION: ${{ steps.fork_metadata.outputs.version }}
         working-directory: .release-workflow/scripts/ci
-        run: task --taskfile fork-check.Taskfile.yml check
+        run: python3 check_browser_fork.py
 
       - name: Publish the browser fork before core crates
         if: steps.fork_registry.outputs.exists == 'false'
@@ -3365,7 +3364,7 @@ jobs:
           expected="${VERSION%%-dryrun-*}"
           if [[ "${actual}" != "${expected}" ]]; then
             echo "::error::plugin/package.json declares ${actual} but the release is ${expected};" \
-              "regenerate the plugin bundle (task version:sync) before tagging"
+              "regenerate the plugin bundle (mise run version:sync) before tagging"
             exit 1
           fi
           echo "plugin/package.json matches the release at ${expected}"

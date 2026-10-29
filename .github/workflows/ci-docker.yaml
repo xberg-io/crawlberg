@@ -26,10 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Task
+      - name: Set up mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
 
       - name: Free disk space
         uses: xberg-io/actions/free-disk-space-linux@v1
@@ -50,7 +50,7 @@ jobs:
 
       - name: Save Docker image
         shell: bash
-        run: task docker:save IMAGE=crawlberg:${{ matrix.variant }} OUTPUT=/tmp/crawlberg-${{ matrix.variant }}.tar.gz
+        run: mise run docker:save crawlberg:${{ matrix.variant }} /tmp/crawlberg-${{ matrix.variant }}.tar.gz
 
       - name: Check image size
         uses: xberg-io/actions/check-docker-image-size@v1
@@ -61,12 +61,12 @@ jobs:
 
       - name: Run feature tests
         if: matrix.variant != 'cli'
-        run: task docker:test:features IMAGE=crawlberg:${{ matrix.variant }}
+        run: mise run docker:test:features crawlberg:${{ matrix.variant }}
 
       - name: Run configuration tests
         if: matrix.variant != 'cli'
-        run: task docker:test:config IMAGE=crawlberg:${{ matrix.variant }}
+        run: mise run docker:test:config crawlberg:${{ matrix.variant }}
 
       - name: Run CLI tests
         if: matrix.variant == 'cli'
-        run: task docker:test:features IMAGE=crawlberg:cli
+        run: mise run docker:test:features crawlberg:cli

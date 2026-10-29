@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "scripts/**"
-      - "Taskfile.yml"
+      - "mise-tasks/**"
       - ".github/workflows/ci-scripts.yaml"
       - "mise.toml"
       - "mise.lock"
@@ -47,14 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ~keep Bats comes from mise.lock at the version task test:scripts:bats expects locally.
-      - name: Install Task, Go and Bats
+      # ~keep Bats comes from mise.lock at the version `mise run test:scripts:bats` expects locally.
+      - name: Install Go and Bats
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task go bats
+          install-args: go bats
 
       - name: Check the vendored Bats helpers
-        run: task test:scripts:lib:check
+        run: mise run test:scripts:lib:check
 
       - name: Run the shell contract tests
         uses: xberg-io/actions/run-bats@v1
@@ -71,10 +71,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Task
+      - name: Set up mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
 
       # ~keep No org action wraps shfmt and it is not on the runner image, so the binary is
       # fetched directly from its own release. `poly fmt --check` does NOT cover these files --
@@ -100,4 +100,4 @@ jobs:
           }
 
       - name: Check shell formatting
-        run: task lint:shell
+        run: mise run lint:shell

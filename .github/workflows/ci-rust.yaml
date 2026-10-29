@@ -21,11 +21,9 @@ on:
       - "rust-toolchain.toml"
       - "mise.toml"
       - "mise.lock"
-      - "Taskfile.yml"
+      - "mise-tasks/**"
       - "scripts/ci/prepare-chrome-runtime.sh"
       - "scripts/ci/test_chrome_runtime.py"
-      - ".task/languages/rust.yml"
-      - ".task/workflows/dev-cycle.yml"
       # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
       # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
       # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
@@ -59,11 +57,10 @@ on:
   #     - "e2e/rust/Cargo.toml"
   #     - "e2e/rust/Cargo.lock"
   #     - "rust-toolchain.toml"
-  #     - "Taskfile.yml"
+  #     - "mise.toml"
+  #     - "mise-tasks/**"
   #     - "scripts/ci/prepare-chrome-runtime.sh"
   #     - "scripts/ci/test_chrome_runtime.py"
-  #     - ".task/languages/rust.yml"
-  #     - ".task/workflows/dev-cycle.yml"
   #     # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
   #     # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
   #     # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
@@ -124,10 +121,10 @@ jobs:
           cache-key-prefix: rust-${{ matrix.os }}
           use-sccache: "false"
 
-      - name: Install Task
+      - name: Set up mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
 
       # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
       # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
@@ -171,11 +168,11 @@ jobs:
       # via common::is_missing_chrome_message on every CI run.
       - name: Test Chromium runtime preparation
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: task ci:chrome:runtime:test
+        run: mise run ci:chrome:runtime:test
 
       - name: Prepare Chromium snap runtime
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: task ci:chrome:runtime
+        run: mise run ci:chrome:runtime
 
       - name: Setup Chrome
         id: chrome
@@ -183,12 +180,12 @@ jobs:
 
       - name: Prepare Chrome app bundle
         id: prepared_chrome
-        run: task rust:chrome:prepare
+        run: mise run rust:chrome:prepare
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
 
       - name: Run tests
-        run: task rust:test:ci
+        run: mise run rust:test:ci
         shell: bash
         env:
           CHROME: ${{ steps.prepared_chrome.outputs.chrome-path }}
@@ -200,7 +197,7 @@ jobs:
 
       # ~keep Compiling each feature cannot catch a native-only crawl silently choosing HTTP (#690).
       - name: Test native browser without Chromiumoxide
-        run: task rust:test:native-only
+        run: mise run rust:test:native-only
         shell: bash
 
       - name: Check no-default-features
@@ -241,15 +238,15 @@ jobs:
         with:
           use-sccache: "false"
           cache-key-prefix: windows-browser
-      - name: Install Task
+      - name: Set up mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
       - name: Setup Chrome
         id: chrome
         uses: xberg-io/actions/setup-chrome@v1
       - name: Run Windows browser tests
-        run: task rust:test:windows-browser
+        run: mise run rust:test:windows-browser
         shell: bash
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
@@ -281,10 +278,10 @@ jobs:
           cache-key-prefix: feature-combinations
           use-sccache: "false"
 
-      - name: Install Task
+      - name: Set up mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
 
       - name: Install cargo-hack
         run: cargo install cargo-hack --locked
@@ -312,7 +309,7 @@ jobs:
         shell: bash
 
       - name: Assert the secondary lockfiles are current
-        run: task rust:lockfiles:check
+        run: mise run rust:lockfiles:check
 
   validate-rust:
     name: Validate Rust
@@ -334,17 +331,17 @@ jobs:
           cache-key-prefix: validate-rust
           use-sccache: "false"
 
-      # ~keep `task rust:lint:check` runs `deps:check` first, which hard-fails when
+      # ~keep `mise run rust:lint:check` runs `deps:check` first, which hard-fails when
       # cargo-machete is absent rather than skipping — deliberately, so the 14 curated
       # [package.metadata.cargo-machete] lists cannot go unread. Nothing installed it here,
-      # so the job died on its very first command. Poly serves `task alef:verify` below.
-      - name: Install Task, cargo-machete and Poly
+      # so the job died on its very first command. Poly serves `mise run alef:verify` below.
+      - name: Install cargo-machete and Poly
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task github:bnjbvr/cargo-machete github:Goldziher/poly
+          install-args: github:bnjbvr/cargo-machete github:Goldziher/poly
 
       - name: Run Rust lint checks
-        run: task rust:lint:check
+        run: mise run rust:lint:check
 
       # ~keep Alef's Poly-owned comparison delegates C and shell formatting to these external
       # ~keep binaries. The requested versions are pinned, but the action still uses a nested
@@ -358,13 +355,13 @@ jobs:
           shfmt-version: "3.14.1"
 
       - name: Run C lint checks
-        run: task c:lint:check
+        run: mise run c:lint:check
 
       - name: Install alef
         uses: xberg-io/actions/install-alef@v1
 
       - name: Verify generated bindings and Poly-owned formatting coverage
-        run: task alef:verify
+        run: mise run alef:verify
 
       # ~keep The list this step used to carry named one path, packages/go/include/crawlberg.h,
       # ~keep which crates/crawlberg-ffi/build.rs writes in the same call as the canonical header

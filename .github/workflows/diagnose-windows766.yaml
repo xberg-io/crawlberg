@@ -41,12 +41,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Install Python and Task
+      - name: Install Python
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: python task
+          install-args: python
       - name: Verify evidence guardrails
-        run: task ci:windows766:harness-test
+        run: mise run ci:windows766:harness-test
       - uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: windows766-diagnostic
@@ -55,20 +55,20 @@ jobs:
         id: chrome
         uses: xberg-io/actions/setup-chrome@v1
       - name: Record provenance and apply diagnostic instrumentation
-        run: task ci:windows766:prepare
+        run: mise run ci:windows766:prepare
         env:
           GH_TOKEN: ${{ github.token }}
           CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
       - name: Build lifecycle executable once
-        run: task ci:windows766:build
+        run: mise run ci:windows766:build
       - name: Run control then exact real browser test
-        run: task ci:windows766:run
+        run: mise run ci:windows766:run
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
           CRAWLBERG_TEST_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
       - name: Verify complete evidence and classify outcome
         if: always()
-        run: task ci:windows766:verify
+        run: mise run ci:windows766:verify
       - name: Preserve complete diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v7

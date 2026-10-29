@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import tomllib
 import unittest
 import urllib.error
 import urllib.response
@@ -44,10 +45,11 @@ def release_fixture(directory: Path) -> tuple[Path, str, str]:
     git(origin, "config", "user.email", "test@example.invalid")
     (origin / "release.txt").write_text("immutable old release source\n")
     (origin / "Taskfile.yml").write_text("version: '3'\ntasks:\n  existing: {cmds: [echo existing]}\n")
-    git(origin, "add", "release.txt", "Taskfile.yml")
+    (origin / "mise.toml").write_text('[tasks.existing]\nrun = "echo existing"\n')
+    git(origin, "add", "release.txt", "Taskfile.yml", "mise.toml")
     git(origin, "commit", "--quiet", "-m", "test: create old release")
     release_sha = git(origin, "rev-parse", "HEAD")
-    for name in ("check_browser_fork.py", "fork-check.Taskfile.yml"):
+    for name in ("check_browser_fork.py",):
         original = ROOT / "scripts/ci" / name
         if original.exists():
             destination = origin / "scripts/ci" / name
@@ -86,7 +88,7 @@ def checkout_workflow_tools(release: Path, origin: Path, workflow_sha: str, chec
     assert checkout["fetch-depth"] == 1 and checkout["persist-credentials"] is False
     assert checkout["sparse-checkout-cone-mode"] is False
     patterns = checkout["sparse-checkout"].split()
-    assert patterns == ["/scripts/ci/check_browser_fork.py", "/scripts/ci/fork-check.Taskfile.yml"]
+    assert patterns == ["/scripts/ci/check_browser_fork.py"]
     tooling = release / checkout["path"]
     subprocess.run(
         [
@@ -104,8 +106,9 @@ def checkout_workflow_tools(release: Path, origin: Path, workflow_sha: str, chec
     )
     git(tooling, "sparse-checkout", "set", "--no-cone", *patterns)
     git(tooling, "switch", "--quiet", "--detach", workflow_sha)
-    assert git(tooling, "ls-files", "-t").count("H ") == 2
+    assert git(tooling, "ls-files", "-t").count("H ") == 1
     assert not (tooling / "Taskfile.yml").exists()
+    assert not (tooling / "mise.toml").exists()
 
 
 class ForkPublicationTests(unittest.TestCase):
@@ -205,7 +208,7 @@ class ForkPublicationTests(unittest.TestCase):
         guards = [step for step in self.steps if step.get("id") == "fork_registry"]
         assert len(guards) == 1
         guard = guards[0]
-        assert guard["run"] == "task --taskfile fork-check.Taskfile.yml check"
+        assert guard["run"] == "python3 check_browser_fork.py"
         assert guard["working-directory"] == ".release-workflow/scripts/ci"
         assert guard["env"] == {"FORK_VERSION": "${{ steps.fork_metadata.outputs.version }}"}
         publisher = next(
@@ -214,15 +217,15 @@ class ForkPublicationTests(unittest.TestCase):
         assert self.steps.index(self.metadata_step()) < self.steps.index(guard) < self.steps.index(publisher)
         installers = [step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/setup-mise@")]
         assert len(installers) == 1 and installers[0]["uses"] == "xberg-io/actions/setup-mise@v1"
-        assert "task" in installers[0]["with"]["install-args"].split()
+        assert "python" in installers[0]["with"]["install-args"].split()
         assert installers[0]["with"]["config-ref"] == "${{ github.sha }}"
         assert self.steps.index(installers[0]) < self.steps.index(guard)
         tools = [step for step in self.steps if step.get("name") == "Check out workflow publishing tools"]
         assert len(tools) == 1
         assert tools[0]["uses"] == "actions/checkout@v7"
         assert self.steps.index(self.metadata_step()) < self.steps.index(tools[0]) < self.steps.index(guard)
-        tasks = yaml.safe_load((ROOT / ".task/tools/general.yml").read_text())["tasks"]
-        assert tasks["ci:release:fork:check"]["cmds"] == ["python3 scripts/ci/check_browser_fork.py"]
+        tasks = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]
+        assert tasks["ci:release:fork:check"]["run"] == "python3 scripts/ci/check_browser_fork.py"
 
     def test_registry_guard_works_when_the_release_has_no_workflow_tooling(self) -> None:
         guard = next(step for step in self.steps if step.get("id") == "fork_registry")

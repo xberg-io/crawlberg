@@ -68,10 +68,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install Task and Python
+      - name: Install Python
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task python
+          install-args: python
       - name: Install workflow parser
         run: python3 -m pip install 'PyYAML>=6.0.3'
       # ~keep The discovery below also runs the tests of the released-constructor check.
