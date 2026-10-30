@@ -69,7 +69,7 @@ impl BenchmarkRunner {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error`] if adapter setup or teardown fails.
+    /// Returns [`crate::Error`] if adapter setup, process inspection initialization or teardown fails.
     pub async fn run(
         &mut self,
     ) -> Result<(
@@ -90,7 +90,12 @@ impl BenchmarkRunner {
         );
 
         let mut monitor = ResourceMonitor::new();
-        monitor.start(Duration::from_millis(10)).await;
+        if let Err(error) = monitor.start(Duration::from_millis(10)).await {
+            if let Err(teardown_error) = self.adapter.teardown().await {
+                warn!(%teardown_error, "adapter teardown failed after process inspection initialization failed");
+            }
+            return Err(error);
+        }
 
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
         let cached_html_map = self.build_cached_html_map();
@@ -298,8 +303,10 @@ impl BenchmarkRunner {
 
                 drop(permit);
 
-                let _ = pre_snapshot;
-                let memory_bytes = post_snapshot.memory_bytes;
+                let memory_bytes = post_snapshot.as_ref().map(|sample| sample.memory_bytes).unwrap_or(0);
+                let scrape_result = pre_snapshot
+                    .and(scrape_result)
+                    .and_then(|output| post_snapshot.map(|_| output));
 
                 let (success, error_msg, maybe_output) = match scrape_result {
                     Ok(output) => (true, None, Some(output)),

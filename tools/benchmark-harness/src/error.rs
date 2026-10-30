@@ -33,6 +33,10 @@ pub enum Error {
     #[error("profiling error: {0}")]
     Profiling(String),
 
+    /// Process inspection could not be initialized for benchmark measurements.
+    #[error("failed to initialize benchmark process inspection: {0}")]
+    Monitoring(#[from] sysinfo::Error),
+
     /// A dataset download or access operation failed.
     #[error("dataset error: {0}")]
     Dataset(String),

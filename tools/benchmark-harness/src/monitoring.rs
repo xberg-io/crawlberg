@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::Mutex;
 
+use crate::Result;
 use crate::stats::{percentile_r7, sanitize_f64};
 
 /// A single resource usage sample.
@@ -78,24 +79,36 @@ impl ResourceMonitor {
     /// Calling `start` on an already-running monitor is a no-op.
     ///
     /// The background task runs until [`ResourceMonitor::stop`] is called.
-    pub async fn start(&mut self, sample_interval: Duration) {
-        if self.running.swap(true, Ordering::SeqCst) {
-            return;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if process inspection cannot be initialized; no sampling task is started.
+    pub async fn start(&mut self, sample_interval: Duration) -> Result<()> {
+        self.start_with_system(sample_interval, System::new).await
+    }
+
+    async fn start_with_system(
+        &mut self,
+        sample_interval: Duration,
+        initialize: impl FnOnce() -> std::result::Result<System, sysinfo::Error>,
+    ) -> Result<()> {
+        if self.running.load(Ordering::SeqCst) {
+            return Ok(());
         }
+        let mut system = initialize()?;
+        self.running.store(true, Ordering::SeqCst);
 
         let samples = Arc::clone(&self.samples);
         let running = Arc::clone(&self.running);
         let pid = self.pid;
         let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu();
 
-        let mut sys = System::new();
-        sys.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
-        self.baseline_memory = process_tree_memory(pid, &sys);
+        system.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
+        self.baseline_memory = process_tree_memory(pid, &system);
 
         tokio::time::sleep(sample_interval).await;
 
         tokio::spawn(async move {
-            let mut system = System::new();
             let start = Instant::now();
 
             system.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
@@ -122,6 +135,7 @@ impl ResourceMonitor {
                 tokio::time::sleep(sample_interval).await;
             }
         });
+        Ok(())
     }
 
     /// Signal the background task to stop after its current sleep completes.
@@ -194,9 +208,13 @@ impl Default for ResourceMonitor {
 ///
 /// The `timestamp_ms` field of the returned [`ResourceSample`] is set to `0`
 /// because it is not meaningful for a point-in-time snapshot.
-pub fn snapshot_resources() -> ResourceSample {
+///
+/// # Errors
+///
+/// Returns an error if process inspection cannot be initialized.
+pub fn snapshot_resources() -> Result<ResourceSample> {
     let pid = sysinfo::get_current_pid().unwrap_or_else(|_| Pid::from_u32(std::process::id()));
-    let mut sys = System::new();
+    let mut sys = System::new()?;
     let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
 
@@ -204,12 +222,12 @@ pub fn snapshot_resources() -> ResourceSample {
     let vm = process_tree_vm(pid, &sys);
     let cpu = process_tree_cpu(pid, &sys) / num_cpus::get().max(1) as f64;
 
-    ResourceSample {
+    Ok(ResourceSample {
         memory_bytes: memory,
         vm_bytes: vm,
         cpu_percent: cpu,
         timestamp_ms: 0,
-    }
+    })
 }
 
 /// Sum RSS memory across a process and all its children (recursive).
@@ -260,6 +278,42 @@ pub(crate) fn process_tree_cpu(pid: Pid, system: &System) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_measures_current_process_memory() {
+        let snapshot = snapshot_resources().expect("current process inspection is available");
+        assert!(snapshot.memory_bytes > 0, "snapshot RSS must be measured");
+        assert!(snapshot.vm_bytes > 0, "snapshot virtual memory must be measured");
+        assert!(snapshot.cpu_percent.is_finite());
+        assert!(snapshot.cpu_percent >= 0.0);
+        assert_eq!(snapshot.timestamp_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn initialization_failure_preserves_source_and_leaves_monitor_restartable() {
+        let mut monitor = ResourceMonitor::new();
+        let error = monitor
+            .start_with_system(Duration::from_millis(1), || {
+                Err(sysinfo::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "process table access denied",
+                )))
+            })
+            .await
+            .expect_err("initialization must fail rather than invent zero metrics");
+        assert!(error.to_string().contains("benchmark process inspection"));
+        assert!(error.to_string().contains("process table access denied"));
+        assert!(std::error::Error::source(&error).is_some());
+        assert!(!monitor.running.load(Ordering::SeqCst));
+        assert_eq!(monitor.metrics().await.sample_count, 0);
+        monitor
+            .start(Duration::from_millis(1))
+            .await
+            .expect("retry must initialize");
+        assert!(monitor.running.load(Ordering::SeqCst));
+        assert!(monitor.metrics().await.baseline_memory_bytes > 0);
+        monitor.stop();
+    }
 
     #[test]
     fn resource_monitor_new_does_not_panic() {
@@ -324,7 +378,10 @@ mod tests {
         // for the sampler to actually produce samples instead of sleeping a fixed
         // real-time window and hoping it was long enough (#430).
         let mut monitor = ResourceMonitor::new();
-        monitor.start(Duration::from_millis(20)).await;
+        monitor
+            .start(Duration::from_millis(20))
+            .await
+            .expect("process inspection starts");
 
         let wait_for_samples = async {
             loop {
@@ -343,7 +400,13 @@ mod tests {
         );
         monitor.stop();
 
-        let sample_count = monitor.metrics().await.sample_count;
-        assert!(sample_count >= 2, "expected >=2 samples, got {sample_count}");
+        let metrics = monitor.metrics().await;
+        assert!(
+            metrics.sample_count >= 2,
+            "expected >=2 samples, got {}",
+            metrics.sample_count
+        );
+        assert!(metrics.baseline_memory_bytes > 0, "baseline RSS must be measured");
+        assert!(metrics.peak_memory_bytes > 0, "samples must contain measured RSS");
     }
 }
