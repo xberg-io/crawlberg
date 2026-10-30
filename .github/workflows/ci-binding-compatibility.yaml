@@ -134,6 +134,7 @@ jobs:
         with:
           use-sccache: "false"
           cache-key-prefix: binding-compatibility-swift
+      # Swift stays on its setup action (toolchain-management rule). ~keep
       - uses: xberg-io/actions/setup-swift@v1
         with:
           swift-version: "6.0"

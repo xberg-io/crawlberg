@@ -51,6 +51,7 @@ jobs:
         with:
           use-sccache: "false"
           cache-key-prefix: ci-mobile-android-${{ matrix.abi }}
+      # The Android SDK/NDK stays on its setup action (toolchain-management rule). ~keep
       - uses: xberg-io/actions/setup-android-ndk@v1
       - name: cargo ndk check crawlberg-dart
         run: cargo ndk --target ${{ matrix.abi }} --platform 21 -- check -p crawlberg-dart
@@ -77,6 +78,7 @@ jobs:
           use-sccache: "false"
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-kotlin-android-${{ matrix.abi }}
+      # The Android SDK/NDK stays on its setup action (toolchain-management rule). ~keep
       - uses: xberg-io/actions/setup-android-ndk@v1
       - uses: xberg-io/actions/build-android-natives@v1
         with:

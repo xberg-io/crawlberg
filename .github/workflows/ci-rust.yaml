@@ -129,6 +129,7 @@ jobs:
       # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
       # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
       # already trusts for the php e2e job, so this is not a newly-introduced toolchain.
+      # PHP stays on its setup action (toolchain-management rule). ~keep
       - name: Setup PHP
         uses: xberg-io/actions/setup-php@v1
         with:

@@ -148,6 +148,7 @@ jobs:
       # with "Because crawlberg depends on freezed >=4.0.0 which requires SDK version
       # >=3.13.0 <4.0.0, version solving failed" — 264 of the job's 528 session-prep
       # Errors. 3.13.7 keeps the analysis-server fix and clears freezed's floor. ~keep
+      # Dart/Flutter stay on their setup action (toolchain-management rule). ~keep
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:

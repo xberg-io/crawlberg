@@ -20,7 +20,7 @@
   "extensions": {
     "com.openai": {
       "interface": {
-        "brandColor": "#7C3AED",
+        "brandColor": "#00E0C2",
         "capabilities": [
           "Read",
           "Write"
