@@ -6,6 +6,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- Preserve navigation errors and partial timeout content when the SSRF policy refuses only a browser subresource. (#812)
 - Preserve false and explicit nil values in generated Ruby tagged variants, and retain nullable constructor arguments in RBS.
 
 ### Changed

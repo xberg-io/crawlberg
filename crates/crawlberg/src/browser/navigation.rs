@@ -228,7 +228,7 @@ async fn render(
         watch.mark_unsettled();
         return Ok(stopped_browser_page(watch, stop));
     }
-    if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
+    if let Err(error) = resolve_navigation_outcome(navigation, watch.blocked_navigation(), timeout) {
         watch.mark_unsettled();
         if matches!(error, CrawlError::BrowserError { .. })
             && let Some(outcome) = answered_error_page(page, watch, watch.redirects_followed(), timeout).await
@@ -1214,6 +1214,68 @@ mod tests {
         let rendered = rendered.expect("the selector added after the first miss must be found");
         assert_eq!(hook_runs, 1, "the first confirmed miss must trigger the test hook once");
         assert!(rendered.response.body.contains("data-selector-ready=\"yes\""));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_blocked_subresource_keeps_the_partial_page_after_navigation_times_out() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let test_name = "a_blocked_subresource_keeps_the_partial_page_after_navigation_times_out";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        Mock::given(method("GET"))
+            .and(path("/blocked-subresource"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "<html><body><p>visible partial content</p>",
+                    "<img src=\"http://169.254.169.254/blocked.gif\">",
+                    "<img src=\"/slow.gif\"></body></html>",
+                ),
+                "text/html",
+            ))
+            .mount(&fixture._site)
+            .await;
+        let mut config = fixture.config.clone();
+        config.browser.timeout = Duration::from_secs(2);
+        let rendered = render(
+            &fixture.url("/blocked-subresource"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+        )
+        .await;
+        fixture.stop().await;
+
+        let rendered = rendered.expect("a refused image must not hide the partial document");
+        assert!(rendered.partial.is_some());
+        assert!(rendered.response.body.contains("visible partial content"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_blocked_main_document_still_reports_the_ssrf_violation() {
+        let test_name = "a_blocked_main_document_still_reports_the_ssrf_violation";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let rendered = render(
+            "http://169.254.169.254/",
+            &fixture.config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+        )
+        .await;
+        fixture.stop().await;
+
+        let Err(CrawlError::SsrfPolicyViolation { url, .. }) = rendered else {
+            panic!("a refused main document must report its SSRF violation");
+        };
+        assert_eq!(url, "http://169.254.169.254/");
     }
 
     /// A page that timed out while loading, with an overall deadline too near for the read of what
