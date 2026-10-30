@@ -927,6 +927,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      # PHP stays on its setup action (toolchain-management rule). ~keep
       - uses: xberg-io/actions/setup-php@v1
         with:
           php-version: ${{ matrix.php }}
@@ -1454,6 +1455,7 @@ jobs:
         shell: bash
         run: echo "ImageOS=win25" >> "$GITHUB_ENV"
 
+      # BEAM stays on its setup action until mise's Erlang/Elixir install is evaluated. ~keep
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17"
@@ -1510,6 +1512,7 @@ jobs:
         shell: bash
         run: echo "ImageOS=ubuntu24" >> "$GITHUB_ENV"
 
+      # BEAM stays on its setup action until mise's Erlang/Elixir install is evaluated. ~keep
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17"
@@ -2479,6 +2482,7 @@ jobs:
             cp -v "${dir}native/"* "packages/csharp/Crawlberg/runtimes/${rid}/native/"
           done
 
+      # dotnet stays on its setup action: mise.lock cannot lock it (toolchain-management rule). ~keep
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
@@ -2547,6 +2551,7 @@ jobs:
           output-path: packages/elixir/checksum-Elixir.Crawlberg.Native.exs
           token: ${{ steps.app-token.outputs.token }}
 
+      # BEAM stays on its setup action until mise's Erlang/Elixir install is evaluated. ~keep
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17"
@@ -2662,6 +2667,7 @@ jobs:
           target: ${{ matrix.target }}
           cache-key-prefix: kotlin-android-${{ matrix.abi }}
 
+      # The Android SDK/NDK stays on its setup action (toolchain-management rule). ~keep
       - uses: xberg-io/actions/setup-android-ndk@v1
 
       - uses: xberg-io/actions/build-android-natives@v1

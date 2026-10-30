@@ -317,12 +317,14 @@ jobs:
           bundle config set frozen true
           bundle install --jobs 4
 
+      # dotnet stays on its setup action: mise.lock cannot lock it (toolchain-management rule). ~keep
       - name: Setup .NET
         if: matrix.dotnet-version
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ matrix.dotnet-version }}
 
+      # PHP stays on its setup action (toolchain-management rule). ~keep
       - name: Setup PHP
         if: matrix.php-version
         uses: xberg-io/actions/setup-php@v1
@@ -331,6 +333,7 @@ jobs:
           tools: composer
           extensions: ${{ matrix.php-extensions || '' }}
 
+      # BEAM stays on its setup action until mise's Erlang/Elixir install is evaluated. ~keep
       - name: Setup Elixir
         if: matrix.elixir-version
         uses: xberg-io/actions/setup-elixir@v1
@@ -338,12 +341,14 @@ jobs:
           elixir-version: ${{ matrix.elixir-version }}
           otp-version: ${{ matrix.otp-version }}
 
+      # Dart/Flutter stay on their setup action (toolchain-management rule). ~keep
       - name: Setup Dart
         if: matrix.dart-version
         uses: dart-lang/setup-dart@v1
         with:
           sdk: ${{ matrix.dart-version }}
 
+      # Swift stays on its setup action (toolchain-management rule). ~keep
       - name: Setup Swift
         if: matrix.swift-version
         uses: xberg-io/actions/setup-swift@v1
@@ -384,6 +389,7 @@ jobs:
       # AndroidManifest.xml) resolves to generateDebugRFile /
       # parseDebugLocalResources, not compileDebugLibraryResources /
       # processDebugResources — so aapt2 is never invoked for this target.
+      # The Android SDK/NDK stays on its setup action (toolchain-management rule). ~keep
       - name: Setup Android SDK
         if: matrix.gradle
         uses: android-actions/setup-android@v4
