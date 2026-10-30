@@ -598,3 +598,10 @@ jobs:
           # Forcing it at the workflow level breaks the hand-written SSRF
           # rejection tests (e2e/{node,rust}/tests/ssrf*) that must
           # observe deny_private=true.
+
+      # ~keep The package unit tests link the release library that the dart E2E task and the
+      # build-ffi artifacts leave in target/release, so they run after the E2E suite.
+      - name: Run package unit tests
+        if: matrix.lang == 'dart' || matrix.lang == 'swift' || matrix.lang == 'zig'
+        run: mise run ${{ matrix.lang }}:test
+        shell: bash
