@@ -330,7 +330,7 @@ poly.local.toml
 .ai-rulez/.config.local.*
 .opencode/agents/
 .opencode/commands/
-opencode.json
+/opencode.json
 # END ai-rulez
 
 # Runtime log written and truncated by e2e/brew/run_tests.sh on every run.
