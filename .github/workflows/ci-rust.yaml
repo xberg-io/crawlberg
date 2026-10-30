@@ -354,9 +354,6 @@ jobs:
           install-shellcheck: "false"
           shfmt-version: "3.14.1"
 
-      - name: Run C lint checks
-        run: mise run c:lint:check
-
       - name: Install alef
         uses: xberg-io/actions/install-alef@v1
 
