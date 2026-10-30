@@ -22,15 +22,15 @@ wheels = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.2"
+version = "1.12.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1f/6c/a73127f907d12b1bfd6c5f383ec93b499d3002259101681bf4d56324a061/crawlberg-1.12.2.tar.gz", hash = "sha256:7ecc02ee4f3f5de4337aeb08e168c7eab15a1fe3a30b9fd30cf8312b96ad379b", size = 129314, upload-time = "2026-10-27T10:00:02.561Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/f2/4b73952ec04f96f7767875cc43e3b535f592b8f3eab101034afa79323f93/crawlberg-1.12.3.tar.gz", hash = "sha256:53228499c41853651ba93a99d660fb3520498c5204a0d421326dd660f81d4f53", size = 129307, upload-time = "2026-10-27T17:39:05.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/f8/0bb8f65d8b7681477b05342c6b77d784c055e4b5e43546f6a257bddccf2d/crawlberg-1.12.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:c689191cbe5a5a63c0aa3e8569d57b9938f206b51597ade83ee16957a002208f", size = 13104282, upload-time = "2026-10-27T09:59:47.762Z" },
-    { url = "https://files.pythonhosted.org/packages/90/23/16063b29c09139e950429ec2c33ae0527bf6571a43d35c47b248c91567a6/crawlberg-1.12.2-cp310-abi3-macosx_11_0_x86_64.whl", hash = "sha256:aa46801859a981b606f9f3e8ed4ee75209aa3d47a57bd435ed896a5ed1a5885a", size = 13567435, upload-time = "2026-10-27T09:59:51.065Z" },
-    { url = "https://files.pythonhosted.org/packages/40/ee/29673697bc1ace3afbfb9a083bde434150e35f45fa7b10362b9461bf02e7/crawlberg-1.12.2-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:314d4cb045cdfb4d59e81d2e3b65111fada09fdb001432813e49e773d8026e26", size = 14827958, upload-time = "2026-10-27T09:59:53.769Z" },
-    { url = "https://files.pythonhosted.org/packages/39/6b/050dd7445b25c90821dc3e17f322ad2f946e2933e2275657c4fbb388aab3/crawlberg-1.12.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:2e4682a102b04ef816ccda0dafc8c13ac623521682ee816723c11baaa0dc2147", size = 14356882, upload-time = "2026-10-27T09:59:56.815Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/3a/17d35076c7753b513b62c7bd7245785553a67e40fa32ed91d8ac24c66045/crawlberg-1.12.2-cp310-abi3-win_amd64.whl", hash = "sha256:7e14550e21b58e19e759468d2c184db0ee463f00638830ddef980e803b029eea", size = 20377827, upload-time = "2026-10-27T10:00:00.195Z" },
+    { url = "https://files.pythonhosted.org/packages/29/a1/e317d870776f01b5201f656c883aaa2b95a9f51d7ba044669d7f2efe298b/crawlberg-1.12.3-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:aff94de61ce798e7cc066ff82a12ee1e939cda607123f3d056956b302e4fd7b9", size = 13097886, upload-time = "2026-10-27T17:38:50.237Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/67/120bd169d94e397e38fe83a6f2e9d52693233367e6dbc2122f8876e70aae/crawlberg-1.12.3-cp310-abi3-macosx_11_0_x86_64.whl", hash = "sha256:2cd1b0ca3608c943ba19dee2c6ae1decf35c51a922fd6f875f85251bb522dad6", size = 13579127, upload-time = "2026-10-27T17:38:53.253Z" },
+    { url = "https://files.pythonhosted.org/packages/57/81/3c14e647ab435952fbc36ca5ca02d10ca51dca5d56488e79aab98ea1551b/crawlberg-1.12.3-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d50b2dc5a5d4f67b8bc3c1c0069898552cb3740e3598dc0c8ef20fd49f93b432", size = 14826429, upload-time = "2026-10-27T17:38:56.363Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/b4/e260fc25dbdb87cc3760222cc869b132ca600a42b9f1ab09071396bbd155/crawlberg-1.12.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1c2e7b11de0a0ef944c197a79e4f58ee75b2b57363b4591e1358d444e5b1e7ad", size = 14342450, upload-time = "2026-10-27T17:38:59.295Z" },
+    { url = "https://files.pythonhosted.org/packages/44/ba/9b9fb9809ba5acf2789b509299c36be58f5ce47e9215a92674eb3a5a9cdf/crawlberg-1.12.3-cp310-abi3-win_amd64.whl", hash = "sha256:a66d76eab53e4c9a4f9a4c98020da9327b5a2e26f41cac4e6da23811ca2e23ee", size = 20381460, upload-time = "2026-10-27T17:39:02.847Z" },
 ]
 
 [[package]]
@@ -46,7 +46,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crawlberg", specifier = ">=1.12.2" },
+    { name = "crawlberg", specifier = ">=1.12.3" },
     { name = "pytest", specifier = ">=7.4" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-timeout", specifier = ">=2.1" },
@@ -102,7 +102,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "9.1.1"
+version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -113,9 +113,9 @@ dependencies = [
     { name = "pygments" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/42/bb4641652e58dedeac2ec51abc1f8cae4fee4ec63899a0999016229a0f2a/pytest-9.2.0.tar.gz", hash = "sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b", size = 1797555, upload-time = "2026-10-27T21:30:20.728Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+    { url = "https://files.pythonhosted.org/packages/51/39/1f5d8c8877a0fa327db959c19341d4be61660de1ab6b7391f9eb805bcd67/pytest-9.2.0-py3-none-any.whl", hash = "sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588", size = 411776, upload-time = "2026-10-27T21:30:19.131Z" },
 ]
 
 [[package]]
