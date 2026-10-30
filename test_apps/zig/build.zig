@@ -1,6 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+// Zig 0.17 replaced `build_root`/`pathFromRoot` with `root`; the compile-time field check
+// keeps 0.16 working, matching alef's generated e2e build. An if/else statement rather than the
+// generated if-expression, because poly's Zig formatter and `zig fmt` indent that differently. ~keep
+fn buildRoot(b: *std.Build) []const u8 {
+    if (@hasField(std.Build, "root")) {
+        return b.root.toString(b.allocator) catch @panic("failed to resolve build root");
+    } else {
+        return b.build_root.path orelse ".";
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -23,8 +34,9 @@ pub fn build(b: *std.Build) void {
     var mock_servers_json: ?[]const u8 = null;
     var mock_servers_map = std.StringHashMap([]const u8).init(_alloc);
     if (mock_server_url == null) {
-        const _bin = b.pathFromRoot("../rust/target/release/mock-server");
-        const _fixtures = b.pathFromRoot("../../fixtures");
+        const _build_root = buildRoot(b);
+        const _bin = b.pathResolve(&.{ _build_root, "../rust/target/release/mock-server" });
+        const _fixtures = b.pathResolve(&.{ _build_root, "../../fixtures" });
         var _threaded = std.Io.Threaded.init(_alloc, .{});
         const _io = _threaded.io();
         const _spawned = std.process.spawn(_io, .{
