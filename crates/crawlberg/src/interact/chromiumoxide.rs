@@ -1030,7 +1030,7 @@ mod tests {
             while tokio::time::Instant::now() < deadline {
                 let received = site.received_requests().await.unwrap_or_default();
                 if received.iter().any(|request| request.url.path() == "/loaded") {
-                    let mut system = sysinfo::System::new();
+                    let mut system = sysinfo::System::new().expect("process inspection must initialize");
                     system.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::Some(&[chrome]),
                         true,

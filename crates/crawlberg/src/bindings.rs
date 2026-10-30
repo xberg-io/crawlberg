@@ -652,15 +652,18 @@ mod tests {
             #[cfg(target_os = "linux")]
             if mode == "stdin" {
                 let flag = crate::browser_pool::user_data_dir_flag(&profile);
-                let inputs: Vec<_> = crate::browser_pool::processes_naming(&mut sysinfo::System::new(), &flag)
-                    .iter()
-                    .map(
-                        |process| match std::fs::read_link(format!("/proc/{}/fd/0", process.pid())) {
-                            Ok(input) => input.display().to_string(),
-                            Err(error) => error.to_string(),
-                        },
-                    )
-                    .collect();
+                let inputs: Vec<_> = crate::browser_pool::processes_naming(
+                    &mut sysinfo::System::new().expect("process inspection must initialize"),
+                    &flag,
+                )
+                .iter()
+                .map(
+                    |process| match std::fs::read_link(format!("/proc/{}/fd/0", process.pid())) {
+                        Ok(input) => input.display().to_string(),
+                        Err(error) => error.to_string(),
+                    },
+                )
+                .collect();
                 println!("{EXIT_CHILD_STDIN_LINE}{}", inputs.join(" "));
             }
             if mode == "drop" {

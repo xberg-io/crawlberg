@@ -42,7 +42,7 @@ fn assert_refused_launcher_stops_its_child(launcher_exits: bool) {
         .expect("reported child must be a pid");
     let stopped = ended_within_the_wait(descendant);
     let peer_running = peer.try_wait().expect("peer status must be readable").is_none();
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[Pid::from_u32(descendant)]));
     if let Some(process) = system.process(Pid::from_u32(descendant)) {
         process.kill();
@@ -169,9 +169,12 @@ async fn a_chrome_args_flag_reaches_the_chrome_the_pool_starts() {
     }
     let path = pool_profile_dir(&pool).await;
     let marker_flag = format!("--user-agent={MARKER}");
-    let reached_chrome = processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(&path))
-        .iter()
-        .any(|process| command_line_names(process.cmd(), &marker_flag));
+    let reached_chrome = processes_naming(
+        &mut sysinfo::System::new().expect("process inspection must initialize"),
+        &user_data_dir_flag(&path),
+    )
+    .iter()
+    .any(|process| command_line_names(process.cmd(), &marker_flag));
     pool.shutdown().await;
 
     assert!(
@@ -255,7 +258,7 @@ pub(crate) fn what_is_left(path: &std::path::Path) -> String {
     let entries: Vec<_> = std::fs::read_dir(path)
         .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.file_name()).collect())
         .unwrap_or_default();
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let users: Vec<_> = processes_naming(&mut system, &user_data_dir_flag(path))
         .iter()
         .map(|process| (process.pid(), process.exe().map(std::path::Path::to_path_buf)))
@@ -272,7 +275,7 @@ pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) 
         path.display(),
         what_is_left(path)
     );
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let users: Vec<_> = processes_naming(&mut system, &user_data_dir_flag(path))
         .iter()
         .map(|process| process.pid())
@@ -400,7 +403,7 @@ fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zom
     let chrome = chrome_started_by(helper.id(), &path).expect("the stand-in's executable must be readable");
 
     let started = std::time::Instant::now();
-    stop_chrome_processes_using(&path, &chrome);
+    stop_chrome_processes_using(&path, &chrome).expect("process inspection must initialize");
     let elapsed = started.elapsed();
 
     let exited = helper.try_wait().expect("the stand-in's status must be readable");
@@ -654,7 +657,9 @@ fn a_profile_directory_dropped_outside_a_runtime_is_torn_down_on_another_thread(
 fn stopping_gives_up_on_a_user_that_never_exits_once_its_timeout_passes() {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = sender.send(kill_until_gone(Duration::from_millis(100), || true));
+        let _ = sender.send(
+            kill_until_gone(Duration::from_millis(100), || Ok(true)).expect("process inspection must initialize"),
+        );
     });
     let stopped = receiver
         .recv_timeout(Duration::from_secs(10))
@@ -698,7 +703,7 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
         .stdin(std::process::Stdio::piped())
         .spawn()
         .expect("sh must start");
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     while processes_naming(&mut system, argument).is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -764,7 +769,8 @@ fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
         sysinfo::Pid::from_u32(other.id()),
         &user_data_dir_flag(dir.path()),
         std::path::Path::new("/"),
-    );
+    )
+    .expect("process inspection must initialize");
     std::thread::sleep(Duration::from_millis(200));
 
     let exited = other.try_wait().expect("the status must be readable");
@@ -832,7 +838,7 @@ fn spawn_scanned(dir: &std::path::Path, flag: &str) -> (std::process::Child, std
         .spawn()
         .expect("cat must start");
     let chrome = chrome_started_by(scanned.id(), dir).expect("the scanned process's executable must be readable");
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let users: Vec<_> = processes_naming(&mut system, flag)
         .into_iter()
         .filter(|process| runs(process, &chrome))
@@ -877,7 +883,7 @@ fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
         };
 
         for &user in &users {
-            kill_if_chrome_using(user, &flag, &chrome);
+            kill_if_chrome_using(user, &flag, &chrome).expect("process inspection must initialize");
         }
         std::thread::sleep(Duration::from_millis(200));
 
@@ -923,7 +929,7 @@ fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
         }
 
         for &user in &users {
-            kill_if_chrome_using(user, &flag, &chrome);
+            kill_if_chrome_using(user, &flag, &chrome).expect("process inspection must initialize");
         }
         std::thread::sleep(Duration::from_millis(200));
 
@@ -1089,13 +1095,13 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
         }
         handler_handle.abort();
         let flag = user_data_dir_flag(&path);
-        let mut system = sysinfo::System::new();
+        let mut system = sysinfo::System::new().expect("process inspection must initialize");
         let left: Vec<_> = processes_naming(&mut system, &flag)
             .iter()
             .filter_map(|process| Some((process.pid(), process.exe()?.to_path_buf())))
             .collect();
         for (pid, executable) in left {
-            kill_if_chrome_using(pid, &flag, &executable);
+            kill_if_chrome_using(pid, &flag, &executable).expect("process inspection must initialize");
         }
         let _ = std::fs::remove_dir_all(&path);
 
@@ -1165,7 +1171,7 @@ async fn a_dropped_pool_stops_a_stopped_helper_before_it_removes_the_profile_dir
     }
     let path = pool_profile_dir(&pool).await;
     let flag = user_data_dir_flag(&path);
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     let main = processes_naming(&mut system, &flag)
         .into_iter()
         .find(|process| {
@@ -1210,12 +1216,13 @@ async fn a_dropped_pool_stops_a_stopped_helper_before_it_removes_the_profile_dir
         let removed = wait_for_removal(&path);
         (
             removed,
-            ChromeFamily::running(&[helper], |_| {}) + stopped_count(helper),
+            ChromeFamily::running(&[helper], |_| {}).expect("process inspection must initialize")
+                + stopped_count(helper),
         )
     })
     .await
     .expect("the wait for the removal must not panic");
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[helper]));
     if let Some(process) = system.process(helper) {
         process.kill();
@@ -1234,7 +1241,7 @@ async fn a_dropped_pool_stops_a_stopped_helper_before_it_removes_the_profile_dir
 /// 1 when the process `pid` is in the table and stopped by a signal, else 0.
 #[cfg(unix)]
 fn stopped_count(pid: Pid) -> usize {
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
     usize::from(
         system
@@ -1256,7 +1263,11 @@ pub(crate) async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
         .expect("a launched pool must own a profile directory");
     assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
     assert!(
-        !processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(&path)).is_empty(),
+        !processes_naming(
+            &mut sysinfo::System::new().expect("process inspection must initialize"),
+            &user_data_dir_flag(&path)
+        )
+        .is_empty(),
         "the pool's Chrome must run on the profile directory the pool owns: {}",
         path.display()
     );
@@ -1264,7 +1275,11 @@ pub(crate) async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
 }
 
 pub(crate) fn chrome_process_count_for_profile(path: &std::path::Path) -> usize {
-    processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)).len()
+    processes_naming(
+        &mut sysinfo::System::new().expect("process inspection must initialize"),
+        &user_data_dir_flag(path),
+    )
+    .len()
 }
 
 /// A profile directory is listed for the exit hook from its creation until its teardown has
@@ -1323,7 +1338,13 @@ fn the_teardown_made_from_the_list_stops_the_recorded_chrome() {
     // ~keep The process table shows the stand-in's command line a moment after the spawn returns.
     let flag = user_data_dir_flag(&path);
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
-    while processes_naming(&mut sysinfo::System::new(), &flag).is_empty() && std::time::Instant::now() < deadline {
+    while processes_naming(
+        &mut sysinfo::System::new().expect("process inspection must initialize"),
+        &flag,
+    )
+    .is_empty()
+        && std::time::Instant::now() < deadline
+    {
         std::thread::sleep(Duration::from_millis(10));
     }
     dir.record_chrome(chrome.id());
@@ -1487,7 +1508,7 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
         .spawn()
         .expect("sh must start");
     let helper_of = |parent: u32| {
-        let mut system = System::new();
+        let mut system = System::new().expect("process inspection must initialize");
         ChromeFamily::refresh(&mut system, ProcessesToUpdate::All);
         system
             .processes()
@@ -1501,7 +1522,9 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
         std::thread::sleep(Duration::from_millis(10));
         helper = helper_of(launcher.id());
     }
-    let helper_ran = helper.is_some_and(|helper| ChromeFamily::running(&[helper], |_| {}) == 1);
+    let helper_ran = helper.is_some_and(|helper| {
+        ChromeFamily::running(&[helper], |_| {}).expect("process inspection must initialize") == 1
+    });
     if let Some(profile) = live_profiles().get_mut(&path) {
         profile.launched = LaunchedProcess::of(launcher.id());
     }
@@ -1525,10 +1548,12 @@ fn a_teardown_during_a_launch_stops_a_helper_that_does_not_name_the_directory() 
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    let helper_left = helper.map_or(0, |helper| ChromeFamily::running(&[helper], |_| {}));
+    let helper_left = helper.map_or(0, |helper| {
+        ChromeFamily::running(&[helper], |_| {}).expect("process inspection must initialize")
+    });
     let removed = !path.exists();
     if let Some(helper) = helper {
-        let mut system = System::new();
+        let mut system = System::new().expect("process inspection must initialize");
         ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[helper]));
         if let Some(process) = system.process(helper) {
             process.kill();
@@ -1583,7 +1608,7 @@ pub(crate) fn a_listed_profile() -> std::path::PathBuf {
 )]
 pub(crate) fn a_profile_whose_chrome_is_launching() -> std::path::PathBuf {
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let mut unrecorded_since = None;
     loop {
         let (launching, unrecorded): (Vec<_>, Vec<_>) = live_profiles()
@@ -1639,7 +1664,10 @@ pub(crate) fn hold_the_live_profile_list_for_good() {
     expect(dead_code, reason = "the binding exit tests require the browser feature")
 )]
 pub(crate) fn kill_processes_naming_profile(path: &std::path::Path) {
-    for process in processes_naming(&mut sysinfo::System::new(), &user_data_dir_flag(path)) {
+    for process in processes_naming(
+        &mut sysinfo::System::new().expect("process inspection must initialize"),
+        &user_data_dir_flag(path),
+    ) {
         process.kill();
     }
 }
@@ -1777,7 +1805,7 @@ async fn a_process_started_at_once_by_the_launched_one_is_in_its_process_tree() 
         .stderr(std::process::Stdio::null());
     let mut child = launcher.spawn().expect("cmd must start");
     let tree = child.tree().cloned();
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     let mut started = marked(&mut system);
     while started.is_empty() && std::time::Instant::now() < deadline {
@@ -1972,7 +2000,7 @@ fn removing_a_profile_directory_that_is_gone_logs_no_failure() {
 /// Kill the main process of the Chrome `pool` runs, and return its profile directory.
 async fn kill_pool_chrome(pool: &BrowserPool) -> std::path::PathBuf {
     let path = pool_profile_dir(pool).await;
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().expect("process inspection must initialize");
     let killed = processes_naming(&mut system, &user_data_dir_flag(&path))
         .into_iter()
         .filter(|process| {
@@ -2878,7 +2906,7 @@ async fn launch_config(test_name: &str, builder: BrowserConfigBuilder) -> Option
 
 /// How many live processes have `text` on their command line.
 fn processes_containing(text: &str) -> usize {
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     system.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
@@ -2984,7 +3012,7 @@ async fn kill_browser_ends_only_the_browser_it_launched() {
 
 /// How many members of `family` are neither stopped nor zombies.
 fn members_running(family: &ChromeFamily) -> usize {
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&family.members));
     family
         .members
@@ -3025,7 +3053,7 @@ fn start_idle_family() -> std::process::Child {
 fn resume(pid: Pid) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let mut system = System::new();
+        let mut system = System::new().expect("process inspection must initialize");
         ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
         let Some(process) = system.process(pid) else {
             return false;
@@ -3043,7 +3071,7 @@ fn resume(pid: Pid) -> bool {
 
 /// How many live children the process `parent` has.
 fn children_of(parent: Pid) -> usize {
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::All);
     system
         .processes()
@@ -3079,10 +3107,12 @@ fn a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind() {
     );
     std::thread::sleep(Duration::from_millis(200));
 
-    let family = ChromeFamily::freeze(parent.id());
+    let family = ChromeFamily::freeze(parent.id()).expect("process inspection must initialize");
     let running = members_running(&family);
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
     std::thread::sleep(Duration::from_millis(100));
     let survivors = processes_containing(&marker);
@@ -3120,10 +3150,14 @@ fn a_family_at_rest_is_collected_without_a_warning() {
     let mut parent = start_idle_family();
     std::thread::sleep(Duration::from_millis(200));
 
-    let (family, fields) = crate::tracing_capture::capture_events(|| ChromeFamily::freeze(parent.id()));
+    let (family, fields) = crate::tracing_capture::capture_events(|| {
+        ChromeFamily::freeze(parent.id()).expect("process inspection must initialize")
+    });
     let running = members_running(&family);
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
 
     assert!(
@@ -3172,10 +3206,13 @@ fn a_member_that_runs_again_after_its_stop_is_stopped_again() {
             resumed.push(*member);
         }
         stopped
-    });
+    })
+    .expect("process inspection must initialize");
     let running = members_running(&family);
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
 
     assert!(
@@ -3223,10 +3260,13 @@ fn a_walk_after_a_wait_that_ran_out_is_not_the_last_one() {
             waits += 1;
             ChromeFamily::settle(stopping) && waits != 2
         })
+        .expect("process inspection must initialize")
     });
     let running = members_running(&family);
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
 
     assert!(
@@ -3271,9 +3311,12 @@ fn a_member_that_does_not_take_its_stop_ends_the_collection_after_two_waits() {
             waits += 1;
             false
         })
+        .expect("process inspection must initialize")
     });
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
 
     assert!(
@@ -3332,9 +3375,12 @@ fn a_family_that_forks_before_every_walk_uses_every_walk_and_is_logged() {
             }
             false
         })
+        .expect("process inspection must initialize")
     });
-    family.kill();
-    let gone = family.wait(Duration::from_secs(5));
+    family.kill().expect("process inspection must initialize");
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
     let _ = parent.wait();
 
     assert!(forked, "{test_name}: the shell must have forked before every walk");
@@ -3482,11 +3528,15 @@ fn the_wait_for_a_family_ends_with_its_members_or_at_its_limit() {
         members: vec![Pid::from_u32(child.id())],
     };
     let started = std::time::Instant::now();
-    let gone_early = family.wait(Duration::from_millis(300));
+    let gone_early = family
+        .wait(Duration::from_millis(300))
+        .expect("process inspection must initialize");
     let waited = started.elapsed();
     let _ = child.kill();
     let _ = child.wait();
-    let gone = family.wait(Duration::from_secs(5));
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
 
     assert!(
         !gone_early,
@@ -3526,7 +3576,7 @@ fn the_wait_for_a_family_holds_while_a_thread_of_a_zombie_member_runs() {
         return;
     };
     let pid = Pid::from_u32(child.id());
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut reads_as_zombie = false;
     while std::time::Instant::now() < deadline {
@@ -3542,11 +3592,15 @@ fn the_wait_for_a_family_holds_while_a_thread_of_a_zombie_member_runs() {
     }
     let family = ChromeFamily { members: vec![pid] };
     let started = std::time::Instant::now();
-    let gone_while_running = family.wait(Duration::from_millis(500));
+    let gone_while_running = family
+        .wait(Duration::from_millis(500))
+        .expect("process inspection must initialize");
     let held = started.elapsed();
     let _ = child.kill();
     let _ = child.wait();
-    let gone = family.wait(Duration::from_secs(5));
+    let gone = family
+        .wait(Duration::from_secs(5))
+        .expect("process inspection must initialize");
 
     assert!(
         reads_as_zombie,
@@ -4361,7 +4415,13 @@ fn a_teardown_dropped_in_a_forked_process_leaves_its_parents_chrome_and_director
         .expect("cat must start");
     let flag = user_data_dir_flag(&path);
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
-    while processes_naming(&mut sysinfo::System::new(), &flag).is_empty() && std::time::Instant::now() < deadline {
+    while processes_naming(
+        &mut sysinfo::System::new().expect("process inspection must initialize"),
+        &flag,
+    )
+    .is_empty()
+        && std::time::Instant::now() < deadline
+    {
         std::thread::sleep(Duration::from_millis(10));
     }
     dir.record_chrome(chrome.id());
@@ -4420,7 +4480,7 @@ fn the_teardown_leaves_a_launched_pid_that_is_no_child_of_this_process() {
         .parse()
         .expect("sh must print the pid of its sleep");
     let stranger_pid = Pid::from_u32(stranger);
-    let ran_before = ChromeFamily::running(&[stranger_pid], |_| {}) == 1;
+    let ran_before = ChromeFamily::running(&[stranger_pid], |_| {}).expect("process inspection must initialize") == 1;
     let mut dir =
         ScratchProfileDir::create("crawlberg-stranger-pid-test-", None).expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -4430,9 +4490,9 @@ fn the_teardown_leaves_a_launched_pid_that_is_no_child_of_this_process() {
     // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
     drop(dir.0.take());
 
-    let runs_after = ChromeFamily::running(&[stranger_pid], |_| {});
+    let runs_after = ChromeFamily::running(&[stranger_pid], |_| {}).expect("process inspection must initialize");
     let stopped_after = stopped_count(stranger_pid);
-    let mut system = System::new();
+    let mut system = System::new().expect("process inspection must initialize");
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[stranger_pid]));
     if let Some(process) = system.process(stranger_pid) {
         process.kill();
@@ -4606,7 +4666,7 @@ fn the_teardown_leaves_a_child_that_got_the_pid_of_the_launched_process() {
     // ~keep Dropped here, not handed to a thread: the teardown has finished when the drop returns.
     drop(dir.0.take());
 
-    let runs_after = ChromeFamily::running(&[reuser_pid], |_| {});
+    let runs_after = ChromeFamily::running(&[reuser_pid], |_| {}).expect("process inspection must initialize");
     let stopped_after = stopped_count(reuser_pid);
     let _ = reuser.kill();
     let _ = reuser.wait();
@@ -4807,7 +4867,7 @@ fn ended_within_the_wait(pid: u32) -> bool {
     let pid = Pid::from_u32(pid);
     let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     loop {
-        let mut system = System::new();
+        let mut system = System::new().expect("process inspection must initialize");
         ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
         if !ChromeFamily::is_running(&system, pid) {
             return true;
@@ -4926,7 +4986,7 @@ fn the_teardown_stops_the_launched_process_after_the_boot_time_moved() {
     let recorded = LaunchedProcess::of_reading(pid, start);
     std::fs::write(&of_the_system, "cpu  1 2 3 4\nbtime 1700000090\n").expect("the boot time must be writable");
     if let Some(recorded) = recorded {
-        stop_launched_family_reading(files.path(), recorded, start);
+        stop_launched_family_reading(files.path(), recorded, start).expect("process inspection must initialize");
     }
 
     let ended = ended_within_the_wait(pid);
@@ -5464,4 +5524,69 @@ fn page_open_timeout_diagnostic_captures_both_safe_phases() {
         }
         assert!(fields.iter().any(|(_, value)| value.contains("page open timed out")));
     }
+}
+
+#[test]
+fn process_query_errors_do_not_count_as_no_profile_users() {
+    let mut queries = 0;
+    let stopped = kill_until_gone(Duration::ZERO, || {
+        queries += 1;
+        Err(sysinfo::Error::Unsupported)
+    });
+    assert_eq!(queries, 1);
+    assert!(matches!(stopped, Err(sysinfo::Error::Unsupported)));
+}
+
+#[test]
+fn a_profile_is_retained_when_process_inspection_fails() {
+    let mut profile = ScratchProfileDir::create("crawlberg-process-query-failure-", None)
+        .expect("the profile directory must be creatable");
+    let path = profile.path().to_path_buf();
+    let marker = path.join("state");
+    std::fs::write(&marker, "a browser may still be writing").expect("write profile state");
+    let mut teardown = profile.0.take().expect("the profile has its teardown");
+
+    assert!(!teardown.complete_after_stopping(Err(sysinfo::Error::Unsupported)));
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("profile state must remain"),
+        "a browser may still be writing"
+    );
+    assert!(
+        live_profiles().contains_key(&path),
+        "the profile must remain listed for a later retry"
+    );
+    assert!(
+        teardown.complete(),
+        "an unlaunched profile can be cleaned up after the failure"
+    );
+    assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_process_identity_retains_its_profile_without_killing_the_process() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("the stand-in process must start");
+    let recorded = LaunchedProcess::of(child.id()).expect("the initial process identity must be readable");
+    let mut profile = ScratchProfileDir::create("crawlberg-unreadable-identity-", None)
+        .expect("the profile directory must be creatable");
+    let path = profile.path().to_path_buf();
+    let marker = path.join("state");
+    std::fs::write(&marker, "a browser may still be writing").expect("write profile state");
+    let stopped = stop_launched_family_reading(&path, recorded, |_| None);
+    let mut teardown = profile.0.take().expect("the profile has its teardown");
+    let completed = teardown.complete_after_stopping(stopped);
+    let retained = marker.is_file();
+    let running = child.try_wait().expect("the process status must be readable").is_none();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(!completed);
+    assert!(
+        retained,
+        "an unreadable process identity must not authorize profile removal"
+    );
+    assert!(running, "an unreadable process identity must not authorize a kill");
 }

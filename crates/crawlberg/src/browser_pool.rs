@@ -894,28 +894,40 @@ impl ProfileTeardown {
             None
         };
         let stopped = self.stop_processes();
+        self.complete_after_stopping(stopped)
+    }
+
+    fn complete_after_stopping(&mut self, stopped: Result<bool, sysinfo::Error>) -> bool {
+        let stopped = match stopped {
+            Ok(stopped) => stopped,
+            Err(error) => {
+                tracing::warn!(dir = %self.dir.display(), %error, "cannot inspect Chrome processes; retaining the profile directory");
+                return false;
+            }
+        };
         let removed = self.remove_directory();
         self.owner = 0;
         live_profiles().remove(&self.dir);
         stopped && removed
     }
 
-    fn stop_processes(&self) -> bool {
+    fn stop_processes(&self) -> Result<bool, sysinfo::Error> {
         if let Some(tree) = &self.tree {
             let stopped = tree.stop(PROFILE_USERS_EXIT_TIMEOUT);
             if !stopped {
                 tracing::warn!(dir = %self.dir.display(), "Chrome processes still run after their process tree was stopped");
             }
-            return stopped;
+            return Ok(stopped);
         }
-        let family = self
-            .launched
-            .is_none_or(|launched| stop_launched_family(&self.dir, launched));
-        let users = self
-            .chrome
-            .as_ref()
-            .is_none_or(|chrome| stop_chrome_processes_using(&self.dir, chrome));
-        family && users
+        let family = match self.launched {
+            Some(launched) => stop_launched_family(&self.dir, launched)?,
+            None => true,
+        };
+        let users = match &self.chrome {
+            Some(chrome) => stop_chrome_processes_using(&self.dir, chrome)?,
+            None => true,
+        };
+        Ok(family && users)
     }
 
     fn remove_directory(&self) -> bool {
@@ -962,7 +974,7 @@ impl Drop for ProfileTeardown {
 /// ~keep does, so the two compare equal on every platform, where a canonicalized path carries a
 /// ~keep `\\?\` prefix on Windows that the process table does not.
 fn chrome_started_by(pid: u32, dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut system = sysinfo::System::new();
+    let mut system = process_system().ok()?;
     let users = processes_naming(&mut system, &user_data_dir_flag(dir));
     let mut chrome = *users.iter().find(|process| process.pid().as_u32() == pid)?;
     // ~keep Bounded: a table read across a pid reuse could link two processes both ways.
@@ -1037,6 +1049,12 @@ fn user_refresh() -> sysinfo::ProcessRefreshKind {
         .with_exe(UpdateKind::Always)
 }
 
+fn process_system() -> Result<System, sysinfo::Error> {
+    System::new().inspect_err(|error| {
+        tracing::warn!(%error, "failed to initialize Chrome process inspection");
+    })
+}
+
 /// Whether `process` is live and its command line holds `token` as a whole token.
 fn names(process: &sysinfo::Process, token: &str) -> bool {
     process.status() != sysinfo::ProcessStatus::Zombie && command_line_names(process.cmd(), token)
@@ -1065,9 +1083,9 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
 /// ~keep name. A shell, `strace` or `grep` that names the flag runs another executable and is left
 /// ~keep alone. A saved profile the caller named is never a `ScratchProfileDir`, so its Chrome is
 /// ~keep never killed here and it is never removed.
-fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) -> bool {
+fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) -> Result<bool, sysinfo::Error> {
     let flag = user_data_dir_flag(dir);
-    let mut system = sysinfo::System::new();
+    let mut system = process_system()?;
     let mut killed = Vec::new();
     let deadline = std::time::Instant::now() + PROFILE_USERS_EXIT_TIMEOUT;
     let stopped = kill_until_gone(PROFILE_USERS_EXIT_TIMEOUT, || {
@@ -1077,15 +1095,15 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
             .map(sysinfo::Process::pid)
             .collect();
         for &pid in &users {
-            killed.extend(kill_if_chrome_using(pid, &flag, chrome));
+            killed.extend(kill_if_chrome_using(pid, &flag, chrome)?);
         }
-        !users.is_empty()
-    });
+        Ok(!users.is_empty())
+    })?;
     let completed = stopped && wait_until_ended(&killed, deadline);
     if !completed {
         tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
     }
-    completed
+    Ok(completed)
 }
 
 /// The process a launch started: its process id with its start mark ([`start_mark`]).
@@ -1143,7 +1161,7 @@ fn start_mark(pid: u32) -> Option<u64> {
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn start_mark(pid: u32) -> Option<u64> {
     let process = Pid::from_u32(pid);
-    let mut system = System::new();
+    let mut system = process_system().ok()?;
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[process]));
     system.process(process).map(Process::start_time)
 }
@@ -1182,7 +1200,7 @@ fn start_ticks(stat: &[u8]) -> Option<u64> {
 /// ~keep The process id counts only while its process is the launched one ([`LaunchedProcess`]),
 /// ~keep and a live child of this process: once it is reaped, the number can belong to another
 /// ~keep process, also to another child of this one.
-fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) -> bool {
+fn stop_launched_family(dir: &std::path::Path, launched: LaunchedProcess) -> Result<bool, sysinfo::Error> {
     stop_launched_family_reading(dir, launched, start_mark)
 }
 
@@ -1191,25 +1209,29 @@ fn stop_launched_family_reading(
     dir: &std::path::Path,
     launched: LaunchedProcess,
     start: impl FnOnce(u32) -> Option<u64>,
-) -> bool {
+) -> Result<bool, sysinfo::Error> {
     let pid = Pid::from_u32(launched.pid);
-    let mut system = System::new();
+    let mut system = process_system()?;
     ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&[pid]));
     let this_process = Pid::from_u32(std::process::id());
-    if !(launched.has_its_pid(start)
+    let current_start = start(launched.pid);
+    if current_start.is_none() && ChromeFamily::is_running(&system, pid) {
+        return Err("the launched Chrome's process identity is unreadable".into());
+    }
+    if !(launched.has_its_pid(|_| current_start)
         && system
             .process(pid)
             .is_some_and(|process| process.parent() == Some(this_process) && ChromeFamily::is_running(&system, pid)))
     {
-        return !ChromeFamily::is_running(&system, pid);
+        return Ok(!ChromeFamily::is_running(&system, pid));
     }
-    let family = ChromeFamily::freeze(launched.pid);
-    family.kill();
-    let completed = family.wait(PROFILE_USERS_EXIT_TIMEOUT);
+    let family = ChromeFamily::freeze(launched.pid)?;
+    family.kill()?;
+    let completed = family.wait(PROFILE_USERS_EXIT_TIMEOUT)?;
     if !completed {
         tracing::warn!(dir = %dir.display(), "Chrome processes still run after their process family was killed");
     }
-    completed
+    Ok(completed)
 }
 
 /// Whether `process` runs `chrome`, as [`chrome_started_by`] names it.
@@ -1239,7 +1261,12 @@ type KilledProcess = std::convert::Infallible;
 /// ~keep only the pinned process, failing with no such process if it has already exited, even if the
 /// ~keep re-check ran just before the reuse. Elsewhere, and on a Linux kernel older than 5.3, the kill
 /// ~keep goes by pid, so the re-check running right before it narrows the gap but does not close it.
-fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) -> Option<KilledProcess> {
+fn kill_if_chrome_using(
+    pid: sysinfo::Pid,
+    flag: &str,
+    chrome: &std::path::Path,
+) -> Result<Option<KilledProcess>, sysinfo::Error> {
+    let mut system = process_system()?;
     #[cfg(target_os = "linux")]
     if let Some(pinned) = i32::try_from(pid.as_u32())
         .ok()
@@ -1247,24 +1274,24 @@ fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path)
     {
         match rustix::process::pidfd_open(pinned, rustix::process::PidfdFlags::empty()) {
             Ok(pidfd) => {
-                if chrome_user(&mut sysinfo::System::new(), pid, flag, chrome).is_some() {
+                if chrome_user(&mut system, pid, flag, chrome).is_some() {
                     #[cfg(test)]
                     tests::fire_reuse_window_hook();
                     let _ = rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::KILL);
-                    return Some(pidfd);
+                    return Ok(Some(pidfd));
                 }
-                return None;
+                return Ok(None);
             }
-            Err(rustix::io::Errno::SRCH) => return None,
+            Err(rustix::io::Errno::SRCH) => return Ok(None),
             Err(_) => {}
         }
     }
-    if let Some(process) = chrome_user(&mut sysinfo::System::new(), pid, flag, chrome) {
+    if let Some(process) = chrome_user(&mut system, pid, flag, chrome) {
         #[cfg(test)]
         tests::fire_reuse_window_hook();
         process.kill();
     }
-    None
+    Ok(None)
 }
 
 /// Wait until every process in `killed` has ended, or until `deadline` passes. Return whether all
@@ -1310,15 +1337,18 @@ fn chrome_user<'s>(
 
 /// Call `kill_users` until it reports that it found no user, pausing between calls, or until
 /// `timeout` passes. Return whether it found none.
-fn kill_until_gone(timeout: Duration, mut kill_users: impl FnMut() -> bool) -> bool {
+fn kill_until_gone(
+    timeout: Duration,
+    mut kill_users: impl FnMut() -> Result<bool, sysinfo::Error>,
+) -> Result<bool, sysinfo::Error> {
     let deadline = std::time::Instant::now() + timeout;
-    while kill_users() {
+    while kill_users()? {
         if std::time::Instant::now() >= deadline {
-            return false;
+            return Ok(false);
         }
         std::thread::sleep(PROFILE_USERS_POLL_INTERVAL);
     }
-    true
+    Ok(true)
 }
 
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
@@ -1954,13 +1984,13 @@ pub(crate) async fn kill_browser(
     let main = browser.process_id();
     let family = match main {
         Some(main) => tokio::task::spawn_blocking(move || {
-            let family = ChromeFamily::freeze(main);
-            family.kill();
-            family
+            let family = ChromeFamily::freeze(main)?;
+            family.kill()?;
+            Ok(family)
         })
         .await
-        .unwrap_or_default(),
-        None => ChromeFamily::default(),
+        .unwrap_or_else(|error| Err(sysinfo::Error::Other(Box::new(error)))),
+        None => Ok(ChromeFamily::default()),
     };
     match browser.kill().await {
         Some(Ok(())) => handler_handle.abort(),
@@ -1970,9 +2000,16 @@ pub(crate) async fn kill_browser(
         }
     }
     let limit = deadline.saturating_duration_since(tokio::time::Instant::now());
-    let gone = tokio::task::spawn_blocking(move || family.wait(limit))
+    let gone = tokio::task::spawn_blocking(move || family?.wait(limit))
         .await
-        .unwrap_or(false);
+        .unwrap_or_else(|error| Err(sysinfo::Error::Other(Box::new(error))));
+    let gone = match gone {
+        Ok(gone) => gone,
+        Err(error) => {
+            tracing::warn!(dir = %profile.display(), %error, "cannot inspect Chrome processes; retaining the profile directory");
+            return;
+        }
+    };
     if !gone {
         tracing::warn!(
             dir = %profile.display(),
@@ -2018,7 +2055,7 @@ impl ChromeFamily {
     /// has taken its stop, or is gone, when this returns, with two exceptions, and each is logged:
     /// a member that did not take its stop in two waits, and a family that did not come to rest
     /// within [`Self::WALKS`] walks.
-    fn freeze(main: u32) -> Self {
+    fn freeze(main: u32) -> Result<Self, sysinfo::Error> {
         Self::freeze_with(main, Self::settle)
     }
 
@@ -2039,8 +2076,8 @@ impl ChromeFamily {
     /// ~keep walks took 7.1 s. The collection ends without it when two waits in a row ran out
     /// ~keep and the walk after each found no new member, which takes about 2 s.
     /// ~keep One window remains: a member that runs after the last read is not seen.
-    fn freeze_with(main: u32, mut settle: impl FnMut(&[Pid]) -> bool) -> Self {
-        let mut system = System::new();
+    fn freeze_with(main: u32, mut settle: impl FnMut(&[Pid]) -> bool) -> Result<Self, sysinfo::Error> {
+        let mut system = process_system()?;
         let mut members: Vec<Pid> = Vec::new();
         let mut stopping: Vec<Pid> = Vec::new();
         let mut waits_run_out = 0;
@@ -2069,9 +2106,9 @@ impl ChromeFamily {
             // ~keep the list that the next wait and the next read are for.
             let running = Self::running(&stopping, |process| {
                 process.kill_with(Signal::Stop);
-            });
+            })?;
             if new.is_empty() && stopped && running == 0 {
-                return Self { members };
+                return Ok(Self { members });
             }
             waits_run_out = if stopped || !new.is_empty() {
                 0
@@ -2084,7 +2121,7 @@ impl ChromeFamily {
                     members = members.len(),
                     "a Chrome process did not take its stop in two waits; a child it forks later can outlive the kill"
                 );
-                return Self { members };
+                return Ok(Self { members });
             }
             for process in new {
                 // ~keep A process gone by the time it is stopped is no member: its pid can be
@@ -2106,7 +2143,7 @@ impl ChromeFamily {
             walks = Self::WALKS,
             "a Chrome process family did not come to rest; a process it forked meanwhile can outlive the kill"
         );
-        Self { members }
+        Ok(Self { members })
     }
 
     /// Wait until every process in `stopping` has taken its stop or is gone, for at most
@@ -2122,7 +2159,7 @@ impl ChromeFamily {
     /// ~keep ran out the collection goes on: see [`Self::freeze_with`] for when it ends.
     fn settle(stopping: &[Pid]) -> bool {
         let deadline = std::time::Instant::now() + Self::SETTLE;
-        while Self::running(stopping, |_| {}) != 0 {
+        while !matches!(Self::running(stopping, |_| {}), Ok(0)) {
             if std::time::Instant::now() >= deadline {
                 return false;
             }
@@ -2138,10 +2175,10 @@ impl ChromeFamily {
     /// ~keep status of a process only when it first sees the process. After that it reports
     /// ~keep the state of a thread, and reports a state it cannot read as running, so a kept
     /// ~keep `System` never shows a stop there.
-    fn running(stopping: &[Pid], mut each: impl FnMut(&Process)) -> usize {
-        let mut system = System::new();
+    fn running(stopping: &[Pid], mut each: impl FnMut(&Process)) -> Result<usize, sysinfo::Error> {
+        let mut system = process_system()?;
         Self::refresh(&mut system, ProcessesToUpdate::Some(stopping));
-        stopping
+        Ok(stopping
             .iter()
             .filter_map(|pid| system.process(*pid))
             .filter(|process| {
@@ -2151,18 +2188,19 @@ impl ChromeFamily {
                 )
             })
             .inspect(|process| each(process))
-            .count()
+            .count())
     }
 
     /// Kill every member.
-    fn kill(&self) {
-        let mut system = System::new();
+    fn kill(&self) -> Result<(), sysinfo::Error> {
+        let mut system = process_system()?;
         Self::refresh(&mut system, ProcessesToUpdate::Some(&self.members));
         for pid in &self.members {
             if let Some(process) = system.process(*pid) {
                 process.kill_with(Signal::Kill);
             }
         }
+        Ok(())
     }
 
     /// Wait until no member is left, for at most `limit`. Returns whether none is left.
@@ -2176,9 +2214,9 @@ impl ChromeFamily {
     /// ~keep is left. The threads are refreshed by their own ids: a refresh of the members alone
     /// ~keep lists their threads but does not read them. Where threads cannot be listed, the
     /// ~keep member is gone once the process itself is.
-    fn wait(&self, limit: Duration) -> bool {
+    fn wait(&self, limit: Duration) -> Result<bool, sysinfo::Error> {
         let deadline = std::time::Instant::now() + limit;
-        let mut system = System::new();
+        let mut system = process_system()?;
         loop {
             system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&self.members),
@@ -2199,10 +2237,10 @@ impl ChromeFamily {
                 alive = threads.iter().any(|pid| Self::is_running(&system, *pid));
             }
             if !alive {
-                return true;
+                return Ok(true);
             }
             if std::time::Instant::now() >= deadline {
-                return false;
+                return Ok(false);
             }
             std::thread::sleep(Duration::from_millis(20));
         }
