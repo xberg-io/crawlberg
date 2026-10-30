@@ -18,8 +18,9 @@ alef all --clean --skip-snippet-validation # regenerate all Alef-managed output
 mise run alef:verify                       # check the generated files are up to date
 ```
 
-- `alef all` has no `--skip-compile`, so it also compiles the Swift bridge and the FFI header
-  gate (cargo over the whole dependency graph). A subagent without build scope must not run it.
+- Without `--skip-compile`, `alef all` also compiles the Swift bridge and the FFI header gate
+  (cargo over the whole dependency graph). A subagent without build scope must add
+  `--skip-compile` or not run it.
 - To move the alef pin, change `alef_version` in `alef.toml` and `"github:xberg-io/alef"` in
   `mise.toml` together: inside `mise run`, the alef pinned in `mise.toml` comes first on PATH.
 
