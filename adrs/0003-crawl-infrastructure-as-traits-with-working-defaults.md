@@ -30,13 +30,17 @@ builder", because the deleted `docs/adr/009-component-boundary.md` rejected the 
 crawl orchestration, Rust's dylib ABI is unstable, a Redis frontier or NATS emitter cannot be expressed as a
 config flag, and two engines duplicate the core.
 
-The traits today are `Frontier`, `RateLimiter`, `CrawlStore`, `EventEmitter`, `CrawlStrategy`, `ContentFilter`
-and `CrawlCache`. Defaults ship in `crates/crawlberg/src/defaults/` (`InMemoryFrontier`, `PerDomainThrottle`,
+The seven traits in `traits.rs` are `Frontier`, `RateLimiter`, `CrawlStore`, `EventEmitter`, `CrawlStrategy`,
+`ContentFilter` and `CrawlCache`. Defaults ship in `crates/crawlberg/src/defaults/` (`InMemoryFrontier`, `PerDomainThrottle`,
 `NoopStore`, `NoopEmitter`, `BfsStrategy`, `NoopFilter`, `NoopCache` and alternatives such as `DfsStrategy`,
 `BestFirstStrategy`, `AdaptiveStrategy` and `Bm25Filter`). An unset trait takes a default chosen from
 `CrawlConfig`: the crawl strategy picks the frontier and strategy, and a BM25 query picks `Bm25Filter`. Request and response
 middleware is no longer a trait: it became a Tower service stack in `crates/crawlberg/src/tower/` (5fb9e1765b,
-2026-04-01). Extraction, Markdown conversion, robots.txt, URL normalization and sitemap parsing stay concrete.
+2026-04-01). Concerns added later follow the same pattern: `EventSink`, `PageBudget` and `ProxyProvider` are
+set through the builder (`crates/crawlberg/src/engine/builder.rs:198`, `:212` and `:257`), and the
+`DispatchProfile` on `CrawlConfig` carries the `RetryPolicy`, `WafClassifier`, `DomainStatePort`,
+`EscalationBudget`, `AntibotStrategy` and `BypassProvider` traits (`crates/crawlberg/src/types/dispatch.rs:597-621`).
+Extraction, Markdown conversion, robots.txt, URL normalization and sitemap parsing stay concrete.
 
 ### Consequences
 

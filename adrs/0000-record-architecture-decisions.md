@@ -17,7 +17,7 @@ adrlint, in an org log and one log per repository.
 ## Considered Options
 
 * A repository log of MADR records in `adrs/`, checked by adrlint, citing the org log for org-wide decisions
-* Restore the deleted Nygard records under `docs/adr/`
+* Nygard records under `docs/adr/` (used until a8f6ab7068)
 
 ## Decision Outcome
 

@@ -32,7 +32,8 @@ service is protected without configuring anything (277ef16f6c, 2026-06-14).
 * Each redirect target is re-resolved and re-validated before the next hop, up to `SsrfPolicy::max_redirects`
   (default 5), which mitigates DNS rebinding.
 * The opt-outs are `CRAWLBERG_ALLOW_PRIVATE_NETWORK=1` (named `KREUZCRAWL_ALLOW_PRIVATE_NETWORK` before the
-  rename) and `CrawlConfig::allow_private_networks(true)`, plus a host allowlist.
+  rename) and `CrawlConfigBuilder::allow_private_networks(true)` (`crates/crawlberg/src/types/builder.rs:338`),
+  plus a host allowlist.
 * The browser layer checks against the same policy core.
 
 ### Consequences

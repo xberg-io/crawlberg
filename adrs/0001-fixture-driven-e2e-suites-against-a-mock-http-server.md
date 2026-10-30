@@ -29,9 +29,10 @@ every binding's suite, and mock responses keep the tests fast, deterministic and
 (`docs/adr/006-e2e-testing-strategy.md`).
 
 The first generator was `tools/e2e-generator/` with wiremock (00ef1b2323, 2026-03-09). alef now generates the
-suites and the mock server from the same fixtures, as
+suites from the same fixtures, as
 [org ADR-0002 (Rust cores with alef-generated bindings)](https://github.com/xberg-io/agent-conventions/blob/main/adrs/0002-rust-cores-with-alef-generated-bindings.md)
-records; the fixture-first, mock-served design is unchanged.
+records, and the suites still run against a mock server: CI builds the generated `mock-server` binary
+(`.github/workflows/ci-e2e.yaml:106-110`). The fixture-first, mock-served design is unchanged.
 
 ### Consequences
 
@@ -42,7 +43,7 @@ records; the fixture-first, mock-served design is unchanged.
 
 ### Confirmation
 
-* `alef.toml:1232-1233` points `[crates.e2e]` at `fixtures/` and writes the suites to `e2e/`.
+* `alef.toml:1232-1234` points `[crates.e2e]` at `fixtures/` and writes the suites to `e2e/`.
 * Each fixture declares its server, as `fixtures/scrape/scrape_asset_dedup.json:11` does with `mock_responses`.
 * `.github/workflows/ci-e2e.yaml:106-110` builds the generated `mock-server`, and the `e2e-tests` job runs each
   language's suite against it.

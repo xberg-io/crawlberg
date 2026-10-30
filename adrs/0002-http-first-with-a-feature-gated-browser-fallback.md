@@ -28,12 +28,13 @@ because pages that HTTP handles pay nothing for the browser, while JavaScript-re
 still get rendered content without caller changes (`docs/adr/008-browser-fallback.md`).
 
 * `BrowserMode::Auto`, the default, re-fetches with the browser when the HTTP fetch is WAF-blocked or when the
-  `js_render_hint` heuristics flag an empty JavaScript shell. `Always` and `Never` force either path.
+  `js_render_hint` heuristics flag an empty JavaScript shell. `Always` and `Never` force either path, and
+  `Stealth` routes every request through the browser like `Always`, with the stealth surfaces enabled.
 * The browser code is behind the `browser` feature (chromiumoxide over CDP). The config types and the detection
   heuristics are always compiled, so `CrawlConfig` and `js_render_hint` are the same in every feature set.
 * The browser path returns the same response shape as HTTP, so the extraction pipeline runs unchanged.
 
-The in-process `browser-native` backend (2bd84b987e, 2026-05-18) is a second implementation of the same
+The in-process `browser-native` backend (7baad5f604, 2026-05-17) is a second implementation of the same
 fallback, behind its own feature; it does not change when the browser is used.
 
 ### Consequences
@@ -46,7 +47,8 @@ fallback, behind its own feature; it does not change when the browser is used.
 
 ### Confirmation
 
-* `crates/crawlberg/src/types/config/primitives.rs:26-33` defines `BrowserMode` with `Auto` as the default.
+* `crates/crawlberg/src/types/config/primitives.rs:26-33` defines `BrowserMode` with `Auto` as the default, and
+  `:47` adds `Stealth`.
 * `crates/crawlberg/src/engine/scrape_page.rs:14-20` documents the WAF and `js_render_hint` fallbacks that
   `CrawlEngine::scrape` applies.
 * `crates/crawlberg/Cargo.toml:34` keeps `browser` out of the default features, and `:38` and `:56` define the
