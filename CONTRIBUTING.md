@@ -45,9 +45,8 @@ This installs the toolchain, the dependencies, and the pre-commit hooks via `pol
 | `mise run lint`          | Run all linters (with auto-fix)                 |
 | `mise run format`        | Format all code                                 |
 | `mise run check`         | Combined lint + format check (no modifications) |
-| `mise run benchmark:run` | Run the benchmark suite                         |
 
-For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:build`, `mise run node:format`, etc. `mise tasks` lists every task.
+For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:test`, `mise run go:lint`, etc. `mise tasks` lists every task.
 
 ## What to keep in mind
 

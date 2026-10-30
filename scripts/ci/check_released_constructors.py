@@ -1064,7 +1064,7 @@ _HELP = (
     "  2. Move the field to the end of the struct and record the released fields on the struct:\n"
     '     `#[cfg_attr(alef, alef(legacy_constructor_fields = ["..."]))]`. The pinned alef must accept the type of the field.\n'
     "  3. Restore the field list of {tag}: the same names, types, order and defaults.\n"
-    "Then run `mise run alef:generate`.\n"
+    "Then run `alef all --clean --skip-snippet-validation`.\n"
     "A Swift arity change requires the exact released compatibility overload, including defaults.\n"
     "A Swift line above with a recorded constructor on the struct: the pinned alef writes the new\n"
     "field as a required argument of the public Swift initializer. The fix is in alef, not here."

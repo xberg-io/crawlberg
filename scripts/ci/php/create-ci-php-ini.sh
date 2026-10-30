@@ -94,9 +94,6 @@ then
   echo ""
   echo "To use this file with PHPUnit:"
   echo "  php -c $INI_FILE vendor/bin/phpunit"
-  echo ""
-  echo "Or run the mise task:"
-  echo "  mise run php:test:ci"
 else
   echo "✗ Failed to create INI file"
   exit 1

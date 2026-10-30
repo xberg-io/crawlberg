@@ -1,24 +1,5 @@
 # Python binding (packages/python), included from mise.toml [task_config]. ~keep
 
-["python:build"]
-description = "Build Python extension (BUILD_PROFILE: dev, release or ci; default release)"
-run = [{ task = "build:profile", args = ["python"] }]
-
-["python:build:dev"]
-description = "Build Python extension in debug mode"
-dir = "{{config_root}}/packages/python"
-run = "uv run maturin develop --profile dev"
-
-["python:build:release"]
-description = "Build Python extension in release mode (optimized)"
-dir = "{{config_root}}/packages/python"
-run = "uv run maturin build --release --strip"
-
-["python:build:ci"]
-description = "Build Python extension in CI mode (with debug info)"
-dir = "{{config_root}}/packages/python"
-run = 'RUSTFLAGS="${RUSTFLAGS:-} -C debuginfo=2" uv run maturin build --release'
-
 ["python:test"]
 description = "Run Python tests"
 dir = "{{config_root}}/packages/python"
@@ -34,16 +15,6 @@ run = [
   "uv run --with 'pytest>=9.1.1' pytest tests/released_constructor_calls.py",
 ]
 
-["python:lint"]
-description = "Auto-fix Python code linting (ruff check + format)"
-dir = "{{config_root}}/packages/python"
-run = ["uv run ruff check --fix", "uv run ruff format"]
-
-["python:format"]
-description = "Format Python code with modifications (ruff format)"
-dir = "{{config_root}}/packages/python"
-run = "uv run ruff format"
-
 ["python:clean"]
 description = "Clean Python build artifacts"
 dir = "{{config_root}}/packages/python"
@@ -54,19 +25,6 @@ run = [
   for r, dirs, _ in os.walk('.') for d in dirs if d == '__pycache__']\"""",
   """python -c "import os, glob; [os.remove(f) for f in glob.glob('**/*.pyc', recursive=True)]\"""",
 ]
-
-["python:update"]
-description = "Update Python dependencies to latest versions (including major versions)"
-run = "mise run deps upgrade python"
-
-["python:cycle"]
-description = "Python: rebuild binding + force-refresh e2e venv + run e2e (avoids stale .so)"
-run = [{ task = "python:build:dev" }, "cd e2e/python && uv sync --reinstall --quiet", { task = "python:e2e:test" }]
-
-["python:e2e:lint"]
-description = "Lint Python E2E test code"
-dir = "{{config_root}}/e2e/python"
-run = ["uv run ruff check --fix", "uv run ruff format"]
 
 ["python:e2e:test"]
 description = "Run Python E2E tests"

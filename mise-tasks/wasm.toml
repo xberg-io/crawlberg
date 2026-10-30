@@ -12,26 +12,9 @@ dir = "{{config_root}}/crates/crawlberg-wasm"
 env = { RUSTFLAGS = "", CC_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/clang", AR_wasm32_unknown_unknown = "{{vars.wasi_sdk}}/bin/ar" }
 run = 'if [ "${usage_production:-false}" = true ]; then export NODE_ENV=production; fi; pnpm run "$usage_script"'
 
-["wasm:build"]
-description = "Build WASM bindings for Node.js target"
-run = [{ task = "wasm:pnpm", args = ["build"] }]
-
 ["wasm:build:dev"]
 description = "Build WASM bindings in debug mode"
 run = [{ task = "wasm:pnpm", args = ["build"] }]
-
-["wasm:test"]
-description = "Run WASM unit tests with Vitest"
-dir = "{{config_root}}/crates/crawlberg-wasm"
-run = "pnpm test"
-
-["wasm:lint"]
-description = "Lint WASM TypeScript code with auto-fix (oxlint)"
-run = "poly lint crates/crawlberg-wasm"
-
-["wasm:format"]
-description = "Format WASM TypeScript code with modifications (oxfmt)"
-run = "poly fmt --fix crates/crawlberg-wasm"
 
 ["wasm:clean"]
 description = "Clean WASM build artifacts"
@@ -45,11 +28,6 @@ run_windows = [
   'crates/crawlberg-wasm/node_modules', 'crates/crawlberg-wasm/.wasm-pack') -Recurse -ErrorAction SilentlyContinue; exit 0\"""",
   "cd crates/crawlberg-wasm && pnpm run clean",
 ]
-
-["wasm:e2e:lint"]
-description = "Lint generated WASM E2E TypeScript"
-dir = "{{config_root}}/e2e/wasm"
-run = "pnpm dlx oxlint ."
 
 ["wasm:e2e:test"]
 description = "Run WASM E2E tests (Node/vitest, alef-generated)"

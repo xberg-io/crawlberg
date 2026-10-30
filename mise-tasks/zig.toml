@@ -1,20 +1,10 @@
 # Zig binding (packages/zig), included from mise.toml [task_config]. The package links the Rust
 # FFI library. ~keep
 
-["zig:build"]
-description = "Build Zig package (depends on Rust FFI)"
-dir = "{{config_root}}/packages/zig"
-run = ["cargo build --release -p crawlberg-ffi", "zig build"]
-
 ["zig:test"]
 description = "Run Zig tests"
 dir = "{{config_root}}/packages/zig"
 run = "zig build test"
-
-["zig:lint"]
-description = "Lint and format Zig code with auto-fix"
-dir = "{{config_root}}/packages/zig"
-run = "zig fmt src"
 
 ["zig:e2e:test"]
 description = "Run generated Zig E2E tests"

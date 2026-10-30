@@ -26,15 +26,6 @@ dir = "{{config_root}}/packages/dart"
 env = { DYLD_FALLBACK_LIBRARY_PATH = "{{config_root}}/target/release", LD_LIBRARY_PATH = "{{config_root}}/target/release", FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR = "../../target/release" }
 run = "dart test"
 
-["dart:lint"]
-description = "Lint and format Dart code with auto-fix"
-dir = "{{config_root}}/packages/dart"
-run = "dart format ."
-
-["dart:update"]
-description = "Update Dart dependencies to latest versions"
-run = "mise run deps update dart"
-
 ["dart:e2e:install"]
 description = "Resolve Dart E2E dependencies and package language version"
 dir = "{{config_root}}/e2e/dart"

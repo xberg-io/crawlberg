@@ -26,7 +26,6 @@ includes = [
   "mise-tasks/zig.toml",
   "mise-tasks/ci.toml",
   "mise-tasks/docker.toml",
-  "mise-tasks/benchmark.toml",
 ]
 
 [tools]
@@ -94,7 +93,7 @@ description = "Upgrade all dependencies to latest versions including cross-major
 run = [{ task = "deps:all", args = ["upgrade"] }]
 
 [tasks.clean]
-description = "Clean all build artifacts (per-language only; see `clean:full` for cargo + e2e)"
+description = "Clean all per-language build artifacts"
 run = [
   { task = "rust:clean" },
   { task = "python:clean" },
@@ -109,56 +108,15 @@ run = [
   { task = "c:clean" },
 ]
 
-[tasks."clean:e2e"]
-description = "Remove per-language e2e test deps (venvs, node_modules, lockfiles, _build, etc.)"
-run = [
-  "rm -rf e2e/python/.venv e2e/python/.pytest_cache",
-  "rm -rf e2e/node/node_modules",
-  "rm -rf e2e/ruby/.bundle e2e/ruby/Gemfile.lock e2e/ruby/spec/coverage",
-  "rm -rf e2e/php/vendor e2e/php/composer.lock",
-  "rm -rf e2e/elixir/_build e2e/elixir/deps",
-  "rm -rf e2e/csharp/bin e2e/csharp/obj",
-  "rm -rf e2e/java/target",
-  "rm -rf e2e/go/.gocache",
-  "rm -rf e2e/rust/target",
-  "rm -rf e2e/wasm/node_modules e2e/wasm/dist",
-  "rm -f .mock-server.pid .mock-server.env .mock-server.out",
-]
-
-[tasks."clean:workspace"]
-description = "Clean Rust workspace target + alef IR cache + legacy mock-server binaries"
-run = ["cargo clean", "rm -rf .alef-cache", "rm -f target/release/mock-server target/debug/mock-server"]
-
-[tasks."clean:full"]
-description = "Total cleanup: per-language clean + cargo workspace target + e2e test deps"
-run = [{ task = "clean" }, { task = "clean:workspace" }, { task = "clean:e2e" }]
-
 [tasks.check]
 description = "Run check-only validation"
 run = [{ task = "format:check" }, { task = "lint" }]
 
 # ---- alef --------------------------------------------------------------------------------------
 
-[tasks."alef:install"]
-description = "Install the alef CLI from the sibling repo (../alef) at HEAD"
-run = "cargo install --path ../alef --locked"
-
-[tasks."alef:generate"]
-description = "Regenerate all Alef-managed outputs without building"
-# ~keep `alef all` never builds the per-language artifacts that a `compile`/`typecheck`
-# `docs.snippets.validation_level` needs (only `alef build` does), so leaving validation on
-# spawns a doomed toolchain per snippet and cannot pass by construction. Discovery, the
-# reference-page audit and gap detection still run. Use `mise run alef:snippets` after
-# `alef build` when you actually want validation.
-run = "alef all --clean --skip-snippet-validation"
-
 [tasks."alef:verify"]
 description = "Check Alef-generated files are up to date"
 run = "./scripts/ci/check-alef-generated.sh"
-
-[tasks."alef:format"]
-description = "Format Alef-managed generated outputs"
-run = "alef fmt"
 
 # ---- E2E ---------------------------------------------------------------------------------------
 
@@ -166,26 +124,6 @@ run = "alef fmt"
 description = "Build the standalone e2e mock HTTP server binary"
 dir = "{{config_root}}/e2e/rust"
 run = "cargo build --release --bin mock-server"
-
-[tasks."e2e:verify"]
-description = "Full e2e pipeline — generate, lint, test all suites"
-run = [{ task = "e2e:generate" }, { task = "e2e:lint" }, { task = "e2e:test" }]
-
-[tasks."e2e:lint"]
-description = "Lint all generated E2E test code"
-run = [
-  { task = "rust:e2e:lint" },
-  { task = "python:e2e:lint" },
-  { task = "node:e2e:lint" },
-  { task = "go:e2e:lint" },
-  { task = "java:e2e:lint" },
-  { task = "csharp:e2e:lint" },
-  { task = "wasm:e2e:lint" },
-  { task = "ruby:e2e:lint" },
-  { task = "php:e2e:lint" },
-  { task = "c:e2e:lint" },
-  { task = "brew:e2e:lint" },
-]
 
 # ---- Governance, plugin and CI gates -----------------------------------------------------------
 
@@ -224,11 +162,6 @@ run = [
   { task = "alef:verify:strict" },
 ]
 
-[tasks."version:set"]
-description = "Set version explicitly and sync all packages (usage: mise run version:set 0.3.0-rc.44)"
-usage = 'arg "<version>" help="Version to set, e.g. 0.3.0-rc.44"'
-run = [{ task = "alef:pin:check" }, 'alef sync-versions --set "$usage_version"', { task = "version:sync" }]
-
 [tasks."version:bump:major"]
 description = "Bump major version and sync all packages"
 run = [{ task = "alef:pin:check" }, "alef sync-versions --bump major", { task = "version:sync" }]
@@ -240,7 +173,3 @@ run = [{ task = "alef:pin:check" }, "alef sync-versions --bump minor", { task = 
 [tasks."version:bump:patch"]
 description = "Bump patch version and sync all packages"
 run = [{ task = "alef:pin:check" }, "alef sync-versions --bump patch", { task = "version:sync" }]
-
-[tasks."version:check"]
-description = "Check consumer versions without modifying files"
-run = "python3 scripts/sync_consumer_versions.py --check"

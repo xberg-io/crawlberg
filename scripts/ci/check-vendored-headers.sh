@@ -6,7 +6,8 @@ CANONICAL="crates/crawlberg-ffi/include/crawlberg.h"
 
 # ~keep Two tiers, because the tracked copies are not produced the same way and a single
 # byte-diff over all of them is not satisfiable. STRICT_COPIES are the paths
-# crates/crawlberg-ffi/build.rs publishes on `mise run c:headers`, so they must be
+# crates/crawlberg-ffi/build.rs publishes on
+# `ALEF_EXPORT_GENERATED_HEADERS=1 cargo build --locked -p crawlberg-ffi`, so they must be
 # byte-identical. ABI_COPIES are vendored next to a prebuilt platform dylib; they were
 # emitted by a different cbindgen and differ from the canonical header only in comment
 # wrapping (936 diff lines, 520/520 cberg_* symbols identical). Byte-diffing them would
@@ -130,7 +131,7 @@ for path in "${STRICT_COPIES[@]}"; do
     echo "::error::vendored header $path is missing — restore it or update STRICT_COPIES in $0"
     failures=$((failures + 1))
   elif ! diff -q "$CANONICAL" "$path" >/dev/null 2>&1; then
-    echo "::error::$path is not byte-identical to $CANONICAL — run 'mise run c:headers'"
+    echo "::error::$path is not byte-identical to $CANONICAL — run 'ALEF_EXPORT_GENERATED_HEADERS=1 cargo build --locked -p crawlberg-ffi'"
     diff "$CANONICAL" "$path" | head -20
     failures=$((failures + 1))
   else

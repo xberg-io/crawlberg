@@ -1,14 +1,6 @@
 # Swift binding (packages/swift), included from mise.toml [task_config]. Swift is not a mise tool;
 # tasks fail with "command not found" when it is missing. ~keep
 
-["swift:build"]
-description = "Build Swift package"
-run = [
-  "cargo build --release -p crawlberg-swift",
-  "bash scripts/setup-swift-bridge.sh release",
-  "cd packages/swift && swift build",
-]
-
 ["swift:build:dev"]
 description = "Build Swift package (dev mode)"
 run = ["cargo build -p crawlberg-swift", "bash scripts/setup-swift-bridge.sh debug", "cd packages/swift && swift build"]
@@ -22,11 +14,6 @@ run = "swift test"
 description = "Compile and test hand-written Swift calls from v1.10.3 against the current package"
 dir = "{{config_root}}/packages/swift"
 run = "swift test --filter ReleasedConstructorTests"
-
-["swift:lint"]
-description = "Lint and format Swift code with auto-fix"
-dir = "{{config_root}}/packages/swift"
-run = "swift format"
 
 ["swift:e2e:test"]
 description = "Run generated Swift E2E tests"

@@ -1,27 +1,9 @@
 # Node binding (crates/crawlberg-node), included from mise.toml [task_config]. ~keep
 
-["node:build"]
-description = "Build Node/TypeScript native bindings (BUILD_PROFILE: dev, release or ci; default release)"
-run = [{ task = "build:profile", args = ["node"] }]
-
 ["node:build:dev"]
 description = "Build Node/TypeScript native bindings in debug mode"
 dir = "{{config_root}}/crates/crawlberg-node"
 run = "pnpm exec napi build --no-js --platform --dts index.native.d.ts"
-
-["node:build:release"]
-description = "Build Node/TypeScript native bindings in release mode (optimized)"
-dir = "{{config_root}}/crates/crawlberg-node"
-run = "pnpm exec napi build --no-js --platform --dts index.native.d.ts --release --strip"
-
-["node:build:ci"]
-description = "Build Node/TypeScript native bindings in CI mode (with debug info)"
-dir = "{{config_root}}/crates/crawlberg-node"
-run = [
-  "corepack enable",
-  "pnpm install -r",
-  "pnpm exec napi build --no-js --platform --dts index.native.d.ts --release",
-]
 
 ["node:test"]
 description = "Run Node/TypeScript tests"
@@ -33,14 +15,6 @@ run = "pnpm test"
 description = "Check released Node runtime exports through CommonJS and ESM"
 run = "node --test scripts/tests/node-binding-exports.test.mjs"
 
-["node:lint"]
-description = "Auto-fix Node/TypeScript code linting (oxlint)"
-run = "poly lint crates/crawlberg-node"
-
-["node:format"]
-description = "Format Node/TypeScript code with modifications (oxfmt)"
-run = "poly fmt --fix crates/crawlberg-node"
-
 ["node:clean"]
 description = "Clean Node/TypeScript build artifacts"
 dir = "{{config_root}}/crates/crawlberg-node"
@@ -49,10 +23,6 @@ run = [
   """python -c "import shutil, os; [shutil.rmtree(os.path.join(r, d), ignore_errors=True) \
   for r, dirs, _ in os.walk('.') for d in dirs if d == '.turbo']\"""",
 ]
-
-["node:e2e:lint"]
-description = "Lint TypeScript E2E code"
-run = ["poly fmt --fix e2e/node", "poly lint e2e/node"]
 
 ["node:e2e:test"]
 description = "Run TypeScript E2E tests"

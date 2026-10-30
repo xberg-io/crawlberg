@@ -24,28 +24,11 @@ description = "Run PHP tests with PHPUnit"
 dir = "{{config_root}}/packages/php"
 run = "composer exec -- phpunit"
 
-["php:test:ci"]
-description = "Run PHP tests in CI mode"
-dir = "{{config_root}}/packages/php"
-run = ["bash ../../scripts/ci/php/create-ci-php-ini.sh", "php -c ../../php-crawlberg.ini vendor/bin/phpunit"]
-
-["php:lint"]
-description = "Lint all PHP code with poly (mago)"
-run = "poly lint packages/php"
-
-["php:format"]
-description = "Format PHP code with modifications (poly/mago)"
-run = "poly fmt --fix packages/php"
-
 ["php:clean"]
 description = "Clean PHP build artifacts"
 dir = "{{config_root}}/packages/php"
 run = """python -c "import shutil, glob, os; [shutil.rmtree(d, ignore_errors=True) for d in ['vendor', 'build', 'coverage']]; \
   [os.remove(f) for f in glob.glob('*.so')]\""""
-
-["php:e2e:lint"]
-description = "Lint PHP E2E code with poly (mago)"
-run = "poly lint e2e/php"
 
 ["php:e2e:test"]
 description = "Run PHP E2E tests"

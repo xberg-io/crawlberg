@@ -45,10 +45,6 @@ description = "Build CLI binary"
 usage = 'flag "--target <triple>" help="Rust target triple to build for"'
 run = 'cargo build --release --package crawlberg-cli ${usage_target:+--target "$usage_target"}'
 
-["rust:ffi:build"]
-description = "Build FFI library for language bindings (extra cargo arguments after --)"
-run = "cargo build --release --package crawlberg-ffi"
-
 ["rust:test"]
 description = "Run all Rust tests"
 run = "bash scripts/ci/rust/run-unit-tests.sh"
@@ -72,14 +68,6 @@ run = """\
   cargo test --locked -p crawlberg --no-default-features --features browser-native \
   --test test_browser_native --test test_native_browser_proxy_provider \
   --test test_native_crawl_feature_configuration"""
-
-["rust:lint"]
-description = "Auto-fix Rust code linting (cargo fmt + clippy)"
-# ~keep node/wasm need no extra toolchain (napi-build only reads cargo-set env vars;
-# crawlberg-wasm has no build.rs), so they lint cleanly everywhere and are no longer
-# excluded. php stays excluded here: ext-php-rs's build script shells out to a `php`
-# binary, which CI now installs for this job but a local machine may not have.
-run = ["cargo fmt --all", "cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude crawlberg-php"]
 
 ["rust:lint:check"]
 description = "Check Rust code linting without modifications"
@@ -135,10 +123,6 @@ run = [
   "rustup target add wasm32-unknown-unknown",
   "cargo check -p crawlberg --target wasm32-unknown-unknown",
 ]
-
-["rust:e2e:lint"]
-description = "Lint Rust E2E crate with clippy"
-run = "cargo clippy --manifest-path e2e/rust/Cargo.toml -- -D warnings"
 
 ["rust:e2e:test"]
 description = "Run Rust E2E tests"

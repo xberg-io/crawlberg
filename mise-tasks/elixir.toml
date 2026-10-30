@@ -1,10 +1,5 @@
 # Elixir binding (packages/elixir), included from mise.toml [task_config]. ~keep
 
-["elixir:build"]
-description = "Build Elixir package"
-dir = "{{config_root}}/packages/elixir"
-run = "mix compile"
-
 ["elixir:test"]
 description = "Run Elixir tests"
 dir = "{{config_root}}/packages/elixir"
@@ -15,19 +10,10 @@ description = "Lint all Elixir code with auto-fix (format + credo)"
 run = "bash scripts/task/elixir-lint.sh fix"
 run_windows = "{{vars.unix_only}}"
 
-["elixir:format"]
-description = "Format Elixir code"
-dir = "{{config_root}}/packages/elixir"
-run = "mix format"
-
 ["elixir:clean"]
 description = "Clean Elixir build artifacts"
 dir = "{{config_root}}/packages/elixir"
 run = ["mix clean", "rm -rf _build", "rm -rf deps"]
-
-["elixir:update"]
-description = "Update Elixir dependencies to latest versions (including major versions)"
-run = "mise run deps upgrade elixir"
 
 ["elixir:e2e:test"]
 description = "Run generated Elixir E2E tests"

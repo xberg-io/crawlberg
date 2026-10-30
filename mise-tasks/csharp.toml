@@ -1,11 +1,6 @@
 # C# binding (packages/csharp), included from mise.toml [task_config]. The binding needs the Rust
 # FFI library built first. ~keep
 
-["csharp:build"]
-description = "Build C# binding and benchmarks (depends on Rust FFI)"
-dir = "{{config_root}}/packages/csharp"
-run = "dotnet build Crawlberg.slnx -c Release"
-
 ["csharp:build:dev"]
 description = "Build C# binding in debug mode"
 dir = "{{config_root}}/packages/csharp"
@@ -21,11 +16,6 @@ run_windows = "cd packages/csharp && dotnet test Crawlberg.Tests/Crawlberg.Tests
 description = "Lint all C# code for style violations with auto-fix (dotnet format)"
 run = "bash scripts/task/csharp-lint.sh fix"
 run_windows = "cd packages/csharp && dotnet format Crawlberg.slnx"
-
-["csharp:format"]
-description = "Format C# code with automatic style corrections (dotnet format)"
-dir = "{{config_root}}/packages/csharp"
-run = "dotnet format Crawlberg.slnx"
 
 ["csharp:clean"]
 description = "Clean C# build artifacts"
@@ -45,11 +35,6 @@ run = [
   "echo 'Checking remaining outdated packages...'",
   "dotnet list Crawlberg.slnx package --outdated || true",
 ]
-
-["csharp:e2e:lint"]
-description = "Lint C# E2E code"
-dir = "{{config_root}}/e2e/csharp"
-run = "dotnet format --verify-no-changes"
 
 ["csharp:e2e:test"]
 description = "Run C# E2E tests"

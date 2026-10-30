@@ -1,10 +1,6 @@
 # Java binding (packages/java), included from mise.toml [task_config]. The package needs the Rust
 # FFI library built first. ~keep
 
-["java:build"]
-description = "Build Java package (depends on Rust FFI)"
-run = "mvn -f packages/java/pom.xml clean package -DskipTests"
-
 ["java:build:dev"]
 description = "Build Java package in debug mode"
 dir = "{{config_root}}/packages/java"
@@ -44,11 +40,6 @@ run = [
   "echo 'Displaying final plugin updates...'",
   "mvn -DallowSnapshots=false versions:display-plugin-updates",
 ]
-
-["java:e2e:lint"]
-description = "Lint Java E2E code"
-dir = "{{config_root}}/e2e/java"
-run = ["mvn checkstyle:check", "mvn pmd:check pmd:cpd-check"]
 
 ["java:e2e:test"]
 description = "Run Java E2E tests"

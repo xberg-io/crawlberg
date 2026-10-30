@@ -1,10 +1,5 @@
 # Ruby binding (packages/ruby), included from mise.toml [task_config]. ~keep
 
-["ruby:build"]
-description = "Build Ruby native extension"
-dir = "{{config_root}}/packages/ruby"
-run = "bundle exec rake compile"
-
 ["ruby:test"]
 description = "Run Ruby tests"
 dir = "{{config_root}}/packages/ruby"
@@ -26,17 +21,8 @@ run = [
   for r, dirs, _ in os.walk('.') for d in dirs if d == '.steep']\"""",
 ]
 
-["ruby:update"]
-description = "Update Ruby dependencies to latest versions (including major versions)"
-run = "mise run deps upgrade ruby"
-
 ["ruby:e2e:test"]
 description = "Run Ruby E2E tests"
 dir = "{{config_root}}/e2e/ruby"
 run = 'BUNDLE_GEMFILE="../../packages/ruby/Gemfile" bundle exec rspec'
-
-["ruby:e2e:lint"]
-description = "Lint Ruby E2E code (check only)"
-dir = "{{config_root}}/e2e/ruby"
-run = "bundle exec rubocop --config .rubocop.yaml"
 

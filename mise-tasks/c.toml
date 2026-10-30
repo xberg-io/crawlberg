@@ -1,30 +1,6 @@
 # C FFI (crates/crawlberg-ffi) and its C tests, included from mise.toml [task_config]. The C
 # tests and E2E suite link the debug FFI library in target/debug. ~keep
 
-["c:build"]
-description = "Build crawlberg-ffi C library (debug)"
-run = "cargo build -p crawlberg-ffi"
-
-["c:headers"]
-description = "Regenerate canonical and vendored C headers from the FFI source"
-env = { ALEF_EXPORT_GENERATED_HEADERS = "1" }
-run = "cargo build --locked -p crawlberg-ffi"
-
-["c:test"]
-description = "Run C FFI unit tests"
-run = 'make -C crates/crawlberg-ffi/tests/c LIBDIR="$PWD/target/debug" clean all test'
-run_windows = "{{vars.unix_only}}"
-
-["c:lint"]
-description = "Lint C code with cppcheck and clang-format (auto-fix)"
-run = [
-  """find crates/crawlberg-ffi/tests/c e2e/c -name "*.c" -o -name "*.h" | \
-  xargs clang-format -i 2>/dev/null || echo "clang-format not available\"""",
-  """cppcheck --enable=warning,style --error-exitcode=0 \
-  crates/crawlberg-ffi/tests/c/*.c e2e/c/*.c 2>/dev/null || echo "cppcheck not available\"""",
-]
-run_windows = "{{vars.unix_only}}"
-
 ["c:lint:check"]
 description = "Lint C code in check-only mode (no fixes)"
 run = [
@@ -35,20 +11,9 @@ run = [
 ]
 run_windows = "{{vars.unix_only}}"
 
-["c:format"]
-description = "Format C code with clang-format"
-run = 'find crates/crawlberg-ffi/tests/c e2e/c -name "*.c" -o -name "*.h" | xargs clang-format -i'
-run_windows = "{{vars.unix_only}}"
-
 ["c:clean"]
 description = "Clean C build artifacts"
 run = ["make -C crates/crawlberg-ffi/tests/c clean 2>/dev/null || true", "make -C e2e/c clean 2>/dev/null || true"]
-run_windows = "{{vars.unix_only}}"
-
-["c:e2e:lint"]
-description = "Lint C E2E code"
-run = """find e2e/c -name "*.c" -o -name "*.h" | \
-  xargs clang-format --dry-run --Werror 2>/dev/null || echo "clang-format not available\""""
 run_windows = "{{vars.unix_only}}"
 
 ["c:e2e:test"]
