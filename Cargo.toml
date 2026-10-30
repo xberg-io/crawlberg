@@ -90,7 +90,7 @@ idna = "1"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2.191"
-liter-llm = { version = "2.4.1", features = ["native-http"] }
+liter-llm = { version = "2.4.2", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
 minijinja = "3"
@@ -130,7 +130,7 @@ serde_json = "1"
 serde_path_to_error = "0.1.20"
 servo_arc = "0.5"
 sha2 = "0.11"
-sysinfo = { version = "0.39", default-features = false }
+sysinfo = { version = "0.40", default-features = false }
 tempfile = "3"
 thiserror = "2"
 tl = { package = "astral-tl", version = "0.8" }
