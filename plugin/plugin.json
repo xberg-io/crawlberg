@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "crawlberg",
-  "version": "1.12.3",
+  "version": "1.12.4",
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
   "author": {
     "name": "Kreuzberg, Inc.",

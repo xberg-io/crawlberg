@@ -658,36 +658,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {
-              os: macos-26,
-              target: aarch64-apple-darwin,
-              rust_target: "",
-              use_napi_cross: false,
-            }
-          - {
-              os: macos-26-intel,
-              target: x86_64-apple-darwin,
-              rust_target: "",
-              use_napi_cross: false,
-            }
-          - {
-              os: ubuntu-latest,
-              target: x86_64-unknown-linux-gnu,
-              rust_target: "",
-              use_napi_cross: false,
-            }
-          - {
-              os: ubuntu-24.04-arm,
-              target: aarch64-unknown-linux-gnu,
-              rust_target: "",
-              use_napi_cross: false,
-            }
-          - {
-              os: windows-latest,
-              target: x86_64-pc-windows-msvc,
-              rust_target: "",
-              use_napi_cross: false,
-            }
+          - { os: macos-26, target: aarch64-apple-darwin, rust_target: "", use_napi_cross: false }
+          - { os: macos-26-intel, target: x86_64-apple-darwin, rust_target: "", use_napi_cross: false }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, rust_target: "", use_napi_cross: false }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, rust_target: "", use_napi_cross: false }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, rust_target: "", use_napi_cross: false }
           - {
               os: windows-latest,
               target: aarch64-pc-windows-msvc,
@@ -1280,18 +1255,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {
-              os: ubuntu-latest,
-              arch: x86_64,
-              target: x86_64-unknown-linux-musl,
-              classifier: linux-musl-x86_64,
-            }
-          - {
-              os: ubuntu-24.04-arm,
-              arch: aarch64,
-              target: aarch64-unknown-linux-musl,
-              classifier: linux-musl-aarch64,
-            }
+          - { os: ubuntu-latest, arch: x86_64, target: x86_64-unknown-linux-musl, classifier: linux-musl-x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64, target: aarch64-unknown-linux-musl, classifier: linux-musl-aarch64 }
     steps:
       - uses: actions/checkout@v7
         with:

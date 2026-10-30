@@ -4,16 +4,21 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.12.4] - 2026-10-30
+
 ### Fixed
 
 - Retain Chrome profiles when system process inspection or the launched process identity cannot be read during cleanup.
 - Preserve navigation errors and partial timeout content when the SSRF policy refuses only a browser subresource. (#812)
 - Preserve false and explicit nil values in generated Ruby tagged variants, and retain nullable constructor arguments in RBS.
+- Continue answering browser dialogs until page cleanup finishes, preventing repeated dialogs from blocking teardown.
 
 ### Changed
 
 - Upgrade liter-llm to 2.4.2 and sysinfo to 0.40, and refresh the Rust dependency lockfile.
-- Generate Brew fixture suites with Bats, load the shared helpers, install Bats in the Brew CI lane, and pin Alef 0.115.5 for regeneration.
+- Generate Brew fixture suites with Bats, load the shared helpers, and install Bats in the Brew CI lane.
+- Refresh Python, Node, PHP and Ruby dependency locks while preserving the configured Bundler version.
+- Regenerate bindings, test consumers and release workflows with Alef 0.115.7.
 - Move the repository tasks from go-task to mise: run them with `mise run <task>`; task names are unchanged.
 
 ## [1.12.3] - 2026-10-27

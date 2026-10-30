@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.3"
+version = "1.12.4"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -593,11 +593,11 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-robots"
-version = "1.12.3"
+version = "1.12.4"
 
 [[package]]
 name = "crawlberg_nif"
-version = "1.12.3"
+version = "1.12.4"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",

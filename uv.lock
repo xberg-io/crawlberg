@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.3"
+version = "1.12.4"
 source = { editable = "packages/python" }
 
 [package.dev-dependencies]
