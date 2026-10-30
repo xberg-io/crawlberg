@@ -1,5 +1,9 @@
 use super::*;
 
+mod lifecycle_chrome {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/common/lifecycle_chrome.rs"));
+}
+
 #[derive(Clone)]
 struct Events(Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
 
@@ -46,6 +50,7 @@ fn runtime() -> tokio::runtime::Runtime {
 fn config(private_pipe: bool) -> BrowserPoolConfig {
     BrowserPoolConfig {
         private_pipe,
+        chrome_args: lifecycle_chrome::args(&["--disable-features=TranslateUI".to_owned()]),
         chrome_path: std::env::var_os("CRAWLBERG_TEST_CHROME_PATH")
             .or_else(|| std::env::var_os("CRAWLBERG_TEST_CHROME"))
             .map(Into::into),

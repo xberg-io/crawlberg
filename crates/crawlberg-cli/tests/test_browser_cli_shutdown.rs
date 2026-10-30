@@ -5,6 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod lifecycle_chrome {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../crawlberg/tests/common/lifecycle_chrome.rs"
+    ));
+}
+
 struct Site {
     url: String,
     hits: Arc<Mutex<Vec<String>>>,
@@ -309,7 +316,8 @@ fn should_finish_five_browser_cli_crawls_without_failure_diagnostics() {
     );
     let config = serde_json::json!({
         "ssrf":{"deny_private":false,"denylist":[]}, "ssrf_deny_private_explicit":false,
-        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy()}
+        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy(),
+            "chrome_args":lifecycle_chrome::args(&["--disable-features=TranslateUI".to_owned()])}
     })
     .to_string();
     let site = Site::start();
@@ -723,7 +731,8 @@ fn should_finish_non_crawl_browser_commands_without_diagnostics_or_owned_chrome_
     assert!(std::path::Path::new(&chrome).is_file());
     let config = serde_json::json!({
         "ssrf":{"deny_private":false,"denylist":[]}, "ssrf_deny_private_explicit":false,
-        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy()},
+        "respect_robots_txt":false,"retry_count":0,"browser":{"chrome_path":chrome.to_string_lossy(),
+            "chrome_args":lifecycle_chrome::args(&["--disable-features=TranslateUI".to_owned()])},
         "max_depth":0,"max_concurrent":1,"rate_limit_ms":0
     })
     .to_string();
