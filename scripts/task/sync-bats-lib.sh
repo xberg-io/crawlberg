@@ -2,7 +2,7 @@
 # Vendor the shared Bats helper library from xberg-io/actions.
 #
 # The library is a committed file, not a fetch-at-test-time dependency, for two reasons:
-# `mise run test:scripts:bats` has to work with no network, and CI must load the same bytes the
+# a local `bats --recursive scripts/tests/bats` run has to work with no network, and CI must load the same bytes the
 # developer loaded. A helper resolved from one place locally and another in CI reintroduces the
 # local-green/CI-red class the library exists to prevent.
 #

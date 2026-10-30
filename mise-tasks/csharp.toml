@@ -12,11 +12,6 @@ env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bash scripts/csharp/test.sh"
 run_windows = "cd packages/csharp && dotnet test Crawlberg.Tests/Crawlberg.Tests.csproj -c Release"
 
-["csharp:lint"]
-description = "Lint all C# code for style violations with auto-fix (dotnet format)"
-run = "bash scripts/task/csharp-lint.sh fix"
-run_windows = "cd packages/csharp && dotnet format Crawlberg.slnx"
-
 ["csharp:clean"]
 description = "Clean C# build artifacts"
 dir = "{{config_root}}/packages/csharp"

@@ -17,11 +17,6 @@ dir = "{{config_root}}/packages/java"
 env = { MAVEN_OPTS = "-Xmx1024m" }
 run = "mvn test -B -q"
 
-["java:lint"]
-description = "Lint all Java code with auto-fix (spotless + checkstyle + PMD)"
-run = "bash scripts/task/java-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
 ["java:clean"]
 description = "Clean Java build artifacts"
 dir = "{{config_root}}/packages/java"

@@ -7,20 +7,10 @@ env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bash scripts/go/test.sh"
 run_windows = 'pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."'
 
-["go:lint"]
-description = "Lint and format Go code with auto-fix (golangci-lint + gofmt)"
-run = "bash scripts/task/go-lint.sh fix"
-run_windows = "pwsh scripts/task/go-lint.ps1 -Mode fix"
-
 ["go:clean"]
 description = "Clean Go build artifacts"
 dir = "{{config_root}}/packages/go"
 run = ["go clean", """python -c "import shutil; shutil.rmtree('bin', ignore_errors=True)\""""]
-
-["go:e2e:lint"]
-description = "Lint Go E2E code"
-run = "bash scripts/task/go-lint.sh check"
-run_windows = "pwsh scripts/task/go-lint.ps1 -Mode check"
 
 ["go:e2e:test"]
 description = "Run Go E2E tests"

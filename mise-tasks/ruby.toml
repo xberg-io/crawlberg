@@ -6,11 +6,6 @@ dir = "{{config_root}}/packages/ruby"
 env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
 run = "bundle exec rspec"
 
-["ruby:lint"]
-description = "Lint all Ruby code with auto-fix (rubocop + steep across all directories)"
-run = "bash scripts/task/ruby-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
 ["ruby:clean"]
 description = "Clean Ruby build artifacts"
 dir = "{{config_root}}/packages/ruby"

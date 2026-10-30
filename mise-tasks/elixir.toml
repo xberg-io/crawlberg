@@ -5,11 +5,6 @@ description = "Run Elixir tests"
 dir = "{{config_root}}/packages/elixir"
 run = "mix test"
 
-["elixir:lint"]
-description = "Lint all Elixir code with auto-fix (format + credo)"
-run = "bash scripts/task/elixir-lint.sh fix"
-run_windows = "{{vars.unix_only}}"
-
 ["elixir:clean"]
 description = "Clean Elixir build artifacts"
 dir = "{{config_root}}/packages/elixir"

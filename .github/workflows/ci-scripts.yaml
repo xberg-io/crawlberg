@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ~keep Bats comes from mise.lock at the version `mise run test:scripts:bats` expects locally.
+      # ~keep Bats comes from mise.lock, the version a local `bats` run uses too.
       - name: Install Go and Bats
         uses: xberg-io/actions/setup-mise@v1
         with:
