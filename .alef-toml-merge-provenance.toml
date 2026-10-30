@@ -79,6 +79,7 @@ values = [
   ".agents/plugins/marketplace.json",
   "/.ai-rulez-generated.json",
   "skills/**",
+  "adrs/**",
 ]
 
 [[entries]]
@@ -160,6 +161,7 @@ values = [
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
   "skills/**",
+  "adrs/**",
   "crates/crawlberg/src/ssrf_intercept.rs",
 ]
 
@@ -232,6 +234,7 @@ values = [
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
   "skills/**",
+  "adrs/**",
 ]
 
 [[entries]]
@@ -303,6 +306,7 @@ values = [
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
   "skills/**",
+  "adrs/**",
 ]
 
 [[entries]]
