@@ -45,7 +45,7 @@ use chromiumoxide::cdp::browser_protocol::target::{
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesOrdered, FuturesUnordered, SelectAll, Stream, StreamExt as _};
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::error::CrawlError;
 use crate::html::is_fetchable_scheme;
@@ -428,6 +428,7 @@ struct WatchedPage {
     document_failed: Notify,
     /// Ends the page-scoped event streams when this watch closes or parks.
     events_ended: Notify,
+    dialogs_ended: watch::Sender<bool>,
 }
 
 /// The targets and frames each watched page owns.
@@ -1718,6 +1719,7 @@ impl FirewallHandle {
             in_flight: AtomicUsize::new(0),
             document_failed: Notify::new(),
             events_ended: Notify::new(),
+            dialogs_ended: watch::channel(false).0,
         });
         let (ack, enabled) = oneshot::channel();
         self.commands
@@ -4562,7 +4564,8 @@ async fn serve(
                     let _ = ack.send(Ok(owned_context));
                 }
                 Some(Command::End { page, close_page, done }) => {
-                    running.push(Box::pin(end_watch(browser, shared, page, close_page, done)));
+                    let cleanup = end_watch(browser, shared, Arc::clone(&page), close_page, done);
+                    running.push(Box::pin(end_dialogs_after(&page, cleanup)));
                 }
                 Some(Command::Stop(done)) => {
                     let stopped = stopping.get_or_insert_with(|| {
@@ -5012,7 +5015,7 @@ fn dialog_answers(
     dialogs: chromiumoxide::listeners::EventStream<EventJavascriptDialogOpening>,
 ) -> DialogAnswers {
     let page = page.clone();
-    events_of(watched, dialogs)
+    dialog_events_of(watched, dialogs)
         .map(move |(_, dialog)| {
             let page = page.clone();
             async move {
@@ -5022,6 +5025,41 @@ fn dialog_answers(
             .boxed()
         })
         .boxed()
+}
+
+fn dialog_events_of<T, S>(page: &Arc<WatchedPage>, events: S) -> BoxStream<'static, (Arc<WatchedPage>, Arc<T>)>
+where
+    T: Send + Sync + 'static,
+    S: Stream<Item = Arc<T>> + Send + 'static,
+{
+    let mut ended = page.dialogs_ended.subscribe();
+    let page = Arc::clone(page);
+    events
+        .take_until(async move {
+            let _ = ended.wait_for(|ended| *ended).await;
+        })
+        .map(move |event| (Arc::clone(&page), event))
+        .boxed()
+}
+
+struct EndDialogs(watch::Sender<bool>);
+
+impl Drop for EndDialogs {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
+}
+
+fn end_dialogs_after<F: std::future::Future>(
+    page: &WatchedPage,
+    cleanup: F,
+) -> impl std::future::Future<Output = F::Output> + use<F> {
+    // ~keep Create the guard before polling so cancellation of a queued cleanup also ends its listener.
+    let end = EndDialogs(page.dialogs_ended.clone());
+    async move {
+        let _end = end;
+        cleanup.await
+    }
 }
 
 /// Close a JavaScript dialog the page opened, as a reader who wants the page closes it.
@@ -5939,7 +5977,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use futures::StreamExt as _;
-    use tokio::sync::{Notify, mpsc, oneshot};
+    use tokio::sync::{Notify, mpsc, oneshot, watch};
 
     use super::{
         BrowserContextId, BrowserOrigin, CLOSE_TIMEOUT, EventLoadingFailed, EventRequestPaused, EventTargetCreated,
@@ -6129,6 +6167,7 @@ mod tests {
             in_flight: AtomicUsize::new(0),
             document_failed: Notify::new(),
             events_ended: Notify::new(),
+            dialogs_ended: watch::channel(false).0,
         })
     }
 
@@ -6150,6 +6189,64 @@ mod tests {
         drop(failures);
         drop(page);
         assert!(weak.upgrade().is_none(), "the ended stream retained the watched page");
+    }
+
+    #[tokio::test]
+    async fn should_keep_answering_dialog_events_while_page_cleanup_is_pending() {
+        let page = watched("ROOT");
+        let dialog: super::EventJavascriptDialogOpening = serde_json::from_value(serde_json::json!({
+            "url": "http://a.localhost/frame", "frameId": "FRAME", "message": "again",
+            "type": "alert", "hasBrowserHandler": false,
+        }))
+        .expect("valid CDP dialog event");
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let events = tokio_stream::wrappers::UnboundedReceiverStream::new(receiver);
+        let mut dialogs = super::dialog_events_of(&page, events);
+
+        begin_ending(&page);
+        sender
+            .send(Arc::new(dialog))
+            .expect("dialog after the page starts closing");
+        let (_, received) = tokio::time::timeout(Duration::from_millis(100), dialogs.next())
+            .await
+            .expect("dialog event must not wait for the close it is blocking")
+            .expect("a page that is closing must still answer its dialog");
+        assert_eq!(received.message, "again");
+        assert!(page.ending.load(Ordering::Acquire), "requests must remain fail-closed");
+    }
+
+    #[tokio::test]
+    async fn should_end_dialog_stream_when_cleanup_succeeds_or_fails() {
+        for result in [Ok(()), Err("cleanup failed")] {
+            let page = watched("ROOT");
+            let mut dialogs = super::dialog_events_of(&page, futures::stream::pending::<Arc<()>>());
+            assert_eq!(super::end_dialogs_after(&page, async { result }).await, result);
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_millis(100), dialogs.next()).await,
+                Ok(None)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn should_end_dialog_stream_when_cleanup_is_cancelled_before_or_after_polling() {
+        for poll in [false, true] {
+            let page = watched("ROOT");
+            let weak = Arc::downgrade(&page);
+            let mut dialogs = super::dialog_events_of(&page, futures::stream::pending::<Arc<()>>());
+            let mut cleanup = Box::pin(super::end_dialogs_after(&page, futures::future::pending::<()>()));
+            if poll {
+                assert!(futures::poll!(&mut cleanup).is_pending());
+            }
+            drop(cleanup);
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_millis(100), dialogs.next()).await,
+                Ok(None)
+            ));
+            drop(dialogs);
+            drop(page);
+            assert!(weak.upgrade().is_none(), "cancelled dialog stream retained the page");
+        }
     }
 
     /// The listener's state on an external browser with `page` watched and another client's
