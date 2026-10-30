@@ -103,38 +103,38 @@ backend = "core:dotnet"
 specifiers = ["10.0.403"]
 
 [[tools."github:Goldziher/ai-rulez"]]
-version = "5.9.2"
+version = "5.9.3"
 backend = "github:Goldziher/ai-rulez"
-specifiers = ["5.9.2"]
+specifiers = ["5.9.3"]
 
 [tools."github:Goldziher/ai-rulez"."platforms.linux-arm64"]
-checksum = "sha256:386c8964df5dcd8ca58266e8c787275ed17593979b536c42b47b4277e42a1faf"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477515"
+checksum = "sha256:2a9c9486037e879c6ccef3db419c292aa844908d9b63105325446285786a5ac5"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.3/ai-rulez_5.9.3_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/691252947"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.linux-x64"]
-checksum = "sha256:b6db376cc072a59b9745563006c37cd99ca51a0842c574f3c8d1423299baac1c"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477522"
+checksum = "sha256:04c2c470368b8c6f11c8cd5a19b298cff3be71e1966473241179159473297c6c"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.3/ai-rulez_5.9.3_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/691252949"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.macos-arm64"]
-checksum = "sha256:6460e06dedbfd8789557f94ef75a382151ea4f4d3448750d376e9b2a2fec136e"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477518"
+checksum = "sha256:fa48c2ffdd15b9d20f9d7041b8901c251c361ebc869ccb1c59820718d3797f00"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.3/ai-rulez_5.9.3_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/691252948"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.macos-x64"]
-checksum = "sha256:c809462b3490b299e5748170dbed8d3a94f6581805646679bf995016827a2f58"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477517"
+checksum = "sha256:f2a6d79174e0c4624cb9ac122b4241cb70f493949d9195011d476e618287e81d"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.3/ai-rulez_5.9.3_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/691252946"
 provenance = "github-attestations"
 
 [tools."github:Goldziher/ai-rulez"."platforms.windows-x64"]
-checksum = "sha256:062e717e808453e3c6eb8bad8742fab93a6574830806ab880fbe60cc688efde0"
-url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.2/ai-rulez_5.9.2_windows_amd64.zip"
-url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/685477519"
+checksum = "sha256:3e87923929d1e1ed59690312cee0cf37a9c86e17f156e6d0a063f3e106578376"
+url = "https://github.com/Goldziher/ai-rulez/releases/download/v5.9.3/ai-rulez_5.9.3_windows_amd64.zip"
+url_api = "https://api.github.com/repos/Goldziher/ai-rulez/releases/assets/691252945"
 provenance = "github-attestations"
 
 [[tools."github:Goldziher/poly"]]
@@ -208,39 +208,39 @@ url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-ma
 url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131414"
 
 [[tools."github:xberg-io/alef"]]
-version = "0.115.5"
+version = "0.115.6"
 backend = "github:xberg-io/alef"
-specifiers = ["0.115.5"]
+specifiers = ["0.115.6"]
 
 [tools."github:xberg-io/alef"."platforms.linux-arm64"]
-checksum = "sha256:056bfb57efcc847fe5a9adc81967219973c075092fe72a802deb42f495f3fdbb"
+checksum = "sha256:75db216fbd2f77223bd3e9da766568b690750b83c96cf8e5b85dd0ec0a0f51e6"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.115.5/alef-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/682920339"
+url = "https://github.com/xberg-io/alef/releases/download/v0.115.6/alef-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/689148047"
 
 [tools."github:xberg-io/alef"."platforms.linux-x64"]
-checksum = "sha256:c9037c999368a0a195571b5c4482621f553cdbf956dfbb13b571e49329ffaff2"
+checksum = "sha256:7afe7c07487675564767c9e2491b55519f038a76042fb0f37fec0e655ae1208c"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.115.5/alef-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/682920702"
+url = "https://github.com/xberg-io/alef/releases/download/v0.115.6/alef-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/689148338"
 
 [tools."github:xberg-io/alef"."platforms.macos-arm64"]
-checksum = "sha256:3966488824c43468f53e7aa231ed1fa164bcd07293ced22cd5d0b674b13328d1"
+checksum = "sha256:add33a47a77cd74e633ff61622b95cfdda9716900e54c5cf7b3abd86e82539a4"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.115.5/alef-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/682920238"
+url = "https://github.com/xberg-io/alef/releases/download/v0.115.6/alef-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/689147967"
 
 [tools."github:xberg-io/alef"."platforms.macos-x64"]
-checksum = "sha256:99376cc02afae0424173fc059e56a103f6a6665430638247e3a9990dd539bc5e"
+checksum = "sha256:5decd67421b1523d262efe543c2222de8d7999c42bf6abb5ab9f384fd5662153"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.115.5/alef-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/682920610"
+url = "https://github.com/xberg-io/alef/releases/download/v0.115.6/alef-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/689148153"
 
 [tools."github:xberg-io/alef"."platforms.windows-x64"]
-checksum = "sha256:c24c4270c5ce46df55321006d10d5939ca1ad680b2cbfd39f8609cb2a5ba8abd"
+checksum = "sha256:69d70f1bee04285a197e15a7d9a8dba0ad2a0687d0c29f8d397c0c44c65e5a60"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.115.5/alef-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/682920663"
+url = "https://github.com/xberg-io/alef/releases/download/v0.115.6/alef-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/689148261"
 
 [[tools.go]]
 version = "1.27.3"
