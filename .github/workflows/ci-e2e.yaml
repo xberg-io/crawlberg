@@ -591,3 +591,10 @@ jobs:
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH || '' }}
           CRAWLBERG_BUILD: "1"
           # NOTE: do NOT set CRAWLBERG_ALLOW_PRIVATE_NETWORK here. Every
+          # e2e harness applies the setdefault from [crates.e2e.env] in
+          # alef.toml (python conftest.py, node tests/*.test.ts via ??=,
+          # rust e2e/rust/.cargo/config.toml [env], go main_test.go,
+          # zig build.zig, swift/dart/java/kotlin TestMain blocks, etc.).
+          # Forcing it at the workflow level breaks the hand-written SSRF
+          # rejection tests (e2e/{node,rust}/tests/ssrf*) that must
+          # observe deny_private=true.
