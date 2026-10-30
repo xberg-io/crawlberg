@@ -565,7 +565,7 @@ jobs:
 
       - name: Check released Node runtime exports
         if: matrix.lang == 'node'
-        run: mise run node:test:released-exports
+        run: mise run node:test
 
       - name: Stage FFI for zig (target/debug shim)
         if: matrix.lang == 'zig'

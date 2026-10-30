@@ -5,13 +5,9 @@ description = "Build Node/TypeScript native bindings in debug mode"
 dir = "{{config_root}}/crates/crawlberg-node"
 run = "pnpm exec napi build --no-js --platform --dts index.native.d.ts"
 
+# crates/crawlberg-node has no test suite of its own; the binding's tests are the released-export
+# checks, which alef.toml's [crates.test.node] also runs through this task. ~keep
 ["node:test"]
-description = "Run Node/TypeScript tests"
-dir = "{{config_root}}/crates/crawlberg-node"
-env = { ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib" }
-run = "pnpm test"
-
-["node:test:released-exports"]
 description = "Check released Node runtime exports through CommonJS and ESM"
 run = "node --test scripts/tests/node-binding-exports.test.mjs"
 
