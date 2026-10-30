@@ -1,0 +1,37 @@
+version = 1
+canonical = 1
+
+[adrs."adrs/0000-record-architecture-decisions.md"]
+number = 0
+status = "accepted"
+blake3 = "0c63e35ea9a317281f209d664d26175f2660fd82f4d701622de54556bda2b079"
+
+[adrs."adrs/0001-fixture-driven-e2e-suites-against-a-mock-http-server.md"]
+number = 1
+status = "accepted"
+blake3 = "abdce4f090161561afcbbcf0eddce2050d6e3d11ddfb60b9d0a0328c9d559881"
+
+[adrs."adrs/0002-http-first-with-a-feature-gated-browser-fallback.md"]
+number = 2
+status = "accepted"
+blake3 = "df5b847310161429963ce4b5e2ff1c59098aa19d5fd4c0b171ee7e4dfed41ff6"
+
+[adrs."adrs/0003-crawl-infrastructure-as-traits-with-working-defaults.md"]
+number = 3
+status = "accepted"
+blake3 = "4a5bb8c54f467f3b607ed2bb4c20896b4c18712c583e28ca8757438f986e9eb0"
+
+[adrs."adrs/0004-markdown-conversion-is-always-on.md"]
+number = 4
+status = "accepted"
+blake3 = "8ae22ad5a10c94bce76413136cdf0e4a2970d9ab4cffb73ef21bd178c95597c6"
+
+[adrs."adrs/0005-ssrf-policy-on-by-default-in-the-http-layer.md"]
+number = 5
+status = "accepted"
+blake3 = "cffbf82a02be5d52f579544417d86aaf6857ac9af7b942169c923018b4744c7e"
+
+[adrs."adrs/0006-one-robots-txt-parser-crate-for-the-engine-and-the-browser.md"]
+number = 6
+status = "accepted"
+blake3 = "77afcc51d438a871b307acd385843c2d631920310842a77dcb9f3a3834957241"
