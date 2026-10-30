@@ -42,7 +42,7 @@ records; the fixture-first, mock-served design is unchanged.
 
 ### Confirmation
 
-* `alef.toml:1229-1230` points `[crates.e2e]` at `fixtures/` and writes the suites to `e2e/`.
+* `alef.toml:1232-1233` points `[crates.e2e]` at `fixtures/` and writes the suites to `e2e/`.
 * Each fixture declares its server, as `fixtures/scrape/scrape_asset_dedup.json:11` does with `mock_responses`.
 * `.github/workflows/ci-e2e.yaml:106-110` builds the generated `mock-server`, and the `e2e-tests` job runs each
   language's suite against it.

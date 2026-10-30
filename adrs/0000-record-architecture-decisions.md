@@ -42,8 +42,10 @@ The index is the docs-site page `docs-site/src/content/docs/reference/decision-r
 
 ### Confirmation
 
-`.adrlint.toml` sets `dir = "adrs"` and `start = 0`. `adrlint lint` and `adrlint format --check` run on
-`adrs/` through the `adrlint` hooks in `poly.toml` and in CI.
+`.adrlint.toml` sets `dir = "adrs"` and `start = 0`. `adrlint lint`, `adrlint format --check` and
+`adrlint lock --check` run as the `adrlint` hooks declared in `poly.toml:887-895`, and in CI through
+`check-adrs: true` on the `validate` job (`.github/workflows/ci-lint.yaml:113`), which fails when it checks no
+ADR.
 
 ## More Information
 
