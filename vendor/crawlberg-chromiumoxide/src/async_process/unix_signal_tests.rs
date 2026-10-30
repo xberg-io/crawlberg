@@ -133,8 +133,12 @@ fn exercise_launch(mode: &str) {
                 .kind(),
             std::io::ErrorKind::PermissionDenied
         );
-        assert!(child.try_wait().expect("foreign refusal leaves child live").is_none());
+        assert_eq!(
+            child.try_wait().expect_err("foreign caller must not reap").kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
         child.spawner = owner;
+        assert!(child.try_wait().expect("foreign refusal leaves child live").is_none());
         assert!(child.tree().expect("owned tree").stop(Duration::from_secs(2)));
         runtime
             .block_on(tokio::time::timeout(Duration::from_secs(2), child.wait()))
