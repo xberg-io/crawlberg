@@ -110,6 +110,7 @@ jobs:
       setup-ruby: true
       setup-dart: true
       setup-elixir: true
+      check-adrs: true
 
   # ~keep alef-snippets used to run as a poly `workspace = true` whole-project hook,
   # but the reusable `validate` job above never installs alef (it's a `uses:` call into
