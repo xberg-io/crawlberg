@@ -10,8 +10,10 @@ import urllib.request
 from pathlib import Path
 
 
-def registry_exists(version: str) -> bool:
-    url = f"https://crates.io/api/v1/crates/crawlberg-chromiumoxide/{urllib.parse.quote(version, safe='')}"
+def registry_exists(version: str, package: str = "crawlberg-chromiumoxide") -> bool:
+    if package not in ("crawlberg-chromiumoxide", "crawlberg-chromiumoxide-fetcher"):
+        raise ValueError("Unexpected browser package identity")
+    url = f"https://crates.io/api/v1/crates/{package}/{urllib.parse.quote(version, safe='')}"
     request = urllib.request.Request(url, headers={"User-Agent": "crawlberg-release/1", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310  # ~keep Fixed HTTPS origin and escaped path.
@@ -23,12 +25,8 @@ def registry_exists(version: str) -> bool:
         if error.code == 404:
             return False
         raise
-    package = payload.get("version") if isinstance(payload, dict) else None
-    if (
-        not isinstance(package, dict)
-        or package.get("crate") != "crawlberg-chromiumoxide"
-        or package.get("num") != version
-    ):
+    identity = payload.get("version") if isinstance(payload, dict) else None
+    if not isinstance(identity, dict) or identity.get("crate") != package or identity.get("num") != version:
         raise ValueError("Registry returned an unexpected browser fork package identity or version")
     return True
 
@@ -38,7 +36,7 @@ def main() -> None:
     output = os.environ.get("GITHUB_OUTPUT", "")
     if not version.strip() or any(character.isspace() for character in version) or not output.strip():
         raise ValueError("FORK_VERSION and GITHUB_OUTPUT must be nonempty; the version must not contain whitespace")
-    exists = registry_exists(version)
+    exists = registry_exists(version, os.environ.get("FORK_PACKAGE", "crawlberg-chromiumoxide"))
     with Path(output).open("a") as stream:
         stream.write(f"exists={str(exists).lower()}\n")
 

@@ -1,19 +1,14 @@
 [workspace]
-members = [
-    "crates/*",
-    "packages/dart/rust",
-    "packages/swift/rust",
-    "tools/benchmark-harness",
-]
+members = ["crates/*", "packages/dart/rust", "packages/swift/rust", "tools/benchmark-harness"]
 exclude = [
-    ".claude",
-    "e2e/rust",
-    "packages/elixir/native/crawlberg_nif",
-    "packages/ruby/ext/crawlberg_rb",
-    "packages/ruby/ext/src_rb",
-    "packages/ruby/tmp",
-    "packages/ruby/vendor",
-    "vendor/crawlberg-chromiumoxide",
+  ".claude",
+  "e2e/rust",
+  "packages/elixir/native/crawlberg_nif",
+  "packages/ruby/ext/crawlberg_rb",
+  "packages/ruby/ext/src_rb",
+  "packages/ruby/tmp",
+  "packages/ruby/vendor",
+  "vendor/crawlberg-chromiumoxide",
 ]
 resolver = "2"
 
@@ -55,7 +50,7 @@ base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
 chardetng = "1.0.0"
-chromiumoxide = { package = "crawlberg-chromiumoxide", path = "vendor/crawlberg-chromiumoxide", version = "0.9.5", default-features = false }
+chromiumoxide = { package = "crawlberg-chromiumoxide", version = "0.9.5", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
@@ -139,13 +134,13 @@ tokio-stream = "0.1"
 toml = "1.1"
 tower = { version = "0.5", features = ["timeout", "retry", "limit", "util", "make"] }
 tower-http = { version = "0.7", features = [
-    "cors",
-    "compression-full",
-    "trace",
-    "limit",
-    "catch-panic",
-    "request-id",
-    "sensitive-headers",
+  "cors",
+  "compression-full",
+  "trace",
+  "limit",
+  "catch-panic",
+  "request-id",
+  "sensitive-headers",
 ] }
 tracing = "0.1"
 # ~keep Moves as one set with the `opentelemetry*` pins above; 0.34 requires opentelemetry ^0.33.

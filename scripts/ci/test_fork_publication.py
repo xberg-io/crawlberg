@@ -152,8 +152,9 @@ class ForkPublicationTests(unittest.TestCase):
         publishers = [
             step for step in self.steps if step.get("uses", "").startswith("xberg-io/actions/publish-crates@")
         ]
-        assert len(publishers) == 2, "Publish the fork separately before the six release-version crates"
-        fork, core = publishers
+        assert len(publishers) == 3, "Publish the fetcher and fork before the six release-version crates"
+        fetcher, fork, core = publishers
+        assert fetcher["with"]["crates"] == "crawlberg-chromiumoxide-fetcher"
         assert fork["with"] == {
             "crates": FORK_NAME,
             "manifest-path": FORK_MANIFEST,

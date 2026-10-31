@@ -2032,6 +2032,32 @@ jobs:
               output.write(f'version={version}\n')
           PYTHON
 
+      - name: Read the secure fetcher version
+        id: fetcher_metadata
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          driver = tomllib.loads(Path('vendor/crawlberg-chromiumoxide/Cargo.toml').read_text())
+          dependency = driver.get('dependencies', {}).get('chromiumoxide_fetcher', {})
+          required = dependency.get('package') == 'crawlberg-chromiumoxide-fetcher'
+          version = None
+          if required:
+              package = tomllib.loads(Path('vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml').read_text())['package']
+              version = package.get('version')
+              if package.get('name') != 'crawlberg-chromiumoxide-fetcher' or not isinstance(version, str):
+                  raise SystemExit('Missing or unexpected secure fetcher package identity or version')
+              if not version.strip() or any(character.isspace() for character in version):
+                  raise SystemExit('Secure fetcher version must be nonempty and contain no whitespace')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'required={str(required).lower()}\n')
+              if required:
+                  output.write(f'version={version}\n')
+          PYTHON
+
       - name: Check out workflow publishing tools
         uses: actions/checkout@v7
         with:
@@ -2049,12 +2075,30 @@ jobs:
           install-args: python
           config-ref: ${{ github.sha }}
 
+      - name: Check the secure fetcher version in crates.io
+        id: fetcher_registry
+        if: steps.fetcher_metadata.outputs.required == 'true'
+        env:
+          FORK_PACKAGE: crawlberg-chromiumoxide-fetcher
+          FORK_VERSION: ${{ steps.fetcher_metadata.outputs.version }}
+        working-directory: .release-workflow/scripts/ci
+        run: python3 check_browser_fork.py
+
       - name: Check the browser fork version in crates.io
         id: fork_registry
         env:
           FORK_VERSION: ${{ steps.fork_metadata.outputs.version }}
         working-directory: .release-workflow/scripts/ci
         run: python3 check_browser_fork.py
+
+      - name: Publish the secure fetcher before the browser fork
+        if: steps.fetcher_metadata.outputs.required == 'true' && steps.fetcher_registry.outputs.exists == 'false'
+        uses: xberg-io/actions/publish-crates@v1
+        with:
+          crates: crawlberg-chromiumoxide-fetcher
+          manifest-path: vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml
+          version: ${{ steps.fetcher_metadata.outputs.version }}
+          dry-run: ${{ needs.prepare.outputs.dry_run }}
 
       - name: Publish the browser fork before core crates
         if: steps.fork_registry.outputs.exists == 'false'

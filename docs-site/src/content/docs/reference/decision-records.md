@@ -23,3 +23,4 @@ This page is the index of that log. Decisions that apply to every xberg-io repos
 | [0004](https://github.com/xberg-io/crawlberg/blob/main/adrs/0004-markdown-conversion-is-always-on.md) | Markdown conversion is always on | Accepted | 2026-04-01 |
 | [0005](https://github.com/xberg-io/crawlberg/blob/main/adrs/0005-ssrf-policy-on-by-default-in-the-http-layer.md) | SSRF policy on by default in the HTTP layer | Accepted | 2026-06-14 |
 | [0006](https://github.com/xberg-io/crawlberg/blob/main/adrs/0006-one-robots-txt-parser-crate-for-the-engine-and-the-browser.md) | One robots.txt parser crate for the engine and the browser | Accepted | 2026-09-29 |
+| [0007](https://github.com/xberg-io/crawlberg/blob/main/adrs/0007-use-a-protected-zip-extractor-for-optional-browser-downloads.md) | Use a protected ZIP extractor for optional browser downloads | Proposed | 2026-10-31 |

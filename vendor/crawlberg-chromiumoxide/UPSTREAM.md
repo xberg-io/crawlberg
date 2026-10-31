@@ -53,3 +53,16 @@ without changing the legacy typed event API or accepting duplicate keys. Owned b
 termination is tracked per browser generation and launching process; only terminal closure after that
 intent is observed on its primary or child connection is treated as expected. Borrowed connections and nonterminal failures retain
 their diagnostics.
+
+## Independent 0.10 release
+
+Version 0.10 replaces the optional upstream fetcher with
+`crawlberg-chromiumoxide-fetcher` 0.9.2 through the existing
+`chromiumoxide_fetcher` dependency alias. The public optional fetcher types now
+belong to that separate package; applications sharing upstream fetcher values must
+migrate those values together. ZIP 9 extraction raises this driver's declared
+minimum Rust version from 1.85 to 1.88. Both `zip0` and `zip8` retain their names
+and select the same protected backend. Default driver features remain unchanged.
+
+Core Crawlberg continues to consume published driver 0.9.5 with default features
+disabled. It does not enable the fetcher or adopt 0.10's optional type identity.

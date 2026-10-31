@@ -352,3 +352,15 @@ plugin/.ai-rulez/.generated-manifest.json
 .codex/plugins.json
 .cursor/
 .github/commands/
+
+!/vendor/
+!/vendor/crawlberg-chromiumoxide-fetcher/
+/vendor/crawlberg-chromiumoxide-fetcher/*
+!/vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml
+!/vendor/crawlberg-chromiumoxide-fetcher/Cargo.lock
+!/vendor/crawlberg-chromiumoxide-fetcher/LICENSE-MIT
+!/vendor/crawlberg-chromiumoxide-fetcher/LICENSE-APACHE
+!/vendor/crawlberg-chromiumoxide-fetcher/README.md
+!/vendor/crawlberg-chromiumoxide-fetcher/UPSTREAM.md
+!/vendor/crawlberg-chromiumoxide-fetcher/src/
+!/vendor/crawlberg-chromiumoxide-fetcher/tests/

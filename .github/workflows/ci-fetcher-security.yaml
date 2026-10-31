@@ -1,0 +1,91 @@
+name: CI Browser Fetcher Security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vendor/crawlberg-chromiumoxide/**"
+      - "vendor/crawlberg-chromiumoxide-fetcher/**"
+      - ".github/workflows/ci-fetcher-security.yaml"
+      - "rust-toolchain.toml"
+      - ".github/toolchains/fetcher-msrv/rust-toolchain.toml"
+      - "mise.toml"
+      - "mise.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fetcher-security-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  fetcher:
+    name: Fetcher (${{ matrix.os }}, ${{ matrix.toolchain_file }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            toolchain_file: rust-toolchain.toml
+          - os: windows-latest
+            toolchain_file: rust-toolchain.toml
+          - os: ubuntu-latest
+            toolchain_file: .github/toolchains/fetcher-msrv/rust-toolchain.toml
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUSTC_WRAPPER: ""
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/codex-fetcher-security
+    steps:
+      - uses: actions/checkout@v7
+      - uses: xberg-io/actions/setup-mise@v1
+        with:
+          install-args: python
+      - name: Read the declared Rust channel
+        id: toolchain
+        shell: bash
+        env:
+          TOOLCHAIN_FILE: ${{ matrix.toolchain_file }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          channel = tomllib.loads(Path(os.environ['TOOLCHAIN_FILE']).read_text())['toolchain']['channel']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'channel={channel}\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'RUSTUP_TOOLCHAIN={channel}\n')
+          PYTHON
+      - uses: xberg-io/actions/setup-rust@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          use-sccache: "false"
+          install-llvm-cov: "false"
+          components: rustfmt
+          cache-key-prefix: fetcher-security-${{ matrix.os }}-${{ steps.toolchain.outputs.channel }}
+      - name: Test default fetcher features
+        run: cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml
+      - name: Test the legacy zip0 alias
+        run: >-
+          cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml
+          --no-default-features --features rustls,zip0
+      - name: Test both ZIP aliases and TLS implementations
+        run: cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml --all-features
+      - name: Require all five Windows extraction regressions
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          listing="$(cargo test --locked --manifest-path vendor/crawlberg-chromiumoxide-fetcher/Cargo.toml \
+            --all-features --test windows_extraction -- --list)"
+          count="$(printf '%s\n' "$listing" | tr -d '\r' | grep -c ': test$')"
+          test "$count" -eq 5
+      - name: Check standalone driver with the secure fetcher
+        run: cargo check --locked --manifest-path vendor/crawlberg-chromiumoxide/Cargo.toml --all-features

@@ -1,0 +1,45 @@
+[package]
+name = "crawlberg-chromiumoxide-fetcher"
+version = "0.9.2"
+authors = ["Matthias Seitz <matthias.seitz@outlook.de>"]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+description = "Crawlberg browser fetcher with protected ZIP extraction"
+homepage = "https://github.com/xberg-io/crawlberg"
+repository = "https://github.com/xberg-io/crawlberg"
+readme = "README.md"
+include = ["src/**/*", "tests/**/*", "LICENSE-*", "README.md", "UPSTREAM.md"]
+
+[lib]
+name = "chromiumoxide_fetcher"
+path = "src/lib.rs"
+doctest = false
+
+[dev-dependencies]
+reqwest = { version = "0.13", features = ["rustls"], default-features = false }
+tempfile = "3.27.0"
+tokio = { version = "1", features = ["rt", "fs", "process", "macros"] }
+
+[dependencies]
+thiserror = "2"
+anyhow = "1"
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+zip = { version = "9.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+tokio = { version = "1", features = ["fs", "io-util"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-version = "0.1"
+
+[features]
+default = ["rustls", "zip8"]
+zip0 = ["dep:zip"]
+zip8 = ["dep:zip"]
+
+rustls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+
+[workspace]
