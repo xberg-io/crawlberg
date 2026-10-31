@@ -108,20 +108,109 @@ async fn browser_exits_when_its_caller_is_killed() {
     }
 }
 
+struct CallerGuard {
+    child: std::process::Child,
+}
+
+impl Drop for CallerGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn publish_pid_marker(
+    marker: &std::path::Path,
+    write_pid: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let parent = marker.parent().expect("marker parent");
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    write_pid(staged.as_file_mut())?;
+    staged.persist(marker).map_err(|error| error.error)?;
+    Ok(())
+}
+
+#[test]
+fn pid_marker_is_invisible_until_its_complete_contents_are_published() {
+    use std::io::Write;
+
+    let directory = tempfile::tempdir().expect("marker directory");
+    let marker = directory.path().join("browser.pid");
+    publish_pid_marker(&marker, |file| {
+        assert_eq!(file.metadata()?.len(), 0, "observe the pre-write window");
+        assert!(!marker.exists(), "an incomplete PID must not be published");
+        file.write_all(b"12345")
+    })
+    .expect("publish PID");
+    let published = std::fs::read_to_string(marker).expect("published PID");
+    assert_eq!(published, "12345");
+    assert_eq!(published.parse::<i32>().expect("numeric PID"), 12345);
+}
+
+#[test]
+fn failed_pid_writes_leave_no_published_marker() {
+    use std::io::Write;
+
+    let directory = tempfile::tempdir().expect("marker directory");
+    let marker = directory.path().join("browser.pid");
+    let error = publish_pid_marker(&marker, |file| {
+        file.write_all(b"12")?;
+        Err(std::io::Error::other("injected PID write failure"))
+    })
+    .expect_err("write failure must propagate");
+    assert_eq!(error.to_string(), "injected PID write failure");
+    assert!(!marker.exists(), "a partial PID must remain unpublished");
+    assert_eq!(
+        std::fs::read_dir(directory.path()).expect("marker directory").count(),
+        0
+    );
+}
+
+#[test]
+fn caller_is_killed_and_reaped_when_an_assertion_unwinds() {
+    let mut caller = CallerGuard {
+        child: std::process::Command::new("sh")
+            .args(["-c", "read value"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("blocked child"),
+    };
+    let pid = i32::try_from(caller.child.id()).expect("PID fits");
+    assert_eq!(caller.child.try_wait().expect("live child status"), None);
+    let failure = std::panic::catch_unwind(move || {
+        let _caller = caller;
+        panic!("intentional caller cleanup probe");
+    });
+    assert!(failure.is_err(), "the cleanup probe must unwind");
+    let mut status = 0;
+    // SAFETY: pid names the child this test spawned; status is writable. ~keep
+    let observed = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    let error = std::io::Error::last_os_error();
+    if observed == 0 {
+        // SAFETY: reap this test's live child even if the cleanup regression fails. ~keep
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, &mut status, 0);
+        }
+    }
+    assert_eq!(observed, -1, "the guard must reap its child before returning");
+    assert_eq!(error.raw_os_error(), Some(libc::ECHILD));
+}
+
 async fn assert_browser_exits_after_signal(chrome: &std::path::Path, signal: i32) {
     let marker_dir = tempfile::tempdir().expect("marker directory");
     let marker = marker_dir.path().join("browser.pid");
-    let mut caller = std::process::Command::new(std::env::current_exe().expect("test executable"))
-        .args(["--ignored", "--exact", "pipe_owner_helper"])
-        .env("CRAWLBERG_PIPE_OWNER_PID", &marker)
-        .env("CHROME", chrome)
-        .spawn()
-        .expect("caller process");
+    let mut caller = CallerGuard {
+        child: std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--ignored", "--exact", "pipe_owner_helper"])
+            .env("CRAWLBERG_PIPE_OWNER_PID", &marker)
+            .env("CHROME", chrome)
+            .spawn()
+            .expect("caller process"),
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !marker.exists() {
-        if caller.try_wait().expect("caller status").is_some() || std::time::Instant::now() >= deadline {
-            let _ = caller.kill();
-            let _ = caller.wait();
+        if caller.child.try_wait().expect("caller status").is_some() || std::time::Instant::now() >= deadline {
             panic!("caller must launch Chrome before the death test");
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -132,10 +221,10 @@ async fn assert_browser_exits_after_signal(chrome: &std::path::Path, signal: i32
         .expect("numeric pid");
     // SAFETY: the pid belongs to the live subprocess created and retained by this test. ~keep
     assert_eq!(
-        unsafe { libc::kill(i32::try_from(caller.id()).expect("pid fits"), signal) },
+        unsafe { libc::kill(i32::try_from(caller.child.id()).expect("pid fits"), signal) },
         0
     );
-    caller.wait().expect("reap caller");
+    caller.child.wait().expect("reap caller");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         // SAFETY: signal zero observes the specific child pid without delivering a signal.
@@ -176,7 +265,12 @@ async fn pipe_owner_helper() {
         .as_mut_inner()
         .id()
         .expect("pid");
-    std::fs::write(marker, pid.to_string()).expect("publish browser pid");
+    use std::io::Write;
+
+    publish_pid_marker(std::path::Path::new(&marker), |file| {
+        file.write_all(pid.to_string().as_bytes())
+    })
+    .expect("publish browser pid");
     let _keep_alive = (browser, driver, page, profile);
     std::future::pending::<()>().await;
 }
