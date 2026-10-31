@@ -11,6 +11,10 @@ use sysinfo::UpdateKind;
 
 use super::*;
 
+#[cfg(unix)]
+#[path = "browser_pool_helper_tests.rs"]
+mod helper_ready;
+
 // ~keep #674: a non-exec launcher can leave its child outside any readable process family.
 #[cfg(unix)]
 fn assert_refused_launcher_stops_its_child(launcher_exits: bool) {
@@ -1170,45 +1174,8 @@ async fn a_dropped_pool_stops_a_stopped_helper_before_it_removes_the_profile_dir
         return;
     }
     let path = pool_profile_dir(&pool).await;
-    let flag = user_data_dir_flag(&path);
-    let mut system = System::new().expect("process inspection must initialize");
-    let main = processes_naming(&mut system, &flag)
-        .into_iter()
-        .find(|process| {
-            !process
-                .cmd()
-                .iter()
-                .any(|argument| argument.to_string_lossy().contains("--type="))
-        })
-        .map(Process::pid)
-        .expect("the pool's Chrome must have a main process");
-    // ~keep The helpers are every process below the main one. `system` holds the whole table,
-    // ~keep with command lines, from the scan above.
-    let mut helpers = vec![main];
-    let mut next = 0;
-    while next < helpers.len() {
-        let parent = helpers[next];
-        helpers.extend(
-            system
-                .processes()
-                .values()
-                .filter(|process| process.parent() == Some(parent))
-                .map(Process::pid),
-        );
-        next += 1;
-    }
-    helpers.remove(0);
-    let helper = helpers
-        .iter()
-        .copied()
-        .find(|helper| system.process(*helper).is_some_and(|process| !names(process, &flag)))
-        .or_else(|| helpers.first().copied())
-        .expect("the pool's Chrome must have a helper process");
-    let helper_named = system.process(helper).is_some_and(|process| names(process, &flag));
-    let stopped = system
-        .process(helper)
-        .and_then(|process| process.kill_with(Signal::Stop))
-        .unwrap_or(false);
+    let (helper, helper_named, stopped) =
+        helper_ready::stopped_helper(&path).expect("the owned helper fixture must initialize");
 
     drop(pool);
 
