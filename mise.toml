@@ -59,7 +59,7 @@ DEPS_NODE_DIRS = ". crates/crawlberg-node crates/crawlberg-wasm e2e/node"
 DEPS_PHP_DIR = "."
 
 [vars]
-# run_windows of a task go-task gated to Linux and macOS: inline runs use cmd /c on Windows. ~keep
+# run_windows of a Linux/macOS-only task: inline runs use cmd /c on Windows. ~keep
 unix_only = "echo %MISE_TASK_NAME% needs Linux or macOS 1>&2 & exit 1"
 rust_excludes = "--exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm"
 wasi_sdk = "{{ get_env(name='WASI_SDK_PATH', default=get_env(name='HOME', default='') ~ '/wasi-sdk') }}"
