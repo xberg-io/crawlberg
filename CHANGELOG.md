@@ -4,7 +4,7 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.12.4] - 2026-10-30
+## [1.12.4] - 2026-10-31
 
 ### Fixed
 
