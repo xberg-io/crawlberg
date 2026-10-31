@@ -828,17 +828,19 @@ jobs:
 
       # ~keep The CI profile locks Ruby 3.3 besides mise.toml's Ruby (mise.ci.toml).
       - uses: xberg-io/actions/setup-mise@v1
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.os != 'macos-26-intel'
         with:
           mise-env: ci
           tools: ruby=3.3
 
       # ~keep Ruby on Windows stays on setup-ruby (org lock-gap policy): the native gem build uses the
-      # MSYS2 devkit setup-ruby provisions with RubyInstaller.
+      # MSYS2 devkit setup-ruby provisions with RubyInstaller. No precompiled macOS x86_64 Ruby for
+      # mise: its lock entry is the source tarball, so the Intel leg would compile Ruby. The version
+      # matches mise.ci.toml's 3.3 pin exactly.
       - uses: ruby/setup-ruby@v1.335.0
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' || matrix.os == 'macos-26-intel'
         with:
-          ruby-version: "3.3"
+          ruby-version: "3.3.13"
           bundler: "4.0.3"
           bundler-cache: false
 
