@@ -2395,7 +2395,7 @@ jobs:
             cp -v "${dir}"/* "packages/java/src/main/resources/natives/${classifier}/"
           done
 
-      # ~keep publish-maven writes the central server entry and imports MAVEN_GPG_PRIVATE_KEY, as
+      # ~keep publish-maven writes the ossrh server entry and imports MAVEN_GPG_PRIVATE_KEY, as
       # setup-java did; Java goes first because setup-maven runs `mvn --version`.
       - uses: xberg-io/actions/setup-mise@v1
         with:
@@ -2414,7 +2414,6 @@ jobs:
           maven-profile: publish
           extra-args: -DskipTests
           dry-run: ${{ needs.prepare.outputs.dry_run }}
-          server-id: central
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
