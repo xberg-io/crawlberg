@@ -8,7 +8,7 @@ produced for this platform, and none is planned. See the [platform support
 matrix](https://docs.crawlberg.xberg.io/getting-started/installation/#platform-support).
 
 To run Crawlberg on Alpine, use the CLI or the Docker image, or base your application on a
-glibc image such as `node:22-bookworm-slim` and install
+glibc image such as `node:26-trixie-slim` and install
 [`@xberg-io/crawlberg`](https://www.npmjs.com/package/@xberg-io/crawlberg) there.
 
 Note that `@xberg-io/crawlberg` lists this package as an optional dependency. On Alpine, npm
