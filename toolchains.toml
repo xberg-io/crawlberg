@@ -19,3 +19,7 @@ task_sets = [
 "version:bump:major" = "runs alef:pin:check before alef sync-versions"
 "version:bump:minor" = "runs alef:pin:check before alef sync-versions"
 "version:bump:patch" = "runs alef:pin:check before alef sync-versions"
+
+[overrides."github:xberg-io/alef"]
+version = "0.115.10"
+reason = "Use the latest released Alef for global regeneration and corrected Swift and Dart generation."
