@@ -826,7 +826,17 @@ jobs:
           use-sccache: "false"
           cache-key-prefix: publish-ruby-${{ matrix.label }}
 
+      # ~keep The CI profile locks Ruby 3.3 besides mise.toml's Ruby (mise.ci.toml).
+      - uses: xberg-io/actions/setup-mise@v1
+        if: runner.os != 'Windows'
+        with:
+          mise-env: ci
+          tools: ruby=3.3
+
+      # ~keep Ruby on Windows stays on setup-ruby (org lock-gap policy): the native gem build uses the
+      # MSYS2 devkit setup-ruby provisions with RubyInstaller.
       - uses: ruby/setup-ruby@v1.335.0
+        if: runner.os == 'Windows'
         with:
           ruby-version: "3.3"
           bundler: "4.0.3"
@@ -2174,10 +2184,9 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - uses: ruby/setup-ruby@v1.335.0
+      - uses: xberg-io/actions/setup-mise@v1
         with:
-          ruby-version: "3.3"
-          bundler-cache: false
+          tools: ruby
 
       - uses: rubygems/configure-rubygems-credentials@v2.1.0
 
@@ -2386,16 +2395,11 @@ jobs:
             cp -v "${dir}"/* "packages/java/src/main/resources/natives/${classifier}/"
           done
 
-      - uses: actions/setup-java@v6
+      # ~keep publish-maven writes the central server entry and imports MAVEN_GPG_PRIVATE_KEY, as
+      # setup-java did; Java goes first because setup-maven runs `mvn --version`.
+      - uses: xberg-io/actions/setup-mise@v1
         with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
-          server-id: central
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+          tools: java
 
       - uses: xberg-io/actions/setup-maven@v1
 
@@ -2410,10 +2414,12 @@ jobs:
           maven-profile: publish
           extra-args: -DskipTests
           dry-run: ${{ needs.prepare.outputs.dry_run }}
+          server-id: central
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
   publish-nuget:
     name: Publish NuGet package
