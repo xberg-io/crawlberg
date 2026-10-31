@@ -605,13 +605,12 @@ async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stea
 
 /// Turn the navigation result and the interceptor's verdict into one error.
 ///
-/// ~keep A request the SSRF interceptor blocked takes precedence over both the
-/// navigation error and the timeout: Chrome reports a blocked request as a generic
-/// navigation failure, so reporting that would hide the policy violation that
-/// actually caused it.
+/// ~keep Only a refused main-frame document takes precedence over the navigation
+/// error or timeout: Chrome can report that refusal as a generic navigation failure.
+/// A refused subresource must leave the main document's own outcome intact.
 fn resolve_navigation_outcome(
     navigation: Result<Result<(), CrawlError>, tokio::time::error::Elapsed>,
-    blocked: Option<(String, String)>,
+    blocked_navigation: Option<(String, String)>,
     timeout: Duration,
 ) -> Result<(), CrawlError> {
     let navigation_error = match navigation {
@@ -619,7 +618,7 @@ fn resolve_navigation_outcome(
         Ok(Err(error)) => error,
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
-    if let Some((blocked_url, reason)) = blocked {
+    if let Some((blocked_url, reason)) = blocked_navigation {
         // ~keep Built through `ssrf_violation`, never a struct literal. `ssrf_intercept` records
         // ~keep a URL with userinfo without it, and `ssrf_violation` redacts again as the last
         // ~keep guard before API error bodies, MCP error payloads and tracing fields.
@@ -771,6 +770,40 @@ mod tests {
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(7);
 
+    fn render_fixture_browser<T, E: std::fmt::Display>(
+        test_name: &str,
+        result: Result<T, E>,
+        chrome_required: bool,
+    ) -> Option<T> {
+        if chrome_required {
+            Some(result.unwrap_or_else(|error| panic!("{test_name}: required Chrome must launch: {error}")))
+        } else {
+            crate::browser_pool::tests::expect_chrome_or_skip(test_name, result)
+        }
+    }
+
+    #[test]
+    fn a_required_render_fixture_must_not_skip_missing_chrome() {
+        let outcome = std::panic::catch_unwind(|| {
+            render_fixture_browser::<(), _>(
+                "a_required_render_fixture_must_not_skip_missing_chrome",
+                Err("could not auto detect a chrome executable"),
+                true,
+            )
+        });
+        assert!(outcome.is_err(), "CI must fail when the required browser is missing");
+    }
+
+    #[test]
+    fn an_optional_local_render_fixture_can_skip_missing_chrome() {
+        let result = render_fixture_browser::<(), _>(
+            "an_optional_local_render_fixture_can_skip_missing_chrome",
+            Err("could not auto detect a chrome executable"),
+            false,
+        );
+        assert!(result.is_none());
+    }
+
     fn elapsed() -> tokio::time::error::Elapsed {
         // ~keep `Elapsed` has no public constructor, so the only way to obtain one is to
         // ~keep let a zero-duration timeout actually expire.
@@ -831,10 +864,10 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_request_is_reported_instead_of_the_navigation_error() {
+    fn a_refused_main_document_is_reported_instead_of_the_navigation_error() {
         let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
         let error = resolve_navigation_outcome(navigation, blocked(), TEST_TIMEOUT)
-            .expect_err("a blocked request must surface as an error");
+            .expect_err("a refused main-frame document must surface as an error");
 
         match error {
             CrawlError::SsrfPolicyViolation { url, reason, .. } => {
@@ -846,13 +879,13 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_request_is_reported_instead_of_the_timeout() {
+    fn a_refused_main_document_is_reported_instead_of_the_timeout() {
         let error = resolve_navigation_outcome(Err(elapsed()), blocked(), TEST_TIMEOUT)
-            .expect_err("a blocked request must surface as an error");
+            .expect_err("a refused main-frame document must surface as an error");
 
         assert!(
             matches!(error, CrawlError::SsrfPolicyViolation { .. }),
-            "a navigation that timed out because a request was blocked must report the block, got: {error:?}"
+            "a timeout with a refused main-frame document must report that refusal, got: {error:?}"
         );
     }
 
@@ -908,7 +941,7 @@ mod tests {
     fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
         let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
         let error = resolve_navigation_outcome(navigation, blocked_with_credentials(), TEST_TIMEOUT)
-            .expect_err("a blocked request must surface as an error");
+            .expect_err("a refused main-frame document must surface as an error");
 
         let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
             panic!("expected an SSRF policy violation, got: {error:?}");
@@ -1025,8 +1058,28 @@ mod tests {
         _site: wiremock::MockServer,
     }
 
+    async fn launch_render_fixture_browser(
+        test_name: &str,
+        dir: std::path::PathBuf,
+    ) -> Option<(chromiumoxide::Browser, chromiumoxide::Handler)> {
+        let mut builder = chromiumoxide::browser::BrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(dir);
+        if let Some(path) = crate::browser_pool::chrome_executable(None) {
+            builder = builder.chrome_executable(path);
+        }
+        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
+            Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
+            Err(error) => Err(error),
+        };
+        let chrome_required =
+            std::env::var_os("CI").is_some() || std::env::var_os("CRAWLBERG_TEST_CHROME_PATH").is_some();
+        render_fixture_browser(test_name, launched, chrome_required)
+    }
+
     impl RenderFixture {
-        /// Launches Chrome, or returns `None` after a skip line when no Chrome is usable.
+        /// Missing Chrome may skip only an unconfigured local run; CI requires it.
         #[allow(
             clippy::print_stderr,
             reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -1076,15 +1129,7 @@ mod tests {
                 .await;
             let base = site.uri().replace("127.0.0.1", "localhost");
             let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
-            let builder = chromiumoxide::browser::BrowserConfig::builder()
-                .no_sandbox()
-                .new_headless_mode()
-                .user_data_dir(dir);
-            let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
-                Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
-                Err(error) => Err(error),
-            };
-            let (browser, handler) = crate::browser_pool::tests::expect_chrome_or_skip(test_name, launched)?;
+            let (browser, handler) = launch_render_fixture_browser(test_name, dir).await?;
             crate::browser_pool::spawn_handler(handler);
             let browser = Arc::new(browser);
             let mut config = CrawlConfig::builder()
@@ -1253,6 +1298,233 @@ mod tests {
         let rendered = rendered.expect("a refused image must not hide the partial document");
         assert!(rendered.partial.is_some());
         assert!(rendered.response.body.contains("visible partial content"));
+    }
+
+    async fn mount_refused_asset_page(fixture: &RenderFixture, route: &str, assets: &str) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("<html><body><p>DNS refusal fixture</p>{assets}</body></html>"),
+                "text/html",
+            ))
+            .mount(&fixture._site)
+            .await;
+    }
+
+    fn assert_dns_subresource_refusal(refusal: Option<(String, String)>, blocked_navigation: Option<(String, String)>) {
+        let (url, reason) = refusal.expect("the asset must actually be refused by the DNS policy");
+        assert_eq!(url, "http://crawlberg-unresolvable-asset.invalid/blocked.gif");
+        assert!(reason.starts_with("dns resolution failed:"), "{reason}");
+        assert!(
+            blocked_navigation.is_none(),
+            "a refused image is not a main-frame refusal"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dns_refused_subresource_keeps_partial_content_after_navigation_times_out() {
+        let test_name = "a_dns_refused_subresource_keeps_partial_content_after_navigation_times_out";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        mount_refused_asset_page(
+            &fixture,
+            "/dns-refused-asset",
+            concat!(
+                "<img src=\"http://crawlberg-unresolvable-asset.invalid/blocked.gif\" ",
+                "onerror=\"this.setAttribute('data-asset-error', 'yes')\">",
+                "<img src=\"/slow.gif\">",
+            ),
+        )
+        .await;
+        let mut config = fixture.config.clone();
+        config.browser.timeout = Duration::from_secs(2);
+        let started = std::time::Instant::now();
+        let rendered = render(
+            &fixture.url("/dns-refused-asset"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + TEST_TIMEOUT,
+        )
+        .await;
+        let refusal = fixture.watch.refusal_during(started, Duration::ZERO).await;
+        let blocked_navigation = fixture.watch.blocked_navigation();
+        fixture.stop().await;
+        assert_dns_subresource_refusal(refusal, blocked_navigation);
+        let rendered = rendered.expect("a DNS-refused image must not replace the document's timeout outcome");
+        assert!(rendered.partial.is_some());
+        assert!(rendered.response.body.contains("DNS refusal fixture"));
+        assert!(rendered.response.body.contains("data-asset-error=\"yes\""));
+    }
+
+    const NAVIGATION_REQUEST_LINE_LIMIT: usize = 1024;
+
+    async fn read_navigation_request(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> std::io::Result<String> {
+        use std::io::{Error, ErrorKind};
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+        let mut line = Vec::new();
+        let mut reader = BufReader::new(stream.take(NAVIGATION_REQUEST_LINE_LIMIT as u64));
+        tokio::time::timeout(TEST_TIMEOUT, reader.read_until(b'\n', &mut line))
+            .await
+            .map_err(|_| Error::new(ErrorKind::TimedOut, "navigation request line timed out"))??;
+        if !line.ends_with(b"\r\n") {
+            return Err(Error::new(ErrorKind::InvalidData, "incomplete navigation request line"));
+        }
+        String::from_utf8(line).map_err(|error| Error::new(ErrorKind::InvalidData, error))
+    }
+
+    #[tokio::test]
+    async fn navigation_failure_fixture_reads_a_fragmented_request_line() {
+        use tokio::io::AsyncReadExt;
+
+        let first: &[u8] = b"GET /navigation-";
+        let rest: &[u8] = b"failure HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let mut stream = first.chain(rest);
+        let request = read_navigation_request(&mut stream)
+            .await
+            .expect("complete request line");
+        assert_eq!(request, "GET /navigation-failure HTTP/1.1\r\n");
+    }
+
+    #[tokio::test]
+    async fn navigation_failure_fixture_rejects_a_request_line_over_the_limit() {
+        let bytes = vec![b'x'; NAVIGATION_REQUEST_LINE_LIMIT + 1];
+        let mut stream = bytes.as_slice();
+        let error = read_navigation_request(&mut stream)
+            .await
+            .expect_err("a truncated request line must not count as a complete request");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn navigation_failure_fixture_bounds_an_unfinished_request() {
+        let (writer, mut reader) = tokio::io::duplex(NAVIGATION_REQUEST_LINE_LIMIT);
+        let error = tokio::time::timeout(TEST_TIMEOUT * 2, read_navigation_request(&mut reader))
+            .await
+            .expect("the fixture's own read deadline must fire first")
+            .expect_err("an unfinished request must time out");
+        drop(writer);
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    async fn navigation_failure_server() -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failure fixture");
+        let port = listener.local_addr().expect("failure fixture address").port();
+        let served = tokio::spawn(async move {
+            tokio::time::timeout(TEST_TIMEOUT, async {
+                let (mut stream, _) = listener.accept().await.expect("navigation request");
+                let request = read_navigation_request(&mut stream)
+                    .await
+                    .expect("read navigation request");
+                stream.shutdown().await.expect("close without an HTTP response");
+                request
+            })
+            .await
+            .expect("the failure fixture must receive a complete request before its deadline")
+        });
+        (format!("http://localhost:{port}/navigation-failure"), served)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_selector_error_survives_a_dns_refused_subresource() {
+        let test_name = "a_selector_error_survives_a_dns_refused_subresource";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        fixture
+            .page
+            .goto(fixture.url("/one"))
+            .await
+            .expect("load the selector control page");
+        let mut config = fixture.config.clone();
+        config.browser.timeout = TEST_TIMEOUT;
+        config.browser.wait = BrowserWait::Selector;
+        config.browser.wait_selector = Some("[".to_owned());
+        let selector_error = wait_for_ready(&fixture.page, &config)
+            .await
+            .expect_err("an invalid selector must produce a real CDP error");
+        assert!(matches!(&selector_error, chromiumoxide::error::CdpError::Chrome(_)));
+        let expected = format!("browser: wait failed: {selector_error}");
+        mount_refused_asset_page(
+            &fixture,
+            "/dns-then-selector-error",
+            r#"<img src="http://crawlberg-unresolvable-asset.invalid/blocked.gif">"#,
+        )
+        .await;
+        let started = std::time::Instant::now();
+        let result = render(
+            &fixture.url("/dns-then-selector-error"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + TEST_TIMEOUT,
+        )
+        .await;
+        let refusal = fixture.watch.refusal_during(started, Duration::ZERO).await;
+        let blocked_navigation = fixture.watch.blocked_navigation();
+        fixture.stop().await;
+        assert_dns_subresource_refusal(refusal, blocked_navigation);
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("a refused image must not hide the selector failure"),
+        };
+        assert!(matches!(error, CrawlError::BrowserError { .. }), "{error:?}");
+        assert_eq!(error.to_string(), expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_non_timeout_navigation_error_survives_a_dns_refused_subresource() {
+        let test_name = "a_non_timeout_navigation_error_survives_a_dns_refused_subresource";
+        let Some(fixture) = RenderFixture::start(test_name).await else {
+            return;
+        };
+        let (failed_url, served) = navigation_failure_server().await;
+        let assets = format!(
+            r#"<img src="http://crawlberg-unresolvable-asset.invalid/blocked.gif" onerror="location.assign('{failed_url}')">"#
+        );
+        mount_refused_asset_page(&fixture, "/dns-then-navigation-error", &assets).await;
+        let mut config = fixture.config.clone();
+        config.browser.timeout = TEST_TIMEOUT;
+        let started = std::time::Instant::now();
+        let result = render(
+            &fixture.url("/dns-then-navigation-error"),
+            &config,
+            &fixture.page,
+            &fixture.watch,
+            false,
+            tokio::time::Instant::now() + TEST_TIMEOUT,
+        )
+        .await;
+        let refusal = fixture.watch.refusal_during(started, Duration::ZERO).await;
+        let blocked_navigation = fixture.watch.blocked_navigation();
+        fixture.stop().await;
+        assert_dns_subresource_refusal(refusal, blocked_navigation);
+        let request = tokio::time::timeout(TEST_TIMEOUT, served)
+            .await
+            .expect("the main-frame request must reach the failure server")
+            .expect("failure fixture task");
+        assert!(request.contains("/navigation-failure"));
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("the failed main navigation must retain its own error"),
+        };
+        assert!(matches!(error, CrawlError::BrowserError { .. }), "{error:?}");
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            format!("browser: Chrome could not load {failed_url} and showed its own error page")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
