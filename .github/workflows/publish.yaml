@@ -2190,8 +2190,6 @@ jobs:
         with:
           tools: ruby
 
-      - uses: rubygems/configure-rubygems-credentials@v2.1.0
-
       - uses: xberg-io/actions/publish-rubygems@v1
         with:
           expected-version: ${{ needs.prepare.outputs.gem_version }}
