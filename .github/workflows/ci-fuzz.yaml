@@ -21,6 +21,8 @@ jobs:
         target: [toml_loader, waf_classify]
     steps:
       - uses: actions/checkout@v7
+      # ~keep cargo-fuzz needs nightly, not rust-toolchain.toml's stable channel; setup-rust would also
+      # ~keep add sccache and its own cache on top of the fuzz-workspace rust-cache below.
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
