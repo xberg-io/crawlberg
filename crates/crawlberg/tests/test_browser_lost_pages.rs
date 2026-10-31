@@ -272,16 +272,35 @@ async fn a_dialog_in_a_frame_does_not_hold_the_page() {
 #[tokio::test]
 async fn dialogs_that_open_again_and_again_do_not_hold_the_page() {
     let mut rows = Rows::new("dialogs_that_open_again_and_again_do_not_hold_the_page");
-    let without_end = "<script>setInterval(() => alert('again'), 10);</script>";
+    let without_end = r#"<script>
+        let answered = 0;
+        setInterval(() => {
+            alert('again');
+            answered += 1;
+            if (answered !== 2) return;
+            if (parent === window) {
+                document.body.insertAdjacentHTML('beforeend', '<p>the page answered ' + answered + ' recurring dialogs</p>');
+            } else if (new URL(document.referrer).origin === location.origin) {
+                parent.document.body.insertAdjacentHTML('beforeend', '<p>the frame answered 2 recurring dialogs</p>');
+            } else {
+                parent.postMessage('the frame answered 2 recurring dialogs', '*');
+            }
+        }, 10);
+        </script>"#;
+    let dialog_config = || {
+        let mut config = config(BrowserMode::Always);
+        config.browser.dom_quiet_cap = Duration::from_millis(500);
+        config
+    };
 
     let page = format!("<!doctype html><html><body><p>start</p>{without_end}</body></html>");
     let site = html_site(&[("/", page)]).await;
     if !rows
         .scrape(
             "the page, without end",
-            config(BrowserMode::Always),
+            dialog_config(),
             &site.uri(),
-            &["start"],
+            &["start", "the page answered 2 recurring dialogs<"],
         )
         .await
     {
@@ -297,7 +316,10 @@ async fn dialogs_that_open_again_and_again_do_not_hold_the_page() {
         };
         let host = format!(
             "<!doctype html><html><body><p>host text</p><iframe src=\"{frame_site}/frame\"></iframe>\
-             <script>setTimeout(() => {{ const answers = [alert('a'), confirm('b'), prompt('c'), alert('d'), \
+             <script>addEventListener('message', (event) => {{ \
+             if (event.source === frames[0] && event.data === 'the frame answered 2 recurring dialogs') {{ \
+             document.body.insertAdjacentHTML('beforeend', '<p>' + event.data + '</p>'); }} }}); \
+             setTimeout(() => {{ const answers = [alert('a'), confirm('b'), prompt('c'), alert('d'), \
              confirm('e')]; document.body.insertAdjacentHTML('beforeend', '<p>the page closed ' + answers.length + \
              ' dialogs</p>'); }}, 300);</script></body></html>"
         );
@@ -313,9 +335,13 @@ async fn dialogs_that_open_again_and_again_do_not_hold_the_page() {
             "a frame of {}, without end, while the page opens five",
             if another_site { "another site" } else { "the same site" }
         );
-        let mut config = config(BrowserMode::Always);
+        let mut config = dialog_config();
         config.browser.extra_wait = Some(Duration::from_millis(1500));
-        let expected = ["host text", "the page closed 5 dialogs<"];
+        let expected = [
+            "host text",
+            "the page closed 5 dialogs<",
+            "the frame answered 2 recurring dialogs<",
+        ];
         if !rows.scrape(&row, config, &site.uri(), &expected).await {
             return;
         }
