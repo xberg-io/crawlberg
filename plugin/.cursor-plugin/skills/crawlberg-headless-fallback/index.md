@@ -1,10 +1,10 @@
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
-Content-Hash: blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c
-Source-Hash: blake3:144d61599b42b8eac44f62f53764b7cfe2a8777a60f6fa906a13e09a9a110295
+Content-Hash: blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb
+Source-Hash: blake3:ed50afb59ee2e2da84cdfeaccccc699edf993a16a4469575269bc26db7e42bd5
 Schema-Version: v1
 -->
 
 # Concepts
 
-* [Headless Fallback](SKILL.md) - Use when a static fetch returns nothing useful and the page needs a real browser. Covers `--browser-mode auto|always|never`, external CDP via `--browser-endpoint`, symptoms of JS-only pages and WAF blocks, and the performance cost.
+- [Headless Fallback](SKILL.md) - Use when a static fetch returns nothing useful and the page needs a real browser. Covers `--browser-mode auto|always|never`, external CDP via `--browser-endpoint`, symptoms of JS-only pages and WAF blocks, and the performance cost.

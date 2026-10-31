@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:144d61599b42b8eac44f62f53764b7cfe2a8777a60f6fa906a13e09a9a110295",
+  "source_hash": "blake3:ed50afb59ee2e2da84cdfeaccccc699edf993a16a4469575269bc26db7e42bd5",
   "outputs": {
     ".claude-plugin/plugin.json": {
       "content_hash": "blake3:bffc3274917265984149dd00a20d67644b6bd6a09fd9dec8a12638ce99ec82de",
@@ -27,7 +27,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -35,7 +35,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-headless-fallback/SKILL.md": {
@@ -43,7 +43,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-mapping-urls/SKILL.md": {
@@ -51,7 +51,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -59,7 +59,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-serving-the-api/SKILL.md": {
@@ -67,7 +67,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg/SKILL.md": {
@@ -75,7 +75,7 @@
       "mode": "0644"
     },
     ".cursor-plugin/skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     },
     ".factory-plugin/plugin.json": {
@@ -111,7 +111,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -119,7 +119,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-headless-fallback/SKILL.md": {
@@ -127,7 +127,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-mapping-urls/SKILL.md": {
@@ -135,7 +135,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -143,7 +143,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-serving-the-api/SKILL.md": {
@@ -151,7 +151,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg/SKILL.md": {
@@ -159,7 +159,7 @@
       "mode": "0644"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/__init__.py": {
@@ -187,7 +187,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -195,7 +195,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-headless-fallback/SKILL.md": {
@@ -203,7 +203,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-mapping-urls/SKILL.md": {
@@ -211,7 +211,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -219,7 +219,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-serving-the-api/SKILL.md": {
@@ -227,7 +227,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg/SKILL.md": {
@@ -235,7 +235,7 @@
       "mode": "0644"
     },
     ".hermes/plugins/crawlberg/skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     },
     ".mcp.json": {
@@ -267,7 +267,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -275,7 +275,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-headless-fallback/SKILL.md": {
@@ -283,7 +283,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-mapping-urls/SKILL.md": {
@@ -291,7 +291,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -299,7 +299,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-serving-the-api/SKILL.md": {
@@ -307,7 +307,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     ".opencode/skills/crawlberg/SKILL.md": {
@@ -315,7 +315,7 @@
       "mode": "0644"
     },
     ".opencode/skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     },
     ".pi/prompts/crawlberg-crawl.md": {
@@ -331,7 +331,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     ".pi/skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -339,7 +339,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     ".pi/skills/crawlberg-headless-fallback/SKILL.md": {
@@ -347,7 +347,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     ".pi/skills/crawlberg-mapping-urls/SKILL.md": {
@@ -355,7 +355,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     ".pi/skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -363,7 +363,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     ".pi/skills/crawlberg-serving-the-api/SKILL.md": {
@@ -371,7 +371,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     ".pi/skills/crawlberg/SKILL.md": {
@@ -379,7 +379,7 @@
       "mode": "0644"
     },
     ".pi/skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     },
     "assets/icon.svg": {
@@ -435,7 +435,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-automating-the-browser/index.md": {
-      "content_hash": "blake3:b4cd4916570c134a1caf8b30c2d996a481c0c24db5255f5ab279342e8246c04d",
+      "content_hash": "blake3:6b2dca9b4e6d3e3914abef798158d085039331fee8979c6c41ba70a51aecabdf",
       "mode": "0644"
     },
     "skills/crawlberg-crawling-a-site/SKILL.md": {
@@ -443,7 +443,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-crawling-a-site/index.md": {
-      "content_hash": "blake3:3261fad5f2bd751603be3312b2423b270af221a590f2c959a4b5feef2c8cc2d7",
+      "content_hash": "blake3:1f0c441ad8bb57c48ff0073a3795e78da8b1de81f1416ef52442db8869365e82",
       "mode": "0644"
     },
     "skills/crawlberg-headless-fallback/SKILL.md": {
@@ -451,7 +451,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-headless-fallback/index.md": {
-      "content_hash": "blake3:86383ba728fcdb336c904c9353e4bd98f9a034e5abc177352c72f7cbd001458c",
+      "content_hash": "blake3:bd4776a639d6f8d2f227969d0712b59d5808def0e1e8d090b225fa7cc23506fb",
       "mode": "0644"
     },
     "skills/crawlberg-mapping-urls/SKILL.md": {
@@ -459,7 +459,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-mapping-urls/index.md": {
-      "content_hash": "blake3:e7bfac4d6c7141202881b5b3e302a7494bf375ee2a0926340e263f52286502ed",
+      "content_hash": "blake3:0e59d0f7995b3de8821ebbb55e20e19f09ce4a1bb405d70080aa453ca5cde96a",
       "mode": "0644"
     },
     "skills/crawlberg-scraping-html-to-markdown/SKILL.md": {
@@ -467,7 +467,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-scraping-html-to-markdown/index.md": {
-      "content_hash": "blake3:df6bfea6942fa63c94ce4708d426f2eba1e6ee2c6e4d91f99f7c1c82ceb42f0f",
+      "content_hash": "blake3:daa2ef785d220b3f614c752190aa09bf0674f0da9f653b1d5c52cfe72c9d1cc8",
       "mode": "0644"
     },
     "skills/crawlberg-serving-the-api/SKILL.md": {
@@ -475,7 +475,7 @@
       "mode": "0644"
     },
     "skills/crawlberg-serving-the-api/index.md": {
-      "content_hash": "blake3:c17f41bda3fc1aeec791222f643f5b2b39bff0a8b019d8e54d840c40d3a1218f",
+      "content_hash": "blake3:b42bb4ff1f8c9c381dc6f4de21c16c558c12038d00d40a64ad56101f67886609",
       "mode": "0644"
     },
     "skills/crawlberg/SKILL.md": {
@@ -483,7 +483,7 @@
       "mode": "0644"
     },
     "skills/crawlberg/index.md": {
-      "content_hash": "blake3:7c3f5f8b6938ceff6457ed1557eb82d956de699d844380c85ca3209ade2b5ee2",
+      "content_hash": "blake3:14c67f609f2a5c505d32bc55300270487f6459dc3190e125eea8fed20b2dbf59",
       "mode": "0644"
     }
   },

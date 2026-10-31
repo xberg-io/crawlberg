@@ -2,9 +2,9 @@
 # Refresh it with `ai-rulez lock`; `ai-rulez generate --locked` fails when it is stale.
 
 version = 1
-ai_rulez_version = '5.9.7'
+ai_rulez_version = '5.9.8'
 scope = 'all'
-tree = 'sha256:44072b74222502a484afd4c3359bca47e6790fd2a0b96562973fe0c0e011f0b7'
+tree = 'sha256:6f42441236a6a739aef0fb9c6324cee06d044071480e2e4484587183a9f8653e'
 
 [[include]]
 name = 'xberg-bindings'
@@ -159,43 +159,43 @@ digest = 'sha256:ec1406ea95df3cbf9d341e936c5749c50093118b08be4204b99d61e747e5a7c
 name = 'crawlberg'
 source = 'skills/crawlberg'
 commit = ''
-digest = 'sha256:3abdfe2cd8558bc9a00b5e3d8527b0ee6e0b1302ec04eb761fe506ab715d49c7'
+digest = 'sha256:9eb115ea441a3ee3df5f0d6c812f830db3db75798c041e048765591d17c0a9af'
 
 [[served]]
 name = 'crawlberg-automating-the-browser'
 source = 'skills/crawlberg-automating-the-browser'
 commit = ''
-digest = 'sha256:9e63f96739a80bf98b292bc833f36e80e8925891f10e7fdd56f417d6e1fbf45e'
+digest = 'sha256:46e16abbb4c48fb185a034e6632e1a652c92600de91745c69e83ff661606b947'
 
 [[served]]
 name = 'crawlberg-crawling-a-site'
 source = 'skills/crawlberg-crawling-a-site'
 commit = ''
-digest = 'sha256:3188fb489defe23756d8170bb0fc060b2c914013968d3b4b1927591fde246510'
+digest = 'sha256:d4431fc75899f4a8b1eebb35c4eae83fcfd683e9cf9f0c2e2155ea1ec561c717'
 
 [[served]]
 name = 'crawlberg-headless-fallback'
 source = 'skills/crawlberg-headless-fallback'
 commit = ''
-digest = 'sha256:738149b81be8701f8b17d39478fda96341389fb530cadb844ffbfd29e0e86082'
+digest = 'sha256:660952492047610e89e51d97eeef1896df1be4267298e9c333eb671ba6b9de65'
 
 [[served]]
 name = 'crawlberg-mapping-urls'
 source = 'skills/crawlberg-mapping-urls'
 commit = ''
-digest = 'sha256:f527c4d001723082c729a7a1c3a6ee6d672b7562b693ea0538fb76872d5f552b'
+digest = 'sha256:0c34de91d7f5361d5bc4aa766384209d6c21fbe5928998893184fab5f8a14bee'
 
 [[served]]
 name = 'crawlberg-scraping-html-to-markdown'
 source = 'skills/crawlberg-scraping-html-to-markdown'
 commit = ''
-digest = 'sha256:75083ac59c1aa1bfaac59431214d6824b2202c7cad9b1a938cf3dc31ebe8b127'
+digest = 'sha256:dc45acd16cdb7a07799a536541f239800af86d0d0438dd0872827dd501a12e3e'
 
 [[served]]
 name = 'crawlberg-serving-the-api'
 source = 'skills/crawlberg-serving-the-api'
 commit = ''
-digest = 'sha256:da5cad6ce067b8659b047154466de5d3c517c1aa1f4d7efbbca545f0b5a7cb8d'
+digest = 'sha256:044c3821ced99eb438480abbbf4c0a32d8dd83b34e44b89ca377a481163623fc'
 
 [[served]]
 name = 'dependency-awareness'
@@ -291,169 +291,169 @@ digest = 'sha256:2700d984ba10baa2e16ed19b48cc8fd5f7351776f2ce03f6712394d3912f91c
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg'
 commit = ''
-digest = 'sha256:dfb5e117d9575f5182a9feb9c7bb126f1cd4202a7b9230a26d91c44d0f2eeeac'
+digest = 'sha256:4dfa1bfa5a06c38ec91dfbdead7342b81c9b05309a4fe303feabe0e1440fa866'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-automating-the-browser'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-automating-the-browser'
 commit = ''
-digest = 'sha256:8741018bd5a72b59c7678c7738d360a7ae6792481d5a5063e68d28cefd4a8039'
+digest = 'sha256:bf52abf10a2f4f882a0eb47ad9de7398bb3c3b602bfdd4b8dffe2fc4773c7714'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-crawling-a-site'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-crawling-a-site'
 commit = ''
-digest = 'sha256:6eefb5c44dba4f4a9198e65052435a580624432f105a837af6fbc06e2d887bf6'
+digest = 'sha256:0a5fd2c04835683a8bb56049ba85ff0678da04e89ae7890521f01a9bcb2c76a3'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-headless-fallback'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-headless-fallback'
 commit = ''
-digest = 'sha256:b36776c04f7b48a3354ef79f43e4fd33306b0cd30ad79cb8b6ea1e6458d5acc5'
+digest = 'sha256:58774f2c47a1cfa062ec86c9fa232c51afa5cdf3c9d018ca6a1a582d12ce13cd'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-mapping-urls'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-mapping-urls'
 commit = ''
-digest = 'sha256:9f6be74ef1b7225880f281330ee8205d9ff5143d9b776fe738e28adc36a14f69'
+digest = 'sha256:aeca12b8c12f4918ca8107a6a230b57b797a87e1fab0e9d8e21abd30ef717ef8'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-scraping-html-to-markdown'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-scraping-html-to-markdown'
 commit = ''
-digest = 'sha256:3473b117674138221c521aab5915cce4ec08b8ba0a199130d8aa2ccb92f906c3'
+digest = 'sha256:d47efbf6b467e302707e1ebf97ea13dbcd185bac6def89718ca33667d74210b1'
 
 [[served]]
 name = 'plugin.hermes.package.src.crawlberg_hermes_plugin.skills.crawlberg-serving-the-api'
 source = 'plugin/.hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg-serving-the-api'
 commit = ''
-digest = 'sha256:3b245827166111c5f09faf6c4e80a6c607b6b3c17fa9608a5bc19540ac78d499'
+digest = 'sha256:da4f4242a2e6619b302f32fb29e7da1605b93e7e0e3dad1db3fe632ba4dbd75a'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg'
 commit = ''
-digest = 'sha256:4d8cc62068197a418b7c660a7b2ef29027f18f49c64a03fcab961fad1890ad15'
+digest = 'sha256:7546ba033cd791582e0d6c9e583e6601972924432381c3e3ac984efefc6ebaa6'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-automating-the-browser'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-automating-the-browser'
 commit = ''
-digest = 'sha256:0a13f7f01bfcb233a1eb5e4b0f3007781be4ad313e770cd10fbc47cffa114fc7'
+digest = 'sha256:35f7bef65d11bb3d853b9ca83ed2a40871bcb7c2c6b2ed04083b96b31bac6e08'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-crawling-a-site'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-crawling-a-site'
 commit = ''
-digest = 'sha256:71ca08ab357844d438d8a46563f65dc259800337765c80b8b4ad2c4a675a9a03'
+digest = 'sha256:669eb5c29abfc0569b843542c1c06a06a2793b0fd18219a75b1b852596c1c310'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-headless-fallback'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-headless-fallback'
 commit = ''
-digest = 'sha256:19d2f8360e554430a02785ebf5ca07ae2028586e5d9ffb8ea6e27c593a43f118'
+digest = 'sha256:530757a11d32a7b6cdd1f8dd71be51c8bafbd02f909c6a419d3312de4c905121'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-mapping-urls'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-mapping-urls'
 commit = ''
-digest = 'sha256:9c08df9fbbc70161408b9b06280cba5e5e03cdd9a2c645c4f2994877ae9aac56'
+digest = 'sha256:57b1d9f963c4a32055aba46dc153d44edfd09a32c62569969f19a833a39ba77d'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-scraping-html-to-markdown'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-scraping-html-to-markdown'
 commit = ''
-digest = 'sha256:79f6cb463adf227ad8961c9452b118f0e9c673f7ee067bbf2895122017c76dfb'
+digest = 'sha256:8a3ed077fb0426eca205ec7fbcc811645894a31ff76e54b1696932516aa810b8'
 
 [[served]]
 name = 'plugin.hermes.plugins.crawlberg.skills.crawlberg-serving-the-api'
 source = 'plugin/.hermes/plugins/crawlberg/skills/crawlberg-serving-the-api'
 commit = ''
-digest = 'sha256:4ed81142f471621a878e4a5dd26ddce0404e78db84891aa07596a799e68b2861'
+digest = 'sha256:442b35623324acb0fea6cc7cbe037cac7a2bce14d32081beb9fde1c9321a255c'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg'
 source = 'plugin/.opencode/skills/crawlberg'
 commit = ''
-digest = 'sha256:601186f85f0d701ec133e3c61a40ae96fc9a767856d3826fdfe70d513d055799'
+digest = 'sha256:a8fd00508c58f48388147b9c9f6f2d5c5ff4e36849057129b62b33334a0222c9'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-automating-the-browser'
 source = 'plugin/.opencode/skills/crawlberg-automating-the-browser'
 commit = ''
-digest = 'sha256:e5f926274d660a0527cc1cac39c732e77809bbd7f25c09e1a7cf2a84d6cb3772'
+digest = 'sha256:a1bfe5e61b250461bf7d2c3cccdde2354ea9dcc4cf7545b829544859469fac3a'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-crawling-a-site'
 source = 'plugin/.opencode/skills/crawlberg-crawling-a-site'
 commit = ''
-digest = 'sha256:50a1a581166979232fbf28bc00b07ed4759750bd8a02248f5b6e3cf4544744d1'
+digest = 'sha256:53d754cadf12143fea5e4f51597a3a9f00c2be051ea9053ddf50aafbb04d87fd'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-headless-fallback'
 source = 'plugin/.opencode/skills/crawlberg-headless-fallback'
 commit = ''
-digest = 'sha256:52c9a254e83fd0c590b20967822887544b913822a05dfad42344e11d88dabe7e'
+digest = 'sha256:d41a55e62701b6f4555f95230c8ee6390f485750f02561e87a6e918cab5dc399'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-mapping-urls'
 source = 'plugin/.opencode/skills/crawlberg-mapping-urls'
 commit = ''
-digest = 'sha256:12f1bff53a7fbb8ec2059937e2eca693156f9e9f56fe4d2a129e11f81504358b'
+digest = 'sha256:3fbed6c2ec99ce817d3e8a0f5a4851acd24860711f797c5ca6bd164755cfe8fa'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-scraping-html-to-markdown'
 source = 'plugin/.opencode/skills/crawlberg-scraping-html-to-markdown'
 commit = ''
-digest = 'sha256:fa056998f2c6d2bd9f0b49ae03a61724085b0d77d93ad8cb9245b2edaf8995b5'
+digest = 'sha256:4989999d1121f1c43db002eecb5f58dceeb6fea15b2e37b3086e7dd0a29a188a'
 
 [[served]]
 name = 'plugin.opencode.skills.crawlberg-serving-the-api'
 source = 'plugin/.opencode/skills/crawlberg-serving-the-api'
 commit = ''
-digest = 'sha256:43f463cf39608cd700776c055f873215e6aa56cb6031aa8f7cb7f98b802138f6'
+digest = 'sha256:05f1e13a82d51811c1017d9e56220fde6ed21ab461fefc821d1521908693beba'
 
 [[served]]
 name = 'plugin.skills.crawlberg'
 source = 'plugin/skills/crawlberg'
 commit = ''
-digest = 'sha256:900ca595489996e97ee551133c6e417c9dfb8caa947996dbfd5c3ca35e3a2c45'
+digest = 'sha256:7e4a33a9a5cb29cc44c3964afe92734280ddabb3eaeaa3673fd6a6fd766f7462'
 
 [[served]]
 name = 'plugin.skills.crawlberg-automating-the-browser'
 source = 'plugin/skills/crawlberg-automating-the-browser'
 commit = ''
-digest = 'sha256:34795d2407e1460ba10d82dbdac84a616eb71b957f52296721ccc181addb368f'
+digest = 'sha256:24a850f4b120f99af82f2ff4d4a25dd83fe59d497540c29e474e7d6662ac510d'
 
 [[served]]
 name = 'plugin.skills.crawlberg-crawling-a-site'
 source = 'plugin/skills/crawlberg-crawling-a-site'
 commit = ''
-digest = 'sha256:fef432b07f9425077a43b0617a3e04af30ab8de42dfeddfa6706a8ccf874c22e'
+digest = 'sha256:58849696b1124f398d79ca716547e37176499c6aca2698f9f40b09e0e4776f26'
 
 [[served]]
 name = 'plugin.skills.crawlberg-headless-fallback'
 source = 'plugin/skills/crawlberg-headless-fallback'
 commit = ''
-digest = 'sha256:0b7779a5ffc14db41a914ba93cf540696e12cacae4a08fbb161e3bc003cfd759'
+digest = 'sha256:68cf86f28f016028581bcf4f48828061afecd0a187fae036745084eab6e9d949'
 
 [[served]]
 name = 'plugin.skills.crawlberg-mapping-urls'
 source = 'plugin/skills/crawlberg-mapping-urls'
 commit = ''
-digest = 'sha256:c7157144969e97ed595fe8e401ecad03034f246e0361d45daa327454fe24baa3'
+digest = 'sha256:07733fdd075aa3a55856bc166fe586e0342cc43345a21363048399e85b911575'
 
 [[served]]
 name = 'plugin.skills.crawlberg-scraping-html-to-markdown'
 source = 'plugin/skills/crawlberg-scraping-html-to-markdown'
 commit = ''
-digest = 'sha256:636fa38213dfbd04e5c78407c10b7e9bd95fc55abedb540fa7c7f4035becd022'
+digest = 'sha256:ba776666e19bd59036a82ba5e662ab2704c82b7e1e99c64a17a9593ba7d55e37'
 
 [[served]]
 name = 'plugin.skills.crawlberg-serving-the-api'
 source = 'plugin/skills/crawlberg-serving-the-api'
 commit = ''
-digest = 'sha256:9a5e915c4a1a855f7a8008a97d9ab1a585453140125ddcb11888906e2b4cd4d2'
+digest = 'sha256:becebfdc796edbfb94072d151246281c90d7f4bbb4c01615910f611f18328294'
 
 [[served]]
 name = 'poly-lint-format'
