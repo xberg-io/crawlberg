@@ -78,6 +78,7 @@ jobs:
       gem_version: ${{ steps.version_forms.outputs.gem_version }}
       ref: ${{ steps.meta.outputs.ref }}
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+      source_sha: ${{ steps.source.outputs.sha }}
       target_sha: ${{ steps.meta.outputs.target_sha }}
       matrix_ref: ${{ steps.meta.outputs.matrix_ref }}
       is_tag: ${{ steps.meta.outputs.is_tag }}
@@ -138,6 +139,15 @@ jobs:
       - name: Resolve release metadata
         id: meta
         uses: xberg-io/actions/prepare-release-metadata@v1
+
+      - name: Pin prepared source
+        id: source
+        shell: bash
+        env:
+          SOURCE_REF: ${{ steps.meta.outputs.checkout_ref }}
+        run: |
+          source_sha="$(git rev-parse --verify "${SOURCE_REF}^{commit}")"
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
 
       # ~keep Most build/publish jobs require is_tag. Reject explicit branches/commits,
       # including dry runs, rather than report green after those jobs skip. Pre-tag rehearsals
@@ -2180,6 +2190,11 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
+
       - uses: actions/download-artifact@v8
         with:
           pattern: rubygems-*
