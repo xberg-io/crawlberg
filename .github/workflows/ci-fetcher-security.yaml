@@ -8,7 +8,7 @@ on:
       - "vendor/crawlberg-chromiumoxide-fetcher/**"
       - ".github/workflows/ci-fetcher-security.yaml"
       - "rust-toolchain.toml"
-      - ".github/toolchains/fetcher-msrv/rust-toolchain.toml"
+      - ".github/toolchains/fetcher-msrv.toml"
       - "mise.toml"
       - "mise.lock"
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           - os: windows-latest
             toolchain_file: rust-toolchain.toml
           - os: ubuntu-latest
-            toolchain_file: .github/toolchains/fetcher-msrv/rust-toolchain.toml
+            toolchain_file: .github/toolchains/fetcher-msrv.toml
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_INCREMENTAL: 0

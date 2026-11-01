@@ -93,7 +93,7 @@ class SecureFetcherPackagingTests(unittest.TestCase):
         job = workflow["jobs"]["fetcher"]
         matrix = job["strategy"]["matrix"]["include"]
         assert len(matrix) == 3
-        msrv_file = ".github/toolchains/fetcher-msrv/rust-toolchain.toml"
+        msrv_file = ".github/toolchains/fetcher-msrv.toml"
         assert {row["os"] for row in matrix} == {"ubuntu-latest", "windows-latest"}
         assert sum(row["toolchain_file"] == msrv_file for row in matrix) == 1
         assert tomllib.loads((ROOT / msrv_file).read_text())["toolchain"]["channel"] == "1.88.0"
