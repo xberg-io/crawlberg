@@ -568,6 +568,8 @@ dependencies = [
 [[package]]
 name = "crawlberg-chromiumoxide"
 version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28a8fa6f75a2a698c099f1defa98fe1dd45367e0574d7f52306a1e54d66bf4df"
 dependencies = [
  "async-tungstenite",
  "base64",
