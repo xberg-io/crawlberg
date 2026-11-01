@@ -9,6 +9,7 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 #[path = "../src/runtime/mod.rs"]
+#[allow(dead_code, reason = "This test-side module import also includes unused network helpers.")]
 mod runtime;
 
 struct Fixture(TempDir);
