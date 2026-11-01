@@ -34,6 +34,27 @@ def assert_ruby_publish_context(steps: list[dict]) -> None:
     assert setup["with"] == {"tools": "ruby"}, "Resolve the committed Ruby version and lock"
 
 
+def two_commit_repo(path: Path) -> Path:
+    """A local repository with a parent commit; CI's shallow checkout of ROOT has none."""
+    path.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=path, env=env, check=True)
+    for message in ("first", "second"):
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", message],
+            cwd=path,
+            env=env,
+            check=True,
+        )
+    return path
+
+
 def assert_context_rejected(steps: list[dict], message: str) -> None:
     failure = None
     try:
@@ -60,17 +81,18 @@ class RubyPublishContextTests(unittest.TestCase):
         assert self.prepare["steps"].index(checkouts[0]) < self.prepare["steps"].index(sources[0])
         assert sources[0]["env"] == {"SOURCE_REF": "${{ steps.meta.outputs.checkout_ref }}"}
         with tempfile.TemporaryDirectory() as directory:
+            repo = two_commit_repo(Path(directory) / "repo")
             output = Path(directory) / "output"
             result = subprocess.run(
                 ["bash", "-e", "-c", sources[0]["run"]],
-                cwd=ROOT,
+                cwd=repo,
                 env={**os.environ, "GITHUB_OUTPUT": str(output), "SOURCE_REF": "HEAD^"},
                 capture_output=True,
                 text=True,
                 check=False,
             )
             assert result.returncode == 0, result.stderr
-            expected = subprocess.check_output(["git", "rev-parse", "HEAD^{commit}^"], cwd=ROOT, text=True).strip()
+            expected = subprocess.check_output(["git", "rev-parse", "HEAD^{commit}^"], cwd=repo, text=True).strip()
             assert output.read_text() == f"sha={expected}\n"
 
     def test_prepared_source_resolution_rejects_a_missing_ref(self) -> None:
