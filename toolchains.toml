@@ -1,4 +1,4 @@
-baseline = "v1.12.3"
+baseline = "v1.13.0"
 task_sets = [
   "alef",
   "alef-bindings",
@@ -22,4 +22,4 @@ task_sets = [
 
 [overrides."github:xberg-io/alef"]
 version = "0.115.10"
-reason = "Use the latest released Alef for global regeneration and corrected Swift and Dart generation."
+reason = "Stays on 0.115.10, the alef_version in alef.toml: alef consumer regeneration to 0.115.12 pending."
