@@ -8,6 +8,10 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
+
 ## [1.12.4] - 2026-10-31
 
 ### Fixed

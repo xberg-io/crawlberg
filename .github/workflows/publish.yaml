@@ -608,7 +608,7 @@ jobs:
         with:
           python-version: "3.13"
           package-dir: packages/python
-          cibw-build: "cp310-*"
+          cibw-build: "cp311-*"
           upload-artifact: "false"
           # ~keep Without an explicit target the wheel inherits the runner's SDK version, so a
           # ~keep macos-15-intel build tags itself macosx_15_0_x86_64 and pip rejects it on

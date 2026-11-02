@@ -104,7 +104,7 @@ png = "0.18"
 precomputed-hash = "0.1"
 proptest = "1"
 psl = "2"
-pyo3 = { version = "0.30", features = ["abi3-py310"] }
+pyo3 = { version = "0.30", features = ["abi3-py311"] }
 pyo3-async-runtimes = { version = "0.30", features = ["tokio-runtime"] }
 quick-xml = "0.42"
 rayon = "1"
