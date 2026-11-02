@@ -2536,11 +2536,10 @@ jobs:
 
       - uses: xberg-io/actions/publish-nuget@v1
         with:
+          nuget-user: naaman
           expected-version: ${{ needs.prepare.outputs.version }}
           packages-dir: dist/nuget
           dry-run: ${{ needs.prepare.outputs.dry_run }}
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
 
   publish-hex:
     name: Publish Elixir Hex package
