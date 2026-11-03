@@ -55,7 +55,7 @@ cargo install crawlberg-cli --features "api,mcp"
 pnpm add -g @xberg-io/crawlberg-cli
 ```
 
-Installs a thin proxy that downloads and runs the native `crawlberg` binary from GitHub releases. Requires Node.js 18+; no Rust toolchain needed.
+Installs a thin proxy that downloads and runs the native `crawlberg` binary from GitHub releases. Requires Node.js 22+; no Rust toolchain needed.
 
 </TabItem>
 </Tabs>
@@ -106,7 +106,7 @@ crawlberg = { version = "0.3", features = ["browser", "ai", "mcp"] }
 ```
 
 :::note[Rust version]
-Crawlberg requires Rust 1.95+ (edition 2024).
+Crawlberg requires Rust 1.99+ (edition 2024).
 :::
 
 
@@ -155,7 +155,7 @@ Native binaries are built for glibc Linux, macOS, and Windows — not musl. On A
 </TabItem>
 <TabItem label="Ruby">
 
-Requires Ruby 3.2+. Add to your `Gemfile`:
+Requires Ruby 3.3+. Add to your `Gemfile`:
 
 ```ruby title="Gemfile"
 gem "crawlberg", "~> 0.3"
@@ -178,7 +178,7 @@ The gem includes a native extension built with [Magnus](https://github.com/matsa
 </TabItem>
 <TabItem label="Go">
 
-Requires Go 1.21+. The Go bindings use cgo with the C FFI layer:
+Requires Go 1.27+. The Go bindings use cgo with the C FFI layer:
 
 ```bash
 go get github.com/xberg-io/crawlberg/packages/go
@@ -237,7 +237,7 @@ The C# bindings use P/Invoke to call the C FFI layer.
 </TabItem>
 <TabItem label="PHP">
 
-Requires PHP 8.2+. Install the extension via Composer:
+Requires PHP 8.3+. Install the extension via Composer:
 
 ```bash
 composer require xberg-io/crawlberg
@@ -255,7 +255,7 @@ php -m | grep crawlberg
 </TabItem>
 <TabItem label="Elixir">
 
-Requires Elixir 1.14+ with OTP 25+. Add to your `mix.exs`:
+Requires Elixir 1.17+ with OTP 25+. Add to your `mix.exs`:
 
 ```elixir title="mix.exs"
 defp deps do

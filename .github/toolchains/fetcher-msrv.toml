@@ -1,5 +1,5 @@
 # The vendored fetcher's MSRV, read by ci-fetcher-security.yaml. Not named rust-toolchain.toml: toolchains.py
 # sync moves every nested rust-toolchain file to the baseline channel, which would erase the MSRV leg. ~keep
 [toolchain]
-channel = "1.88.0"
+channel = "1.99.0"
 profile = "minimal"

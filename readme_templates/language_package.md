@@ -24,7 +24,7 @@
   {% elif language == "ruby" %}
 - **Ruby package** — Magnus-backed native extension with Ruby objects for crawl results.
   {% elif language == "php" %}
-- **PHP extension** — typed PHP 8.2+ surface for crawl and scrape calls.
+- **PHP extension** — typed PHP 8.3+ surface for crawl and scrape calls.
   {% elif language == "go" %}
 - **Go module** — cgo-backed binding with ordinary Go structs and errors.
   {% elif language == "java" %}

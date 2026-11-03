@@ -6,6 +6,7 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Minimum supported versions raised: Node.js 22, PHP 8.3, Elixir 1.17, Go 1.27, Android API 24, Dart 3.13, Zig 0.17, macOS 26, Rust 1.99.
 - Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
 
 ## [1.12.4] - 2026-10-31

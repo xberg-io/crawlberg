@@ -2516,7 +2516,7 @@ package_name = "xberg-io/crawlberg"
 install_command = "composer require xberg-io/crawlberg"
 description = """
 PHP bindings for **crawlberg** — a high-performance Rust web crawling engine. Native PHP
-extension via ext-php-rs with typed properties, PHP 8.2+ support, and PHPStan type stubs.
+extension via ext-php-rs with typed properties, PHP 8.3+ support, and PHPStan type stubs.
 """
 
 [crates.readme.languages.php.snippets]

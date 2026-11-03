@@ -96,7 +96,7 @@ class SecureFetcherPackagingTests(unittest.TestCase):
         msrv_file = ".github/toolchains/fetcher-msrv.toml"
         assert {row["os"] for row in matrix} == {"ubuntu-latest", "windows-latest"}
         assert sum(row["toolchain_file"] == msrv_file for row in matrix) == 1
-        assert tomllib.loads((ROOT / msrv_file).read_text())["toolchain"]["channel"] == "1.88.0"
+        assert tomllib.loads((ROOT / msrv_file).read_text())["toolchain"]["channel"] == "1.99.0"
         assert job["strategy"]["fail-fast"] is False
         assert job["env"]["CARGO_BUILD_JOBS"] == 2
         assert job["env"]["RUSTC_WRAPPER"] == ""

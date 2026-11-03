@@ -21,7 +21,7 @@ repository = "https://github.com/xberg-io/crawlberg"
 homepage = "https://xberg.io"
 documentation = "https://docs.rs/crawlberg"
 readme = "README.md"
-rust-version = "1.95"
+rust-version = "1.99"
 keywords = ["crawl", "scrape", "web", "spider", "rust"]
 categories = ["web-programming", "network-programming"]
 
