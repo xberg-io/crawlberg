@@ -2,9 +2,9 @@
 # Refresh it with `ai-rulez lock`; `ai-rulez generate --locked` fails when it is stale.
 
 version = 1
-ai_rulez_version = '5.9.8'
+ai_rulez_version = '5.10.0'
 scope = 'all'
-tree = 'sha256:035b3dd32891b775481477e002cddb9fbb67c0079f2613354a8a0b8b1cb08a82'
+tree = 'sha256:4420ebcedb378c9cf71cc03ca4a912bc7b4b8f7b1db94259a82f67f7934f7514'
 
 [[include]]
 name = 'xberg-bindings'
@@ -87,7 +87,7 @@ digest = 'sha256:36238558abea96bb59730e41ea86fcbc474022fd4f951a2548fb52eb46d08b7
 name = 'api'
 source = '.agents/skills/api'
 commit = ''
-digest = 'sha256:97c3b538dd8542f57fe97cdbd5882433016424b25365f21d2bad0ae231654455'
+digest = 'sha256:e4397d2eec644025fbd975679b8b5965a10e54ab54b8802f6dfef1fa5e5f59d2'
 
 [[served]]
 name = 'basemind-tools'
@@ -111,25 +111,25 @@ digest = 'sha256:ab529dd0b7133c43697f12c9285b314f7098ec1f9f9db4c8ef1d9c86b272955
 name = 'claude.skills.api'
 source = '.claude/skills/api'
 commit = ''
-digest = 'sha256:27e0ec57d840807476b09afdc806e4059991a09b4d5b9614fbc09fc4d456642e'
+digest = 'sha256:5d91c51be23a6519fcc52ac975dbf7e2086262ed3ce9bb1ec6725663865be062'
 
 [[served]]
 name = 'claude.skills.cli'
 source = '.claude/skills/cli'
 commit = ''
-digest = 'sha256:672084c6f11bc4242d5801c7e17a8a36fd11eb73dfa0d4047eebad12d68f87f0'
+digest = 'sha256:0763ea594732f0c40b3b007efb1b8c870492a0f28d23b8348cbf30fb3c6b5b38'
 
 [[served]]
 name = 'claude.skills.mcp'
 source = '.claude/skills/mcp'
 commit = ''
-digest = 'sha256:98745a7daa7a0146edcaa9cf7a3b3a9810a5e4b04ff25b239b728fee2d248462'
+digest = 'sha256:95f771fb2df9dab1c3ad96f348e3ad03e56c0b65034487e034419000b02d9c56'
 
 [[served]]
 name = 'cli'
 source = '.agents/skills/cli'
 commit = ''
-digest = 'sha256:477d809a2a885b396db7080c798e2086c69bfb292112c33e7b11617ced3df36a'
+digest = 'sha256:f750ee049ac44042f649b4a2fa902bdf9505090c5a5bca08781f3ed92ad32395'
 
 [[served]]
 name = 'code-quality-standards'
@@ -261,7 +261,7 @@ digest = 'sha256:5cb87728d1449fadda6d8557501fcc0823509c60a37058ce4d2dda123296f67
 name = 'mcp'
 source = '.agents/skills/mcp'
 commit = ''
-digest = 'sha256:d88dc32155c8ae92a568403e185db7584eb95a055bcca0a6c65d268516a25816'
+digest = 'sha256:588231243555dd394e6741bc221fbbad2413662d3ff2cca27d48b9a17af727c9'
 
 [[served]]
 name = 'mise-tasks'
