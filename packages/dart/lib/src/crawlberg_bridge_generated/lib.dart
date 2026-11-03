@@ -1300,7 +1300,7 @@ class CrawlConfig {
   /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
   /// between requests to the same domain, in HTTP mode and before each page load in
   /// browser mode. When `None`, HTTP mode uses 200ms and browser mode applies no delay.
-  final PlatformInt64? rateLimitMs;
+  final BigInt? rateLimitMs;
 
   /// Maximum number of redirects to follow.
   final PlatformInt64 maxRedirects;
@@ -1315,13 +1315,13 @@ class CrawlConfig {
 
   /// Initial delay, in milliseconds, before the first retry. Doubled on each
   /// subsequent attempt (capped at `retry_max_delay_ms`). Defaults to 100ms.
-  final PlatformInt64 retryInitialDelayMs;
+  final BigInt retryInitialDelayMs;
 
   /// Upper bound, in milliseconds, on the exponential retry backoff. A 429 or 503 whose
   /// `Retry-After` is longer than the backoff is waited out, but one that exceeds this bound
   /// ends the retries with a warning instead (so `0` abandons the retry on any positive
   /// `Retry-After`). Defaults to 60s.
-  final PlatformInt64 retryMaxDelayMs;
+  final BigInt retryMaxDelayMs;
 
   /// Fraction of the per-domain rate-limit delay to randomly jitter by, in `[0.0, 1.0]`.
   /// `0.0` (the default) applies no jitter and preserves the previous fixed-interval
@@ -2233,10 +2233,10 @@ class ExtractionMeta {
   final double? cost;
 
   /// Number of prompt (input) tokens consumed.
-  final PlatformInt64? promptTokens;
+  final BigInt? promptTokens;
 
   /// Number of completion (output) tokens generated.
-  final PlatformInt64? completionTokens;
+  final BigInt? completionTokens;
 
   /// The model identifier used for extraction.
   final String? model;
@@ -3154,7 +3154,7 @@ class ScrapeResult {
   final bool isAllowed;
 
   /// The crawl delay from robots.txt, in seconds.
-  final PlatformInt64? crawlDelay;
+  final BigInt? crawlDelay;
 
   /// Whether a noindex directive was detected.
   final bool noindexDetected;

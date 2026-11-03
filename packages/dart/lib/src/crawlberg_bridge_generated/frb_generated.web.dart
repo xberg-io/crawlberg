@@ -194,6 +194,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SsrfError dco_decode_box_autoadd_ssrf_error(dynamic raw);
 
   @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw);
+
+  @protected
   WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw);
 
   @protected
@@ -443,6 +446,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ScrapeResult? dco_decode_opt_box_autoadd_scrape_result(dynamic raw);
 
   @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+
+  @protected
   WafBlockDetails? dco_decode_opt_box_autoadd_waf_block_details(dynamic raw);
 
   @protected
@@ -486,6 +492,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SsrfPolicy dco_decode_ssrf_policy(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -699,6 +708,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SsrfError sse_decode_box_autoadd_ssrf_error(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   WafBlockDetails sse_decode_box_autoadd_waf_block_details(
@@ -1002,6 +1014,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
   WafBlockDetails? sse_decode_opt_box_autoadd_waf_block_details(
     SseDeserializer deserializer,
   );
@@ -1055,6 +1070,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SsrfPolicy sse_decode_ssrf_policy(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -1324,6 +1342,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     SsrfError self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_waf_block_details(
@@ -1713,6 +1734,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_waf_block_details(
     WafBlockDetails? self,
     SseSerializer serializer,
@@ -1774,6 +1798,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ssrf_policy(SsrfPolicy self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

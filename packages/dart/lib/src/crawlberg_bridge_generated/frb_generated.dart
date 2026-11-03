@@ -609,7 +609,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -647,7 +647,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -685,7 +685,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -2446,7 +2446,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -2485,7 +2485,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -2521,7 +2521,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
             engine,
             serializer,
           );
@@ -3005,6 +3005,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_u_64(raw);
+  }
+
+  @protected
   WafBlockDetails dco_decode_box_autoadd_waf_block_details(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_waf_block_details(raw);
@@ -3191,12 +3197,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       trackingParams: dco_decode_list_String(arr[19]),
       customHeaders: dco_decode_Map_String_String_None(arr[20]),
       requestTimeout: dco_decode_i_64(arr[21]),
-      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[22]),
+      rateLimitMs: dco_decode_opt_box_autoadd_u_64(arr[22]),
       maxRedirects: dco_decode_i_64(arr[23]),
       retryCount: dco_decode_i_64(arr[24]),
       retryCodes: dco_decode_list_prim_i_64_strict(arr[25]),
-      retryInitialDelayMs: dco_decode_i_64(arr[26]),
-      retryMaxDelayMs: dco_decode_i_64(arr[27]),
+      retryInitialDelayMs: dco_decode_u_64(arr[26]),
+      retryMaxDelayMs: dco_decode_u_64(arr[27]),
       rateLimitJitterRatio: dco_decode_f_64(arr[28]),
       cookiesEnabled: dco_decode_bool(arr[29]),
       auth: dco_decode_opt_box_autoadd_auth_config(arr[30]),
@@ -3431,8 +3437,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return ExtractionMeta(
       cost: dco_decode_opt_box_autoadd_f_64(arr[0]),
-      promptTokens: dco_decode_opt_box_autoadd_i_64(arr[1]),
-      completionTokens: dco_decode_opt_box_autoadd_i_64(arr[2]),
+      promptTokens: dco_decode_opt_box_autoadd_u_64(arr[1]),
+      completionTokens: dco_decode_opt_box_autoadd_u_64(arr[2]),
       model: dco_decode_opt_String(arr[3]),
       chunksProcessed: dco_decode_i_64(arr[4]),
     );
@@ -3873,6 +3879,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+  }
+
+  @protected
   WafBlockDetails? dco_decode_opt_box_autoadd_waf_block_details(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_waf_block_details(raw);
@@ -4050,7 +4062,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       feeds: dco_decode_list_feed_info(arr[8]),
       jsonLd: dco_decode_list_json_ld_entry(arr[9]),
       isAllowed: dco_decode_bool(arr[10]),
-      crawlDelay: dco_decode_opt_box_autoadd_i_64(arr[11]),
+      crawlDelay: dco_decode_opt_box_autoadd_u_64(arr[11]),
       noindexDetected: dco_decode_bool(arr[12]),
       nofollowDetected: dco_decode_bool(arr[13]),
       xRobotsTag: dco_decode_opt_String(arr[14]),
@@ -4130,6 +4142,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       maxRedirects: dco_decode_i_64(arr[3]),
       schemeAllowlist: dco_decode_list_String(arr[4]),
     );
+  }
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
   }
 
   @protected
@@ -4675,6 +4693,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_64(deserializer));
+  }
+
+  @protected
   WafBlockDetails sse_decode_box_autoadd_waf_block_details(
     SseDeserializer deserializer,
   ) {
@@ -4900,12 +4924,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_trackingParams = sse_decode_list_String(deserializer);
     var var_customHeaders = sse_decode_Map_String_String_None(deserializer);
     var var_requestTimeout = sse_decode_i_64(deserializer);
-    var var_rateLimitMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_rateLimitMs = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_maxRedirects = sse_decode_i_64(deserializer);
     var var_retryCount = sse_decode_i_64(deserializer);
     var var_retryCodes = sse_decode_list_prim_i_64_strict(deserializer);
-    var var_retryInitialDelayMs = sse_decode_i_64(deserializer);
-    var var_retryMaxDelayMs = sse_decode_i_64(deserializer);
+    var var_retryInitialDelayMs = sse_decode_u_64(deserializer);
+    var var_retryMaxDelayMs = sse_decode_u_64(deserializer);
     var var_rateLimitJitterRatio = sse_decode_f_64(deserializer);
     var var_cookiesEnabled = sse_decode_bool(deserializer);
     var var_auth = sse_decode_opt_box_autoadd_auth_config(deserializer);
@@ -5272,8 +5296,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ExtractionMeta sse_decode_extraction_meta(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_cost = sse_decode_opt_box_autoadd_f_64(deserializer);
-    var var_promptTokens = sse_decode_opt_box_autoadd_i_64(deserializer);
-    var var_completionTokens = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_promptTokens = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_completionTokens = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_model = sse_decode_opt_String(deserializer);
     var var_chunksProcessed = sse_decode_i_64(deserializer);
     return ExtractionMeta(
@@ -5980,6 +6004,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   WafBlockDetails? sse_decode_opt_box_autoadd_waf_block_details(
     SseDeserializer deserializer,
   ) {
@@ -6238,7 +6273,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_feeds = sse_decode_list_feed_info(deserializer);
     var var_jsonLd = sse_decode_list_json_ld_entry(deserializer);
     var var_isAllowed = sse_decode_bool(deserializer);
-    var var_crawlDelay = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_crawlDelay = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_noindexDetected = sse_decode_bool(deserializer);
     var var_nofollowDetected = sse_decode_bool(deserializer);
     var var_xRobotsTag = sse_decode_opt_String(deserializer);
@@ -6364,6 +6399,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       maxRedirects: var_maxRedirects,
       schemeAllowlist: var_schemeAllowlist,
     );
+  }
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
   }
 
   @protected
@@ -6906,6 +6947,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_waf_block_details(
     WafBlockDetails self,
     SseSerializer serializer,
@@ -7076,12 +7123,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_String(self.trackingParams, serializer);
     sse_encode_Map_String_String_None(self.customHeaders, serializer);
     sse_encode_i_64(self.requestTimeout, serializer);
-    sse_encode_opt_box_autoadd_i_64(self.rateLimitMs, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.rateLimitMs, serializer);
     sse_encode_i_64(self.maxRedirects, serializer);
     sse_encode_i_64(self.retryCount, serializer);
     sse_encode_list_prim_i_64_strict(self.retryCodes, serializer);
-    sse_encode_i_64(self.retryInitialDelayMs, serializer);
-    sse_encode_i_64(self.retryMaxDelayMs, serializer);
+    sse_encode_u_64(self.retryInitialDelayMs, serializer);
+    sse_encode_u_64(self.retryMaxDelayMs, serializer);
     sse_encode_f_64(self.rateLimitJitterRatio, serializer);
     sse_encode_bool(self.cookiesEnabled, serializer);
     sse_encode_opt_box_autoadd_auth_config(self.auth, serializer);
@@ -7329,8 +7376,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_opt_box_autoadd_f_64(self.cost, serializer);
-    sse_encode_opt_box_autoadd_i_64(self.promptTokens, serializer);
-    sse_encode_opt_box_autoadd_i_64(self.completionTokens, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.promptTokens, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.completionTokens, serializer);
     sse_encode_opt_String(self.model, serializer);
     sse_encode_i_64(self.chunksProcessed, serializer);
   }
@@ -7962,6 +8009,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_64(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_waf_block_details(
     WafBlockDetails? self,
     SseSerializer serializer,
@@ -8159,7 +8216,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_feed_info(self.feeds, serializer);
     sse_encode_list_json_ld_entry(self.jsonLd, serializer);
     sse_encode_bool(self.isAllowed, serializer);
-    sse_encode_opt_box_autoadd_i_64(self.crawlDelay, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.crawlDelay, serializer);
     sse_encode_bool(self.noindexDetected, serializer);
     sse_encode_bool(self.nofollowDetected, serializer);
     sse_encode_opt_String(self.xRobotsTag, serializer);
@@ -8238,6 +8295,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(_alefCheckU64BeforeEncode(self));
+  }
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self);
@@ -8251,7 +8314,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putBigUint64(self);
+    serializer.buffer.putBigUint64(_alefCheckU64BeforeEncode(self));
   }
 
   @protected
@@ -8299,4 +8362,13 @@ class CrawlEngineHandleImpl extends RustOpaque implements CrawlEngineHandle {
       .instance
       .api
       .crateCrawlEngineHandleCrawlStream(that: this, req: req);
+}
+
+BigInt _alefCheckU64BeforeEncode(BigInt value) {
+  if (value.isNegative || value.bitLength > 64) {
+    throw RangeError(
+      'u64 unsigned value must be between 0 and 18446744073709551615: $value',
+    );
+  }
+  return value;
 }

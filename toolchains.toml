@@ -21,5 +21,5 @@ task_sets = [
 "version:bump:patch" = "runs alef:pin:check before alef sync-versions"
 
 [overrides."github:xberg-io/alef"]
-version = "0.115.10"
-reason = "Stays on 0.115.10, the alef_version in alef.toml: alef consumer regeneration to 0.115.12 pending."
+version = "0.118.0"
+reason = "Matches alef_version in alef.toml: Alef 0.118.0 emits the raised language minimums."

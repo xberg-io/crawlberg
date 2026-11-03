@@ -163,13 +163,27 @@ fn wire__crate__batch_crawl_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_urls = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::batch_crawl(api_engine, api_urls).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::batch_crawl(&*api_engine_guard, api_urls).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -195,13 +209,27 @@ fn wire__crate__batch_scrape_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_urls = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::batch_scrape(api_engine, api_urls).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::batch_scrape(&*api_engine_guard, api_urls).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -227,13 +255,27 @@ fn wire__crate__crawl_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::crawl(api_engine, api_url).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::crawl(&*api_engine_guard, api_url).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -1774,14 +1816,28 @@ fn wire__crate__interact_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_url = <String>::sse_decode(&mut deserializer);
             let api_actions = <Vec<crate::PageAction>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::interact(api_engine, api_url, api_actions).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::interact(&*api_engine_guard, api_url, api_actions).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -1807,13 +1863,27 @@ fn wire__crate__map_urls_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::map_urls(api_engine, api_url).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::map_urls(&*api_engine_guard, api_url).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -1839,13 +1909,27 @@ fn wire__crate__scrape_impl(
                 flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_engine = <CrawlEngineHandle>::sse_decode(&mut deserializer);
+            let api_engine =
+                <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>>::sse_decode(
+                    &mut deserializer,
+                );
             let api_url = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, AlefBridgeError>(
                     (move || async move {
-                        let output_ok = crate::scrape(api_engine, api_url).await?;
+                        let mut api_engine_guard = None;
+                        let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_engine, 0, false),
+                        ]);
+                        for i in decode_indices_ {
+                            match i {
+                                0 => api_engine_guard = Some(api_engine.lockable_decode_async_ref().await),
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_engine_guard = api_engine_guard.unwrap();
+                        let output_ok = crate::scrape(&*api_engine_guard, api_url).await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -2016,12 +2100,12 @@ const _: fn() = || {
         let _: Vec<String> = CrawlConfig.tracking_params;
         let _: std::collections::HashMap<String, String> = CrawlConfig.custom_headers;
         let _: i64 = CrawlConfig.request_timeout;
-        let _: Option<i64> = CrawlConfig.rate_limit_ms;
+        let _: Option<u64> = CrawlConfig.rate_limit_ms;
         let _: i64 = CrawlConfig.max_redirects;
         let _: i64 = CrawlConfig.retry_count;
         let _: Vec<i64> = CrawlConfig.retry_codes;
-        let _: i64 = CrawlConfig.retry_initial_delay_ms;
-        let _: i64 = CrawlConfig.retry_max_delay_ms;
+        let _: u64 = CrawlConfig.retry_initial_delay_ms;
+        let _: u64 = CrawlConfig.retry_max_delay_ms;
         let _: f64 = CrawlConfig.rate_limit_jitter_ratio;
         let _: bool = CrawlConfig.cookies_enabled;
         let _: Option<crate::AuthConfig> = CrawlConfig.auth;
@@ -2208,8 +2292,8 @@ const _: fn() = || {
     {
         let ExtractionMeta = None::<crate::ExtractionMeta>.unwrap();
         let _: Option<f64> = ExtractionMeta.cost;
-        let _: Option<i64> = ExtractionMeta.prompt_tokens;
-        let _: Option<i64> = ExtractionMeta.completion_tokens;
+        let _: Option<u64> = ExtractionMeta.prompt_tokens;
+        let _: Option<u64> = ExtractionMeta.completion_tokens;
         let _: Option<String> = ExtractionMeta.model;
         let _: i64 = ExtractionMeta.chunks_processed;
     }
@@ -2398,7 +2482,7 @@ const _: fn() = || {
         let _: Vec<crate::FeedInfo> = ScrapeResult.feeds;
         let _: Vec<crate::JsonLdEntry> = ScrapeResult.json_ld;
         let _: bool = ScrapeResult.is_allowed;
-        let _: Option<i64> = ScrapeResult.crawl_delay;
+        let _: Option<u64> = ScrapeResult.crawl_delay;
         let _: bool = ScrapeResult.noindex_detected;
         let _: bool = ScrapeResult.nofollow_detected;
         let _: Option<String> = ScrapeResult.x_robots_tag;
@@ -3041,12 +3125,12 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_trackingParams = <Vec<String>>::sse_decode(deserializer);
         let mut var_customHeaders = <std::collections::HashMap<String, String>>::sse_decode(deserializer);
         let mut var_requestTimeout = <i64>::sse_decode(deserializer);
-        let mut var_rateLimitMs = <Option<i64>>::sse_decode(deserializer);
+        let mut var_rateLimitMs = <Option<u64>>::sse_decode(deserializer);
         let mut var_maxRedirects = <i64>::sse_decode(deserializer);
         let mut var_retryCount = <i64>::sse_decode(deserializer);
         let mut var_retryCodes = <Vec<i64>>::sse_decode(deserializer);
-        let mut var_retryInitialDelayMs = <i64>::sse_decode(deserializer);
-        let mut var_retryMaxDelayMs = <i64>::sse_decode(deserializer);
+        let mut var_retryInitialDelayMs = <u64>::sse_decode(deserializer);
+        let mut var_retryMaxDelayMs = <u64>::sse_decode(deserializer);
         let mut var_rateLimitJitterRatio = <f64>::sse_decode(deserializer);
         let mut var_cookiesEnabled = <bool>::sse_decode(deserializer);
         let mut var_auth = <Option<crate::AuthConfig>>::sse_decode(deserializer);
@@ -3447,8 +3531,8 @@ impl SseDecode for crate::ExtractionMeta {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_cost = <Option<f64>>::sse_decode(deserializer);
-        let mut var_promptTokens = <Option<i64>>::sse_decode(deserializer);
-        let mut var_completionTokens = <Option<i64>>::sse_decode(deserializer);
+        let mut var_promptTokens = <Option<u64>>::sse_decode(deserializer);
+        let mut var_completionTokens = <Option<u64>>::sse_decode(deserializer);
         let mut var_model = <Option<String>>::sse_decode(deserializer);
         let mut var_chunksProcessed = <i64>::sse_decode(deserializer);
         return crate::ExtractionMeta {
@@ -4162,6 +4246,17 @@ impl SseDecode for Option<crate::ScrapeResult> {
     }
 }
 
+impl SseDecode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::WafBlockDetails> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4429,7 +4524,7 @@ impl SseDecode for crate::ScrapeResult {
         let mut var_feeds = <Vec<crate::FeedInfo>>::sse_decode(deserializer);
         let mut var_jsonLd = <Vec<crate::JsonLdEntry>>::sse_decode(deserializer);
         let mut var_isAllowed = <bool>::sse_decode(deserializer);
-        let mut var_crawlDelay = <Option<i64>>::sse_decode(deserializer);
+        let mut var_crawlDelay = <Option<u64>>::sse_decode(deserializer);
         let mut var_noindexDetected = <bool>::sse_decode(deserializer);
         let mut var_nofollowDetected = <bool>::sse_decode(deserializer);
         let mut var_xRobotsTag = <Option<String>>::sse_decode(deserializer);
@@ -4564,6 +4659,13 @@ impl SseDecode for crate::SsrfPolicy {
             max_redirects: var_maxRedirects,
             scheme_allowlist: var_schemeAllowlist,
         };
+    }
+}
+
+impl SseDecode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u64::<NativeEndian>().unwrap()
     }
 }
 
@@ -6575,12 +6677,12 @@ impl SseEncode for crate::CrawlConfig {
         <Vec<String>>::sse_encode(self.tracking_params, serializer);
         <std::collections::HashMap<String, String>>::sse_encode(self.custom_headers, serializer);
         <i64>::sse_encode(self.request_timeout, serializer);
-        <Option<i64>>::sse_encode(self.rate_limit_ms, serializer);
+        <Option<u64>>::sse_encode(self.rate_limit_ms, serializer);
         <i64>::sse_encode(self.max_redirects, serializer);
         <i64>::sse_encode(self.retry_count, serializer);
         <Vec<i64>>::sse_encode(self.retry_codes, serializer);
-        <i64>::sse_encode(self.retry_initial_delay_ms, serializer);
-        <i64>::sse_encode(self.retry_max_delay_ms, serializer);
+        <u64>::sse_encode(self.retry_initial_delay_ms, serializer);
+        <u64>::sse_encode(self.retry_max_delay_ms, serializer);
         <f64>::sse_encode(self.rate_limit_jitter_ratio, serializer);
         <bool>::sse_encode(self.cookies_enabled, serializer);
         <Option<crate::AuthConfig>>::sse_encode(self.auth, serializer);
@@ -6860,8 +6962,8 @@ impl SseEncode for crate::ExtractionMeta {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<f64>>::sse_encode(self.cost, serializer);
-        <Option<i64>>::sse_encode(self.prompt_tokens, serializer);
-        <Option<i64>>::sse_encode(self.completion_tokens, serializer);
+        <Option<u64>>::sse_encode(self.prompt_tokens, serializer);
+        <Option<u64>>::sse_encode(self.completion_tokens, serializer);
         <Option<String>>::sse_encode(self.model, serializer);
         <i64>::sse_encode(self.chunks_processed, serializer);
     }
@@ -7461,6 +7563,16 @@ impl SseEncode for Option<crate::ScrapeResult> {
     }
 }
 
+impl SseEncode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u64>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::WafBlockDetails> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7654,7 +7766,7 @@ impl SseEncode for crate::ScrapeResult {
         <Vec<crate::FeedInfo>>::sse_encode(self.feeds, serializer);
         <Vec<crate::JsonLdEntry>>::sse_encode(self.json_ld, serializer);
         <bool>::sse_encode(self.is_allowed, serializer);
-        <Option<i64>>::sse_encode(self.crawl_delay, serializer);
+        <Option<u64>>::sse_encode(self.crawl_delay, serializer);
         <bool>::sse_encode(self.noindex_detected, serializer);
         <bool>::sse_encode(self.nofollow_detected, serializer);
         <Option<String>>::sse_encode(self.x_robots_tag, serializer);
@@ -7747,6 +7859,13 @@ impl SseEncode for crate::SsrfPolicy {
         <Vec<crate::HostMatcher>>::sse_encode(self.denylist, serializer);
         <i64>::sse_encode(self.max_redirects, serializer);
         <Vec<String>>::sse_encode(self.scheme_allowlist, serializer);
+    }
+}
+
+impl SseEncode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u64::<NativeEndian>(self).unwrap();
     }
 }
 
