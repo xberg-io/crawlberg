@@ -30,6 +30,10 @@ MOVES_A_RELEASE_REF = re.compile(
 )
 
 
+# ~keep Deletes and re-creates the release tag on `republish`; immutable releases never call it.
+RETAG_ACTION = "xberg-io/actions/retag-for-republish@"
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.publish = workflow("publish.yaml")["jobs"]
@@ -43,6 +47,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     checked += 1
                     with self.subTest(workflow=name, job=job_name, step=step.get("name")):
                         assert not MOVES_A_RELEASE_REF.search(str(step.get("run", "")))
+                        assert not str(step.get("uses", "")).startswith(RETAG_ACTION)
         assert checked > 200, checked
         assert MOVES_A_RELEASE_REF.search('git tag -f -a "$TAG" -m "$TAG" HEAD')
         assert MOVES_A_RELEASE_REF.search('git push origin "refs/tags/${TAG}" --force')

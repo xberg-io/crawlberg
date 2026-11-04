@@ -17,9 +17,10 @@ release takes two dispatches after the version bump (`mise run version:bump:<par
    before any registry publishes, then creates `release/swift/<version>` at the tagged commit. It never
    rebuilds the bundle: the ZIP is not reproducible.
 
-`republish` re-creates the tag on `main`, which the Swift verification rejects unless that commit
-still pins the attached bundle and any existing `release/swift/<version>` already points at it; fix
-a broken Swift release with a new version instead.
+Publish Release rejects `republish` and `force_republish` on real runs before it checks anything
+out: the tag is never deleted or re-created, and a version a registry already holds is never
+re-published. Fix a broken release with a new version; a rerun of the same tag completes only what
+is still missing.
 
 ### Node musl Platform Packages Are Intentionally Not Published
 

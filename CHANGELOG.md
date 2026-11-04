@@ -10,11 +10,11 @@ All notable changes to crawlberg are documented here.
 - Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
 - Regenerate the bindings with Alef 0.119.0, so the generated manifests declare the raised minimums, including Ruby 3.3.
 - Python option enums subclass `StrEnum`.
-- Every macOS binary the release builds, including the wheels, native libraries, CLI and the Swift archive, targets macOS 26, the same minimum as the Swift package, instead of the toolchain defaults (11.0 on arm64, 10.12 on x86_64) or 13.0.
+- The macOS wheels, native libraries and the Swift archive target macOS 26, the same minimum as the Swift package, instead of the toolchain defaults (11.0 on arm64, 10.12 on x86_64) or 13.0.
 
 ### Fixed
 
-- Keep the core release tag on the commit it was created at: the Swift bundle is built and its checksum pinned into `Package.swift` by the Prepare Swift release workflow (the shared xberg-io/actions preparation) before the tag exists, and publishing reuses those exact bytes and creates `release/swift/<version>` without force. (#816)
+- Keep the core release tag on the commit it was created at: the Swift bundle is built and its checksum pinned into `Package.swift` by the Prepare Swift release workflow (the shared xberg-io/actions preparation) before the tag exists, and publishing reuses those exact bytes and creates `release/swift/<version>` without force. Publish Release rejects `republish` and `force_republish` on real runs instead of deleting and re-creating the tag. (#816)
 
 ## [1.12.4] - 2026-10-31
 

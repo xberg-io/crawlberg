@@ -63,6 +63,23 @@ def macos_job(job: dict[str, object]) -> bool:
     return "matrix" in runs_on and "macos" in str(job.get("strategy", {}))
 
 
+# ~keep Reusable workflows that build shipped macOS binaries. Workflow env does not reach a called
+# ~keep workflow, so each caller must pass the target as the `macos-deployment-target` input.
+MACOS_BUILDING_REUSABLES = ("reusable-cli-release.yml", "reusable-swift-release-prepare.yml")
+# ~keep reusable-cli-release.yml has no `macos-deployment-target` input in xberg-io/actions v1.44.0,
+# ~keep and a caller cannot pass an undeclared input. Drop this entry once the release adds it.
+AWAITING_INPUT = {("publish.yaml", "cli-release")}
+
+
+def reusable_macos_builds() -> dict[tuple[str, str], dict[str, object]]:
+    found = {}
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+        for name, job in yaml.safe_load(path.read_text())["jobs"].items():
+            if any(f"/{reusable}@" in str(job.get("uses", "")) for reusable in MACOS_BUILDING_REUSABLES):
+                found[(path.name, name)] = job
+    return found
+
+
 class MacosDeploymentTargetTests(unittest.TestCase):
     def test_package_minimum_is_macos_26(self) -> None:
         assert package_minimum() == "26.0"
@@ -80,6 +97,22 @@ class MacosDeploymentTargetTests(unittest.TestCase):
         for name, job in jobs.items():
             with self.subTest(job=name):
                 assert job.get("env", {}).get(SETTING, inherited) == package_minimum()
+
+    def test_every_reusable_macos_build_passes_the_target(self) -> None:
+        jobs = reusable_macos_builds()
+        assert set(jobs) >= {("publish.yaml", "cli-release"), ("prepare-swift-release.yaml", "swift")}, sorted(jobs)
+        for key, job in jobs.items():
+            if key in AWAITING_INPUT:
+                continue
+            with self.subTest(job=key):
+                assert job.get("with", {}).get(CALLER_INPUT) == package_minimum()
+
+    @unittest.expectedFailure
+    def test_cli_release_passes_the_target(self) -> None:
+        # ~keep Expected to fail until reusable-cli-release.yml accepts `macos-deployment-target`; the CLI's
+        # ~keep macOS binaries build at rustc's default (11.0 arm64, 10.12 x86_64) until then.
+        (key,) = AWAITING_INPUT
+        assert reusable_macos_builds()[key].get("with", {}).get(CALLER_INPUT) == package_minimum()
 
     def test_detectors_find_nested_and_inline_low_values(self) -> None:
         document = {

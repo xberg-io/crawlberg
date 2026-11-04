@@ -26,12 +26,12 @@ on:
         type: boolean
         default: false
       republish:
-        description: "Delete and re-create the tag on current HEAD before publishing"
+        description: "Legacy option; forbidden for real immutable releases"
         required: false
         type: boolean
         default: false
       force_republish:
-        description: "Force republish targets whose registry version already exists"
+        description: "Legacy option; forbidden for real immutable releases"
         required: false
         type: boolean
         default: false
@@ -111,6 +111,28 @@ jobs:
       release_zig: ${{ steps.meta.outputs.release_zig }}
       release_kotlin_android: ${{ steps.meta.outputs.release_kotlin_android }}
     steps:
+      # ~keep The release tag is created once by Prepare Swift release and never moves (#816):
+      # ~keep `republish` used to delete and re-create it, and `force_republish` re-published
+      # ~keep versions a registry already holds. A real run with either fails here, before
+      # ~keep anything is checked out or published; prepare a new version instead.
+      - name: Reject destructive release options
+        shell: bash
+        env:
+          REPUBLISH: ${{ inputs.republish }}
+          FORCE_REPUBLISH: ${{ inputs.force_republish }}
+          PAYLOAD_REPUBLISH: ${{ github.event.client_payload.republish }}
+          PAYLOAD_FORCE_REPUBLISH: ${{ github.event.client_payload.force_republish }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PAYLOAD_DRY_RUN: ${{ github.event.client_payload.dry_run }}
+        run: |
+          set -euo pipefail
+          if [[ "$DRY_RUN" != "true" && "$PAYLOAD_DRY_RUN" != "true" &&
+                ( "$REPUBLISH" == "true" || "$FORCE_REPUBLISH" == "true" ||
+                  "$PAYLOAD_REPUBLISH" == "true" || "$PAYLOAD_FORCE_REPUBLISH" == "true" ) ]]; then
+            echo "Immutable releases forbid republish and force_republish; prepare a new version instead." >&2
+            exit 1
+          fi
+
       - uses: actions/create-github-app-token@v3
         id: app-token
         with:
@@ -129,16 +151,6 @@ jobs:
           submodules: recursive
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: true
-
-      - name: Retag for republish
-        if: >-
-          ${{ (inputs.republish == true || github.event.client_payload.republish == true) && inputs.dry_run != true && inputs.dry_run != 'true' && github.event.client_payload.dry_run != true && github.event.client_payload.dry_run != 'true' }}
-        uses: xberg-io/actions/retag-for-republish@v1
-        with:
-          tag: ${{ inputs.tag || github.event.client_payload.tag }}
-          token: ${{ steps.app-token.outputs.token }}
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Resolve release metadata
         id: meta
@@ -169,8 +181,8 @@ jobs:
           if [[ "${IS_TAG}" != "true" ]]; then
             echo "::error::Resolved ref '${RESOLVED_REF}' is not a tag, so every publish job" \
                  "would be skipped and this run would report success having published nothing." \
-                 "Requested targets: '${TARGETS}'. Dispatch with the 'tag' input alone (and" \
-                 "'republish' if the tag must move); do not pass a branch as 'ref'." >&2
+                 "Requested targets: '${TARGETS}'. Dispatch with the 'tag' input alone;" \
+                 "do not pass a branch as 'ref'." >&2
             exit 1
           fi
           echo "Publishing from ${RESOLVED_REF} (targets: ${TARGETS})"

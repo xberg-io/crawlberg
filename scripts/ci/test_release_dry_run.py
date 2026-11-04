@@ -75,33 +75,37 @@ class ReleaseDryRunTests(unittest.TestCase):
                 }
                 assert release_condition(self.jobs["push-go-subdir-tag"]["if"], values) is expected
 
-    def check_republish_mode(self, channel: str) -> None:
-        retag = next(step for step in self.jobs["prepare"]["steps"] if step.get("name") == "Retag for republish")
-        for republish, dry_run, expected in (
-            (True, True, False),
-            (True, "true", False),
-            (True, False, True),
-            (True, "false", True),
-            (True, None, True),
-            (False, True, False),
-            (False, False, False),
-        ):
-            with self.subTest(channel=channel, republish=republish, dry_run=dry_run):
-                values = {
-                    "inputs.republish": False,
-                    "inputs.dry_run": False,
-                    "github.event.client_payload.republish": False,
-                    "github.event.client_payload.dry_run": False,
-                }
-                values[f"{channel}.republish"] = republish
-                values[f"{channel}.dry_run"] = dry_run
-                assert release_condition(retag["if"], values) is expected
+    def run_destructive_guard(self, values: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        (guard,) = [
+            step for step in self.jobs["prepare"]["steps"] if step.get("name") == "Reject destructive release options"
+        ]
+        assert self.jobs["prepare"]["steps"].index(guard) == 0
+        env = dict.fromkeys(guard["env"], "")
+        return subprocess.run(
+            ["bash", "-c", guard["run"]],
+            cwd=ROOT,
+            env={**os.environ, **env, **values},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-    def test_manual_dry_run_cannot_retag_for_republish(self) -> None:
-        self.check_republish_mode("inputs")
+    def test_real_runs_reject_republish_and_force_republish_on_every_channel(self) -> None:
+        observed = 0
+        for option in ("REPUBLISH", "FORCE_REPUBLISH", "PAYLOAD_REPUBLISH", "PAYLOAD_FORCE_REPUBLISH"):
+            for dry_run in ({}, {"DRY_RUN": "false"}, {"DRY_RUN": "true"}, {"PAYLOAD_DRY_RUN": "true"}):
+                with self.subTest(option=option, dry_run=dry_run):
+                    observed += 1
+                    result = self.run_destructive_guard({option: "true", **dry_run})
+                    rehearsal = "true" in dry_run.values()
+                    assert result.returncode == (0 if rehearsal else 1), result.stderr
+                    if not rehearsal:
+                        assert "forbid republish" in result.stderr
+        assert observed == 16
+        assert self.run_destructive_guard({}).returncode == 0
 
-    def test_repository_dispatch_dry_run_cannot_retag_for_republish(self) -> None:
-        self.check_republish_mode("github.event.client_payload")
+    def test_no_job_retags_for_republish(self) -> None:
+        assert "retag-for-republish" not in str(self.jobs)
 
     def test_real_tag_guard_still_rejects_non_tags_including_dry_runs(self) -> None:
         guard = next(
