@@ -72,7 +72,6 @@ class ReleaseDryRunTests(unittest.TestCase):
                     "needs.prepare.outputs.dry_run": str(dry_run).lower(),
                     "needs.validate-versions.result": "success",
                     "needs.upload-go-release.result": "success",
-                    "needs.publish-swift-checksums.result": "skipped",
                 }
                 assert release_condition(self.jobs["push-go-subdir-tag"]["if"], values) is expected
 

@@ -205,6 +205,26 @@ jobs:
           prerelease: ${{ steps.meta.outputs.is_prerelease }}
           token: ${{ steps.app-token.outputs.token }}
 
+      # ~keep Every publisher needs this job, so a tag without the prepared Swift bundle, a tagged
+      # ~keep manifest whose checksum differs from the attached bytes, or a divergent
+      # ~keep release/swift/<version> branch fails here, before any registry receives anything.
+      - name: Fetch the prepared Swift receipt
+        if: ${{ steps.meta.outputs.release_swift == 'true' && steps.meta.outputs.is_tag == 'true' && steps.meta.outputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "Crawlberg-rs.artifactbundle.release.json" -D dist/swift-artifactbundle
+
+      - name: Verify the prepared Swift release before publication
+        if: ${{ steps.meta.outputs.release_swift == 'true' && steps.meta.outputs.is_tag == 'true' && steps.meta.outputs.dry_run != 'true' }}
+        uses: xberg-io/actions/publish-swift-release@v1
+        with:
+          tag: ${{ steps.meta.outputs.tag }}
+          bundle-zip: ""
+          receipt: dist/swift-artifactbundle/Crawlberg-rs.artifactbundle.release.json
+          dry-run: "true"
+          token: ${{ steps.app-token.outputs.token }}
+
   validate-versions:
     name: Validate language manifest versions
     needs: prepare
@@ -1527,46 +1547,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  swift-artifactbundle:
-    name: Build Swift artifact bundle
-    needs: prepare
-    if: >-
-      ${{ !inputs.plugins-only && (needs.prepare.outputs.release_swift == 'true') }}
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare.outputs.checkout_ref }}
-          fetch-depth: 0
-      - uses: xberg-io/actions/setup-rust@v1
-        with:
-          use-sccache: "false"
-          macos-dynamic-lookup: "false"
-      # ~keep cargo-zigbuild's unreleased fix drops rustc's ignored -Wl,-O1 flag for Zig 0.17.
-      - name: Install compatible Swift cross-linker
-        run: >-
-          cargo install --locked --force
-          --git https://github.com/rust-cross/cargo-zigbuild
-          --rev 371bac84444fe6f998955889f2106802b817094b cargo-zigbuild
-      - uses: xberg-io/actions/build-swift-artifactbundle@v1
-        id: bundle
-        # ~keep Rust otherwise links the iOS archive for 10.0 while current aws-lc objects use
-        # ~keep ___chkstk_darwin, which the iOS 10 runtime does not provide.
-        env:
-          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
-        with:
-          crate-name: crawlberg-swift
-          artifact-name: Crawlberg-rs
-          package-manifest-path: Package.swift
-          package-version: ${{ needs.prepare.outputs.version }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: swift-artifactbundle
-          path: ${{ steps.bundle.outputs.bundle-zip }}
-          if-no-files-found: error
-          retention-days: 14
-
   swift-package:
     name: Build Swift package
     needs: prepare
@@ -1647,18 +1627,19 @@ jobs:
 
   # ~keep This job used to check the repo out and run `git tag`, and for v1.7.2 it died in
   # ~keep actions/checkout with "The ref 'refs/tags/v1.7.2' does not point to the expected
-  # ~keep commit" -- publish-swift-checksums force-moves that tag, and the two overlapped by
+  # ~keep commit" -- the retired Swift checksum job force-moved that tag, and the two overlapped by
   # ~keep seven seconds (Swift 21:19:32-21:20:01, Go started 21:19:54). `target_sha` is empty
   # ~keep on a release event ("Specific SHA to checkout (empty if using ref)"), so checkout fell
   # ~keep back to github.ref -- the very tag being moved -- and enforced that it still pointed at
   # ~keep the triggering commit. Creating the tag through the API needs no working tree and no
-  # ~keep tag fetch, so the race cannot recur; needing publish-swift-checksums additionally
-  # ~keep guarantees the Go tag names the commit the release actually ships.
+  # ~keep tag fetch, so the race cannot recur. The release tag itself no longer moves either:
+  # ~keep the Swift checksum is pinned before the tag is created (#816), so this job no longer
+  # ~keep waits for a Swift job to settle the commit the release ships.
   push-go-subdir-tag:
     name: Push Go module subdir tag
-    needs: [prepare, validate-versions, upload-go-release, publish-swift-checksums]
+    needs: [prepare, validate-versions, upload-go-release]
     if: >-
-      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.release_go == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && (needs.upload-go-release.result == 'success' || needs.upload-go-release.result == 'skipped') && (needs.publish-swift-checksums.result == 'success' || needs.publish-swift-checksums.result == 'skipped')) }}
+      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.release_go == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && (needs.upload-go-release.result == 'success' || needs.upload-go-release.result == 'skipped')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -1736,39 +1717,16 @@ jobs:
           assets: crawlberg-ffi-*.tar.gz
           token: ${{ steps.app-token.outputs.token }}
 
-  upload-swift-release:
-    name: Upload Swift artifact bundle to GitHub Release
-    needs: [prepare, validate-versions, swift-artifactbundle]
+  # ~keep The bundle is built, pinned into Package.swift and attached to the draft release by
+  # ~keep release-swift-prepare.yaml BEFORE the tag exists, so the tag SwiftPM resolves already
+  # ~keep carries its checksum (#816). This job only verifies that tag and the attached bytes and
+  # ~keep creates release/swift/<version> at the tagged commit; it never builds, moves or rewrites.
+  publish-swift-release:
+    name: Publish the prepared Swift release
+    needs: [prepare, validate-versions]
     if: >-
-      ${{ !inputs.plugins-only && (needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.swift-artifactbundle.result == 'success') }}
+      ${{ !inputs.plugins-only && (needs.prepare.outputs.release_swift == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success') }}
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          app-id: ${{ secrets.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
-          owner: xberg-io
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: swift-artifactbundle
-          path: dist/swift
-
-      - uses: xberg-io/actions/upload-release-assets@v1
-        with:
-          tag: ${{ needs.prepare.outputs.tag }}
-          working-directory: dist/swift
-          dry-run: ${{ needs.prepare.outputs.dry_run }}
-          assets: "*.zip"
-          token: ${{ steps.app-token.outputs.token }}
-
-  publish-swift-checksums:
-    name: Inject Swift artifactbundle checksum into the release tag
-    needs: [prepare, validate-versions, upload-swift-release]
-    if: >-
-      ${{ !inputs.plugins-only && (!cancelled() && needs.upload-swift-release.result == 'success' && needs.validate-versions.result == 'success' && needs.prepare.outputs.release_swift == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true') }}
-    runs-on: macos-26
     steps:
       - uses: actions/create-github-app-token@v3
         id: app-token
@@ -1779,90 +1737,24 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.prepare.outputs.checkout_ref }}
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: true
 
-      - name: Compute artifactbundle checksum and rewrite Package.swift
-        id: inject
+      - name: Fetch the prepared Swift receipt
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "Crawlberg-rs.artifactbundle.zip" -D dist-swift
-          CHECKSUM=$(swift package compute-checksum dist-swift/Crawlberg-rs.artifactbundle.zip)
-          echo "Computed Swift checksum: $CHECKSUM"
-          # ~keep Assert the placeholder is PRESENT before substituting, and fail when it is
-          # not. This used to `exit 0` on a missing placeholder, which reads as tolerant but
-          # is the opposite: Package.swift has carried a literal checksum with no placeholder
-          # ever since the v1.4.0 injection commit landed on main, so every release since has
-          # silently skipped both this sed and the retag below. `release/swift/*` branches
-          # stop at 1.4.0, and v1.5.0 advertises a v1.5.0 artifactbundle URL beside a checksum
-          # that no release since v1.4.0 has recomputed. Never invert this into an
-          # after-the-fact check that the placeholder is gone: that assertion is satisfied
-          # both by a successful substitution and by the generator renaming the token, which
-          # is precisely the case it has to catch.
-          # ~keep A third state, not a weakening of the two above. This job rewrites Package.swift
-          # and then force-moves the release tag onto the rewritten commit, so re-running a tag
-          # whose first run got this far checks out a manifest that legitimately has no
-          # placeholder left -- v1.5.0 run 33520701648 injected b4595f6b and moved the tag to
-          # 548121b06, and the re-run 33551706031 then failed here, which alone re-drafted the
-          # release via release-report. A partial failure is exactly when someone re-runs, so the
-          # two-state check turned one recoverable problem into a stuck one. Distinguish
-          # "already done" from "token missing" by recomputing: if the committed checksum equals
-          # the one just computed from this tag's artifactbundle, a previous run of THIS job did
-          # the work and there is nothing left to do. This does not re-admit the case the comment
-          # above forbids -- a renamed or dropped token leaves whatever literal was committed,
-          # which will not equal the freshly computed checksum, so it still fails loudly below.
-          PLACEHOLDERS=$(grep -c "__ALEF_SWIFT_CHECKSUM__" Package.swift || true)
-          if [ "${PLACEHOLDERS}" -eq 0 ]; then
-            if grep -qF "checksum: \"${CHECKSUM}\"" Package.swift; then
-              echo "already_done=true" >> "${GITHUB_OUTPUT}"
-              echo "Package.swift already carries the computed checksum ${CHECKSUM}: a previous run of this job injected it and moved ${TAG} onto the result. Nothing to do."
-              exit 0
-            fi
-            echo "::error::Package.swift carries no __ALEF_SWIFT_CHECKSUM__ placeholder, and the checksum it does carry is not the one computed from ${TAG}'s artifactbundle (${CHECKSUM}), so the computed checksum has nowhere to go and the manifest keeps a checksum nothing recomputed. Regenerate the Swift package so the placeholder is present."
-            exit 1
-          fi
-          echo "already_done=false" >> "${GITHUB_OUTPUT}"
-          echo "Injecting the checksum into ${PLACEHOLDERS} placeholder occurrence(s)"
-          sed -i '' "s/__ALEF_SWIFT_CHECKSUM__/$CHECKSUM/g" Package.swift
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "Crawlberg-rs.artifactbundle.release.json" -D dist/swift-artifactbundle
 
-      - name: Commit and move the release tag onto the checksummed Package.swift
-        # ~keep Skipped only on the already-done path proven above (committed checksum ==
-        # freshly computed), where the tag already points at the checksummed commit and
-        # release/swift/<version> already exists. Every other path either injected the
-        # checksum or failed the step before this one.
-        if: ${{ steps.inject.outputs.already_done != 'true' }}
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          # ~keep The step above proved the placeholder was present and then substituted it,
-          # so an unchanged Package.swift means the sed did not take. Fail instead of skipping
-          # the retag: the alef-generated Swift e2e app resolves `release/swift/<version>`,
-          # which exists only if the push below runs.
-          if git diff --quiet -- Package.swift; then
-            echo "::error::Package.swift is unchanged after injecting the checksum — refusing to leave the release tag on a manifest without the real checksum."
-            exit 1
-          fi
-          git config user.name "xberg-dev-publisher[bot]"
-          git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
-          git add Package.swift
-          git commit -m "chore: inject Swift artifactbundle checksum for ${TAG}"
-          # Recreate the annotated release tag on this commit. Pushing the tag also
-          # pushes the new commit object, so main is left untouched (Package.swift
-          # is regenerated with the placeholder on the next release anyway).
-          git tag -f -a "$TAG" -m "$TAG" HEAD
-          git push origin "refs/tags/${TAG}" --force
-          # Also publish the checksummed commit to a release/swift/<version> branch. The
-          # alef-generated Swift e2e/test-app pins `branch: "release/swift/<version>"`
-          # (bare version, no leading "v"), so this ref must exist for SwiftPM to resolve
-          # the package with the real checksum.
-          VERSION="${TAG#v}"
-          git push origin "HEAD:refs/heads/release/swift/${VERSION}" --force
+      - uses: xberg-io/actions/publish-swift-release@v1
+        with:
+          tag: ${{ needs.prepare.outputs.tag }}
+          bundle-zip: ""
+          receipt: dist/swift-artifactbundle/Crawlberg-rs.artifactbundle.release.json
+          dry-run: ${{ needs.prepare.outputs.dry_run }}
+          token: ${{ steps.app-token.outputs.token }}
 
   upload-elixir-release:
     name: Upload Elixir NIF archives to GitHub Release
@@ -2618,17 +2510,13 @@ jobs:
           fi
           CHECKSUM_SNAPSHOT="$(mktemp)"
           cp "$CHECKSUM_FILE" "$CHECKSUM_SNAPSHOT"
-          # ~keep This job checks out the release TAG, and the Swift injection job force-moves
-          # that tag onto a commit that rewrites Package.swift's __ALEF_SWIFT_CHECKSUM__
-          # placeholder into a literal checksum. Pushing this job's own HEAD to main therefore
-          # fast-forwarded main THROUGH that commit and destroyed the placeholder on main --
-          # which is exactly why the next release's injection step failed with "carries no
-          # __ALEF_SWIFT_CHECKSUM__ placeholder" (v1.4.0, and again v1.6.2 -> v1.6.3). Whether
-          # it happens is a race between this checkout and the tag move, which is why it bit
-          # only some releases. Build the commit in a throwaway worktree based on the CURRENT
-          # origin/main so the pushed commit contains the checksum file and nothing else, and
-          # leave this job's own tree on the tag, which the Hex publish below still needs at
-          # the released version.
+          # ~keep This job checks out the release TAG, which main has usually moved past by the
+          # time Hex publishes, so pushing this job's own HEAD to main is not a fast-forward.
+          # The worktree was introduced when the Swift job still force-moved the tag onto an
+          # unmerged checksum commit (v1.4.0, v1.6.2 -> v1.6.3); the tag no longer moves (#816),
+          # but basing the commit on the CURRENT origin/main is still what makes the push land
+          # the checksum file and nothing else. Leave this job's own tree on the tag, which the
+          # Hex publish below still needs at the released version.
           MAIN_TREE="$(mktemp -d)/main"
           for attempt in 1 2 3 4 5; do
             git fetch origin main
@@ -2829,7 +2717,7 @@ jobs:
 
   publish-homebrew-formula:
     name: Update Homebrew formula source
-    needs: [prepare, validate-versions, check-homebrew, cli-release, publish-swift-checksums]
+    needs: [prepare, validate-versions, check-homebrew, cli-release]
     if: >-
       ${{ !inputs.plugins-only && (always() && needs.prepare.outputs.release_homebrew == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.cli-release.result == 'success' && (needs.check-homebrew.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
     runs-on: ubuntu-latest
@@ -3175,7 +3063,7 @@ jobs:
       - upload-go-release
       - upload-elixir-release
       - upload-php-pie-release
-      - upload-swift-release
+      - publish-swift-release
     if: >-
       ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && needs.cli-release.result == 'success' && needs.upload-c-ffi-release.result == 'success') }}
     runs-on: ubuntu-latest
@@ -3247,8 +3135,7 @@ jobs:
       - upload-c-ffi-release
       - upload-elixir-release
       - upload-php-pie-release
-      - upload-swift-release
-      - publish-swift-checksums
+      - publish-swift-release
     # ~keep A rerun can reuse cancelled prerequisite results while !cancelled() is true.
     if: >-
       ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')) }}
@@ -3297,7 +3184,7 @@ jobs:
       - upload-c-ffi-release
       - upload-elixir-release
       - upload-php-pie-release
-      - upload-swift-release
+      - publish-swift-release
       - release-finalize
     if: >-
       ${{ !inputs.plugins-only && (always() && !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.is_prerelease != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.release-finalize.result == 'success') }}
@@ -3531,14 +3418,13 @@ jobs:
       - publish-homebrew-formula
       - publish-homebrew-bottles
       - publish-scoop-manifest
-      - publish-swift-checksums
       - cli-release
       - verify-binstall
       - upload-go-release
       - upload-c-ffi-release
       - upload-elixir-release
       - upload-php-pie-release
-      - upload-swift-release
+      - publish-swift-release
     if: >-
       ${{ !inputs.plugins-only && (always() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true') }}
     runs-on: ubuntu-latest
@@ -3581,8 +3467,7 @@ jobs:
           RESULT_UPLOAD_C_FFI: ${{ needs.upload-c-ffi-release.result }}
           RESULT_UPLOAD_ELIXIR: ${{ needs.upload-elixir-release.result }}
           RESULT_UPLOAD_PHP_PIE: ${{ needs.upload-php-pie-release.result }}
-          RESULT_UPLOAD_SWIFT: ${{ needs.upload-swift-release.result }}
-          RESULT_SWIFT_CHECKSUMS: ${{ needs.publish-swift-checksums.result }}
+          RESULT_SWIFT_RELEASE: ${{ needs.publish-swift-release.result }}
           RELEASE_CRATES: ${{ needs.prepare.outputs.release_crates }}
           RELEASE_PYTHON: ${{ needs.prepare.outputs.release_python }}
           RELEASE_RUBY: ${{ needs.prepare.outputs.release_ruby }}
@@ -3679,8 +3564,7 @@ jobs:
           require_publish "c-ffi-assets" "${RESULT_UPLOAD_C_FFI}" "${RELEASE_C_FFI}" "${EXISTS_C_FFI}"
           require_publish "elixir-nif-assets" "${RESULT_UPLOAD_ELIXIR}" "${RELEASE_ELIXIR}" "${EXISTS_ELIXIR}"
           require_publish "php-pie-assets" "${RESULT_UPLOAD_PHP_PIE}" "${RELEASE_PHP}"
-          require_publish "swift-assets" "${RESULT_UPLOAD_SWIFT}" "${RELEASE_SWIFT}"
-          require_publish "swift-checksums" "${RESULT_SWIFT_CHECKSUMS}" "${RELEASE_SWIFT}"
+          require_publish "swift-release" "${RESULT_SWIFT_RELEASE}" "${RELEASE_SWIFT}"
 
           if [[ "${failed}" -eq 1 ]]; then
             echo "::error title=Incomplete release::Release ${TAG} did not reach every enabled target. See the errors above."

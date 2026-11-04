@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class SwiftReleaseLinkerTests(unittest.TestCase):
     def test_bundle_installs_zig_017_compatible_linker_before_cross_compiling(self) -> None:
-        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())
         job = workflow["jobs"]["swift-artifactbundle"]
         installers = [step for step in job["steps"] if "cargo install" in step.get("run", "")]
         assert len(installers) == 1
@@ -48,7 +48,7 @@ class SwiftReleaseLinkerTests(unittest.TestCase):
         )
 
     def test_bundle_opts_out_of_host_extension_linker_flags_before_cross_compiling(self) -> None:
-        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())
         job = workflow["jobs"]["swift-artifactbundle"]
         setups = [step for step in job["steps"] if step.get("uses", "").startswith("xberg-io/actions/setup-rust@")]
         bundles = [

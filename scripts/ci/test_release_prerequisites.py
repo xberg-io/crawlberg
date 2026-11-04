@@ -234,7 +234,9 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         expected = f"{major}.{minor or '0'}"
         builders = [
             step
-            for step in self.jobs["swift-artifactbundle"]["steps"]
+            for step in yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())["jobs"][
+                "swift-artifactbundle"
+            ]["steps"]
             if step.get("uses", "").startswith("xberg-io/actions/build-swift-artifactbundle@")
         ]
         assert len(builders) == 1, "Expected one native Swift artifact builder"

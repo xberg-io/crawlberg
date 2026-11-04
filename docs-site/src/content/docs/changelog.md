@@ -15,6 +15,10 @@ All notable changes to crawlberg are documented here.
 - Regenerate the bindings with Alef 0.119.0, so the generated manifests declare the raised minimums, including Ruby 3.3.
 - Python option enums subclass `StrEnum`.
 
+### Fixed
+
+- Keep the core release tag on the commit it was created at: the Swift bundle is built and its checksum pinned into `Package.swift` by the new Swift Release Preparation workflow before the tag exists, and publishing reuses those exact bytes and creates `release/swift/<version>` without force. (#816)
+
 ## [1.12.4] - 2026-10-31
 
 ### Fixed
