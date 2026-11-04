@@ -12,6 +12,7 @@ All notable changes to crawlberg are documented here.
 - Regenerate the bindings with Alef 0.124.0. The generated public APIs are unchanged in every language.
 - Python option enums subclass `StrEnum`.
 - Every macOS binary the release builds, including the wheels, native libraries, CLI and the Swift archive, targets macOS 26, the same minimum as the Swift package, instead of the toolchain defaults (11.0 on arm64, 10.12 on x86_64) or 13.0.
+- The optional OpenCode plugin no longer depends on `@opencode/plugin`, which pulled in vulnerable `glob` and `minimatch` (GHSA-3g3m-2fjr-6pw4, GHSA-g3hv-75wg-m249); CI now fails on any advisory in the root or plugin pnpm lock (#813).
 
 ### Fixed
 

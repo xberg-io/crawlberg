@@ -4,9 +4,7 @@
     "name": "Kreuzberg, Inc.",
     "url": "https://xberg.io"
   },
-  "dependencies": {
-    "@opencode/plugin": "^2.1.4"
-  },
+  "dependencies": {},
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
   "exports": {
     ".": "./.opencode/plugins/crawlberg.js"

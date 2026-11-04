@@ -4,6 +4,10 @@
 description = "Test Chromium snap runtime preparation"
 run = "python3 scripts/ci/test_chrome_runtime.py"
 
+["ci:node:advisories"]
+description = "Audit the root and plugin pnpm locks and fail on any advisory"
+run = ["python3 scripts/ci/test_node_advisories.py", "python3 scripts/ci/check_node_advisories.py"]
+
 ["ci:windows766:harness-test"]
 description = "Verify Windows diagnostic evidence rejects empty, ignored and skipped runs"
 env = { WINDOWS766_ARTIFACTS = "{{vars.windows766_artifacts}}" }

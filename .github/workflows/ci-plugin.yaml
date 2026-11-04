@@ -21,6 +21,10 @@ on:
       - "scripts/tests/test_public_skills.py"
       - "scripts/tests/test_mcp_launcher_cwd.py"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/ci/check_node_advisories.py"
+      - "scripts/ci/test_node_advisories.py"
       - ".claude-plugin/**"
       - ".agents/plugins/**"
       - ".ai-rulez/config*.toml"
@@ -78,7 +82,7 @@ jobs:
       - name: Install Python, uv and Node
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: python uv node
+          install-args: python uv node pnpm
       - name: Resolve the mise Python version
         id: mise-python
         shell: bash
@@ -97,6 +101,8 @@ jobs:
       # until `mise run plugin:generate` is rerun. ~keep
       - name: Verify generated plugin bundles are current
         run: ai-rulez verify --recursive --plugin --if-configured
+      - name: Audit Node dependency advisories
+        run: mise run ci:node:advisories
       - name: Verify OpenCode tools and bundled content
         run: node --test scripts/tests/opencode-plugin.test.mjs
       - name: Validate Hermes distribution metadata

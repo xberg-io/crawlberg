@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:7c32be41a5a998f89e9bf804bc44d88daab4e72c86d33962219a3a23fe2a7291",
+  "source_hash": "blake3:cdb4a4a2b37832dd03cd977f4d71c9e3b84e7ea50cd310878fcce8f3dc314710",
   "outputs": {
     ".claude-plugin/plugin.json": {
       "content_hash": "blake3:bffc3274917265984149dd00a20d67644b6bd6a09fd9dec8a12638ce99ec82de",
@@ -419,7 +419,7 @@
       "mode": "0644"
     },
     "package.json": {
-      "content_hash": "blake3:cc5c18f28d5a6ef57081efd07d0a1f12a56bf1891cc6e53839b76aecae08af36",
+      "content_hash": "blake3:5ed702d274e8f2220e312a2d3db488409030099613ffe8b5b812da705ba6fd9a",
       "mode": "0644"
     },
     "plugin.json": {
@@ -505,7 +505,6 @@
       "type",
       "main",
       "exports",
-      "dependencies",
       "homepage",
       "license",
       "packageManager"
