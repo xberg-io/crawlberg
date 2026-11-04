@@ -14,6 +14,7 @@ All notable changes to crawlberg are documented here.
 - Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
 - Regenerate the bindings with Alef 0.119.0, so the generated manifests declare the raised minimums, including Ruby 3.3.
 - Python option enums subclass `StrEnum`.
+- macOS wheels and the Swift archive target macOS 26, the same minimum as the Swift package, instead of 11.0 and 13.0.
 
 ### Fixed
 

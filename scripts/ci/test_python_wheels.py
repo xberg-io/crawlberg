@@ -19,8 +19,6 @@ MACOS_RUNNER_ARCH = {
     "macos-26-intel": "x86_64",
 }
 
-# ~keep 11.0 is the arm64 floor, so anything above it would also move the published arm64 tag.
-MAX_DEPLOYMENT_TARGET = (11, 0)
 
 
 def _python_wheels_job() -> dict:
@@ -47,17 +45,20 @@ class PythonWheelMatrixTests(unittest.TestCase):
             "An Intel Mac otherwise falls back to the sdist, which needs a Rust toolchain."
         )
 
-    def test_macos_wheels_pin_a_deployment_target_old_enough_to_install(self) -> None:
+    def test_macos_wheels_target_the_public_macos_minimum(self) -> None:
+        minimums = re.findall(r"\.macOS\(\.v([0-9]+)(?:_([0-9]+))?\)", (ROOT / "Package.swift").read_text())
+        assert len(minimums) == 1, "Expected one public macOS deployment minimum in Package.swift"
+        expected = (int(minimums[0][0]), int(minimums[0][1] or 0))
         env = _build_step(_python_wheels_job())["with"].get("cibw-environment-macos", "")
         match = re.search(r"MACOSX_DEPLOYMENT_TARGET=(\d+)(?:\.(\d+))?", env)
         assert match, (
             "cibw-environment-macos must pin MACOSX_DEPLOYMENT_TARGET; without it the wheel inherits "
-            f"the runner's SDK version and pip rejects it on older macOS. Got: {env!r}"
+            f"the runner's SDK version. Got: {env!r}"
         )
         target = (int(match.group(1)), int(match.group(2) or 0))
-        assert target <= MAX_DEPLOYMENT_TARGET, (
-            f"MACOSX_DEPLOYMENT_TARGET={match.group(0).split('=')[1]} is newer than "
-            f"{'.'.join(map(str, MAX_DEPLOYMENT_TARGET))}, which would drop macOS users and move the arm64 tag."
+        assert target == expected, (
+            f"MACOSX_DEPLOYMENT_TARGET={match.group(0).split('=')[1]} differs from the macOS "
+            f"{expected[0]}.{expected[1]} minimum in Package.swift; every package shares one macOS floor."
         )
 
 
