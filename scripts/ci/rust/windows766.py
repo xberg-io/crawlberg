@@ -102,12 +102,33 @@ def sources() -> dict[str, str]:
     return {name: digest(Path(name)) for name in selected}
 
 
+# ~keep The last release whose publication force-moved its tag onto a checksum commit. Later
+# ~keep releases pin the checksum before tagging (#816), so their tag must name the run's commit.
+LAST_ADVANCED_TAG = (1, 12, 4)
+SWIFT_PLACEHOLDER = b"__ALEF_SWIFT_CHECKSUM__"
+
+
 @dataclass(frozen=True)
 class SwiftChecksumProof:
+    mode: str
     checksum: str
     placeholder_count: int
     original_package_sha256: str
     tagged_package_sha256: str
+
+
+def tag_may_advance(tag: str) -> bool:
+    return tuple(int(part) for part in tag.removeprefix("v").split(".")) <= LAST_ADVANCED_TAG
+
+
+def validate_immutable_swift_manifest(tagged: bytes) -> SwiftChecksumProof:
+    if b"__ALEF_" in tagged:
+        raise ValueError("tagged Package.swift still holds an alef placeholder")
+    checksums = re.findall(rb'checksum:\s*"([^"]*)"', tagged)
+    if len(checksums) != 1 or not re.fullmatch(rb"[0-9a-f]{64}", checksums[0]):
+        raise ValueError("tagged Package.swift must pin exactly one 64 lowercase hex checksum")
+    package_sha256 = hashlib.sha256(tagged).hexdigest()
+    return SwiftChecksumProof("immutable", checksums[0].decode("ascii"), 0, package_sha256, package_sha256)
 
 
 def validate_swift_checksum_advance(
@@ -115,27 +136,30 @@ def validate_swift_checksum_advance(
 ) -> SwiftChecksumProof:
     if commits != 1 or changed_paths != ["Package.swift"]:
         raise ValueError("checksum advance must be one commit changing only Package.swift")
-    placeholder = b"__ALEF_SWIFT_CHECKSUM__"
-    if placeholder not in original:
+    if SWIFT_PLACEHOLDER not in original:
         raise ValueError("original Package.swift has no checksum placeholder")
-    prefix = original.split(placeholder, 1)[0]
+    prefix = original.split(SWIFT_PLACEHOLDER, 1)[0]
     checksum = tagged[len(prefix) : len(prefix) + 64]
     if not re.fullmatch(rb"[0-9a-f]{64}", checksum):
         raise ValueError("Swift checksum must be exactly 64 lowercase hex bytes")
-    if tagged != original.replace(placeholder, checksum):
+    if tagged != original.replace(SWIFT_PLACEHOLDER, checksum):
         raise ValueError("tagged Package.swift changes bytes beyond one uniform checksum substitution")
     return SwiftChecksumProof(
+        "legacy-checksum-advance",
         checksum.decode("ascii"),
-        original.count(placeholder),
+        original.count(SWIFT_PLACEHOLDER),
         hashlib.sha256(original).hexdigest(),
         hashlib.sha256(tagged).hexdigest(),
     )
 
 
-def release_commit_proof(original_sha: str, tag_sha: str) -> SwiftChecksumProof | None:
+def release_commit_proof(tag: str, original_sha: str, tag_sha: str) -> SwiftChecksumProof:
     subprocess.run(["git", "merge-base", "--is-ancestor", original_sha, "HEAD"], check=True)
+    tagged = subprocess.check_output(["git", "show", f"{tag_sha}:Package.swift"])
     if original_sha == tag_sha:
-        return None
+        return validate_immutable_swift_manifest(tagged)
+    if not tag_may_advance(tag):
+        raise ValueError(f"{tag} moved off the published commit; releases after v1.12.4 never advance their tag")
     subprocess.run(["git", "merge-base", "--is-ancestor", original_sha, tag_sha], check=True)
     commits = int(command("git", "rev-list", "--count", f"{original_sha}..{tag_sha}"))
     changed_paths = (
@@ -144,7 +168,6 @@ def release_commit_proof(original_sha: str, tag_sha: str) -> SwiftChecksumProof 
         .split("\0")
     )
     original = subprocess.check_output(["git", "show", f"{original_sha}:Package.swift"])
-    tagged = subprocess.check_output(["git", "show", f"{tag_sha}:Package.swift"])
     return validate_swift_checksum_advance(original, tagged, [path for path in changed_paths if path], commits)
 
 
@@ -165,13 +188,13 @@ def validate_release() -> dict[str, object]:
     if not isinstance(original_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", original_sha):
         raise ValueError("publication run has no valid original commit SHA")
     tag_sha = command("git", "rev-parse", f"{tag}^{{commit}}")
-    swift_proof = release_commit_proof(original_sha, tag_sha)
+    swift_proof = release_commit_proof(tag, original_sha, tag_sha)
     return {
         "run_id": run_id,
         "tag": tag,
         "original_run_sha": original_sha,
         "final_tag_sha": tag_sha,
-        "swift_checksum_advance": asdict(swift_proof) if swift_proof else None,
+        "swift_release_proof": asdict(swift_proof),
     }
 
 

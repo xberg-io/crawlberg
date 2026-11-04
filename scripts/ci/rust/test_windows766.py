@@ -4,7 +4,15 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
-from windows766 import compilation_environment, log_path, parse_counts, parse_listing, validate_swift_checksum_advance
+from windows766 import (
+    compilation_environment,
+    log_path,
+    parse_counts,
+    parse_listing,
+    tag_may_advance,
+    validate_immutable_swift_manifest,
+    validate_swift_checksum_advance,
+)
 
 
 def rejects(call: Callable[[], object]) -> None:
@@ -77,6 +85,7 @@ def test_accepts_only_uniform_swift_checksum_metadata_advance() -> None:
     checksum = b"ab" * 32
     tagged = original.replace(b"__ALEF_SWIFT_CHECKSUM__", checksum)
     proof = validate_swift_checksum_advance(original, tagged, ["Package.swift"], 1)
+    assert proof.mode == "legacy-checksum-advance"
     assert proof.checksum == checksum.decode("ascii")
     assert proof.placeholder_count == 2
     assert proof.original_package_sha256 == hashlib.sha256(original).hexdigest()
@@ -112,6 +121,34 @@ def test_rejects_different_nonlowercase_or_wrong_length_checksums() -> None:
         rejects(lambda: validate_swift_checksum_advance(original, tagged, ["Package.swift"], 1))
 
 
+def test_accepts_an_immutable_tag_whose_manifest_pins_one_checksum() -> None:
+    tagged = b'let name = "Crawlberg"\nchecksum: "' + b"ab" * 32 + b'"\n'
+    proof = validate_immutable_swift_manifest(tagged)
+    assert proof.mode == "immutable"
+    assert proof.checksum == "ab" * 32
+    assert proof.placeholder_count == 0
+    assert proof.original_package_sha256 == proof.tagged_package_sha256 == hashlib.sha256(tagged).hexdigest()
+
+
+def test_rejects_an_immutable_tag_without_exactly_one_final_checksum() -> None:
+    pinned = b'checksum: "' + b"ab" * 32 + b'"\n'
+    for tagged in [
+        swift_fixture(),
+        b"let name = 1\n",
+        pinned + pinned,
+        pinned + b"// __ALEF_SWIFT_VERSION__\n",
+        pinned.replace(b"ab", b"AB"),
+    ]:
+        rejects(lambda: validate_immutable_swift_manifest(tagged))
+
+
+def test_only_releases_published_before_816_may_advance_their_tag() -> None:
+    for tag in ["v1.4.0", "v1.12.0", "v1.12.4"]:
+        assert tag_may_advance(tag)
+    for tag in ["v1.12.5", "v1.13.0", "v2.0.0"]:
+        assert not tag_may_advance(tag)
+
+
 if __name__ == "__main__":
     if not __debug__:
         raise RuntimeError("harness controls require Python assertions enabled")
@@ -128,10 +165,13 @@ if __name__ == "__main__":
         test_rejects_other_swift_bytes_and_multiple_metadata_commits,
         test_rejects_swift_advance_without_an_original_placeholder,
         test_rejects_different_nonlowercase_or_wrong_length_checksums,
+        test_accepts_an_immutable_tag_whose_manifest_pins_one_checksum,
+        test_rejects_an_immutable_tag_without_exactly_one_final_checksum,
+        test_only_releases_published_before_816_may_advance_their_tag,
     )
     observed = 0
     for case in cases:
         case()
         observed += 1
-    assert observed == 12
-    print(json.dumps({"expected_guardrail_cases": 12, "observed_guardrail_cases": observed}))
+    assert observed == 15
+    print(json.dumps({"expected_guardrail_cases": 15, "observed_guardrail_cases": observed}))
