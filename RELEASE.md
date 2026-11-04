@@ -5,17 +5,17 @@
 ### Release Order: the Swift Checksum Is Pinned Before the Tag
 
 SwiftPM resolves `from:`/`exact:` requirements to the core `vX.Y.Z` tag, so the root `Package.swift`
-at that tag must already carry the artifact bundle's checksum, and the tag never moves (#816):
+at that tag must already carry the artifact bundle's checksum, and the tag never moves (#816). Every
+release takes two dispatches after the version bump (`mise run version:bump:<part>`) lands on `main`:
 
-1. Bump and push the version to `main` (`mise run version:bump:<part>`).
-2. Dispatch **Swift Release Preparation** (`release-swift-prepare.yaml`) on `main` with `tag=vX.Y.Z`.
-   It builds the bundle once, pins its checksum with `alef sync-versions`, commits that to `main`,
-   creates the tag on that commit and attaches the ZIP and its receipt to the draft release. If
-   `main` moves while it builds, it fails before tagging; dispatch it again. A failed `tag-release`
-   job is resumed with "Re-run failed jobs", which reuses the same bytes.
-3. Dispatch **Publish Release** with `tag=vX.Y.Z`. It verifies the tagged manifest against the
-   attached bundle before any registry publishes, then creates `release/swift/<version>` at the
-   tagged commit. It never rebuilds the bundle: the ZIP is not reproducible.
+1. **Prepare Swift release** (`prepare-swift-release.yaml`) on `main`. It calls the shared
+   [Swift release preparation workflow](https://github.com/xberg-io/actions/blob/v1/prepare-swift-release/README.md),
+   which builds the bundle once, pins its checksum, pushes that commit together with the `v<Cargo version>`
+   tag and attaches the ZIP and its receipt to the draft release. Recover a failed run with "Re-run failed
+   jobs", which reuses the same bytes; `dry-run` builds and verifies without pushing.
+2. **Publish Release** with `tag=vX.Y.Z`. It verifies the tagged manifest against the attached bundle
+   before any registry publishes, then creates `release/swift/<version>` at the tagged commit. It never
+   rebuilds the bundle: the ZIP is not reproducible.
 
 `republish` re-creates the tag on `main`, which the Swift verification rejects unless that commit
 still pins the attached bundle and any existing `release/swift/<version>` already points at it; fix

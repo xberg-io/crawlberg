@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 import unittest
 from pathlib import Path
 
@@ -11,57 +10,24 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def caller() -> dict[str, object]:
+    return yaml.safe_load((ROOT / ".github/workflows/prepare-swift-release.yaml").read_text())
+
+
 class SwiftReleaseLinkerTests(unittest.TestCase):
     def test_bundle_installs_zig_017_compatible_linker_before_cross_compiling(self) -> None:
-        workflow = yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())
-        job = workflow["jobs"]["swift-artifactbundle"]
-        installers = [step for step in job["steps"] if "cargo install" in step.get("run", "")]
-        assert len(installers) == 1
-        installer = installers[0]
-        assert shlex.split(installer["run"]) == [
-            "cargo",
-            "install",
-            "--locked",
-            "--force",
-            "--git",
-            "https://github.com/rust-cross/cargo-zigbuild",
-            "--rev",
-            "371bac84444fe6f998955889f2106802b817094b",
-            "cargo-zigbuild",
-        ]
-        setup_index = next(
-            index
-            for index, step in enumerate(job["steps"])
-            if step.get("uses", "").startswith("xberg-io/actions/setup-rust@")
-        )
-        bundle_index = next(
-            index
-            for index, step in enumerate(job["steps"])
-            if step.get("uses", "").startswith("xberg-io/actions/build-swift-artifactbundle@")
-        )
-        assert setup_index < job["steps"].index(installer) < bundle_index
-        assert installer.get("env", {}).get("CARGO_BUILD_WARNINGS", "deny") == "deny"
-        assert all(
-            "cargo-zigbuild" not in str(other)
-            for name, other in workflow["jobs"].items()
-            if name != "swift-artifactbundle"
-        )
+        workflow = caller()
+        inputs = workflow["jobs"]["swift"]["with"]
+        assert inputs["cargo-zigbuild-revision"] == "371bac84444fe6f998955889f2106802b817094b"
+        publish = yaml.safe_load((ROOT / ".github/workflows/publish.yaml").read_text())
+        assert "cargo-zigbuild" not in str(publish["jobs"])
 
     def test_bundle_opts_out_of_host_extension_linker_flags_before_cross_compiling(self) -> None:
-        workflow = yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())
-        job = workflow["jobs"]["swift-artifactbundle"]
-        setups = [step for step in job["steps"] if step.get("uses", "").startswith("xberg-io/actions/setup-rust@")]
-        bundles = [
-            step
-            for step in job["steps"]
-            if step.get("uses", "").startswith("xberg-io/actions/build-swift-artifactbundle@")
-        ]
-        assert len(setups) == len(bundles) == 1
-        setup, bundle = setups[0], bundles[0]
-        assert setup.get("with", {}).get("macos-dynamic-lookup") == "false"
-        assert job["steps"].index(setup) < job["steps"].index(bundle)
-        assert bundle["with"]["crate-name"] == "crawlberg-swift"
-        for scope in (workflow, job, setup, bundle):
+        workflow = caller()
+        job = workflow["jobs"]["swift"]
+        assert job["with"]["macos-dynamic-lookup"] == "false"
+        assert job["with"]["crate-name"] == "crawlberg-swift"
+        for scope in (workflow, job):
             env = scope.get("env", {})
             assert "RUSTFLAGS" not in env
             assert "CARGO_ENCODED_RUSTFLAGS" not in env

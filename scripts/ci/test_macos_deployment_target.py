@@ -10,6 +10,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SETTING = "MACOSX_DEPLOYMENT_TARGET"
+# ~keep The shared Swift preparation workflow takes the target as an input, not an env value.
+CALLER_INPUT = "macos-deployment-target"
 # ~keep `VAR=value`, `VAR: value` and `VAR = "value"` spellings in run blocks, action inputs, shell and TOML.
 ASSIGNMENT = re.compile(rf"\b{SETTING}[\"']?\s*[=:]\s*[\"']?(\$\{{[^}}]*\}}|[^\s\"',}}]+)")
 
@@ -25,7 +27,7 @@ def yaml_targets(document: object, where: str = "") -> list[tuple[str, str]]:
     found = []
     if isinstance(document, dict):
         for key, value in document.items():
-            if key == SETTING:
+            if key in {SETTING, CALLER_INPUT}:
                 found.append((f"{where}/{key}", str(value)))
             found.extend(yaml_targets(value, f"{where}/{key}"))
     elif isinstance(document, list):

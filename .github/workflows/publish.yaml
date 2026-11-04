@@ -1722,7 +1722,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
   # ~keep The bundle is built, pinned into Package.swift and attached to the draft release by
-  # ~keep release-swift-prepare.yaml BEFORE the tag exists, so the tag SwiftPM resolves already
+  # ~keep prepare-swift-release.yaml BEFORE the tag exists, so the tag SwiftPM resolves already
   # ~keep carries its checksum (#816). This job only verifies that tag and the attached bytes and
   # ~keep creates release/swift/<version> at the tagged commit; it never builds, moves or rewrites.
   publish-swift-release:

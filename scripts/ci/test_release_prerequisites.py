@@ -232,15 +232,8 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         assert len(minimums) == 1, "Expected one public macOS deployment minimum"
         major, minor = minimums[0]
         expected = f"{major}.{minor or '0'}"
-        builders = [
-            step
-            for step in yaml.safe_load((ROOT / ".github/workflows/release-swift-prepare.yaml").read_text())["jobs"][
-                "swift-artifactbundle"
-            ]["steps"]
-            if step.get("uses", "").startswith("xberg-io/actions/build-swift-artifactbundle@")
-        ]
-        assert len(builders) == 1, "Expected one native Swift artifact builder"
-        assert builders[0].get("env", {}).get("MACOSX_DEPLOYMENT_TARGET") == expected
+        swift = yaml.safe_load((ROOT / ".github/workflows/prepare-swift-release.yaml").read_text())["jobs"]["swift"]
+        assert swift["with"]["macos-deployment-target"] == expected
 
     def test_php_packager_installs_the_config_pinned_alef_first(self) -> None:
         steps = self.jobs["php-extension"]["steps"]
