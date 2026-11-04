@@ -1,4 +1,4 @@
-baseline = "v1.13.0"
+baseline = "v1.14.1"
 task_sets = [
   "alef",
   "alef-bindings",
@@ -19,7 +19,3 @@ task_sets = [
 "version:bump:major" = "runs alef:pin:check before alef sync-versions"
 "version:bump:minor" = "runs alef:pin:check before alef sync-versions"
 "version:bump:patch" = "runs alef:pin:check before alef sync-versions"
-
-[overrides."github:xberg-io/alef"]
-version = "0.124.0"
-reason = "Matches alef_version in alef.toml: Alef 0.124.0 emits the raised language minimums."

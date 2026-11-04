@@ -138,39 +138,39 @@ url = "https://github.com/Goldziher/adrlint/releases/download/v0.4.1/adrlint-x86
 url_api = "https://api.github.com/repos/Goldziher/adrlint/releases/assets/694609927"
 
 [[tools."github:Goldziher/poly"]]
-version = "0.32.1"
+version = "0.32.5"
 backend = "github:Goldziher/poly"
-specifiers = ["0.32.1"]
+specifiers = ["0.32.5"]
 
 [tools."github:Goldziher/poly"."platforms.linux-arm64"]
-checksum = "sha256:ac57c466acdb03312f2b1d32dd0d7ca09d96c8c4cf1d8a66f408fc8c59d23018"
+checksum = "sha256:68dba781ee81ab40023e22c3ee605c6e9e39dc1e44e152e735e354f7d999df51"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.32.1/poly-0.32.1-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/694708720"
+url = "https://github.com/Goldziher/poly/releases/download/v0.32.5/poly-0.32.5-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/710082727"
 
 [tools."github:Goldziher/poly"."platforms.linux-x64"]
-checksum = "sha256:5a440909839644c642113e9a46933c6872c141bdbe4f26c2975db0ca30fb3050"
+checksum = "sha256:38ce40aedfead50c4a0422bf7f3c003106415a5650edb3c985ee714363a2bd1f"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.32.1/poly-0.32.1-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/694707555"
+url = "https://github.com/Goldziher/poly/releases/download/v0.32.5/poly-0.32.5-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/710102938"
 
 [tools."github:Goldziher/poly"."platforms.macos-arm64"]
-checksum = "sha256:fb7355b1cd999b00268a77cbc9cb72e562c9c61a152fdcbdcd6e289e09534201"
+checksum = "sha256:1307954e499e2663f81670a8a332d08b7be640593eddd0d3deae24af1b77aa15"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.32.1/poly-0.32.1-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/694726994"
+url = "https://github.com/Goldziher/poly/releases/download/v0.32.5/poly-0.32.5-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/710740659"
 
 [tools."github:Goldziher/poly"."platforms.macos-x64"]
-checksum = "sha256:7f68c671bd3931f40fb8cfa1f13a70d80e8c2a4b1560b01a399758c2ecea7d9a"
+checksum = "sha256:bfef1965c90a36cede4ae9df6815e2d3e0cb776e696e24802041883980691cef"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.32.1/poly-0.32.1-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/694721594"
+url = "https://github.com/Goldziher/poly/releases/download/v0.32.5/poly-0.32.5-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/710352757"
 
 [tools."github:Goldziher/poly"."platforms.windows-x64"]
-checksum = "sha256:b31bd4033f5fc43543525487f905b02ae49837f74e11ee8b03e231738dac96a2"
+checksum = "sha256:dfd3fdd5f1fc86e8c5c65ca905ee4dbe59629b26b5e26d911706893172354d35"
 checksum_source = "mise-versions"
-url = "https://github.com/Goldziher/poly/releases/download/v0.32.1/poly-0.32.1-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/694766438"
+url = "https://github.com/Goldziher/poly/releases/download/v0.32.5/poly-0.32.5-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/Goldziher/poly/releases/assets/710153787"
 
 [[tools."github:bnjbvr/cargo-machete"]]
 version = "0.9.2"
@@ -278,39 +278,39 @@ url_api = "https://api.github.com/repos/rustwasm/wasm-pack/releases/assets/69107
 provenance = "github-attestations"
 
 [[tools."github:xberg-io/alef"]]
-version = "0.124.0"
+version = "0.124.1"
 backend = "github:xberg-io/alef"
-specifiers = ["0.124.0"]
+specifiers = ["0.124.1"]
 
 [tools."github:xberg-io/alef"."platforms.linux-arm64"]
-checksum = "sha256:7009374ca68c1e9154820139584504776a6ff16c9e26951849d2f103d21a16a4"
+checksum = "sha256:ec7dd3766599073de6b7880fe6cd4aa43869f9c4776cbaf1261d377c938ce5c5"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.124.0/alef-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/710607207"
+url = "https://github.com/xberg-io/alef/releases/download/v0.124.1/alef-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/711133982"
 
 [tools."github:xberg-io/alef"."platforms.linux-x64"]
-checksum = "sha256:650a7f7d0c3d920bd94e4281de4571c4f4c80e3cbc0c31f69aa976e9d5f34089"
+checksum = "sha256:88a095508ace5caf486745ff5004e8f22bc4eba6c17fb144a94eeeafd49941f5"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.124.0/alef-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/710607032"
+url = "https://github.com/xberg-io/alef/releases/download/v0.124.1/alef-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/711133894"
 
 [tools."github:xberg-io/alef"."platforms.macos-arm64"]
-checksum = "sha256:db86ace21e2853f38e7bf95b54aa9a8a1b1e3f423911234ab7b6dc253094cc86"
+checksum = "sha256:e42c5f67d87feb057a94b4c4ff0ea19bdae98ca596cac7b7d0710e49f4e5aecb"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.124.0/alef-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/710607796"
+url = "https://github.com/xberg-io/alef/releases/download/v0.124.1/alef-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/711134356"
 
 [tools."github:xberg-io/alef"."platforms.macos-x64"]
-checksum = "sha256:1bde072d7eda49b1694769dfb7e7544f031ab5e65fcbadc3b54692721aa97d63"
+checksum = "sha256:0bec6fd965e17f8ffe3a361204731c9471dcb7f874dce77f4e8570f0b8d84259"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.124.0/alef-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/710607956"
+url = "https://github.com/xberg-io/alef/releases/download/v0.124.1/alef-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/711134462"
 
 [tools."github:xberg-io/alef"."platforms.windows-x64"]
-checksum = "sha256:4b0739e60900c138942637e3b812e109f4326d8f8739c33a30af54a2eb4ef206"
+checksum = "sha256:9ee286f5fd949332a7cb46a8ee1e7381912a68cc6c3a6c221c86a9245b1eab45"
 checksum_source = "mise-versions"
-url = "https://github.com/xberg-io/alef/releases/download/v0.124.0/alef-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/710608155"
+url = "https://github.com/xberg-io/alef/releases/download/v0.124.1/alef-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/xberg-io/alef/releases/assets/711134627"
 
 [[tools.go]]
 version = "1.27.3"
@@ -552,38 +552,38 @@ checksum = "sha256:1dc0715916251a13c4f6a550a3da1f2c726bff869371fd573a65234c008f4
 url = "https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-4.0.9-1/rubyinstaller-4.0.9-1-x64.7z"
 
 [[tools.uv]]
-version = "0.13.6"
+version = "0.13.7"
 backend = "aqua:astral-sh/uv"
-specifiers = ["0.13.6"]
+specifiers = ["0.13.7"]
 
 [tools.uv."platforms.linux-arm64"]
-checksum = "sha256:229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980412"
+checksum = "sha256:71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009469"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64"]
-checksum = "sha256:f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980644"
+checksum = "sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009823"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-arm64"]
-checksum = "sha256:60fbd5c8a1ed681845eea28d9d622fcde03c51e91a43465b64a1e17db1ed3472"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980393"
+checksum = "sha256:81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009442"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-x64"]
-checksum = "sha256:63ba17fdda55ad1a230d4b37fc6017ffa10c23688c83818bd3bfdf914c652a02"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980609"
+checksum = "sha256:20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009775"
 provenance = "github-attestations"
 
 [tools.uv."platforms.windows-x64"]
-checksum = "sha256:a2a8820d5eea32f08ef467ef3b7f66883a9b076d5737a2fc2fbb5f458d1bb50f"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980629"
+checksum = "sha256:0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009796"
 provenance = "github-attestations"
 
 [[tools.zig]]
