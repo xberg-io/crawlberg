@@ -9,7 +9,7 @@ All notable changes to crawlberg are documented here.
 - Minimum supported versions raised: Node.js 22, PHP 8.3, Elixir 1.17, Go 1.27, Android API 24, Dart 3.13, Zig 0.17, macOS 26, Rust 1.99.
 - Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
 - Regenerate the bindings with Alef 0.119.0, so the generated manifests declare the raised minimums, including Ruby 3.3.
-- Regenerate the bindings with Alef 0.124.0. The generated public APIs are unchanged in every language.
+- Regenerate the bindings with Alef 0.124.1. The generated public APIs are unchanged in every language.
 - Python option enums subclass `StrEnum`.
 - Every macOS binary the release builds, including the wheels, native libraries, CLI and the Swift archive, targets macOS 26, the same minimum as the Swift package, instead of the toolchain defaults (11.0 on arm64, 10.12 on x86_64) or 13.0.
 - The optional OpenCode plugin no longer depends on `@opencode/plugin`, which pulled in vulnerable `glob` and `minimatch` (GHSA-3g3m-2fjr-6pw4, GHSA-g3hv-75wg-m249); CI now fails on any advisory in the root or plugin pnpm lock (#813).
