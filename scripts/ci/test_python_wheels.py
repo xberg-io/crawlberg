@@ -20,7 +20,6 @@ MACOS_RUNNER_ARCH = {
 }
 
 
-
 def _python_wheels_job() -> dict:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     return workflow["jobs"]["python-wheels"]

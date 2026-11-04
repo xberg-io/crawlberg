@@ -35,7 +35,9 @@ class NodeAdvisoryTests(unittest.TestCase):
         assert CHECK.evaluate("plugin", report(15)) == []
 
     def test_each_advisory_fails(self) -> None:
-        audit = report(277, advisory(GLOB, "glob", UTIL_PATH), advisory(MINIMATCH, "minimatch", f"{UTIL_PATH}>minimatch"))
+        audit = report(
+            277, advisory(GLOB, "glob", UTIL_PATH), advisory(MINIMATCH, "minimatch", f"{UTIL_PATH}>minimatch")
+        )
         errors = CHECK.evaluate("plugin", audit)
         assert len(errors) == 2
         assert GLOB in errors[0]
