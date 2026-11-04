@@ -1036,6 +1036,8 @@ jobs:
       checksums: true
       extra-cargo-args: --features all
       extra-targets: '[{"os": "macos-26-intel", "target": "x86_64-apple-darwin"}]'
+      # ~keep Workflow env does not reach a reusable workflow; the CLI's macOS legs need the input.
+      macos-deployment-target: "26.0"
 
   # ~keep Must run AFTER `promote-release`: cargo-binstall downloads the release asset over
   # the public `.../releases/download/<tag>/...` URL, which 404s while the release is a
