@@ -45,6 +45,10 @@ permissions:
   id-token: write
 
 env:
+  # ~keep Every macOS binary this workflow builds targets the macOS minimum the root Package.swift
+  # ~keep declares; without it rustc and the C toolchains default to 11.0 (arm64) / 10.12 (x86_64).
+  # ~keep scripts/ci/test_macos_deployment_target.py holds every value to Package.swift.
+  MACOSX_DEPLOYMENT_TARGET: "26.0"
   # ~keep Single source of truth for the crates.io release set, in dependency order.
   # check-cratesio and publish-crates both read this; they used to keep two
   # hand-maintained lists that had silently diverged (the check omitted
