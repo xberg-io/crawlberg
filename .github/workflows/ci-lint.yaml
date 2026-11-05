@@ -99,14 +99,6 @@ jobs:
       # skipped poly's workspace phase entirely, so those five linters ran only in
       # the git hooks and CI never saw them. ~keep
       setup-go: true
-      # ~keep The reusable workflow defaults to golangci-lint v2.12.2, which vendors
-      # honnef.co/go/tools v0.7.0. That IR builder panics building the Go 1.27 stdlib
-      # (`buildir: package "poll": unexpected expr: *ast.KeyValueExpr`), so `poly lint .`
-      # died on golangci-lint before reaching a single crawlberg finding. `go-version` is
-      # `stable`, which is now 1.27, so the toolchain cannot be walked back without also
-      # losing the go.mod-declared floor. v2.13.1 handles 1.27 — verified locally against
-      # packages/go with go1.27.0: 0 issues, no panic.
-      golangci-lint-version: v2.13.1
       setup-ruby: true
       setup-dart: true
       setup-elixir: true
