@@ -17,7 +17,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- macOS releases before macOS 26 stay supported. The toolchain raise above set every macOS binary and the Swift package to macOS 26, but nothing in crawlberg needs macOS 26. The FFI libraries, language extensions, CLI and Python wheels now target macOS 10.13 on x86_64 and macOS 11.0 on arm64, and the wheels are tagged `macosx_10_13_x86_64` and `macosx_11_0_arm64`. The Swift package requires macOS 13 and uses `swift-tools-version: 6.0`.
+- macOS releases before macOS 26 stay supported. The toolchain raise above set every macOS binary and the Swift package to macOS 26, but nothing in crawlberg needs macOS 26. The FFI libraries, language extensions, CLI and Python wheels now target macOS 10.13 on x86_64 and macOS 11.0 on arm64, and the wheels are tagged `macosx_10_13_x86_64` and `macosx_11_0_arm64`. The Swift package requires macOS 13 and uses `swift-tools-version: 6.2`.
 - Keep the core release tag on the commit it was created at: the Swift bundle is built and its checksum pinned into `Package.swift` by the Prepare Swift release workflow (the shared xberg-io/actions preparation) before the tag exists, and publishing reuses those exact bytes and creates `release/swift/<version>` without force. Publish Release rejects `republish` and `force_republish` on real runs instead of deleting and re-creating the tag. (#816)
 
 ## [1.12.4] - 2026-10-31
