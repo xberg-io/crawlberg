@@ -226,14 +226,11 @@ class ReleasePrerequisiteTests(unittest.TestCase):
         assert observed == 28
         print(f"Release completion cases: expected=28 observed={observed}")
 
-    def test_swift_archive_deployment_target_matches_the_public_macos_minimum(self) -> None:
-        manifest = (ROOT / "Package.swift").read_text()
-        minimums = re.findall(r"\.macOS\(\.v([0-9]+)(?:_([0-9]+))?\)", manifest)
-        assert len(minimums) == 1, "Expected one public macOS deployment minimum"
-        major, minor = minimums[0]
-        expected = f"{major}.{minor or '0'}"
+    def test_swift_archive_derives_its_deployment_target_from_package_swift(self) -> None:
+        # The shared prepare workflow builds the archive at the macOS minimum of Package.swift when the caller
+        # passes no target; a set value must equal that minimum, so an override could only restate it.
         swift = yaml.safe_load((ROOT / ".github/workflows/prepare-swift-release.yaml").read_text())["jobs"]["swift"]
-        assert swift["with"]["macos-deployment-target"] == expected
+        assert "macos-deployment-target" not in swift["with"]
 
     def test_php_packager_installs_the_config_pinned_alef_first(self) -> None:
         steps = self.jobs["php-extension"]["steps"]

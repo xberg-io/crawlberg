@@ -45,10 +45,11 @@ permissions:
   id-token: write
 
 env:
-  # ~keep Every macOS binary this workflow builds targets the macOS minimum the root Package.swift
-  # ~keep declares; without it rustc and the C toolchains default to 11.0 (arm64) / 10.12 (x86_64).
-  # ~keep scripts/ci/test_macos_deployment_target.py holds every value to Package.swift.
-  MACOSX_DEPLOYMENT_TARGET: "26.0"
+  # ~keep Every macOS binary this workflow builds targets the lowest macOS the code and the
+  # ~keep toolchain need: 10.13 on x86_64. clang and rustc raise an arm64 target to 11.0, the first
+  # ~keep macOS on Apple Silicon. Rust and the C objects both read it, so their minos agree.
+  # ~keep scripts/ci/test_macos_deployment_target.py holds the other release files to this value.
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
   # ~keep Single source of truth for the crates.io release set, in dependency order.
   # check-cratesio and publish-crates both read this; they used to keep two
   # hand-maintained lists that had silently diverged (the check omitted
@@ -646,12 +647,12 @@ jobs:
           package-dir: packages/python
           cibw-build: "cp311-*"
           upload-artifact: "false"
-          # ~keep Without an explicit target the wheel inherits the runner's SDK version, so a
-          # ~keep macos-15-intel build tags itself macosx_15_0_x86_64 and pip rejects it on
-          # ~keep everything older. 11.0 is deliberately not higher: it is already the arm64
-          # ~keep floor, so one value covers both runners and the published arm64 tag does not
-          # ~keep move. Sibling repos set this the same way (xberg 11.0, html-to-markdown 10.12).
-          cibw-environment-macos: 'MATURIN_BUILD_ARGS="" CARGO_BUILD_LOCKED=true MACOSX_DEPLOYMENT_TARGET=26.0'
+          # ~keep Without an explicit target the wheel inherits the runner's SDK version and pip
+          # ~keep rejects it on every older macOS. 10.13 is the deployment target of every macOS
+          # ~keep binary in this workflow, so the x86_64 wheel is tagged macosx_10_13. Apple Silicon
+          # ~keep has no macOS before 11: clang, rustc and maturin raise the arm64 build to 11.0, so
+          # ~keep the arm64 wheel is tagged macosx_11_0.
+          cibw-environment-macos: 'MATURIN_BUILD_ARGS="" CARGO_BUILD_LOCKED=true MACOSX_DEPLOYMENT_TARGET=10.13'
 
       - uses: actions/upload-artifact@v7
         with:
@@ -1037,7 +1038,7 @@ jobs:
       extra-cargo-args: --features all
       extra-targets: '[{"os": "macos-26-intel", "target": "x86_64-apple-darwin"}]'
       # ~keep Workflow env does not reach a reusable workflow; the CLI's macOS legs need the input.
-      macos-deployment-target: "26.0"
+      macos-deployment-target: "10.13"
 
   # ~keep Must run AFTER `promote-release`: cargo-binstall downloads the release asset over
   # the public `.../releases/download/<tag>/...` URL, which 404s while the release is a

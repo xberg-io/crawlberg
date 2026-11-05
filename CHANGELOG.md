@@ -6,7 +6,7 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
-- Minimum supported versions raised: Node.js 22, PHP 8.3, Elixir 1.17, Go 1.27, Android API 24, Dart 3.13, Zig 0.17, macOS 26, Rust 1.99.
+- Minimum supported versions raised: Node.js 22, PHP 8.3, Elixir 1.17, Go 1.27, Android API 24, Dart 3.13, Zig 0.17, Rust 1.99.
 - Python 3.11 is now the minimum supported version; Python 3.10 reached end of life.
 - Regenerate the bindings with Alef 0.119.0, so the generated manifests declare the raised minimums, including Ruby 3.3.
 - Regenerate the bindings with Alef 0.124.2. The generated public APIs are unchanged in every language.
@@ -17,6 +17,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- macOS releases before macOS 26 stay supported. The toolchain raise above set every macOS binary and the Swift package to macOS 26, but nothing in crawlberg needs macOS 26. The FFI libraries, language extensions, CLI and Python wheels now target macOS 10.13 on x86_64 and macOS 11.0 on arm64, and the wheels are tagged `macosx_10_13_x86_64` and `macosx_11_0_arm64`. The Swift package requires macOS 13 and uses `swift-tools-version: 6.0`.
 - Keep the core release tag on the commit it was created at: the Swift bundle is built and its checksum pinned into `Package.swift` by the Prepare Swift release workflow (the shared xberg-io/actions preparation) before the tag exists, and publishing reuses those exact bytes and creates `release/swift/<version>` without force. Publish Release rejects `republish` and `force_republish` on real runs instead of deleting and re-creating the tag. (#816)
 
 ## [1.12.4] - 2026-10-31

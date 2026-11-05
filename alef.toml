@@ -1007,6 +1007,10 @@ package = "io.xberg.crawlberg.android"
 [crates.swift]
 module_name = "Crawlberg"
 package_name = "Crawlberg"
+# ~keep 13.0 because alef 0.124.2 cannot render a 10.x macOS minimum. Crawlberg's Swift does not
+# ~keep use Duration, so nothing in crawlberg needs 13. xberg-io/alef#893 lowers the generated floor
+# ~keep to 10.15; move to 10.15 with the alef release that carries it.
+min_macos_version = "13.0"
 
 [crates.zig]
 module_name = "crawlberg"

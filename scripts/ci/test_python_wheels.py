@@ -44,10 +44,10 @@ class PythonWheelMatrixTests(unittest.TestCase):
             "An Intel Mac otherwise falls back to the sdist, which needs a Rust toolchain."
         )
 
-    def test_macos_wheels_target_the_public_macos_minimum(self) -> None:
-        minimums = re.findall(r"\.macOS\(\.v([0-9]+)(?:_([0-9]+))?\)", (ROOT / "Package.swift").read_text())
-        assert len(minimums) == 1, "Expected one public macOS deployment minimum in Package.swift"
-        expected = (int(minimums[0][0]), int(minimums[0][1] or 0))
+    def test_macos_wheels_target_the_publish_deployment_target(self) -> None:
+        published = str(yaml.safe_load(WORKFLOW.read_text())["env"]["MACOSX_DEPLOYMENT_TARGET"])
+        major, _, minor = published.partition(".")
+        expected = (int(major), int(minor or 0))
         env = _build_step(_python_wheels_job())["with"].get("cibw-environment-macos", "")
         match = re.search(r"MACOSX_DEPLOYMENT_TARGET=(\d+)(?:\.(\d+))?", env)
         assert match, (
@@ -57,7 +57,7 @@ class PythonWheelMatrixTests(unittest.TestCase):
         target = (int(match.group(1)), int(match.group(2) or 0))
         assert target == expected, (
             f"MACOSX_DEPLOYMENT_TARGET={match.group(0).split('=')[1]} differs from the macOS "
-            f"{expected[0]}.{expected[1]} minimum in Package.swift; every package shares one macOS floor."
+            f"{expected[0]}.{expected[1]} deployment target in publish.yaml; every macOS binary shares one floor."
         )
 
 

@@ -305,7 +305,7 @@ dart pub add crawlberg
 </TabItem>
 <TabItem label="Swift">
 
-Add the Swift package from GitHub:
+Requires macOS 13+ and Swift 6.0+. Add the Swift package from GitHub:
 
 ```swift
 .package(url: "https://github.com/xberg-io/crawlberg", exact: "0.3.0")
@@ -363,7 +363,7 @@ docker run --rm -v $(pwd)/output:/output \
 ### Platform support
 
 Every binding ships prebuilt artifacts for glibc Linux (x86_64 and aarch64), macOS, and
-Windows. On **musl Linux — Alpine and anything else built on musl — coverage is deliberately
+Windows. macOS binaries run on macOS 10.13 and later on x86_64, and on macOS 11.0 and later on arm64. On **musl Linux — Alpine and anything else built on musl — coverage is deliberately
 partial**, and the table below is the authoritative statement of it.
 
 | Distribution                   | glibc Linux | musl Linux                     |
