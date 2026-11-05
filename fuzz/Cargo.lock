@@ -77,6 +77,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "astral-html"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d050c4dc17bfd8bf50da08bda9ef724b44a1b4ec09a5811f193f978cb6fbadbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "astral-tl"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -867,12 +876,12 @@ checksum = "491194d601b4fa9fac3c9571e014070a0ad1bc3392d1bc10419695196a8b3cc3"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.19.1"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0c9d1d13553220b2dd9bbbd135b6d8d9dfcb8c1893a842e93f93b9f59bcc5a4"
+checksum = "1508f37b10916e398625bcce1e4d19da5a04786d25de2996e2e4579c0e800a22"
 dependencies = [
  "ahash",
- "astral-tl",
+ "astral-html",
  "base64",
  "bitflags",
  "html-escape",
@@ -884,6 +893,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "smallvec",
  "thiserror",
  "tracing",
  "url",
