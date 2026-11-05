@@ -90,6 +90,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         assert job["with"]["dry-run"] == "${{ inputs.dry-run }}"
         assert job["with"]["crate-name"] == "crawlberg-swift"
         assert job["with"]["artifact-name"] == "Crawlberg-rs"
+        # alef's sync-versions accepts only a bundle whose info.json declares Package.swift's binary target.
+        assert job["with"]["binary-target-name"] == "RustBridgeBinary"
         assert job["secrets"] == {
             "app-id": "${{ secrets.BOT_APP_ID }}",
             "app-private-key": "${{ secrets.BOT_APP_PRIVATE_KEY }}",

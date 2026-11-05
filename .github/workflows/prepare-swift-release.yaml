@@ -27,6 +27,7 @@ jobs:
       dry-run: ${{ inputs.dry-run }}
       crate-name: crawlberg-swift
       artifact-name: Crawlberg-rs
+      binary-target-name: RustBridgeBinary
       use-sccache: "false"
       macos-dynamic-lookup: "false"
       # ~keep cargo-zigbuild's unreleased fix drops rustc's ignored -Wl,-O1 flag for Zig 0.17.
