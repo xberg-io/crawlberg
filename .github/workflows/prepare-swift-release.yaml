@@ -32,7 +32,7 @@ jobs:
       macos-dynamic-lookup: "false"
       # ~keep cargo-zigbuild's unreleased fix drops rustc's ignored -Wl,-O1 flag for Zig 0.17.
       cargo-zigbuild-revision: 371bac84444fe6f998955889f2106802b817094b
-      macos-deployment-target: "26.0"
+      macos-deployment-target: "15.0"
       # ~keep Rust otherwise links the iOS archive for 10.0 while current aws-lc objects use
       # ~keep ___chkstk_darwin, which the iOS 10 runtime does not provide.
       ios-deployment-target: "13.0"

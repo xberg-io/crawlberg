@@ -1007,6 +1007,8 @@ package = "io.xberg.crawlberg.android"
 [crates.swift]
 module_name = "Crawlberg"
 package_name = "Crawlberg"
+# ~keep The oldest macOS Apple still supports; every macOS artifact shares this floor.
+min_macos_version = "15.0"
 
 [crates.zig]
 module_name = "crawlberg"

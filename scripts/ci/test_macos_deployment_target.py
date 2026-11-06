@@ -78,8 +78,9 @@ def reusable_macos_builds() -> dict[tuple[str, str], dict[str, object]]:
 
 
 class MacosDeploymentTargetTests(unittest.TestCase):
-    def test_package_minimum_is_macos_26(self) -> None:
-        assert package_minimum() == "26.0"
+    def test_package_minimum_is_macos_15(self) -> None:
+        # ~keep The floor is the oldest macOS Apple still supports; it moves when Apple drops one.
+        assert package_minimum() == "15.0"
 
     def test_every_configured_target_equals_the_package_minimum(self) -> None:
         found = configured_targets()
@@ -111,7 +112,7 @@ class MacosDeploymentTargetTests(unittest.TestCase):
         }
         assert sorted(value for _, value in yaml_targets(document)) == ["10.12", "11.0", "13.0"]
         assert ASSIGNMENT.findall(f'export {SETTING}="${{X:-11.0}}"') == ["${X:-11.0}"]
-        assert ASSIGNMENT.findall(f'{SETTING} = "26.0"') == ["26.0"]
+        assert ASSIGNMENT.findall(f'{SETTING} = "15.0"') == ["15.0"]
         assert macos_job({"runs-on": "${{ matrix.os }}", "strategy": {"matrix": {"os": ["macos-26"]}}})
         assert not macos_job({"runs-on": "${{ matrix.os }}", "strategy": {"matrix": {"os": ["ubuntu-latest"]}}})
 
