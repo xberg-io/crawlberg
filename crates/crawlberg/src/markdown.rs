@@ -1322,7 +1322,7 @@ mod tests {
             ),
             (
                 "<textarea><a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></svg></a></textarea>",
-                "<a href=\"https://example.com/x\" title=\"Icon\"><svg><path /></svg></a>\n",
+                "<a href=\"https://example.com/x\" title=\"Icon\"><svg><path/></svg></a>\n",
             ),
             (
                 concat!(
