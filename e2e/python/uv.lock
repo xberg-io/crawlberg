@@ -22,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "crawlberg"
-version = "1.12.4"
+version = "1.13.0"
 source = { directory = "../../packages/python" }
 
 [package.metadata]

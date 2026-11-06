@@ -10,7 +10,7 @@
     }
   ],
   "name": "@xberg-io/crawlberg-linux-x64-musl",
-  "version": "1.12.4",
+  "version": "1.13.0",
   "license": "MIT",
   "repository": {
     "type": "git",

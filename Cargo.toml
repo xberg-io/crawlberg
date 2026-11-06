@@ -13,7 +13,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.12.4"
+version = "1.13.0"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>", "Tobias Perlstein <tobias@xberg.io>"]
 license = "MIT"
