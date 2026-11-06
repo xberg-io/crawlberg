@@ -87,6 +87,11 @@ tools = ["find_skill", "load_skill"]
 [lock]
 include_outputs = false
 
+[exposure]
+mcp_server_tokens = 1150
+start_budget = 7450
+codex_start_budget = 8300
+
 [lint]
 # Crawlberg supplies its own MCP reference for this harness name. ~keep
 allow_overrides = ["python-conventions", "claude:mcp"]
