@@ -2326,7 +2326,7 @@ jobs:
     steps:
       - uses: xberg-io/actions/publish-packagist@v1
         with:
-          packagist-username: xberg-io
+          packagist-username: Goldziher
           package-name: xberg-io/crawlberg
           version: ${{ needs.prepare.outputs.version }}
           repository-url: https://github.com/xberg-io/crawlberg
