@@ -94,6 +94,9 @@ jobs:
       # poly's checkstyle whole-project check runs `mvn checkstyle:check` on
       # packages/java; checkstyle 13+ needs JDK 21+. ~keep
       setup-java: true
+      # ~keep Workspace Clippy builds the PHP extension against headers from a release target.
+      setup-php: true
+      php-version: "8.4"
       # The remaining whole-project checks poly runs (golangci-lint, rubocop, steep,
       # dart-analyze, credo) each need their own toolchain. Without them this job
       # skipped poly's workspace phase entirely, so those five linters ran only in
