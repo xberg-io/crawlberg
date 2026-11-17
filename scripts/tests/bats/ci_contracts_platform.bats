@@ -62,20 +62,20 @@ header_fixture() {
 	xberg_assert_output_contains 'declares 1 thing(s)'
 }
 
-@test "chrome runtime installs providers before classic Chromium and connects content" {
-	xberg_stub_trace sudo
-	run_script prepare-chrome-runtime.sh 2 0 gnome-46-2404 mesa-2404
+@test "chrome runtime installs Chromium and connects its core26 providers" {
+	xberg_stub sudo 'printf "%s\n" "$*" >>"$XBERG_TRACE"; if [ "$*" = "snap connections --all chromium" ]; then printf "%s\n" "Interface Plug Slot Notes" "content chromium:gnome-core26 - -" "content chromium:gpu-2604 - -"; fi'
+	run_script prepare-chrome-runtime.sh 2 0
 	xberg_assert_status 0
-	xberg_assert_trace 'sudo snap install gnome-46-2404' 'sudo snap install mesa-2404' 'sudo snap install chromium --classic' 'sudo snap connect chromium:gnome-46-2404 gnome-46-2404' 'sudo snap connect chromium:gpu-2404 mesa-2404'
+	xberg_assert_trace 'snap install chromium' 'snap connections --all chromium' 'snap install gnome-core26' 'snap install mesa-2604' 'snap connect chromium:gnome-core26 gnome-core26' 'snap connect chromium:gpu-2604 mesa-2604'
 }
 
-@test "chrome runtime stops at the retry budget without connecting failed providers" {
+@test "chrome runtime stops at the retry budget before inspecting failed Chromium installs" {
 	xberg_stub sudo 'printf "%s\n" "$*" >>"$XBERG_TRACE"; exit 7'
 	xberg_stub_trace sleep
-	run_script prepare-chrome-runtime.sh 2 0 gnome-46-2404
+	run_script prepare-chrome-runtime.sh 2 0
 	xberg_assert_status 1
 	xberg_assert_output_contains 'failed after 2 attempts'
-	xberg_assert_trace 'snap install gnome-46-2404' 'sleep 0' 'snap install gnome-46-2404'
+	xberg_assert_trace 'snap install chromium' 'sleep 0' 'snap install chromium'
 }
 
 @test "sccache wrapper retries cache failures with the wrapper disabled" {
