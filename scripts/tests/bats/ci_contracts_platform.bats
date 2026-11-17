@@ -63,10 +63,10 @@ header_fixture() {
 }
 
 @test "chrome runtime installs Chromium and connects its core26 providers" {
-	xberg_stub sudo 'printf "%s\n" "$*" >>"$XBERG_TRACE"; if [ "$*" = "snap connections --all" ]; then printf "%s\n" "Interface Plug Slot Notes" "content chromium:gnome-core26 - -" "content chromium:gpu-2604 - -"; fi'
+	xberg_stub sudo 'printf "%s\n" "$*" >>"$XBERG_TRACE"; if [ "$*" = "snap connections chromium" ]; then printf "%s\n" "Interface Plug Slot Notes" "content[gnome-core26] chromium:gnome-core26 gnome-core26:gnome-core26 -" "content chromium:gpu-2604 - -"; fi'
 	run_script prepare-chrome-runtime.sh 2 0
 	xberg_assert_status 0
-	xberg_assert_trace 'snap install chromium' 'snap connections --all' 'snap install gnome-core26' 'snap install mesa-2604' 'snap connect chromium:gnome-core26 gnome-core26' 'snap connect chromium:gpu-2604 mesa-2604'
+	xberg_assert_trace 'snap install chromium' 'snap connections chromium' 'snap install gnome-core26' 'snap install mesa-2604' 'snap connect chromium:gnome-core26 gnome-core26' 'snap connect chromium:gpu-2604 mesa-2604'
 }
 
 @test "chrome runtime stops at the retry budget before inspecting failed Chromium installs" {

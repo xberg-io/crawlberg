@@ -45,12 +45,12 @@ if args[:2] == ["snap", "install"]:
 if args[:3] == ["snap", "connections", "--all"] and len(args) > 3:
     sys.stderr.write("error: cannot use --all with snap name\n")
     sys.exit(1)
-if args == ["snap", "connections", "--all"]:
+if args == ["snap", "connections", "chromium"]:
     print("Interface  Plug  Slot  Notes")
-    print("content  other:gnome-core26  -  -")
-    print("content  other:gpu-2604  -  -")
-    for plug in os.environ["PLUGS"].split():
-        print(f"content  chromium:{plug}  -  -")
+    for index, plug in enumerate(os.environ["PLUGS"].split()):
+        interface = f"content[{plug}]" if index == 0 else "content"
+        slot = f"{plug}:{plug}" if index == 0 else "-"
+        print(f"{interface}  chromium:{plug}  {slot}  -")
 if args[:2] == ["snap", "connect"]:
     plug = args[2].split(":", 1)[1]
     if plug not in os.environ["PLUGS"].split():
@@ -119,7 +119,7 @@ if args[0] == "chromium":
         assert "<html>" in smoke.stdout
         assert calls == [
             "snap install chromium",
-            "snap connections --all",
+            "snap connections chromium",
             "snap install gnome-46-2404",
             "snap install mesa-2404",
             "snap connect chromium:gnome-46-2404 gnome-46-2404",
@@ -132,7 +132,7 @@ if args[0] == "chromium":
         assert smoke.returncode == 0, smoke.stderr
         assert calls == [
             "snap install chromium",
-            "snap connections --all",
+            "snap connections chromium",
             "snap install gnome-core26",
             "snap install mesa-2604",
             "snap connect chromium:gnome-core26 gnome-core26",
@@ -143,7 +143,7 @@ if args[0] == "chromium":
         result, calls, _ = self.run_case(0, plugs=("gnome-core26", "gpu-2404"))
         assert result.returncode != 0
         assert "Unsupported Chromium content plugs" in result.stderr
-        assert calls == ["snap install chromium", "snap connections --all"]
+        assert calls == ["snap install chromium", "snap connections chromium"]
 
     def test_should_connect_runtime_on_a_fresh_chromium_install(self) -> None:
         result, calls, smoke = self.run_case(0, chromium_present=False)

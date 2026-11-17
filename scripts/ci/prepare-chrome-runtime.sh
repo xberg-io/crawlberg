@@ -25,7 +25,7 @@ install_snap() {
 install_snap chromium
 
 # ~keep Detect the installed revision's plugs, including unconnected ones on a partial install.
-plugs=$(sudo snap connections --all | awk '$1 == "content" && $2 ~ /^chromium:/ { print $2 }')
+plugs=$(sudo snap connections chromium | awk '$1 ~ /^content(\[|$)/ && $2 ~ /^chromium:/ { print $2 }')
 has_runtime_plugs() {
   grep -Fxq "chromium:$1" <<<"$plugs" && grep -Fxq "chromium:$2" <<<"$plugs"
 }
