@@ -1015,6 +1015,9 @@ jobs:
             dist/php-package/php_*.zip.sha256
           retention-days: 14
 
+  # cli-release is skipped on a re-run whose CLI assets are already on the release
+  # (check-cli). Jobs that consume those assets accept that skip, or a retry would leave
+  # the release in draft and skip Homebrew, Scoop and binstall. ~keep
   cli-release:
     name: Build & release CLI binaries
     needs: [prepare, validate-versions, check-cli, cli-musl-binaries]
@@ -1045,9 +1048,9 @@ jobs:
   # the promotion itself succeeded. ~keep
   verify-binstall:
     name: Verify cargo-binstall install
-    needs: [prepare, cli-release, promote-release]
+    needs: [prepare, check-cli, cli-release, promote-release]
     if: >-
-      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.cli-release.result == 'success' && needs.promote-release.outputs.promoted == 'true') }}
+      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && (needs.cli-release.result == 'success' || (needs.cli-release.result == 'skipped' && needs.check-cli.outputs.exists == 'true')) && needs.promote-release.outputs.promoted == 'true') }}
     uses: xberg-io/actions/.github/workflows/reusable-binstall-verify.yml@v1
     with:
       package-name: crawlberg-cli
@@ -2734,9 +2737,9 @@ jobs:
 
   publish-homebrew-formula:
     name: Update Homebrew formula source
-    needs: [prepare, validate-versions, check-homebrew, cli-release]
+    needs: [prepare, validate-versions, check-homebrew, check-cli, cli-release]
     if: >-
-      ${{ !inputs.plugins-only && (always() && needs.prepare.outputs.release_homebrew == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.cli-release.result == 'success' && (needs.check-homebrew.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
+      ${{ !inputs.plugins-only && (always() && needs.prepare.outputs.release_homebrew == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && (needs.cli-release.result == 'success' || (needs.cli-release.result == 'skipped' && needs.check-cli.outputs.exists == 'true')) && (needs.check-homebrew.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -2807,9 +2810,9 @@ jobs:
   # is already a no-op. ~keep
   publish-scoop-manifest:
     name: Update Scoop manifest
-    needs: [prepare, cli-release]
+    needs: [prepare, check-cli, cli-release]
     if: >-
-      ${{ !inputs.plugins-only && (needs.prepare.outputs.release_scoop == 'true' && needs.cli-release.result == 'success' && (needs.prepare.outputs.is_tag == 'true' || needs.prepare.outputs.dry_run == 'true')) }}
+      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.release_scoop == 'true' && (needs.cli-release.result == 'success' || (needs.cli-release.result == 'skipped' && needs.check-cli.outputs.exists == 'true')) && (needs.prepare.outputs.is_tag == 'true' || needs.prepare.outputs.dry_run == 'true')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -3070,6 +3073,7 @@ jobs:
       - prepare
       - validate-versions
       - crates-gate
+      - check-cli
       - cli-release
       - upload-c-ffi-release
       # ~keep Ordering only: the draft flips once the asset inventory check and every
@@ -3082,7 +3086,7 @@ jobs:
       - upload-php-pie-release
       - publish-swift-release
     if: >-
-      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && needs.cli-release.result == 'success' && needs.upload-c-ffi-release.result == 'success') }}
+      ${{ !inputs.plugins-only && (!cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && (needs.cli-release.result == 'success' || (needs.cli-release.result == 'skipped' && needs.check-cli.outputs.exists == 'true')) && needs.upload-c-ffi-release.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
