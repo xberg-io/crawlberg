@@ -13596,15 +13596,18 @@ mod race_tests {
     /// ~keep A second page stays open and is never touched. The driver's delivery of an event
     /// ~keep while it tracks no target has a test of its own,
     /// ~keep `the_driver_passes_on_a_browser_event_while_it_tracks_no_target`.
-    /// ~keep Google Chrome 155 started without a window can exit by itself, with status 0, about
-    /// ~keep a second after the page closes, with the second page open too. The test then fails
-    /// ~keep with `ChannelSendError`. Seen on a loaded host, at the tree before this change too.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_closed_pages_context_is_disposed() {
         let test_name = "a_closed_pages_context_is_disposed";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        // ~keep With --no-startup-window, Chrome 155 can exit when a tab closes even while
+        // ~keep another isolated tab is open. Keep a default-context tab alive through the final count.
+        let keepalive_tab = browser
+            .new_page("about:blank")
+            .await
+            .expect("the browser must open a default-context tab");
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
@@ -13650,6 +13653,7 @@ mod race_tests {
         firewall.stop().await;
         let after_stop = context_count(&browser).await;
         drop(open_window);
+        drop(keepalive_tab);
         close(browser).await;
         assert_eq!(
             with_page,
