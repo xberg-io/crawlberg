@@ -87,6 +87,8 @@ jobs:
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     uses: xberg-io/actions/.github/workflows/reusable-validate.yml@v1
     with:
+      # ~keep Ubuntu 26.04's Clang headers fail PHP bindgen in workspace Clippy.
+      runner: ubuntu-24.04
       setup-rust: true
       rust-use-sccache: false
       setup-python: true
