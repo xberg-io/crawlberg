@@ -14,6 +14,10 @@ task_sets = [
   "rust",
 ]
 
+[overrides."github:xberg-io/alef"]
+version = "0.129.0"
+reason = "Preserve required Node result fields. Alef 0.129.1 makes fields optional on defaulted types with legacy constructors."
+
 [task_overrides]
 "alef:verify" = "runs scripts/ci/check-alef-generated.sh instead of alef verify --exit-code"
 "version:bump:major" = "runs alef:pin:check before alef sync-versions"

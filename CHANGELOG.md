@@ -4,6 +4,17 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-11-17
+
+### Changed
+
+- Upgrade html-to-markdown-rs to 3.22.2 and liter-llm to 2.7.0, and refresh the Rust dependency lockfile.
+- Regenerate bindings and package metadata with Alef 0.129.0.
+
+### Security
+
+- Require rmcp 3.9 or later to address RUSTSEC-2026-0462.
+
 ## [1.13.0] - 2026-11-06
 
 ### Changed
