@@ -6,7 +6,6 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 description = "Crawlberg browser fetcher with protected ZIP extraction"
-homepage = "https://github.com/xberg-io/crawlberg"
 repository = "https://github.com/xberg-io/crawlberg"
 readme = "README.md"
 include = ["src/**/*", "tests/**/*", "LICENSE-*", "README.md", "UPSTREAM.md"]

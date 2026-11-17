@@ -41,23 +41,19 @@ dbg_macro = "deny"
 [workspace.dependencies]
 ahash = "0.8"
 aho-corasick = "1"
-anyhow = "1"
 arc-swap = "1"
 async-trait = "0.1"
 async-tungstenite = { version = "0.35", features = ["tokio-runtime"] }
 axum = "0.8"
 base64 = "0.23"
 blake3 = "1"
-camino = "1.2"
 chardetng = "1.0.0"
 chromiumoxide = { package = "crawlberg-chromiumoxide", version = "0.9.5", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
 crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.13.1" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.13.1" }
 crawlberg-robots = { path = "crates/crawlberg-robots", version = "1.13.1" }
-criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Keep cssparser in lockstep with selectors: selectors exposes cssparser types in
 # ~keep parser traits implemented by crawlberg-browser/src/dom/selector.rs, so mismatched
 # ~keep versions split the type graph and make those trait implementations uncompilable.
@@ -68,8 +64,6 @@ deno_error = "0.7"
 dirs = "7"
 encoding_rs = "0.8"
 
-# Binding framework dependencies
-ext-php-rs = "0.16.4"
 fancy-regex = "0.20"
 flate2 = "1"
 futures = "0.3"
@@ -83,14 +77,10 @@ icu_casemap = { version = "2.4", default-features = false, features = ["compiled
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 idna = "1"
 ipnet = "2"
-itertools = "0.15"
 libc = "0.2.191"
 liter-llm = { version = "2.7.0", features = ["native-http"] }
-markup5ever = "0.40"
 memchr = "2"
 minijinja = "3"
-napi = { version = "3", default-features = false, features = ["napi8", "tokio_rt"] }
-napi-derive = "3"
 notify = "8"
 # ~keep OpenTelemetry 0.33 and tracing-opentelemetry 0.34 must move together because their
 # ~keep public types cross the subscriber boundary. The liter-llm 2.2 floor keeps its optional
@@ -102,12 +92,8 @@ opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
 percent-encoding = "2"
 png = "0.18"
 precomputed-hash = "0.1"
-proptest = "1"
 psl = "2"
-pyo3 = { version = "0.30", features = ["abi3-py311"] }
-pyo3-async-runtimes = { version = "0.30", features = ["tokio-runtime"] }
 quick-xml = "0.42"
-rayon = "1"
 regex = "1"
 regex-syntax = "0.8"
 # default-features = false: reqwest's `default` set (default-tls, http2, system-proxy) pulls
@@ -123,7 +109,6 @@ serde = { version = "1", features = ["derive"] }
 serde-value = "0.7"
 serde_json = "1"
 serde_path_to_error = "0.1.20"
-servo_arc = "0.6"
 sha2 = "0.11"
 sysinfo = { version = "0.40", default-features = false }
 tempfile = "3"
@@ -149,6 +134,3 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "6", features = ["axum_extras"] }
 uuid = { version = "1.29", features = ["v4"] }
-walkdir = "2.5"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"

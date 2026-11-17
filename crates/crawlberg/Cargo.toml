@@ -183,11 +183,11 @@ rustix = { workspace = true, optional = true, features = ["event", "process", "s
 
 [dev-dependencies]
 async-trait = { workspace = true }
-criterion = { workspace = true }
+criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep `testing` provides the in-memory metric exporter that tests/test_waf_blocks_counter.rs
 # ~keep reads crawl_waf_blocks_total through.
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
-proptest = { workspace = true }
+proptest = "1"
 # ~keep in-process TLS server for the transport-error tests (#395, #463): a static
 # ~keep self-signed cert plus a pure-Rust TLS stack, instead of shelling out to the
 # ~keep system `openssl` binary, whose version differs between CI's Linux and macOS
