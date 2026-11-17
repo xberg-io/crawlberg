@@ -24,10 +24,7 @@ fn scoreable_metrics<'a>(
                 return false;
             }
             let is_success_status = r.status_code.is_some_and(|code| (200..=299).contains(&code));
-            if !is_success_status || r.content_size == 0 {
-                return false;
-            }
-            true
+            is_success_status && r.content_size > 0
         })
         .filter_map(|r| r.quality.as_ref())
         .collect()

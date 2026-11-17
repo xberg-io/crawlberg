@@ -5,7 +5,7 @@ description: Scrape a page to Markdown
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:d9987915d238cdb051f10fc83473235652d8b0b082cbad1cd44d79fd40402fe9
-Source-Hash: blake3:b15128d3db9c38f4c7503624f753aa1bccbabe57668d7438168aab582c11eba9
+Source-Hash: blake3:9340eda9265f76cc38576474f2bac03a6405285f2b25e56763c1429bf12eb5ee
 Schema-Version: v1
 -->
 

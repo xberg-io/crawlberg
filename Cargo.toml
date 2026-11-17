@@ -69,12 +69,12 @@ dirs = "7"
 encoding_rs = "0.8"
 
 # Binding framework dependencies
-ext-php-rs = "0.16.3"
+ext-php-rs = "0.16.4"
 fancy-regex = "0.20"
 flate2 = "1"
 futures = "0.3"
-html-escape = "0.3.0"
-html-to-markdown-rs = { version = "3.21.0", features = ["full"] }
+html-escape = "0.3.1"
+html-to-markdown-rs = { version = "3.22.2", features = ["full"] }
 # ~keep Kept in lockstep with html-to-markdown-rs, which pins html5ever 0.40 from 3.14 on.
 # Before that it pinned 0.39 and the graph carried two copies of the html5ever/markup5ever/
 # string_cache/web_atoms stack; matching majors is what collapses them to one.
@@ -85,7 +85,7 @@ idna = "1"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2.191"
-liter-llm = { version = "2.6.0", features = ["native-http"] }
+liter-llm = { version = "2.7.0", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
 minijinja = "3"
@@ -115,15 +115,15 @@ regex-syntax = "0.8"
 # native transport off wasm. Native-only features are re-added per-crate under
 # `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
 reqwest = { version = "0.13", default-features = false, features = ["cookies", "gzip", "brotli", "deflate"] }
-rmcp = { version = "3", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.9", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 rustix = { version = "1", default-features = false }
 schemars = "1.2"
-selectors = "0.41"
+selectors = "0.43"
 serde = { version = "1", features = ["derive"] }
 serde-value = "0.7"
 serde_json = "1"
 serde_path_to_error = "0.1.20"
-servo_arc = "0.5"
+servo_arc = "0.6"
 sha2 = "0.11"
 sysinfo = { version = "0.40", default-features = false }
 tempfile = "3"
@@ -131,7 +131,7 @@ thiserror = "2"
 tl = { package = "astral-tl", version = "0.8" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-toml = "1.1"
+toml = "1.2"
 tower = { version = "0.5", features = ["timeout", "retry", "limit", "util", "make"] }
 tower-http = { version = "0.7", features = [
   "cors",

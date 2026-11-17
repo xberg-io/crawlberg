@@ -2304,7 +2304,7 @@ impl AuthorizedTabDrainView<'_> {
 
     fn registry_matches(&self, parent: AuthorizedTabDrainParent<'_>, proof: &AuthorizedTabDrainProof) -> bool {
         let (context, target, session, _) = parent;
-        if !unowned_structural_registry_matches(self.registry, context, target, &proof.parent)
+        !(!unowned_structural_registry_matches(self.registry, context, target, &proof.parent)
             || !unowned_arm_registry_matches(self.registry, context, &proof.child_target, &proof.child)
             || self.registry.frames.iter().any(|(id, frame)| {
                 frame.owner.is_some()
@@ -2327,11 +2327,7 @@ impl AuthorizedTabDrainView<'_> {
                 .values()
                 .any(|required| required.contains(session) || required.contains(&proof.child_session))
             || self.session_targets.contains_key(session)
-            || self.evidence.len() != self.session_targets.len()
-        {
-            return false;
-        }
-        true
+            || self.evidence.len() != self.session_targets.len())
     }
 
     fn parent_matches(&self, parent: AuthorizedTabDrainParent<'_>, proof: &AuthorizedTabDrainProof) -> bool {
@@ -2339,7 +2335,7 @@ impl AuthorizedTabDrainView<'_> {
         let Some(parent) = self.structural_sessions.get(session) else {
             return false;
         };
-        if parent.target != *target
+        !(parent.target != *target
             || parent.context.as_ref() != context
             || parent.waiting_for_debugger
             || !parent.authorized
@@ -2354,11 +2350,7 @@ impl AuthorizedTabDrainView<'_> {
                     && (entry.target == *target
                         || entry.target == proof.child_target
                         || entry.context.as_ref() == context)
-            })
-        {
-            return false;
-        }
-        true
+            }))
     }
 
     fn child_matches(&self, parent: AuthorizedTabDrainParent<'_>, proof: &AuthorizedTabDrainProof) -> bool {

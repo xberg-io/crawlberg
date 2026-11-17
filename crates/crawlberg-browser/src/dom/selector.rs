@@ -1,4 +1,4 @@
-use cssparser::{CowRcStr, ToCss};
+use cssparser::ToCss;
 use html5ever::{LocalName, Namespace};
 use precomputed_hash::PrecomputedHash;
 use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
@@ -145,8 +145,8 @@ impl<'i> parser::Parser<'i> for CssSelectorParser {
     type Impl = CssSelector;
     type Error = SelectorParseErrorKind;
 
-    fn parse_non_ts_pseudo_class(&self, name: CowRcStr<'i>) -> Result<PseudoClass, cssparser::ParseError<Self::Error>> {
-        match name.as_ref() {
+    fn parse_non_ts_pseudo_class(&self, name: &str) -> Result<PseudoClass, cssparser::ParseError<Self::Error>> {
+        match name {
             "hover" => Ok(PseudoClass::Hover),
             "active" => Ok(PseudoClass::Active),
             "focus" => Ok(PseudoClass::Focus),
@@ -470,7 +470,7 @@ impl DomTree {
             let is_element = self.with_node(desc_id, |n| n.is_element()).unwrap_or(false);
             if is_element {
                 let element = DomElement::new(self, desc_id);
-                if selectors::matching::matches_selector_list(&selector_list, &element, &mut context) {
+                if selectors::matching::matches_selector_list(&selector_list, element, &mut context) {
                     return Ok(Some(desc_id));
                 }
             }
@@ -496,7 +496,7 @@ impl DomTree {
             let is_element = self.with_node(desc_id, |n| n.is_element()).unwrap_or(false);
             if is_element {
                 let element = DomElement::new(self, desc_id);
-                if selectors::matching::matches_selector_list(&selector_list, &element, &mut context) {
+                if selectors::matching::matches_selector_list(&selector_list, element, &mut context) {
                     results.push(desc_id);
                 }
             }
