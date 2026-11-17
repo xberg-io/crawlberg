@@ -7,6 +7,10 @@
     )
 )]
 
+// ~keep These feature-only dependencies enable JavaScript entropy for transitive callers.
+#[cfg(target_arch = "wasm32")]
+use {getrandom as _, getrandom03 as _};
+
 #[cfg(feature = "api")]
 pub(crate) mod api;
 mod assets;
