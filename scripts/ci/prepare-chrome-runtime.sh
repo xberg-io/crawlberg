@@ -44,3 +44,35 @@ install_snap "$gnome"
 install_snap "$mesa"
 sudo snap connect "chromium:$gnome" "$gnome"
 sudo snap connect "chromium:$gpu" "$mesa"
+
+chromium=/snap/bin/chromium
+smoke_attempt=1
+until timeout 30 "$chromium" \
+  --headless=new --disable-gpu --no-sandbox --use-mock-keychain --dump-dom about:blank | grep -i '<html' >/dev/null; do
+  if [ "$smoke_attempt" -ge 3 ]; then
+    echo "::error::Chromium smoke test failed after 3 attempts on Linux ARM64" >&2
+    sudo snap connections chromium || true
+    exit 1
+  fi
+  sleep "$((smoke_attempt * 3))"
+  smoke_attempt=$((smoke_attempt + 1))
+done
+
+if [ -n "${GITHUB_ENV:-}" ]; then
+  # ~keep The snap sees its own common directory at the host path, including saved and temporary profiles.
+  profile_root="$HOME/snap/chromium/common/crawlberg-ci"
+  mkdir -p "$profile_root/tmp" "$profile_root/data"
+  {
+    printf 'CHROME=%s\n' "$chromium"
+    printf 'TMPDIR=%s\n' "$profile_root/tmp"
+    # ~keep Keep mise on its existing tool store when redirecting the browser profile data.
+    printf 'MISE_DATA_DIR=%s\n' "${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+    printf 'XDG_DATA_HOME=%s\n' "$profile_root/data"
+  } >>"$GITHUB_ENV"
+fi
+if [ -n "${GITHUB_PATH:-}" ]; then
+  printf '%s\n' "${chromium%/*}" >>"$GITHUB_PATH"
+fi
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf 'chrome-path=%s\n' "$chromium" >>"$GITHUB_OUTPUT"
+fi

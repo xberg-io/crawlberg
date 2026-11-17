@@ -271,6 +271,14 @@ jobs:
           install: ${{ matrix.mise-tools && 'true' || 'false' }}
           install-args: ${{ matrix.mise-tools }}
 
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: mise run ci:chrome:runtime:test
+
+      - name: Prepare Chromium snap runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: mise run ci:chrome:runtime
+
       - name: Resolve the mise Python version
         if: matrix.lang == 'python'
         id: mise-python
@@ -400,15 +408,8 @@ jobs:
         if: matrix.lang == 'brew'
         run: mise run brew:e2e:lint
 
-      - name: Test Chromium runtime preparation
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: mise run ci:chrome:runtime:test
-
-      - name: Prepare Chromium snap runtime
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: mise run ci:chrome:runtime
-
       - name: Setup Chrome
+        if: runner.os != 'Linux' || runner.arch != 'ARM64'
         uses: xberg-io/actions/setup-chrome@v1
 
       - name: Setup library paths for FFI bindings

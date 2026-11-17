@@ -126,6 +126,15 @@ jobs:
         with:
           install: "false"
 
+      - name: Test Chromium runtime preparation
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: mise run ci:chrome:runtime:test
+
+      - name: Prepare Chromium snap runtime
+        id: chrome_runtime
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: mise run ci:chrome:runtime
+
       # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
       # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
       # already trusts for the php e2e job, so this is not a newly-introduced toolchain.
@@ -159,23 +168,16 @@ jobs:
       # is not the same coverage more cheaply -- it is a verdict nobody can reproduce or bisect.
       #
       # ~keep This does NOT make the two legs run the same browser, and it is not meant to. The
-      # action installs the chromium snap on `ubuntu-*-arm` (Chrome for Testing publishes no
-      # linux-arm64 build) and delegates to browser-actions/setup-chrome elsewhere, so macOS gets
+      # runtime task installs the Chromium snap on Ubuntu ARM. The setup action delegates to
+      # browser-actions/setup-chrome on macOS, so it gets
       # Chrome stable. What it buys is that each leg's browser is declared and pinnable.
       #
       # ~keep Linux-only originally closed the gap where browser-gated tests in
       # crates/crawlberg/tests (test_browser_pool_lifecycle, test_browser_profile,
       # test_browser_screenshot, test_interact) had no Chrome binary at all and silently skipped
       # via common::is_missing_chrome_message on every CI run.
-      - name: Test Chromium runtime preparation
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: mise run ci:chrome:runtime:test
-
-      - name: Prepare Chromium snap runtime
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: mise run ci:chrome:runtime
-
       - name: Setup Chrome
+        if: runner.os != 'Linux' || runner.arch != 'ARM64'
         id: chrome
         uses: xberg-io/actions/setup-chrome@v1
 
@@ -183,7 +185,7 @@ jobs:
         id: prepared_chrome
         run: mise run rust:chrome:prepare
         env:
-          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME: ${{ steps.chrome_runtime.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
 
       - name: Run tests
         run: mise run rust:test:ci

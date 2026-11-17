@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ci/prepare-chrome-runtime.sh"
+SMOKE_CALL = "chromium --headless=new --disable-gpu --no-sandbox --use-mock-keychain --dump-dom about:blank"
 
 
 class ChromeRuntimeTests(unittest.TestCase):
@@ -19,6 +20,7 @@ class ChromeRuntimeTests(unittest.TestCase):
         *,
         chromium_failures: int = 0,
         connect_failure: bool = False,
+        smoke_failures: int = 0,
         chromium_present: bool = True,
         attempts: str = "3",
         delay: str = "0",
@@ -75,6 +77,12 @@ if args[0] == "chromium":
     if not ready:
         sys.stderr.write("Content snap command-chain not found: ensure slot is connected\n")
         sys.exit(1)
+    smoke_file = root / "smoke-count"
+    count = int(smoke_file.read_text()) if smoke_file.exists() else 0
+    smoke_file.write_text(str(count + 1))
+    if count < int(os.environ["SMOKE_FAILURES"]):
+        sys.stdout.write("No DOM rendered\n")
+        sys.exit(0)
     sys.stdout.write("<html><head></head><body></body></html>\n")
 """)
             mock.chmod(0o755)
@@ -82,6 +90,13 @@ if args[0] == "chromium":
                 os.environ,
                 PATH=f"{root}:{os.environ['PATH']}",
                 CASE_ROOT=str(root),
+                HOME=str(root),
+                MISE_DATA_DIR="",
+                XDG_DATA_HOME=str(root / "existing-data"),
+                GITHUB_ENV=str(root / "github-env"),
+                GITHUB_OUTPUT=str(root / "github-output"),
+                GITHUB_PATH=str(root / "github-path"),
+                SMOKE_FAILURES=str(smoke_failures),
                 FAILURES=str(failures),
                 CHROMIUM_FAILURES=str(chromium_failures),
                 CONNECT_FAILURE=str(int(connect_failure)),
@@ -93,6 +108,14 @@ if args[0] == "chromium":
                 '    log.write("sleep " + sys.argv[1] + "\\n")\n'
             )
             (root / "sleep").chmod(0o755)
+            timeout = root / "timeout"
+            timeout.write_text(
+                "#!/bin/bash\n"
+                '[[ "$1" = 30 && "$2" = /snap/bin/chromium ]] || exit 1\n'
+                "shift 2\n"
+                'exec sudo chromium "$@"\n'
+            )
+            timeout.chmod(0o755)
             if chromium_present:
                 (root / "chromium.installed").touch()
             result = subprocess.run(
@@ -103,6 +126,20 @@ if args[0] == "chromium":
                 check=False,
             )
             calls = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
+            if result.returncode == 0:
+                assert (root / "github-output").read_text() == "chrome-path=/snap/bin/chromium\n"
+                assert (root / "github-path").read_text() == "/snap/bin\n"
+                profile_root = root / "snap/chromium/common/crawlberg-ci"
+                assert (root / "github-env").read_text().splitlines() == [
+                    "CHROME=/snap/bin/chromium",
+                    f"TMPDIR={profile_root / 'tmp'}",
+                    f"MISE_DATA_DIR={root / 'existing-data' / 'mise'}",
+                    f"XDG_DATA_HOME={profile_root / 'data'}",
+                ]
+                assert (profile_root / "tmp").is_dir()
+                assert (profile_root / "data").is_dir()
+            else:
+                assert not (root / "github-output").exists()
             smoke = subprocess.run(
                 [str(mock), "chromium", "--dump-dom", "about:blank"],
                 env=env,
@@ -124,6 +161,7 @@ if args[0] == "chromium":
             "snap install mesa-2404",
             "snap connect chromium:gnome-46-2404 gnome-46-2404",
             "snap connect chromium:gpu-2404 mesa-2404",
+            SMOKE_CALL,
         ]
 
     def test_should_connect_providers_for_core26_chromium(self) -> None:
@@ -137,7 +175,20 @@ if args[0] == "chromium":
             "snap install mesa-2604",
             "snap connect chromium:gnome-core26 gnome-core26",
             "snap connect chromium:gpu-2604 mesa-2604",
+            SMOKE_CALL,
         ]
+
+    def test_should_retry_a_smoke_launch_without_rendered_html(self) -> None:
+        result, calls, _ = self.run_case(0, smoke_failures=2)
+        assert result.returncode == 0, result.stderr
+        assert calls.count(SMOKE_CALL) == 3
+        assert [call for call in calls if call.startswith("sleep")] == ["sleep 3", "sleep 6"]
+
+    def test_should_fail_when_the_browser_never_renders_html(self) -> None:
+        result, calls, _ = self.run_case(0, smoke_failures=3)
+        assert result.returncode != 0
+        assert "Chromium smoke test failed after 3 attempts" in result.stderr
+        assert calls.count(SMOKE_CALL) == 3
 
     def test_should_fail_without_a_recognized_pair_of_content_plugs(self) -> None:
         result, calls, _ = self.run_case(0, plugs=("gnome-core26", "gpu-2404"))
@@ -149,9 +200,10 @@ if args[0] == "chromium":
         result, calls, smoke = self.run_case(0, chromium_present=False)
         assert result.returncode == 0, result.stderr
         assert smoke.returncode == 0, smoke.stderr
-        assert calls[-2:] == [
+        assert calls[-3:] == [
             "snap connect chromium:gnome-46-2404 gnome-46-2404",
             "snap connect chromium:gpu-2404 mesa-2404",
+            SMOKE_CALL,
         ]
 
     def test_should_retry_each_provider_after_transient_assertion_failure(self) -> None:
@@ -161,7 +213,7 @@ if args[0] == "chromium":
         assert calls.count("snap install gnome-46-2404") == 3
         assert calls.count("snap install mesa-2404") == 3
         assert calls.count("sleep 7") == 4
-        assert calls[-1] == "snap connect chromium:gpu-2404 mesa-2404"
+        assert calls[-2:] == ["snap connect chromium:gpu-2404 mesa-2404", SMOKE_CALL]
 
     def test_should_retry_chromium_after_a_transient_install_failure(self) -> None:
         result, calls, smoke = self.run_case(0, chromium_failures=1, chromium_present=False)
