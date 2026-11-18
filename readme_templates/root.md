@@ -17,7 +17,7 @@ You need data that lives on the web, and raw HTML is not it. Crawlberg does the 
 
 It runs from a single Rust core with identical results across 14 language bindings, and it handles the awkward parts for you: JavaScript-heavy pages fall back to a real headless browser, bot filters are detected and worked around, robots and sitemaps are respected, requests are throttled per domain, and requests to private or internal addresses are refused by default. Drive it from your code, an AI agent, a REST service, or the CLI.
 
-Every part of the pipeline is a trait you can swap — the crawl frontier, rate limiter, storage, event stream, and content filters — so you can plug in your own behavior. Managed extras like proxy pools, tuned bot-evasion, authenticated sessions, scheduling, and billing live in [xberg-enterprise](https://github.com/xberg-io/xberg-enterprise).
+Every part of the pipeline is a trait you can swap — the crawl frontier, rate limiter, storage, event stream, and content filters — so you can plug in your own behavior. Managed extras like proxy pools, tuned bot-evasion, authenticated sessions, scheduling, and billing live in [Xberg Enterprise](https://pro.xberg.io).
 
 ### Features
 
@@ -339,8 +339,8 @@ Contributions are welcome! See our [Contributing Guide](https://github.com/xberg
 ## Part of Xberg.io
 
 - [Xberg](https://github.com/xberg-io/xberg) — the open-source content-intelligence engine: text, tables, and metadata from 101 formats (115 file extensions), with OCR, transcription, and code intelligence. MIT.
-- [Xberg Pro](https://xberg.io) — a complete self-hosted content-intelligence backend in a single container. Commercial.
-- [Xberg Enterprise](https://xberg.io) — the distributed, governed content-intelligence platform, scaled on Kubernetes with team governance and support. Commercial.
+- [Xberg Pro](https://pro.xberg.io) — a complete self-hosted content-intelligence backend in a single container. Commercial.
+- [Xberg Enterprise](https://pro.xberg.io) — the distributed, governed content-intelligence platform, scaled on Kubernetes with team governance and support. Commercial.
 - [crawlberg](https://github.com/xberg-io/crawlberg) — web crawling and scraping with HTML→Markdown and headless-Chrome fallback.
 - [html-to-markdown](https://github.com/xberg-io/html-to-markdown) — fast, lossless HTML→Markdown engine.
 - [liter-llm](https://github.com/xberg-io/liter-llm) — universal LLM API client with native bindings for 14 languages and 165 providers.
