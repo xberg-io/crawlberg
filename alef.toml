@@ -428,6 +428,12 @@ exclude = [
   "**/*_bridge_generated/**",
   "crates/*-ffi/include/*.h",
   "packages/go/include/*.h",
+  # ~keep Vendored headers kept byte-for-byte beside the last release's prebuilt macOS arm64
+  # library; scripts/ci/check-vendored-headers.sh compares them to the canonical header, so
+  # they are neither refreshed from it nor reformatted.
+  "packages/csharp/Crawlberg/runtimes/*/native/include/*.h",
+  "packages/go/.lib/*/include/*.h",
+  "packages/java/src/main/resources/natives/*/include/*.h",
   # ~keep Alef formats this generated build script with the pinned Zig toolchain. Poly's generic
   # Zig formatter uses a different continuation indentation and would undo `zig fmt`'s canonical
   # output, making regeneration oscillate between two byte layouts.
