@@ -6,7 +6,7 @@ name: crawlberg-mapping-urls
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:26e1d5c5cc2fa54b3f29ebabb1a466df0163c29ca984cb489d8d738e610bd584
-Source-Hash: blake3:e3cdb487932b71dc2ed9401adf99f8c0cce4141b41670123f0fda74171580f6a
+Source-Hash: blake3:0dcc205aedd52f89642ecf0d56b267853276fa6b400b3aa0bbf00e59476e16ef
 Schema-Version: v1
 -->
 

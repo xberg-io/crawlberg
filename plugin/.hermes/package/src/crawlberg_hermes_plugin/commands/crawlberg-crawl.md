@@ -6,7 +6,7 @@ name: crawlberg-crawl
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:35251d5fa9d0a18c16430ed6c49c4568ed75a0864a513b1b5ceccd62c3e59315
-Source-Hash: blake3:e3cdb487932b71dc2ed9401adf99f8c0cce4141b41670123f0fda74171580f6a
+Source-Hash: blake3:0dcc205aedd52f89642ecf0d56b267853276fa6b400b3aa0bbf00e59476e16ef
 Schema-Version: v1
 -->
 

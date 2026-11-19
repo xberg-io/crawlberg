@@ -1,6 +1,6 @@
 // AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 // Content-Hash: blake3:1acb0b9e6a7ba4f729e29dee8776ca8b65ab50c331851c7b60b7d20e4ff67cb5
-// Source-Hash: blake3:e3cdb487932b71dc2ed9401adf99f8c0cce4141b41670123f0fda74171580f6a
+// Source-Hash: blake3:0dcc205aedd52f89642ecf0d56b267853276fa6b400b3aa0bbf00e59476e16ef
 // Schema-Version: v1
 
 import { registerBundledContent } from "../ai-rulez-content.js";
