@@ -319,6 +319,8 @@ jobs:
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    env:
+      POLY_TRUST: "1"
     steps:
       - uses: actions/checkout@v7
 
