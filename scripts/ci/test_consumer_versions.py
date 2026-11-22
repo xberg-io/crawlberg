@@ -106,6 +106,26 @@ class ConsumerVersionTests(unittest.TestCase):
         self.assert_sync_error("regenerate with Alef")
         assert self.contents() == before
 
+    def test_check_reports_a_drifted_cli_proxy_and_registry_manifest(self) -> None:
+        for relative, drifted in (
+            ("cli-proxy/npm/package.json", f'  "version": "{NEXT_VERSION}"'),
+            ("cli-proxy/pypi/pyproject.toml", f'version = "{NEXT_VERSION}"'),
+            ("server.json", f'"version": "{NEXT_VERSION}"'),
+        ):
+            path = self.root / relative
+            original = path.read_text()
+            assert drifted in original, relative
+            path.write_text(original.replace(drifted, drifted.replace(NEXT_VERSION, "0.0.1")))
+            assert relative in SYNC.synchronize(self.root, check=True)
+            path.write_text(original)
+            assert relative not in SYNC.synchronize(self.root, check=True)
+
+    def test_pypi_prerelease_is_spelled_as_pep_440(self) -> None:
+        assert SYNC.pep440_version("1.14.0") == "1.14.0"
+        assert SYNC.pep440_version("1.14.0-rc.1") == "1.14.0rc1"
+        assert SYNC.pep440_version("1.14.0-alpha.2") == "1.14.0a2"
+        assert SYNC.pep440_version("1.14.0-beta.3") == "1.14.0b3"
+
     def assert_check_error(self, expected: str) -> None:
         try:
             SYNC.synchronize(self.root, check=True)

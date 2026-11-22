@@ -12,6 +12,24 @@ const PKG_NAME = "crawlberg-cli";
 const VERSION_ENV = "CRAWLBERG_CLI_VERSION";
 const USER_AGENT = "crawlberg-cli-npm-proxy";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BIN_DIR = path.join(__dirname, "bin");
+
+function packageVersion() {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
+  return manifest.version;
+}
+
+// The package is published in lockstep with the product, so its own version names the one release
+// whose binary it may download. CRAWLBERG_CLI_VERSION is an explicit override, never a fallback.
+export function releaseTag(version, override) {
+  const tag = override || `v${version}`;
+  if (!/^v\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/.test(tag)) {
+    throw new Error(`refusing to resolve release tag '${tag}'`);
+  }
+  return tag;
+}
+
 function targetTriple() {
   const type = os.type();
   const arch = os.arch();
@@ -129,22 +147,20 @@ export function selectArchiveName(names, triple) {
 
 async function resolveRelease() {
   const triple = targetTriple();
-  const pinned = process.env[VERSION_ENV];
-  const apiUrl = pinned
-    ? `https://api.github.com/repos/${REPO}/releases/tags/${encodeURIComponent(pinned)}`
-    : `https://api.github.com/repos/${REPO}/releases/latest`;
+  const pinned = releaseTag(packageVersion(), process.env[VERSION_ENV]);
+  const apiUrl = `https://api.github.com/repos/${REPO}/releases/tags/${encodeURIComponent(pinned)}`;
 
   let release;
   try {
     release = await httpGetJson(apiUrl);
   } catch (err) {
-    if (pinned && /HTTP 404/.test(err.message)) {
+    if (/HTTP 404/.test(err.message)) {
       throw new Error(`release tag '${pinned}' not found`, { cause: err });
     }
     throw err;
   }
   const assets = Array.isArray(release.assets) ? release.assets : [];
-  const tag = release.tag_name || pinned || "latest";
+  const tag = release.tag_name || pinned;
 
   const chosenName = selectArchiveName(
     assets.map((a) => a.name),
@@ -159,10 +175,7 @@ async function resolveRelease() {
   return { tag, triple, archive, checksums };
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BIN_DIR = path.join(__dirname, "bin");
-
-function expectedDigest(text, assetName) {
+export function expectedDigest(text, assetName) {
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
@@ -174,6 +187,17 @@ function expectedDigest(text, assetName) {
   return null;
 }
 
+export function verifyChecksum(archiveBuf, archiveName, sumsText, sumsName = "SHA256SUMS") {
+  const expected = expectedDigest(sumsText, archiveName);
+  if (!expected) {
+    throw new Error(`no checksum entry for ${archiveName} in ${sumsName} — refusing to install unverified binary`);
+  }
+  const actual = crypto.createHash("sha256").update(archiveBuf).digest("hex").toLowerCase();
+  if (actual !== expected) {
+    throw new Error(`checksum mismatch for ${archiveName} (expected ${expected}, got ${actual})`);
+  }
+}
+
 async function verifyOrWarn(archiveBuf, archiveName, checksums) {
   if (!checksums) {
     process.stderr.write(
@@ -183,16 +207,7 @@ async function verifyOrWarn(archiveBuf, archiveName, checksums) {
     return;
   }
   const sumsText = (await httpGetBuffer(checksums.browser_download_url)).toString("utf8");
-  const expected = expectedDigest(sumsText, archiveName);
-  if (!expected) {
-    throw new Error(
-      `no checksum entry for ${archiveName} in ${checksums.name} — refusing to install unverified binary`,
-    );
-  }
-  const actual = crypto.createHash("sha256").update(archiveBuf).digest("hex").toLowerCase();
-  if (actual !== expected) {
-    throw new Error(`checksum mismatch for ${archiveName} (expected ${expected}, got ${actual})`);
-  }
+  verifyChecksum(archiveBuf, archiveName, sumsText, checksums.name);
   process.stderr.write(`Checksum verified for ${archiveName}.\n`);
 }
 
