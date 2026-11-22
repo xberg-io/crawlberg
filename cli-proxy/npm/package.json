@@ -1,6 +1,7 @@
 {
   "name": "@xberg-io/crawlberg-cli",
-  "version": "0.0.1",
+  "version": "1.13.1",
+  "mcpName": "io.github.xberg-io/crawlberg",
   "description": "CLI proxy for crawlberg — downloads and runs the native crawlberg binary from GitHub releases.",
   "license": "MIT",
   "author": {

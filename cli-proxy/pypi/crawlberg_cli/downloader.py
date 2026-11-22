@@ -1,8 +1,10 @@
 """Resolve, download, verify, and run the native crawlberg binary.
 
-Self-healing asset discovery: query the GitHub releases API and pick the asset
-whose name contains the platform target triple, instead of hardcoding one exact
-asset name. This keeps working as release asset naming standardizes over time.
+The package is published in lockstep with the product, so it downloads exactly the
+release whose version it carries (``CRAWLBERG_CLI_VERSION`` overrides that tag
+explicitly; there is no "latest" fallback). Asset discovery queries that release and
+picks the asset whose name contains the platform target triple, instead of hardcoding
+one exact asset name. The archive is checked against the release's SHA256SUMS.
 All diagnostics go to stderr.
 """
 
@@ -12,12 +14,15 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import zipfile
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as installed_version
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.error import URLError
@@ -29,6 +34,37 @@ BIN_NAME = "crawlberg"
 PKG_NAME = "crawlberg-cli"
 VERSION_ENV = "CRAWLBERG_CLI_VERSION"
 _USER_AGENT = "crawlberg-cli-python-proxy"
+
+_PEP440_RE = re.compile(r"^(?P<core>\d+\.\d+\.\d+)(?:(?P<kind>a|b|rc)(?P<number>\d+))?$")
+_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+_PRERELEASE_SPELLING = {"a": "alpha", "b": "beta", "rc": "rc"}
+
+
+def _release_tag(package_version: str, override: str | None = None) -> str:
+    """Return the release tag for this package version, or the explicit override.
+
+    PyPI respells a semver prerelease (``1.14.0-rc.1`` becomes ``1.14.0rc1``); the GitHub
+    release tag keeps the semver spelling, so the PEP 440 form is mapped back.
+    """
+    if override:
+        tag = override
+    else:
+        match = _PEP440_RE.match(package_version)
+        if not match:
+            raise RuntimeError(f"cannot derive a release tag from package version '{package_version}'")
+        tag = f"v{match['core']}"
+        if match["kind"]:
+            tag += f"-{_PRERELEASE_SPELLING[match['kind']]}.{match['number']}"
+    if not _TAG_RE.match(tag):
+        raise RuntimeError(f"refusing to resolve release tag '{tag}'")
+    return tag
+
+
+def _package_version() -> str:
+    try:
+        return installed_version(PKG_NAME)
+    except PackageNotFoundError as exc:
+        raise RuntimeError(f"{PKG_NAME} is not installed, so its release version is unknown") from exc
 
 
 def _target_triple() -> str:
@@ -100,15 +136,12 @@ def _asset_score(name: str) -> int:
 def _resolve_release() -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     """Return (tag, archive_asset, checksums_asset_or_none) for this platform."""
     triple = _target_triple()
-    pinned = os.getenv(VERSION_ENV)
-    if pinned:
-        api_url = f"https://api.github.com/repos/{REPO}/releases/tags/{quote(pinned, safe='')}"
-    else:
-        api_url = f"https://api.github.com/repos/{REPO}/releases/latest"
+    pinned = _release_tag(_package_version(), os.getenv(VERSION_ENV))
+    api_url = f"https://api.github.com/repos/{REPO}/releases/tags/{quote(pinned, safe='')}"
 
     release = json.loads(_http_get(api_url, accept="application/vnd.github+json"))
     assets = release.get("assets") or []
-    tag = release.get("tag_name") or pinned or "latest"
+    tag = release.get("tag_name") or pinned
 
     archives = [
         a
@@ -139,6 +172,15 @@ def _expected_digest(text: str, asset_name: str) -> str | None:
     return None
 
 
+def _verify_checksum(archive_path: Path, asset_name: str, sums_text: str, sums_name: str = "SHA256SUMS") -> None:
+    expected = _expected_digest(sums_text, asset_name)
+    if not expected:
+        raise RuntimeError(f"no checksum entry for {asset_name} in {sums_name} — refusing to install unverified binary")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().lower()
+    if digest != expected:
+        raise RuntimeError(f"checksum mismatch for {asset_name} (expected {expected}, got {digest})")
+
+
 def _verify_or_warn(archive_path: Path, asset_name: str, checksums: dict[str, Any] | None) -> None:
     if not checksums:
         print(
@@ -148,14 +190,7 @@ def _verify_or_warn(archive_path: Path, asset_name: str, checksums: dict[str, An
         )
         return
     sums_text = _http_get(checksums["browser_download_url"]).decode("utf-8")
-    expected = _expected_digest(sums_text, asset_name)
-    if not expected:
-        raise RuntimeError(
-            f"no checksum entry for {asset_name} in {checksums['name']} — refusing to install unverified binary"
-        )
-    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().lower()
-    if digest != expected:
-        raise RuntimeError(f"checksum mismatch for {asset_name} (expected {expected}, got {digest})")
+    _verify_checksum(archive_path, asset_name, sums_text, checksums["name"])
     print(f"Checksum verified for {asset_name}.", file=sys.stderr)
 
 

@@ -312,7 +312,13 @@ manifest = "crates/crawlberg-node/package.json"
 # ~keep                              annotations landing first.
 
 [workspace.sync]
-extra_paths = ["package.json", "crates/crawlberg-node/package.json"]
+extra_paths = [
+  "package.json",
+  "crates/crawlberg-node/package.json",
+  "cli-proxy/pypi/pyproject.toml",
+  "cli-proxy/npm/package.json",
+  "server.json",
+]
 
 [workspace.citation]
 title = "crawlberg"

@@ -8,7 +8,7 @@ maintainers = [
   { name = "Tobias Perlstein", email = "tobias@xberg.io" },
 ]
 name = "crawlberg-cli"
-version = "0.1.0"
+version = "1.13.1"
 description = "CLI proxy for crawlberg — downloads and runs the native crawlberg binary from GitHub releases."
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,4 +34,5 @@ urls.Repository = "https://github.com/xberg-io/crawlberg.git"
 scripts.crawlberg = "crawlberg_cli.cli:main"
 
 [tool.hatch]
+build.hooks.custom.path = "hatch_build.py"
 build.targets.wheel.packages = ["crawlberg_cli"]

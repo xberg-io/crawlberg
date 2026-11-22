@@ -11,6 +11,9 @@ from pathlib import Path
 
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?"
 CAPTURE = rf"(?P<version>{VERSION})"
+# ~keep PyPI respells a semver prerelease (1.14.0-rc.1 -> 1.14.0rc1), and alef writes that spelling.
+PEP440_CAPTURE = r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?)"
+PRERELEASE_KINDS = {"alpha": "a", "beta": "b", "rc": "rc"}
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,17 @@ class Pin:
     pattern: str
     count: int = 1
     generated: bool = False
+    pep440: bool = False
+
+
+def pep440_version(version: str) -> str:
+    core, _, prerelease = version.partition("-")
+    if not prerelease:
+        return core
+    kind, _, number = prerelease.partition(".")
+    if kind not in PRERELEASE_KINDS or not number.isdigit():
+        raise ValueError(f"cannot spell {version} as a PEP 440 version")
+    return f"{core}{PRERELEASE_KINDS[kind]}{number}"
 
 
 PINS = (
@@ -45,6 +59,11 @@ PINS = (
         generated=True,
     ),
     Pin("test_apps/c/download_ffi.sh", rf"(?m)^VERSION='{CAPTURE}'$", generated=True),
+    # ~keep The CLI proxy packages publish in lockstep with the product, and server.json names the
+    # ~keep npm package at that same version; the MCP Registry rejects a package version that is not on npm.
+    Pin("cli-proxy/npm/package.json", rf'(?m)^  "version": "{CAPTURE}"', generated=True),
+    Pin("cli-proxy/pypi/pyproject.toml", rf'(?m)^version = "{PEP440_CAPTURE}"$', generated=True, pep440=True),
+    Pin("server.json", rf'(?m)^ +"version": "{CAPTURE}"', 2, generated=True),
 )
 
 
@@ -97,9 +116,10 @@ def synchronize(root: Path, *, check: bool) -> list[str]:
         if len(matches) != pin.count:
             raise ValueError(f"{pin.path}: expected {pin.count} release pin(s), found {len(matches)}")
         updated = original
+        spelled = pep440_version(version) if pin.pep440 else version
         for match in reversed(matches):
             start, end = match.span("version")
-            updated = updated[:start] + version + updated[end:]
+            updated = updated[:start] + spelled + updated[end:]
         if updated != original:
             if pin.generated and not check:
                 raise ValueError(f"{pin.path}: generated release pin is stale; regenerate with Alef")
