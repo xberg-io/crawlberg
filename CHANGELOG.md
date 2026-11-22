@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-11-22
+
 ### Added
 
 - Publish `@xberg-io/crawlberg-cli` (npm) and `crawlberg-cli` (PyPI) with every release at the release version. The PyPI wheels embed the native binary; the npm package and the sdist download exactly their own release and verify it against `crawlberg-cli-SHA256SUMS`.
@@ -11,6 +13,7 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Update Cargo dependencies.
 - The CLI proxy packages no longer fall back to the latest release; the separate `cli-proxy-v*` release lineage is gone.
 - The MCP Registry entry no longer lists the OCI image: the image is built by a separate workflow, so it cannot be published atomically with the npm package.
 
