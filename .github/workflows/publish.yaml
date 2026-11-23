@@ -3323,7 +3323,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           mkdir -p dist-cli
-          archives=(dist-cli/crawlberg-cli-"${TARGET}".tar.gz dist-cli/crawlberg-cli-"${TARGET}".zip)
+          archives=(dist-cli/crawlberg-cli-"${TARGET}".*)
           if [ "${#archives[@]}" -eq 0 ]; then
             if [ "$DRY_RUN" = "true" ]; then
               echo "::error::no crawlberg-cli-${TARGET} archive among this run's artifacts, and a dry run has no release to download from"
@@ -3335,7 +3335,7 @@ jobs:
               cd dist-cli
               grep -E " \*?crawlberg-cli-${TARGET}\.(tar\.gz|zip)$" crawlberg-cli-SHA256SUMS | sha256sum -c -
             )
-            archives=(dist-cli/crawlberg-cli-"${TARGET}".tar.gz dist-cli/crawlberg-cli-"${TARGET}".zip)
+            archives=(dist-cli/crawlberg-cli-"${TARGET}".*)
           fi
           if [ "${#archives[@]}" -ne 1 ]; then
             echo "::error::expected exactly one crawlberg-cli-${TARGET} archive, found ${#archives[@]}"
