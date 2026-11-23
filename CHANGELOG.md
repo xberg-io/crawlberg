@@ -4,6 +4,13 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.3] - 2026-11-23
+
+### Changed
+
+- Regenerate the bindings with Alef 0.132.5: generated Node, WASM, Python, PHP, Java and Elixir output is lint-clean.
+- Release publish jobs collect CLI archives by target name instead of a fixed extension list.
+
 ## [1.13.2] - 2026-11-22
 
 ### Added

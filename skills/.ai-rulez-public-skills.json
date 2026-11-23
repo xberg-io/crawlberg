@@ -2,19 +2,19 @@
   "source": "plugin/skills",
   "skill_count": 7,
   "files": {
-    "crawlberg/SKILL.md": "c89221866c69b46407cd54922ce86d79ed8796f4a3a120598bbe97af96c5cf60",
-    "crawlberg/index.md": "c213c1010272bfd4d330f6762a8a51aa4db8f98055683e6bcec72b5c0e25907d",
-    "crawlberg-automating-the-browser/SKILL.md": "ca732dd7677918f4936c9eab8a02d25f1811841db6073c0a4ad1b06945f1effe",
-    "crawlberg-automating-the-browser/index.md": "acb685c626b28ae15c0406370c5b2661824f8c8285996f35d806b4f8bc61c4b0",
-    "crawlberg-crawling-a-site/SKILL.md": "2591c7c37a42c21aa4e6dd38807a07f79ff2f67ddea12d5b63c22c7a97ce237d",
-    "crawlberg-crawling-a-site/index.md": "a365a871c20f1a7928ec5789c2f4597ba40f88b3da47f7d1bcd29108d90da35c",
-    "crawlberg-headless-fallback/SKILL.md": "a3048f00c813ce58adaf2c8188f34edbf7e82e7a87e923130bb176161861c0ce",
-    "crawlberg-headless-fallback/index.md": "0093d6597b6efd8a73c34dfb53f6e98bc045b4888f76a4efe21b4581021118fd",
-    "crawlberg-mapping-urls/SKILL.md": "9481df66e358fe03fdc5e6511b52edd07cc1bba4e220c32b2c2bcee1e3e97b24",
-    "crawlberg-mapping-urls/index.md": "8e8693f067b735fd8a66b57f2ffb52853955cf047a4e898075b9e892271e5e09",
-    "crawlberg-scraping-html-to-markdown/SKILL.md": "1b4b4658266e0c02d7d293d72b3ce73a42f4ea79be2643239e431704cacda1d4",
-    "crawlberg-scraping-html-to-markdown/index.md": "8fc1e4f1f07c5f614a50fe22ce38e3e975367164f8b406132282324f5a2d62fe",
-    "crawlberg-serving-the-api/SKILL.md": "ac7a8d94d36722d3917f5d3f29ade4a8c0bfdb7f2f7f7280e70d150a402d2d36",
-    "crawlberg-serving-the-api/index.md": "872ed899768b33436595f4989fdde1c598d63b8d29b1867efd1e99be891e78c7"
+    "crawlberg/SKILL.md": "c27efd188545fc241222ee94c042c4dd0a81aff6ce99f6e727ed774f1cd86b0b",
+    "crawlberg/index.md": "eb30c27c72ca1f3717d69cf538659b95095209b2535849144005b4fa3bcc4305",
+    "crawlberg-automating-the-browser/SKILL.md": "be203540f1ddfe7b7e311059402c2fba3c14e3ecfbb583625e5c9dd40a71b31d",
+    "crawlberg-automating-the-browser/index.md": "4ffb7a57f3c66af0b4b15d9a82c485f85a19cc7aee7d032cc94255db27d9e2e3",
+    "crawlberg-crawling-a-site/SKILL.md": "84091b8af539ecd3a81af16b497238c95bd24154ac554ee37729e1269a59b698",
+    "crawlberg-crawling-a-site/index.md": "cdf905a3a79fcf3e2209c9b544b5d3bc3ba2417db6588368f31df764a34f745a",
+    "crawlberg-headless-fallback/SKILL.md": "2befc2acbda7814b0fc155aa131b8018da63d1a5ba8daf3b17dd2a1f4da65081",
+    "crawlberg-headless-fallback/index.md": "d1197fcac5c54d6c3ac1b51eca3d658f093e53440370fd13a2f1e5f681e8d7e1",
+    "crawlberg-mapping-urls/SKILL.md": "a766f481ed412789f55b33edd0bc5519f428b18d639e3f300acc81604fe716ee",
+    "crawlberg-mapping-urls/index.md": "a1e720b7c20472460d4dd163033b94018478d7222b72320d80d96d1edc94ab3b",
+    "crawlberg-scraping-html-to-markdown/SKILL.md": "7b3c30604a1e5eead328499b55ce44da772b52adaaf651bede09627b6ee401b0",
+    "crawlberg-scraping-html-to-markdown/index.md": "bb9728c53f71549c0c9d3f5adc2d3a5ee087e39f5bdae027d00b718fac20d628",
+    "crawlberg-serving-the-api/SKILL.md": "a02d1b5bd84dbc94a776c123f99ce2773125ad550db7f6393d9e4ccb8dbcf82a",
+    "crawlberg-serving-the-api/index.md": "bf4080d4bb16a8d9a8337946363c0759ac09d58d8cd7036ba649ce922ee770c6"
   }
 }

@@ -1283,6 +1283,7 @@ fn kill_if_chrome_using(
                 return Ok(None);
             }
             Err(rustix::io::Errno::SRCH) => return Ok(None),
+            // Any other errno leaves the pid unproven, so fall through to the process-table check below.
             Err(_) => {}
         }
     }

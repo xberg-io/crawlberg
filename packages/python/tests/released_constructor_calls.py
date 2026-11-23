@@ -751,7 +751,7 @@ def test_should_declare_tagged_enum_factories_once_in_stubs() -> None:
             ]
             observed[f"{declaration.name}.{factory}"] = len(members)
     assert len(observed) == 6
-    assert observed == {name: 1 for name in observed}, f"Factory declarations must be unique: {observed}"
+    assert observed == dict.fromkeys(observed, 1), f"Factory declarations must be unique: {observed}"
     for declaration in classes:
         factories = [
             node

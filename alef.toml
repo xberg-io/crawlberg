@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.129.0"
+alef_version = "0.132.5"
 languages = [
   "python",
   "node",
@@ -514,6 +514,10 @@ indent-width = 2
 # Deliberate misspelling inside a generated comment quoting a type-checker error
 # message verbatim ("has no attribute `addresss`"). ~keep
 addresss = "addresss"
+# Existing identifiers and test names in hand-written code. ~keep
+childs = "childs"
+launchs = "launchs"
+optin = "optin"
 # flate2 crate + PDF FlateDecode filter (THE ORIGINAL BUG: flate -> flat)
 flate = "flate"
 delocate = "delocate"
@@ -594,6 +598,73 @@ WebUI = "WebUI"
 traineddata = "traineddata"
 
 [workspace.poly.per-file-ignores]
+# Hand-written code over the size and complexity thresholds; splitting it is tracked separately. ~keep
+"crates/crawlberg-browser/src/adapter/mod.rs" = ["file-too-long"]
+"crates/crawlberg-browser/src/adapter/tests.rs" = ["file-too-long"]
+"crates/crawlberg-browser/src/context.rs" = ["too-many-parameters"]
+"crates/crawlberg-browser/src/js/module_loader.rs" = ["function-too-long"]
+"crates/crawlberg-browser/src/net/client.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg-browser/src/net/cookies.rs" = ["file-too-long"]
+"crates/crawlberg-browser/src/net/wreq_client.rs" = ["function-too-long"]
+"crates/crawlberg-browser/src/page/navigation.rs" = ["function-too-long"]
+"crates/crawlberg-browser/src/page/tests.rs" = ["file-too-long"]
+"crates/crawlberg-bypass/src/provider.rs" = ["function-too-long"]
+"crates/crawlberg/src/api/router.rs" = ["file-too-long"]
+"crates/crawlberg/src/bindings.rs" = ["function-too-long"]
+"crates/crawlberg/src/browser/cookies/tests.rs" = ["nesting-too-deep"]
+"crates/crawlberg/src/browser/launch.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/browser/navigation.rs" = ["file-too-long", "function-too-long", "too-many-parameters"]
+"crates/crawlberg/src/browser_pool.rs" = ["file-too-long"]
+"crates/crawlberg/src/browser_pool_tests.rs" = ["file-too-long"]
+"crates/crawlberg/src/engine/builder.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/engine/continuation.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/cooperative.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/crawl_loop.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/engine/crawl_scheduling_tests.rs" = ["file-too-long"]
+"crates/crawlberg/src/engine/dispatch.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/host_turn.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/engine/page_result.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/redirect.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/engine/wasm_crawl.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/wasm_crawl_tests.rs" = ["file-too-long"]
+"crates/crawlberg/src/error.rs" = ["file-too-long"]
+"crates/crawlberg/src/helpers.rs" = ["file-too-long"]
+"crates/crawlberg/src/html/charset.rs" = ["file-too-long"]
+"crates/crawlberg/src/html/real_tags.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long"]
+"crates/crawlberg/src/http.rs" = ["file-too-long", "function-too-long", "too-many-parameters"]
+"crates/crawlberg/src/http/client.rs" = ["file-too-long"]
+"crates/crawlberg/src/http/retry.rs" = ["too-many-parameters"]
+"crates/crawlberg/src/http/waf.rs" = ["function-too-long"]
+"crates/crawlberg/src/interact/chromiumoxide.rs" = ["file-too-long"]
+"crates/crawlberg/src/map.rs" = ["file-too-long"]
+"crates/crawlberg/src/markdown.rs" = ["file-too-long"]
+"crates/crawlberg/src/mcp/server.rs" = ["file-too-long"]
+"crates/crawlberg/src/native_browser.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/net/egress.rs" = ["file-too-long"]
+"crates/crawlberg/src/net/redact.rs" = ["function-too-long"]
+"crates/crawlberg/src/net/ssrf.rs" = ["file-too-long"]
+"crates/crawlberg/src/research/agent.rs" = ["function-too-long"]
+"crates/crawlberg/src/scrape.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/sitemap.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/ssrf_intercept.rs" = [
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "too-many-parameters",
+]
+"crates/crawlberg/src/ssrf_intercept/tests/unowned_retirement.rs" = ["file-too-long"]
+"crates/crawlberg/src/tower/cache.rs" = ["function-too-long"]
+"crates/crawlberg/src/tower/service.rs" = ["function-too-long"]
+"crates/crawlberg/src/types/config.rs" = ["type-too-long"]
+"crates/crawlberg/src/types/config/debug.rs" = ["function-too-long"]
+"crates/crawlberg/tests/test_browser_document_status.rs" = ["file-too-long"]
+"crates/crawlberg/tests/test_browser_native.rs" = ["file-too-long"]
+"crates/crawlberg/tests/test_browser_ssrf_whole_fetch.rs" = ["file-too-long"]
+"crates/crawlberg/tests/test_interact.rs" = ["file-too-long"]
+"crates/crawlberg/tests/test_page_charset.rs" = ["file-too-long"]
+"crates/crawlberg/tests/test_url_credentials_canary.rs" = ["file-too-long"]
+"scripts/ci/check_released_constructors.py" = ["file-too-long"]
+"scripts/ci/test_released_constructors.py" = ["file-too-long"]
 # Alef-generated config files. Both grow with the size of the surface alef manages and
 # with the quality-debt baseline below; a line count on generated config is not a
 # maintainability signal. ~keep
@@ -639,8 +710,8 @@ traineddata = "traineddata"
 # ~keep by the same entry at every release, so they belong here on the same footing.
 "docs-site/src/content/docs/changelog.md" = ["file-too-long"]
 "alef.toml" = ["file-too-long"]
-"crates/crawlberg-browser/src/js/ops.rs" = ["too-many-parameters"]
-"crates/crawlberg/src/browser.rs" = ["too-many-parameters"]
+"crates/crawlberg-browser/src/js/ops.rs" = ["file-too-long", "too-many-parameters"]
+"crates/crawlberg/src/browser.rs" = ["file-too-long", "too-many-parameters"]
 "plugin/.ai-rulez/opencode/index.js" = ["function-too-long"]
 # --- end quality-debt baseline ---
 # Quality metrics do not apply to test code. A test function's length is its assertion
@@ -866,7 +937,7 @@ traineddata = "traineddata"
   "too-many-parameters",
   "type-too-long",
 ]
-"docker/**" = ["DL3006", "DL3059"]
+"docker/**" = ["DL3006", "DL3008", "DL3018", "DL3059", "DL4006"]
 "packages/python/**/api.py" = ["RET504"]
 # Test-code relaxations on top of the builtin "**/tests/**" defaults: tests
 # access private members (SLF001), use lazy/local imports (PLC0415), and
@@ -2325,63 +2396,63 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.13.2"
+version = ">=1.13.3"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.13.2"
+version = "^1.13.3"
 
 [crates.e2e.registry.packages.dart]
 name = "crawlberg"
-version = "^1.13.2"
+version = "^1.13.3"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.13.2"
+version = "v1.13.3"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.csharp]
 name = "XbergIo.Crawlberg"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.13.2"
+version = ">=1.13.3"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.13.2"
+version = ">= 1.13.3"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.13.2"
+version = "~> 1.13.3"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.13.2"
+version = "^1.13.3"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.13.2"
+version = "1.13.3"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

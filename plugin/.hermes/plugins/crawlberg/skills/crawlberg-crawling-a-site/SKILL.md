@@ -6,7 +6,7 @@ name: crawlberg-crawling-a-site
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:2b9ef3346b813f235cf3e3623ee2a8bf454de3aede996c625411c127443f837f
-Source-Hash: blake3:92819c06a6de8bde37d536be17469e9400af2d0f2a624626916dafe871dc3273
+Source-Hash: blake3:224dac1157f464075f7afcb7bd39702190c2788a1f8b1a22aa439e01b04609b9
 Schema-Version: v1
 -->
 
