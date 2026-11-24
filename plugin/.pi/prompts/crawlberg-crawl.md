@@ -5,7 +5,7 @@ description: Crawl a site with bounded scope
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 Content-Hash: blake3:e602995be85bdd2dec69c0271497f15ede7fd8f6c3cabcdeb68f9e3bd51b5e6b
-Source-Hash: blake3:224dac1157f464075f7afcb7bd39702190c2788a1f8b1a22aa439e01b04609b9
+Source-Hash: blake3:af8c8aadb840ead5d7fad3dcc5724099df1af34310483afb22665d452201eb7c
 Schema-Version: v1
 -->
 

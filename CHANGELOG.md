@@ -4,6 +4,12 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.4] - 2026-11-24
+
+### Fixed
+
+- Publish the Maven package: checkstyle no longer rejects the generated Java constructors that exceed 200 characters.
+
 ## [1.13.3] - 2026-11-23
 
 ### Changed
