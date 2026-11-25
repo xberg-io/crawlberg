@@ -84,8 +84,8 @@ async fn should_wait_for_delta_seconds_retry_after_before_retrying_a_503() {
 #[tokio::test]
 async fn should_wait_for_an_http_date_retry_after_before_retrying() {
     // ~keep HTTP-dates truncate to whole seconds, so asking for 4s ahead keeps the wait above 1s even when the request is slow to arrive.
-    let date = chrono::Utc::now() + chrono::Duration::seconds(4);
-    assert_retry_waits_for_retry_after(429, &date.format("%a, %d %b %Y %H:%M:%S GMT").to_string()).await;
+    let date = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(4);
+    assert_retry_waits_for_retry_after(429, &date.strftime("%a, %d %b %Y %H:%M:%S GMT").to_string()).await;
 }
 
 #[tokio::test]

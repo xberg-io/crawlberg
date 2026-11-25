@@ -49,7 +49,6 @@ base64 = "0.23"
 blake3 = "1"
 chardetng = "1.0.0"
 chromiumoxide = { package = "crawlberg-chromiumoxide", version = "0.9.5", default-features = false }
-chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 cookie_store = { version = "0.22", default-features = false }
 crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.13.4" }
@@ -77,6 +76,7 @@ icu_casemap = { version = "2.4", default-features = false, features = ["compiled
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 idna = "1"
 ipnet = "2"
+jiff = "0.2"
 libc = "0.2.191"
 liter-llm = { version = "2.7.3", features = ["native-http"] }
 memchr = "2"

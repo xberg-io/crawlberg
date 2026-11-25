@@ -91,7 +91,6 @@ base64 = { workspace = true }
 bytes = { version = "1", optional = true }
 chardetng = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
-chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
 crawlberg-robots = { workspace = true }
 dashmap = { workspace = true }
@@ -109,6 +108,7 @@ icu_casemap = { workspace = true }
 icu_normalizer = { workspace = true }
 idna = { workspace = true }
 ipnet = { workspace = true }
+jiff = { workspace = true }
 liter-llm = { workspace = true, optional = true }
 memchr = { workspace = true }
 minijinja = { workspace = true, optional = true }

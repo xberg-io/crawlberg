@@ -11,7 +11,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -112,7 +111,7 @@ impl HtmlCache {
             status_code: response.status_code,
             content_type: response.content_type.clone(),
             body_size: response.body.len(),
-            cached_at: Utc::now().to_rfc3339(),
+            cached_at: jiff::Timestamp::now().to_string(),
         };
         self.index.insert(response.url.clone(), entry);
         self.save_index()?;

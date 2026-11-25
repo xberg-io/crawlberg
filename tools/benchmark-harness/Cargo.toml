@@ -23,11 +23,11 @@ memory-profiling = ["tikv-jemallocator"]
 [dependencies]
 ahash = { workspace = true }
 async-trait = { workspace = true }
-chrono = { workspace = true }
 clap = { workspace = true }
 crawlberg = { path = "../../crates/crawlberg", features = ["browser"] }
 
 inferno = { version = "0.12", default-features = false, optional = true }
+jiff = { workspace = true }
 num_cpus = "1"
 pprof = { version = "0.15", optional = true }
 regex = { workspace = true }

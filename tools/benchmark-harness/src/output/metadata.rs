@@ -1,7 +1,5 @@
 //! Construction of [`BenchmarkMetadata`] from run configuration and results.
 
-use chrono::Utc;
-
 use crate::config::BenchmarkConfig;
 use crate::types::{BenchmarkMetadata, ScrapeBenchmarkResult};
 
@@ -18,7 +16,7 @@ pub(crate) fn build_metadata(
         .unwrap_or_else(|| "unknown".to_owned());
 
     BenchmarkMetadata {
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: jiff::Timestamp::now().to_string(),
         harness_version: env!("CARGO_PKG_VERSION").to_owned(),
         execution_mode: config.execution_mode,
         dataset,

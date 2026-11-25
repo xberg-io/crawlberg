@@ -10,7 +10,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -51,7 +51,7 @@ impl WarcWriter {
     /// via the `WARC-Warcinfo-ID` field.
     pub fn write_warcinfo(&mut self, software: &str, hostname: &str) -> Result<(), CrawlError> {
         let record_id = make_record_id();
-        let date = format_warc_date(Utc::now());
+        let date = format_warc_date(Timestamp::now());
 
         let payload = format!("software: {software}\r\nhostname: {hostname}\r\n");
         let payload_bytes = payload.as_bytes();
@@ -81,7 +81,7 @@ impl WarcWriter {
         status: u16,
         headers: &[(&str, &str)],
         body: &[u8],
-        fetch_time: DateTime<Utc>,
+        fetch_time: Timestamp,
     ) -> Result<String, CrawlError> {
         let record_id = make_record_id();
         let date = format_warc_date(fetch_time);
@@ -158,7 +158,7 @@ impl EventSink for WarcEventSink {
         let headers = [("Content-Type", result.content_type.as_str())];
         let body = result.html.as_bytes();
         let mut writer = self.writer.lock().await;
-        if let Err(error) = writer.write_response(&result.url, result.status_code, &headers, body, Utc::now()) {
+        if let Err(error) = writer.write_response(&result.url, result.status_code, &headers, body, Timestamp::now()) {
             tracing::error!(url = %result.url, %error, "failed to write WARC response record");
         }
     }
@@ -169,11 +169,11 @@ fn make_record_id() -> String {
     format!("<urn:uuid:{}>", Uuid::new_v4())
 }
 
-/// Format a `DateTime<Utc>` as a WARC-Date value (ISO 8601 with `Z` suffix, second precision).
-fn format_warc_date(dt: DateTime<Utc>) -> String {
+/// Format a `Timestamp` as a WARC-Date value (ISO 8601 with `Z` suffix, second precision).
+fn format_warc_date(dt: Timestamp) -> String {
     let mut buf = String::with_capacity(20);
     use std::fmt::Write as _;
-    write!(buf, "{}", dt.format("%Y-%m-%dT%H:%M:%SZ")).expect("write to String cannot fail");
+    write!(buf, "{}", dt.strftime("%Y-%m-%dT%H:%M:%SZ")).expect("write to String cannot fail");
     buf
 }
 
@@ -268,9 +268,7 @@ mod tests {
 
     #[test]
     fn test_format_warc_date() {
-        let dt = DateTime::parse_from_rfc3339("2026-04-09T12:00:00Z")
-            .expect("valid date")
-            .with_timezone(&Utc);
+        let dt: Timestamp = "2026-04-09T12:00:00Z".parse().expect("valid date");
         assert_eq!(format_warc_date(dt), "2026-04-09T12:00:00Z");
     }
 

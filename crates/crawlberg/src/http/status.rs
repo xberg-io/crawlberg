@@ -31,26 +31,21 @@ pub(crate) struct StatusRetryAfter {
 ///
 /// ~keep Only the IMF-fixdate form (`Sun, 06 Nov 1994 08:49:37 GMT`) is parsed as a date; the
 /// obsolete RFC 850 and asctime forms are ignored, as servers have not sent them for decades.
-pub(crate) fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+pub(crate) fn parse_retry_after(value: &str, now: jiff::Timestamp) -> Option<Duration> {
     let value = value.trim();
     if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
         // ~keep An all-digit value too large for u64 is an enormous wait, not a malformed one: it
         // must land beyond any cap so the retry is abandoned instead of sent early.
         return Some(value.parse::<u64>().map_or(Duration::MAX, Duration::from_secs));
     }
-    let date = chrono::DateTime::parse_from_rfc2822(value).ok()?;
-    Some(
-        date.with_timezone(&chrono::Utc)
-            .signed_duration_since(now)
-            .to_std()
-            .unwrap_or(Duration::ZERO),
-    )
+    let date = jiff::fmt::rfc2822::parse(value).ok()?.timestamp();
+    Some(Duration::try_from(date.duration_since(now)).unwrap_or(Duration::ZERO))
 }
 
 /// The delay a response's `Retry-After` header asks for, from a lowercase-keyed header map.
 pub(crate) fn retry_after_from_headers(headers: &HashMap<String, Vec<String>>) -> Option<Duration> {
     let value = headers.get("retry-after")?.first()?;
-    parse_retry_after(value, chrono::Utc::now())
+    parse_retry_after(value, jiff::Timestamp::now())
 }
 
 /// The `Retry-After` delay `error` carries, if it was raised for a response that sent one.
@@ -225,9 +220,9 @@ mod tests {
 
     #[test]
     fn parse_retry_after_reads_delta_seconds_and_http_dates() {
-        let now = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT")
+        let now = jiff::fmt::rfc2822::parse("Sun, 06 Nov 1994 08:49:37 GMT")
             .expect("date")
-            .with_timezone(&chrono::Utc);
+            .timestamp();
         assert_eq!(parse_retry_after("120", now), Some(Duration::from_secs(120)));
         assert_eq!(parse_retry_after(" 0 ", now), Some(Duration::ZERO));
         assert_eq!(
