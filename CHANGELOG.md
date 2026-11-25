@@ -4,6 +4,26 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.5] - 2026-11-25
+
+### Added
+
+- Ship the CLI binary inside per-platform npm packages (`@xberg-io/crawlberg-cli-<os>-<cpu>[-<libc>]`) that the `@xberg-io/crawlberg-cli` launcher resolves first, so `npx` works in sandboxes without network access. The GitHub download remains the last-resort fallback. macOS x64 and Windows arm64 builds are best-effort.
+
+### Changed
+
+- Replace the unmaintained `astral-tl` HTML parser with `astral-html`: about 2.7x faster on real pages, and character references are now decoded, which fixes mangled attribute values, titles and link text.
+- Replace the unmaintained `chrono` with `jiff`.
+- Upgrade dependencies.
+
+### Security
+
+- Update `cookie` to 0.18.3 (RUSTSEC-2026-0594: private cookie nonces could repeat in processes that fork).
+
+### Fixed
+
+- Refresh the `.ai-rulez` lock for ai-rulez 5.15.0 so the plugin runtime packaging check passes.
+
 ## [1.13.4] - 2026-11-24
 
 ### Fixed

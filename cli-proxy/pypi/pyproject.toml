@@ -8,7 +8,7 @@ maintainers = [
   { name = "Tobias Perlstein", email = "tobias@xberg.io" },
 ]
 name = "crawlberg-cli"
-version = "1.13.4"
+version = "1.13.5"
 description = "CLI proxy for crawlberg — downloads and runs the native crawlberg binary from GitHub releases."
 readme = "README.md"
 license = { text = "MIT" }
