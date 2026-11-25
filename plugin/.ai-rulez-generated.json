@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:9d3a4ace6312750e7c2c6bdd44df28c717623322a334494d4da2194a86acafe4",
+  "source_hash": "blake3:eaf0f5872a49fa79dffee2459a0a7a4067de46f1084c4207412276df1d1e34bf",
   "outputs": {
     ".claude-plugin/plugin.json": {
       "content_hash": "blake3:e25c5f69ff446a3b1e2c04d4172ef6ed7bd0a9dc4d187f0474f397e28e289e8b",
@@ -427,7 +427,7 @@
       "mode": "0644"
     },
     "scripts/mcp-launch.sh": {
-      "content_hash": "blake3:dd98fddf80ddc6732c2cc7d80574884e8bd44158c189b07706c4552a7497e3cc",
+      "content_hash": "blake3:183a9beb94136c53925fae6c046ae5a758e34e6242939878773787546e4a31c3",
       "mode": "0755"
     },
     "skills/crawlberg-automating-the-browser/SKILL.md": {

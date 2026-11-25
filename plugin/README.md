@@ -49,7 +49,7 @@ Pi loads the bundled skills and prompt templates. Use `/crawlberg-scrape` or `/c
 
 ### Binary requirement
 
-The MCP server runs through an auto-installing launcher (`scripts/mcp-launch.sh`): on first use it reuses any working `crawlberg` binary already on `PATH`, then tries `npx`, Homebrew, or a prebuilt download. No manual install is required for MCP.
+The MCP server runs through an auto-installing launcher (`scripts/mcp-launch.sh`): it reuses a cached or `PATH` binary at or above the plugin's pinned version, then runs `npx --yes @xberg-io/crawlberg-cli@<pinned version>` (needs `node` and `npx`; no curl or brew), and only then falls back to a checksum-verified GitHub release download. Homebrew is used only when you set `CRAWLBERG_LAUNCHER=brew`. No manual install is required for MCP.
 
 To install the CLI yourself (recommended for direct CLI use, and reused by the launcher):
 
@@ -79,7 +79,7 @@ Headless fallback requires Chrome/Chromium on your system. The CLI launches it o
 
 ## MCP / CLI
 
-MCP-capable integrations wire up the `crawlberg` MCP server via `scripts/mcp-launch.sh`, which resolves an existing binary or installs the latest available CLI, then runs `crawlberg mcp` over stdio. Override binary resolution with `CRAWLBERG_LAUNCHER=auto|download`.
+MCP-capable integrations wire up the `crawlberg` MCP server via `scripts/mcp-launch.sh`, which resolves an existing binary or installs the latest available CLI, then runs `crawlberg mcp` over stdio. Override binary resolution with `CRAWLBERG_LAUNCHER=auto|npx|brew|download`.
 
 The MCP server exposes nine tools:
 

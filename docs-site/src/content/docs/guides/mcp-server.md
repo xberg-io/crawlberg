@@ -15,8 +15,9 @@ CLI, Factory Droid, GitHub Copilot CLI, or opencode, it registers an MCP server 
 `crawlberg` for you — no manual client config required.
 
 The plugin launches the server through its bundled `plugin/scripts/mcp-launch.sh`, which
-locates a `crawlberg` binary — a cached copy, one on `PATH`, `pnpm dlx @xberg-io/crawlberg-cli`,
-Homebrew, or a release download — and runs `crawlberg mcp`.
+locates a `crawlberg` binary — a cached copy, one on `PATH`, the exactly pinned
+`npx @xberg-io/crawlberg-cli`, or a checksum-verified release download (Homebrew only with
+`CRAWLBERG_LAUNCHER=brew`) — and runs `crawlberg mcp`.
 
 For non-agent Python workflows, the same capabilities ship as the **Hermes** plugin:
 
