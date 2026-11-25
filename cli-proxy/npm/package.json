@@ -2,7 +2,7 @@
   "name": "@xberg-io/crawlberg-cli",
   "version": "1.13.4",
   "mcpName": "io.github.xberg-io/crawlberg",
-  "description": "CLI proxy for crawlberg — downloads and runs the native crawlberg binary from GitHub releases.",
+  "description": "CLI proxy for crawlberg — runs the native crawlberg binary shipped in a per-platform package, downloading it from GitHub releases only as a fallback.",
   "license": "MIT",
   "author": {
     "name": "Na'aman Hirschfeld",
