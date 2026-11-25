@@ -19,43 +19,49 @@ mod url_targets;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
+use astral_html::{Document, Element, Limits};
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
-use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
-/// Parse an HTML document with every tag name in lowercase.
+use self::selectors::Selector;
+
+/// Parse an HTML document. Element and attribute names come back in lower case, and attribute
+/// values and text with their character references decoded.
 ///
-/// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
-/// ~keep so `a[href]` would miss `<A HREF>`. tl already lowercases attribute names. Parse
-/// ~keep every document crawlberg queries through here, so no selector needs its own fix.
-pub(crate) fn parse_html(html: &str) -> Result<VDom<'_>, tl::ParseError> {
-    let mut dom = tl::parse(html, tl::ParserOptions::default())?;
-    for tag in dom.nodes_mut().iter_mut().filter_map(|node| node.as_tag_mut()) {
-        let name = tag.name().as_bytes();
-        if name.iter().any(u8::is_ascii_uppercase) {
-            let lowercase = name.to_ascii_lowercase();
-            tag.name_mut()
-                .set(lowercase)
-                .expect("a tag name tl parsed is at most u32::MAX bytes");
-        }
-    }
-    Ok(dom)
+/// ~keep The only errors are the resource limits. The crawl's own body limit bounds the input,
+/// ~keep and no node or nesting depth can outgrow it (each takes at least one byte), so neither
+/// ~keep gets a limit of its own: a long table of unclosed `<td>`s nests that deep, and failing
+/// ~keep it would fail the whole page. The parser keeps no recursion, whatever the depth.
+pub(crate) fn parse_html(html: &str) -> Result<Document<'_>, astral_html::Error> {
+    Document::parse_with_limits(
+        html,
+        Limits {
+            max_input_bytes: u32::MAX as usize,
+            max_nodes: usize::MAX,
+            max_depth: usize::MAX,
+        },
+    )
 }
 
-/// Get an attribute value from an HTMLTag, with its character references decoded.
+/// The elements of `dom` that `selector` matches, in document order.
+pub(crate) fn select<'d, 's>(dom: &'d Document<'s>, selector: Selector) -> impl Iterator<Item = Element<'d, 's>> {
+    dom.elements().filter(move |element| {
+        selector.names.contains(&element.name()) && selector.attr.is_none_or(|attr| element.has_attribute(attr))
+    })
+}
+
+/// Get an attribute value of an element, with its character references decoded.
 ///
-/// Returns `None` if the attribute does not exist, has no value, or is not UTF-8.
-pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
-    tag.attributes()
-        .get(attr)
-        .flatten()
-        .and_then(|b| b.try_as_utf8_str())
-        .map(decode_attr_value)
+/// Returns `None` if the attribute does not exist or has no value (no `=`).
+pub(crate) fn get_attr<'d>(tag: Element<'d, '_>, attr: &str) -> Option<Cow<'d, str>> {
+    tag.attribute(attr)
+        .filter(|attribute| attribute.raw_value().is_some())
+        .map(|attribute| Cow::Borrowed(attribute.value()))
 }
 
 /// Get a URL attribute value such as `href` or `src`, decoded and cleaned by [`clean_url`].
-pub(crate) fn get_url_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
+pub(crate) fn get_url_attr<'d>(tag: Element<'d, '_>, attr: &str) -> Option<Cow<'d, str>> {
     get_attr(tag, attr).and_then(clean_url)
 }
 
@@ -108,11 +114,9 @@ pub(crate) fn fetchable_address(address: &str, base_url: &Url) -> Option<Url> {
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
 /// around the value.
 ///
-/// ~keep HTML compares values such as `name`, `http-equiv` and `type` without case, but tl's
-/// ~keep attribute selectors compare them byte for byte and cannot parse the CSS `i` flag. Select
-/// ~keep the tag and compare the value here instead. HTML does not trim these values, so a browser
-/// ~keep ignores `http-equiv=" refresh "`; the trim is a leniency for pages that add the spaces.
-pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
+/// ~keep HTML does not trim these values, so a browser ignores `http-equiv=" refresh "`; the trim
+/// ~keep is a leniency for pages that add the spaces.
+pub(crate) fn attr_eq(tag: Element<'_, '_>, attr: &str, expected: &str) -> bool {
     get_attr(tag, attr).is_some_and(|value| value.trim_ascii().eq_ignore_ascii_case(expected))
 }
 
@@ -125,7 +129,7 @@ pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
 /// ~keep The trim runs on the essence after the `;` split, not on the whole value, so whitespace
 /// ~keep just before `;` is stripped too, which neither HTML nor the MIME rule does. That is more
 /// ~keep leniency, in the same spirit as the attribute trim above.
-pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
+pub(crate) fn mime_essence(tag: Element<'_, '_>) -> Option<String> {
     get_attr(tag, "type").map(|value| media_type_essence(&value))
 }
 
@@ -142,7 +146,7 @@ pub(crate) fn media_type_essence(value: &str) -> String {
 }
 
 /// Whether the tag's `rel` value, a space-separated list of tokens, holds `token` in any ASCII case.
-pub(crate) fn has_rel(tag: &HTMLTag<'_>, token: &str) -> bool {
+pub(crate) fn has_rel(tag: Element<'_, '_>, token: &str) -> bool {
     rel_holds(tag, token, |c| c.is_ascii_whitespace())
 }
 
@@ -151,11 +155,11 @@ pub(crate) fn has_rel(tag: &HTMLTag<'_>, token: &str) -> bool {
 ///
 /// ~keep Google documents comma-separated qualifiers (`rel="ugc,nofollow"`), so a comma also
 /// ~keep separates these three words. Every other `rel` word keeps the HTML whitespace rule.
-pub(crate) fn has_link_qualifier(tag: &HTMLTag<'_>, qualifier: &str) -> bool {
+pub(crate) fn has_link_qualifier(tag: Element<'_, '_>, qualifier: &str) -> bool {
     rel_holds(tag, qualifier, |c| c.is_ascii_whitespace() || c == ',')
 }
 
-fn rel_holds(tag: &HTMLTag<'_>, token: &str, is_separator: fn(char) -> bool) -> bool {
+fn rel_holds(tag: Element<'_, '_>, token: &str, is_separator: fn(char) -> bool) -> bool {
     get_attr(tag, "rel").is_some_and(|rel| rel.split(is_separator).any(|t| t.eq_ignore_ascii_case(token)))
 }
 
@@ -221,23 +225,6 @@ impl TokenSink for FirstAttrValue {
     }
 }
 
-/// Iterate over nodes matching a CSS selector, calling the closure for each tag.
-pub(crate) fn query_tags<'a, F>(dom: &'a VDom<'a>, selector: &str, mut f: F)
-where
-    F: FnMut(&HTMLTag<'a>, &Parser<'a>),
-{
-    let parser = dom.parser();
-    if let Some(iter) = dom.query_selector(selector) {
-        for handle in iter {
-            if let Some(node) = handle.get(parser)
-                && let Some(tag) = node.as_tag()
-            {
-                f(tag, parser);
-            }
-        }
-    }
-}
-
 #[cfg(feature = "browser-native")]
 pub(crate) use charset::decode_document;
 pub(crate) use charset::decode_page;
@@ -272,6 +259,26 @@ mod tests {
         assert_eq!(decode_attr_value("a\0b"), "a\u{FFFD}b");
         assert_eq!(decode_attr_value("a\rb"), "a\nb");
         assert!(matches!(decode_attr_value("plain value"), Cow::Borrowed("plain value")));
+    }
+
+    #[test]
+    fn an_attribute_value_comes_back_decoded_once() {
+        let dom = parse_html(r#"<a href="a?x=1&amp;y=2" title="&amp;lt;" download>x</a>"#).expect("valid HTML");
+        let anchor = dom.elements().next().expect("one element");
+        assert_eq!(get_attr(anchor, "href").as_deref(), Some("a?x=1&y=2"));
+        assert_eq!(get_attr(anchor, "title").as_deref(), Some("&lt;"));
+        assert_eq!(
+            get_attr(anchor, "download"),
+            None,
+            "an attribute without a value has none"
+        );
+    }
+
+    #[test]
+    fn a_document_nested_past_the_parser_default_depth_still_parses() {
+        let html = "<div>".repeat(10_000) + "<a href=deep>x</a>";
+        let dom = parse_html(&html).expect("deep nesting is no parse error");
+        assert_eq!(select(&dom, selectors::SEL_A_HREF).count(), 1);
     }
 
     #[test]

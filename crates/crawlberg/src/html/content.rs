@@ -1,17 +1,13 @@
 //! Content processing: word count.
 
-use tl::VDom;
+use astral_html::Document;
+
+use super::select;
+use super::selectors::SEL_BODY;
 
 /// Compute the word count of visible text in the HTML body.
-pub(crate) fn compute_word_count(dom: &VDom<'_>) -> usize {
-    let parser = dom.parser();
-    let body_text = dom
-        .query_selector("body")
-        .and_then(|mut iter| {
-            iter.next()
-                .and_then(|h| h.get(parser))
-                .map(|node| node.inner_text(parser).to_string())
-        })
-        .unwrap_or_default();
-    body_text.split_whitespace().count()
+pub(crate) fn compute_word_count(dom: &Document<'_>) -> usize {
+    select(dom, SEL_BODY)
+        .next()
+        .map_or(0, |body| body.text().split_whitespace().count())
 }

@@ -486,39 +486,33 @@ async fn replacing_a_virtual_list_preserves_its_container_and_all_ordered_rows()
     let Some(result) = scrape_page(name, REPLACED_LIST, true).await else {
         return;
     };
-    let dom = tl::parse(&result.html, tl::ParserOptions::default()).expect("scraped HTML");
-    let parser = dom.parser();
+    let dom = astral_html::Document::parse_with_limits(
+        &result.html,
+        astral_html::Limits {
+            max_depth: usize::MAX,
+            ..astral_html::Limits::default()
+        },
+    )
+    .expect("scraped HTML");
     let rows: Vec<usize> = dom
-        .query_selector("li")
-        .expect("row selector")
-        .map(|handle| {
-            let row = handle.get(parser).expect("row").as_tag().expect("row tag");
-            row.attributes()
-                .get("data-index")
-                .flatten()
+        .elements()
+        .filter(|element| element.name() == "li")
+        .map(|row| {
+            row.attribute("data-index")
                 .expect("row index")
-                .as_utf8_str()
+                .value()
                 .parse()
                 .expect("numeric row index")
         })
         .collect();
     assert_eq!(rows, (0..20).collect::<Vec<_>>(), "HTML: {}", result.html);
-    let container = dom
-        .query_selector("#scroller")
-        .expect("container selector")
-        .next()
-        .expect("container")
-        .get(parser)
-        .expect("container node")
-        .as_tag()
-        .expect("container tag");
-    let children: Vec<_> = container
-        .children()
-        .top()
-        .iter()
-        .filter_map(|handle| handle.get(parser).and_then(tl::Node::as_tag))
-        .map(|tag| tag.name().as_utf8_str().into_owned())
-        .collect();
+    let with_id = |id: &str| {
+        dom.elements()
+            .filter(|element| element.attribute("id").is_some_and(|value| value.value() == id))
+            .collect::<Vec<_>>()
+    };
+    let container = with_id("scroller").into_iter().next().expect("container");
+    let children: Vec<_> = container.children().map(|tag| tag.name().to_owned()).collect();
     assert_eq!(children, ["div", "ul"], "outer container must retain its structure");
-    assert_eq!(dom.query_selector("#header").expect("header selector").count(), 1);
+    assert_eq!(with_id("header").len(), 1);
 }

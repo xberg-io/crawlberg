@@ -1,6 +1,6 @@
 //! Shared HTML data extraction used by both scrape and crawl.
 
-use tl::VDom;
+use astral_html::Document;
 use url::Url;
 
 use crate::types::{FeedInfo, ImageInfo, JsonLdEntry, LinkInfo, PageMetadata};
@@ -30,7 +30,7 @@ pub(crate) struct HtmlExtraction {
 /// When `include_extended` is true, also extracts hreflangs, favicons,
 /// headings, and word count into the metadata.
 pub(crate) fn extract_page_data(
-    dom: &VDom<'_>,
+    dom: &Document<'_>,
     page: &MaskedHtml<'_>,
     document_url: &Url,
     is_html: bool,
@@ -84,7 +84,7 @@ mod tests {
     use super::*;
     use crate::html::{mask_raw_text_markup, parse_html};
 
-    /// The metadata raw-body fallback reads whatever `tl`'s DOM pass missed, so this call site
+    /// The metadata raw-body fallback reads whatever the DOM pass missed, so this call site
     /// must hand it the page's own masked text, not a placeholder: an empty `dom` (standing in
     /// for a DOM pass that found nothing) still gets the description from `page.text`.
     #[test]

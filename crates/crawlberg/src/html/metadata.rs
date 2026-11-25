@@ -1,11 +1,7 @@
 //! Metadata extraction from HTML documents.
 
+use astral_html::Document;
 use std::borrow::Cow;
-use std::cell::RefCell;
-
-use html5ever::tendril::StrTendril;
-use html5ever::tokenizer::{BufferQueue, StartTag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
-use tl::VDom;
 use url::Url;
 
 use crate::types::{ArticleMetadata, PageMetadata};
@@ -13,7 +9,7 @@ use crate::types::{ArticleMetadata, PageMetadata};
 use super::selectors::{
     META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, ROBOTS_META_NAME, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE,
 };
-use super::{clean_url, decode_attr_value, fetchable_address, get_attr, get_url_attr, has_rel};
+use super::{clean_url, decode_attr_value, fetchable_address, get_attr, get_url_attr, has_rel, select};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -165,22 +161,14 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 /// The canonical URL resolves against `base_url`, the document's base URL. A blank `href` gives no
 /// canonical URL: it points at the page itself. Nor does one whose address the crawler cannot
 /// fetch.
-pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
-    let parser = dom.parser();
+pub(crate) fn extract_metadata(dom: &Document<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
+    let title = select(dom, SEL_TITLE).next().map(|tag| tag.text().into_owned());
 
-    let title = dom.query_selector(SEL_TITLE).and_then(|mut iter| {
-        iter.next()
-            .and_then(|h| h.get(parser))
-            .map(|node| decode_title_text(&node.inner_text(parser)))
-    });
-
-    let canonical_url = dom.query_selector(SEL_LINK_REL).and_then(|iter| {
-        iter.filter_map(|h| h.get(parser).and_then(|node| node.as_tag()))
-            .find(|tag| has_rel(tag, "canonical"))
-            .and_then(|tag| get_url_attr(tag, "href"))
-            .and_then(|href| fetchable_address(&href, base_url))
-            .map(String::from)
-    });
+    let canonical_url = select(dom, SEL_LINK_REL)
+        .find(|tag| has_rel(*tag, "canonical"))
+        .and_then(|tag| get_url_attr(tag, "href"))
+        .and_then(|href| fetchable_address(&href, base_url))
+        .map(String::from);
 
     let mut md = PageMetadata {
         title,
@@ -188,61 +176,27 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
         ..Default::default()
     };
 
-    if let Some(mut iter) = dom.query_selector(SEL_HTML)
-        && let Some(tag) = iter.next().and_then(|h| h.get(parser)).and_then(|n| n.as_tag())
-    {
+    if let Some(tag) = select(dom, SEL_HTML).next() {
         md.html_lang = get_attr(tag, "lang").map(Cow::into_owned);
         md.html_dir = get_attr(tag, "dir").map(Cow::into_owned);
     }
 
     let mut accumulator = MetaAccumulator::new(md, base_url);
 
-    super::query_tags(dom, SEL_META, |tag, _parser| {
+    for tag in select(dom, SEL_META) {
         let name = get_attr(tag, "name")
             .or_else(|| get_attr(tag, "property"))
             .unwrap_or_default();
         let content = get_attr(tag, "content").unwrap_or_default().into_owned();
         if content.is_empty() {
-            return;
+            continue;
         }
         accumulator.apply(&name.trim_ascii().to_lowercase(), content);
-    });
+    }
 
     let mut md = accumulator.finish();
     apply_raw_meta_fallback(&mut md, raw_body);
     md
-}
-
-fn decode_title_text(raw: &str) -> String {
-    if !raw.bytes().any(|byte| matches!(byte, b'&' | b'\r' | b'\0')) {
-        return raw.to_owned();
-    }
-    let input = BufferQueue::default();
-    input.push_back(StrTendril::from(format!("<title>{raw}</title>")));
-    let tokenizer = Tokenizer::new(TitleText::default(), TokenizerOpts::default());
-    let _ = tokenizer.feed(&input);
-    tokenizer.end();
-    tokenizer.sink.0.into_inner()
-}
-
-#[derive(Default)]
-struct TitleText(RefCell<String>);
-
-impl TokenSink for TitleText {
-    type Handle = ();
-
-    fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
-        match token {
-            Token::TagToken(tag) if tag.kind == StartTag && &*tag.name == "title" => {
-                // ~keep Title character references use RCDATA rules; attribute decoding treats
-                // ~keep semicolonless references followed by letters or '=' differently.
-                return TokenSinkResult::RawData(html5ever::tokenizer::states::Rcdata);
-            }
-            Token::CharacterTokens(text) => self.0.borrow_mut().push_str(&text),
-            _ => {}
-        }
-        TokenSinkResult::Continue
-    }
 }
 
 /// The `content` of every robots meta tag whose directives address this crawler.
@@ -250,24 +204,24 @@ impl TokenSink for TitleText {
 /// ~keep A `<meta name="...">` robots tag may be addressed either to every crawler, through the
 /// generic `robots` name, or to one named crawler. A tag naming another crawler is not ours to
 /// obey, so it is dropped here rather than folded in with everyone else's.
-pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<String> {
+pub(crate) fn robots_meta_contents(dom: &Document<'_>, user_agent: &str) -> Vec<String> {
     // ~keep HTML compares `name` without case, but only ASCII case (selectors.rs:20-22): a
     // ~keep Unicode fold would turn some non-ASCII letters into an ASCII one (U+212A KELVIN SIGN
     // ~keep folds to `k`) and let a page bind a crawler its markup never actually named.
     let ua_lower = user_agent.to_ascii_lowercase();
     let mut contents = Vec::new();
-    super::query_tags(dom, SEL_META, |tag, _parser| {
+    for tag in select(dom, SEL_META) {
         let Some(name) = get_attr(tag, "name") else {
-            return;
+            continue;
         };
         let name_lower = name.trim_ascii().to_ascii_lowercase();
         if name_lower != ROBOTS_META_NAME && !crate::robots::product_token_addresses_us(&name_lower, &ua_lower) {
-            return;
+            continue;
         }
         if let Some(content) = get_attr(tag, "content") {
             contents.push(content.into_owned());
         }
-    });
+    }
     contents
 }
 
@@ -369,12 +323,12 @@ fn unquote_refresh_url(value: &str) -> &str {
 /// ~keep shortest delay wins and the later tag wins a tie; a refresh that keeps the page (no target,
 /// ~keep or a scheme the crawl cannot follow) takes part like any other (#279).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
+pub(crate) fn detect_meta_refresh(dom: &Document<'_>) -> Option<String> {
     meta_refresh_directive(dom)?.1
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn immediate_meta_refresh(dom: &VDom<'_>) -> Option<String> {
+pub(crate) fn immediate_meta_refresh(dom: &Document<'_>) -> Option<String> {
     let (delay, target) = meta_refresh_directive(dom)?;
     (delay == 0).then_some(target).flatten()
 }
@@ -386,14 +340,9 @@ pub(crate) fn immediate_refresh_target(value: &str) -> Option<Cow<'_, str>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn meta_refresh_directive(dom: &VDom<'_>) -> Option<(u64, Option<String>)> {
-    let parser = dom.parser();
-    let iter = dom.query_selector(SEL_META)?;
+fn meta_refresh_directive(dom: &Document<'_>) -> Option<(u64, Option<String>)> {
     let mut chosen: Option<(u64, Option<String>)> = None;
-    for handle in iter {
-        let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-            continue;
-        };
+    for tag in select(dom, SEL_META) {
         if !super::attr_eq(tag, "http-equiv", "refresh") {
             continue;
         }
@@ -420,6 +369,12 @@ mod tests {
     fn parse(html: &str) -> PageMetadata {
         let dom = crate::html::parse_html(html).expect("valid HTML");
         extract_metadata(&dom, "", &document_url())
+    }
+
+    #[test]
+    fn a_title_reference_is_decoded_once() {
+        let md = parse("<title>A &amp;lt; B &amp; C&#x21;</title>");
+        assert_eq!(md.title.as_deref(), Some("A &lt; B & C!"));
     }
 
     #[test]

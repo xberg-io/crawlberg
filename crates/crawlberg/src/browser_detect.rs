@@ -5,7 +5,11 @@
 
 use std::sync::LazyLock;
 
+use astral_html::Document;
 use regex::Regex;
+
+use crate::html::select;
+use crate::html::selectors::{SEL_NOSCRIPT, SEL_SCRIPT_SRC};
 
 /// Minimum word count to consider a page as having substantial content.
 const MIN_CONTENT_WORD_COUNT: usize = 50;
@@ -30,18 +34,16 @@ static NOSCRIPT_WARNING: LazyLock<Regex> = LazyLock::new(|| {
 ///
 /// Returns `true` when the page appears to be a client-side rendered SPA shell
 /// with no substantial server-rendered content.
-pub(crate) fn detect_js_render_needed(dom: &tl::VDom<'_>, word_count: usize) -> bool {
+pub(crate) fn detect_js_render_needed(dom: &Document<'_>, word_count: usize) -> bool {
     if word_count >= MIN_CONTENT_WORD_COUNT {
         return false;
     }
-
-    let parser = dom.parser();
 
     if has_empty_spa_mount(dom) {
         return true;
     }
 
-    if has_noscript_js_warning(dom, parser) {
+    if has_noscript_js_warning(dom) {
         return true;
     }
 
@@ -54,41 +56,23 @@ pub(crate) fn detect_js_render_needed(dom: &tl::VDom<'_>, word_count: usize) -> 
 
 /// Check if the document has a well-known SPA mount-point div that is empty
 /// or contains only whitespace.
-fn has_empty_spa_mount(dom: &tl::VDom<'_>) -> bool {
-    let parser = dom.parser();
-    for id in SPA_MOUNT_IDS {
-        if let Some(handle) = dom.get_element_by_id(*id)
-            && let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
-        {
-            let inner_text = tag.inner_text(parser);
-            if inner_text.trim().is_empty() {
-                return true;
-            }
-        }
-    }
-    false
+fn has_empty_spa_mount(dom: &Document<'_>) -> bool {
+    SPA_MOUNT_IDS.iter().any(|id| {
+        dom.elements()
+            .find(|element| element.attribute("id").is_some_and(|value| value.value() == *id))
+            .is_some_and(|element| element.text().trim().is_empty())
+    })
 }
 
 /// Check if the document has a `<noscript>` element with text suggesting
 /// JavaScript is required to use the page.
-fn has_noscript_js_warning(dom: &tl::VDom<'_>, parser: &tl::Parser<'_>) -> bool {
-    if let Some(iter) = dom.query_selector("noscript") {
-        for handle in iter {
-            if let Some(node) = handle.get(parser) {
-                let text = node.inner_text(parser).to_string();
-                if NOSCRIPT_WARNING.is_match(&text) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+fn has_noscript_js_warning(dom: &Document<'_>) -> bool {
+    select(dom, SEL_NOSCRIPT).any(|noscript| NOSCRIPT_WARNING.is_match(&noscript.text()))
 }
 
 /// Check if the document has external script tags.
-fn has_script_tags(dom: &tl::VDom<'_>) -> bool {
-    dom.query_selector("script[src]")
-        .is_some_and(|mut iter| iter.next().is_some())
+fn has_script_tags(dom: &Document<'_>) -> bool {
+    select(dom, SEL_SCRIPT_SRC).next().is_some()
 }
 
 #[cfg(test)]
@@ -165,8 +149,8 @@ mod tests {
     // ~keep The word count sits between SPARSE_CONTENT_WORD_COUNT and MIN_CONTENT_WORD_COUNT in
     // ~keep the next two tests, so neither the early return nor the sparse-content-with-scripts
     // ~keep rule decides them: only the SPA-mount and noscript-warning checks can, and both read
-    // ~keep the parsed document. Without the raw-text masking `tl` reads the markup written inside
-    // ~keep the script and title text and both pages are reported as needing a browser.
+    // ~keep the parsed document. Read as elements, the markup written inside the script and title
+    // ~keep text would report both pages as needing a browser.
     #[test]
     fn should_not_report_js_render_needed_when_the_spa_mount_only_appears_in_script_text() {
         let html = r#"<html><body>

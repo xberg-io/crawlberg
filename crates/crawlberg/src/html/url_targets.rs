@@ -179,10 +179,10 @@ mod tests {
     }
 
     #[test]
-    fn omits_a_malformed_attribute_name_when_rebuilding_a_changed_tag() {
+    fn keeps_a_malformed_attribute_name_when_rebuilding_a_changed_tag() {
         let html = r#"<a x"y="1" href="//alice:secret@example.test/ok">x</a>"#;
 
-        assert_eq!(sanitize(html), r#"<a href="https://example.test/ok">x</a>"#);
+        assert_eq!(sanitize(html), r#"<a x"y="1" href="https://example.test/ok">x</a>"#);
     }
 
     #[test]

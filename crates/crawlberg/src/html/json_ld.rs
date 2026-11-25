@@ -1,12 +1,12 @@
 //! JSON-LD structured data extraction from HTML documents.
 
+use astral_html::Document;
 use serde_json::Value;
-use tl::VDom;
 
 use crate::types::JsonLdEntry;
 
-use super::mime_essence;
 use super::selectors::SEL_SCRIPT_TYPE;
+use super::{mime_essence, select};
 
 /// Extract JSON-LD structured data entries from a parsed HTML document.
 ///
@@ -14,22 +14,14 @@ use super::selectors::SEL_SCRIPT_TYPE;
 /// array of objects, or an object wrapping its nodes in `@graph`. Each case is
 /// expanded into one [`JsonLdEntry`] per node so `@type`/`name` are preserved
 /// instead of collapsing the whole block into a single, mostly-empty entry.
-pub(crate) fn extract_json_ld(dom: &VDom<'_>) -> Vec<JsonLdEntry> {
-    let parser = dom.parser();
+pub(crate) fn extract_json_ld(dom: &Document<'_>) -> Vec<JsonLdEntry> {
     let mut entries = Vec::new();
 
-    let Some(iter) = dom.query_selector(SEL_SCRIPT_TYPE) else {
-        return entries;
-    };
-
-    for handle in iter {
-        let Some(node) = handle.get(parser) else {
-            continue;
-        };
-        if node.as_tag().and_then(|tag| mime_essence(tag)).as_deref() != Some("application/ld+json") {
+    for tag in select(dom, SEL_SCRIPT_TYPE) {
+        if mime_essence(tag).as_deref() != Some("application/ld+json") {
             continue;
         }
-        let raw = node.inner_text(parser).to_string();
+        let raw = tag.text().into_owned();
         let Ok(val) = serde_json::from_str::<Value>(&raw) else {
             continue;
         };

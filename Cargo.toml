@@ -42,6 +42,7 @@ dbg_macro = "deny"
 ahash = "0.8"
 aho-corasick = "1"
 arc-swap = "1"
+astral-html = "0.0.4"
 async-trait = "0.1"
 async-tungstenite = { version = "0.35", features = ["tokio-runtime"] }
 axum = "0.8"
@@ -113,7 +114,6 @@ sha2 = "0.11"
 sysinfo = { version = "0.40", default-features = false }
 tempfile = "3"
 thiserror = "2"
-tl = { package = "astral-tl", version = "0.8" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 toml = "1.2"

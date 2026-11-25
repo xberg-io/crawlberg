@@ -2,52 +2,45 @@
 
 use std::borrow::Cow;
 
-use tl::VDom;
+use astral_html::Document;
 use url::Url;
 
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{fetchable_address, get_attr, get_url_attr, has_rel, is_fetchable_scheme, mime_essence};
+use super::{fetchable_address, get_attr, get_url_attr, has_rel, is_fetchable_scheme, mime_essence, select};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
 /// document's base URL. A link with a blank `href`, or one whose address the crawler cannot
 /// fetch, is skipped.
-pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
-    let parser = dom.parser();
+pub(crate) fn extract_feeds(dom: &Document<'_>, base_url: &Url) -> Vec<FeedInfo> {
     let mut feeds = Vec::new();
+    for tag in select(dom, SEL_LINK_REL) {
+        if !has_rel(tag, "alternate") {
+            continue;
+        }
+        let Some(href) = get_url_attr(tag, "href") else {
+            continue;
+        };
+        let Some(href) = fetchable_address(&href, base_url) else {
+            continue;
+        };
+        let link_type = mime_essence(tag).unwrap_or_default();
+        let title = get_attr(tag, "title").map(Cow::into_owned);
 
-    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
-        for handle in iter {
-            let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                continue;
-            };
-            if !has_rel(tag, "alternate") {
-                continue;
-            }
-            let Some(href) = get_url_attr(tag, "href") else {
-                continue;
-            };
-            let Some(href) = fetchable_address(&href, base_url) else {
-                continue;
-            };
-            let link_type = mime_essence(tag).unwrap_or_default();
-            let title = get_attr(tag, "title").map(Cow::into_owned);
+        let feed_type = match link_type.as_str() {
+            "application/rss+xml" => Some(FeedType::Rss),
+            "application/atom+xml" => Some(FeedType::Atom),
+            "application/json" | "application/feed+json" => Some(FeedType::JsonFeed),
+            _ => None,
+        };
 
-            let feed_type = match link_type.as_str() {
-                "application/rss+xml" => Some(FeedType::Rss),
-                "application/atom+xml" => Some(FeedType::Atom),
-                "application/json" | "application/feed+json" => Some(FeedType::JsonFeed),
-                _ => None,
-            };
-
-            if let Some(ft) = feed_type {
-                feeds.push(FeedInfo {
-                    url: href.into(),
-                    title,
-                    feed_type: ft,
-                });
-            }
+        if let Some(ft) = feed_type {
+            feeds.push(FeedInfo {
+                url: href.into(),
+                title,
+                feed_type: ft,
+            });
         }
     }
     feeds
@@ -56,33 +49,27 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
 /// Extract hreflang alternate links from a parsed HTML document, resolved against the document's
 /// base URL. A link with a blank `hreflang` or `href`, or one whose address the crawler cannot
 /// fetch, is skipped.
-pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangEntry> {
-    let parser = dom.parser();
+pub(crate) fn extract_hreflangs(dom: &Document<'_>, base_url: &Url) -> Vec<HreflangEntry> {
     let mut entries = Vec::new();
-    if let Some(iter) = dom.query_selector(SEL_HREFLANG) {
-        for handle in iter {
-            let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                continue;
-            };
-            if !has_rel(tag, "alternate") {
-                continue;
-            }
-            let lang = get_attr(tag, "hreflang").unwrap_or_default();
-            let lang = lang.trim_ascii();
-            if lang.is_empty() {
-                continue;
-            }
-            let Some(href) = get_url_attr(tag, "href") else {
-                continue;
-            };
-            let Some(url) = fetchable_address(&href, base_url) else {
-                continue;
-            };
-            entries.push(HreflangEntry {
-                lang: lang.to_owned(),
-                url: url.into(),
-            });
+    for tag in select(dom, SEL_HREFLANG) {
+        if !has_rel(tag, "alternate") {
+            continue;
         }
+        let lang = get_attr(tag, "hreflang").unwrap_or_default();
+        let lang = lang.trim_ascii();
+        if lang.is_empty() {
+            continue;
+        }
+        let Some(href) = get_url_attr(tag, "href") else {
+            continue;
+        };
+        let Some(url) = fetchable_address(&href, base_url) else {
+            continue;
+        };
+        entries.push(HreflangEntry {
+            lang: lang.to_owned(),
+            url: url.into(),
+        });
     }
     entries
 }
@@ -94,61 +81,48 @@ const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 /// base URL. A link with a blank `href`, or one whose address the crawler cannot fetch, is
 /// skipped; an inline `data:` icon is kept, since it is a real, usable icon that needs no fetch,
 /// unlike a `file:` or `blob:` address.
-pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
-    let parser = dom.parser();
+pub(crate) fn extract_favicons(dom: &Document<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let mut favicons = Vec::new();
-    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
-        for handle in iter {
-            let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                continue;
-            };
-            if !FAVICON_RELS.iter().any(|token| has_rel(tag, token)) {
-                continue;
-            }
-            let rel = get_attr(tag, "rel").unwrap_or_default();
-            let Some(raw_href) = get_url_attr(tag, "href") else {
-                continue;
-            };
-            let Some(url) = crate::net::userinfo::resolve(base_url, &raw_href)
-                .filter(|url| is_fetchable_scheme(url) || url.scheme() == "data")
-            else {
-                continue;
-            };
-            let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
-            let mime_type = get_attr(tag, "type").map(Cow::into_owned);
-            favicons.push(FaviconInfo {
-                url: url.into(),
-                rel: rel.into_owned(),
-                sizes,
-                mime_type,
-            });
+    for tag in select(dom, SEL_LINK_REL) {
+        if !FAVICON_RELS.iter().any(|token| has_rel(tag, token)) {
+            continue;
         }
+        let rel = get_attr(tag, "rel").unwrap_or_default();
+        let Some(raw_href) = get_url_attr(tag, "href") else {
+            continue;
+        };
+        let Some(url) = crate::net::userinfo::resolve(base_url, &raw_href)
+            .filter(|url| is_fetchable_scheme(url) || url.scheme() == "data")
+        else {
+            continue;
+        };
+        let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
+        let mime_type = get_attr(tag, "type").map(Cow::into_owned);
+        favicons.push(FaviconInfo {
+            url: url.into(),
+            rel: rel.into_owned(),
+            sizes,
+            mime_type,
+        });
     }
     favicons
 }
 
 /// Extract heading elements (h1-h6) from a parsed HTML document.
-pub(crate) fn extract_headings(dom: &VDom<'_>) -> Vec<HeadingInfo> {
-    let parser = dom.parser();
+pub(crate) fn extract_headings(dom: &Document<'_>) -> Vec<HeadingInfo> {
     let mut headings = Vec::new();
-    if let Some(iter) = dom.query_selector(SEL_HEADINGS) {
-        for handle in iter {
-            let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                continue;
-            };
-            let tag_name = tag.name().as_utf8_str();
-            let level = match tag_name.as_ref() {
-                "h1" => 1,
-                "h2" => 2,
-                "h3" => 3,
-                "h4" => 4,
-                "h5" => 5,
-                "h6" => 6,
-                _ => continue,
-            };
-            let text = tag.inner_text(parser).trim().to_owned();
-            headings.push(HeadingInfo { level, text });
-        }
+    for tag in select(dom, SEL_HEADINGS) {
+        let level = match tag.name() {
+            "h1" => 1,
+            "h2" => 2,
+            "h3" => 3,
+            "h4" => 4,
+            "h5" => 5,
+            "h6" => 6,
+            _ => continue,
+        };
+        let text = tag.text().trim().to_owned();
+        headings.push(HeadingInfo { level, text });
     }
     headings
 }
@@ -157,7 +131,7 @@ pub(crate) fn extract_headings(dom: &VDom<'_>) -> Vec<HeadingInfo> {
 mod tests {
     use super::*;
 
-    fn parse(html: &str) -> tl::VDom<'_> {
+    fn parse(html: &str) -> Document<'_> {
         crate::html::parse_html(html).expect("valid HTML")
     }
 

@@ -231,15 +231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astral-tl"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04d4bb5df351abb6758a04240b0193794ddaf34a7c0b9452fab3c25dcce39e88"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "async-compression"
 version = "0.4.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1206,7 +1197,7 @@ dependencies = [
  "ahash",
  "aho-corasick",
  "arc-swap",
- "astral-tl",
+ "astral-html",
  "async-trait",
  "async-tungstenite",
  "axum",

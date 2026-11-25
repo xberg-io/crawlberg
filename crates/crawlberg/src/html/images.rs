@@ -2,20 +2,20 @@
 
 use std::borrow::Cow;
 
-use tl::VDom;
+use astral_html::Document;
 use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
 use super::srcset::srcset_candidates;
-use super::{attr_eq, clean_url, fetchable_address, get_attr, get_url_attr};
+use super::{attr_eq, clean_url, fetchable_address, get_attr, get_url_attr, select};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
 /// Sources are appended in a fixed order — `<img>`, `<picture><source>`, `og:image`,
 /// `twitter:image` — and downstream dedup depends on it. ~keep
-pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
+pub(crate) fn extract_images(dom: &Document<'_>, base_url: &Url) -> Vec<ImageInfo> {
     let mut images = Vec::new();
     collect_img_elements(dom, base_url, &mut images);
     collect_picture_sources(dom, base_url, &mut images);
@@ -41,15 +41,8 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
 /// Collect `<img src>` images, skipping blank sources and addresses the crawler cannot fetch
 /// (inline `data:` and script sources, `mailto:`, `tel:`, `file:`, `blob:`, any other
 /// non-`http`/`https` scheme, and an address that does not resolve at all).
-fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
-    let parser = dom.parser();
-    let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
-        return;
-    };
-    for handle in iter {
-        let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-            continue;
-        };
+fn collect_img_elements(dom: &Document<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
+    for tag in select(dom, SEL_IMG_SRC) {
         let Some(src) = get_url_attr(tag, "src") else {
             continue;
         };
@@ -68,15 +61,8 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
 
 /// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
 /// skipping blank candidates and candidates that resolve to an address the crawler cannot fetch.
-fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
-    let parser = dom.parser();
-    let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
-        return;
-    };
-    for handle in iter {
-        let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-            continue;
-        };
+fn collect_picture_sources(dom: &Document<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
+    for tag in select(dom, SEL_SOURCE_SRCSET) {
         let srcset = get_attr(tag, "srcset").unwrap_or_default();
         let Some(raw_url) = srcset_candidates(&srcset)
             .next()
@@ -100,21 +86,14 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
 /// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
 /// skipping contents that resolve to an address the crawler cannot fetch.
 fn collect_meta_images(
-    dom: &VDom<'_>,
+    dom: &Document<'_>,
     base_url: &Url,
     attr: &str,
     name: &str,
     source: &ImageSource,
     images: &mut Vec<ImageInfo>,
 ) {
-    let parser = dom.parser();
-    let Some(iter) = dom.query_selector(SEL_META) else {
-        return;
-    };
-    for handle in iter {
-        let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-            continue;
-        };
+    for tag in select(dom, SEL_META) {
         if !attr_eq(tag, attr, name) {
             continue;
         }

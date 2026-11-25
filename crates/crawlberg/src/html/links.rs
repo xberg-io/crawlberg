@@ -9,7 +9,7 @@ use crate::types::{LinkInfo, LinkType};
 use super::raw_text::MaskedHtml;
 use super::real_tags::{RealTags, write_start_tag};
 use super::selectors::SEL_A_HREF;
-use super::{fetchable_address, get_attr, get_url_attr, has_link_qualifier};
+use super::{fetchable_address, get_attr, get_url_attr, has_link_qualifier, select};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -58,57 +58,49 @@ pub(crate) fn effective_base_url(base_href: Option<&str>, document_url: &Url) ->
 /// Extract all links from `page`, the document at `document_url`. Each link resolves against
 /// the document's base URL from [`effective_base_url`] and is classified against `document_url`.
 ///
-/// ~keep The page is parsed by tl a second time, on its own, rather than reusing the caller's
-/// ~keep already-parsed document: tl and html5ever's tokenizer can read a malformed `<a>` tag's
-/// ~keep boundary differently (#294), so every real `<a>` start tag is rewritten into
-/// ~keep unambiguous form, as html5ever read it while masking the page, before tl parses it for
-/// ~keep the link's text, `rel` and qualifiers. A well-formed `<a>` tag rewrites to itself, so
-/// ~keep this changes nothing for one.
+/// ~keep The page is parsed a second time, on its own, rather than reusing the caller's
+/// ~keep already-parsed document: every real `<a>` start tag is first rewritten into unambiguous
+/// ~keep form, as html5ever read it while masking the page (#294), so the link's address, text,
+/// ~keep `rel` and qualifiers come from the tag html5ever read. A well-formed `<a>` tag rewrites
+/// ~keep to itself, so this changes nothing for one.
 pub(crate) fn extract_links(page: &MaskedHtml<'_>, document_url: &Url) -> Vec<LinkInfo> {
     let base_url = &effective_base_url(page.base_href.as_deref(), document_url);
     let canonical = canonicalize_anchor_tags(&page.text, &page.url_tags);
     let Ok(dom) = super::parse_html(&canonical) else {
         return Vec::new();
     };
-    let parser = dom.parser();
     let mut links = Vec::new();
 
-    if let Some(iter) = dom.query_selector(SEL_A_HREF) {
-        for handle in iter {
-            let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                continue;
-            };
+    for tag in select(&dom, SEL_A_HREF) {
+        let Some(href) = get_url_attr(tag, "href") else {
+            continue;
+        };
+        let href = href.as_ref();
 
-            let Some(href) = get_url_attr(tag, "href") else {
-                continue;
-            };
-            let href = href.as_ref();
+        // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
+        // per the WHATWG URL spec, so no special-casing is needed here.
+        // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
+        // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
+        // ~keep Only `http` and `https` are kept: the crawler can fetch neither `mailto:`,
+        // ~keep `tel:` nor the inline schemes, and no more than these two can name a `file:`,
+        // ~keep `blob:` or other address the crawler cannot reach either.
+        let Some(resolved_url) = fetchable_address(href, base_url) else {
+            continue;
+        };
 
-            // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
-            // per the WHATWG URL spec, so no special-casing is needed here.
-            // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
-            // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
-            // ~keep Only `http` and `https` are kept: the crawler can fetch neither `mailto:`,
-            // ~keep `tel:` nor the inline schemes, and no more than these two can name a `file:`,
-            // ~keep `blob:` or other address the crawler cannot reach either.
-            let Some(resolved_url) = fetchable_address(href, base_url) else {
-                continue;
-            };
+        let link_type = classify_link(href, &resolved_url, document_url);
+        let rel = get_attr(tag, "rel").map(Cow::into_owned);
+        let nofollow = has_link_qualifier(tag, "nofollow");
+        let text = tag.text().trim().to_owned();
 
-            let link_type = classify_link(href, &resolved_url, document_url);
-            let rel = get_attr(tag, "rel").map(Cow::into_owned);
-            let nofollow = has_link_qualifier(tag, "nofollow");
-            let text = tag.inner_text(parser).trim().to_owned();
-
-            links.push(LinkInfo {
-                original_url: resolve_original_url(href, base_url, &resolved_url),
-                url: resolved_url.into(),
-                text,
-                link_type,
-                rel,
-                nofollow,
-            });
-        }
+        links.push(LinkInfo {
+            original_url: resolve_original_url(href, base_url, &resolved_url),
+            url: resolved_url.into(),
+            text,
+            link_type,
+            rel,
+            nofollow,
+        });
     }
     #[cfg(not(target_arch = "wasm32"))]
     if super::immediate_meta_refresh(&dom).is_none()
@@ -219,9 +211,8 @@ fn remove_original_userinfo(original: &str) -> Option<String> {
 /// Rewrite every real `<a>` start tag of `tags` in `html` into unambiguous form: its name lower-cased, each
 /// attribute once in source order, double-quoted, as html5ever's tokenizer reads it.
 ///
-/// A malformed tag such as `<a href=b ="x>one</a><a href="y">two</a>` makes tl read a different
-/// tag boundary, or none at all, than a real HTML parser does, so the rewritten tag is what tl
-/// parses instead. Every byte outside a rewritten tag is kept.
+/// A malformed tag such as `<a href=b ="x>one</a><a href="y">two</a>` is parsed as the tag
+/// html5ever read. Every byte outside a rewritten tag is kept.
 fn canonicalize_anchor_tags<'h>(html: &'h str, tags: &RealTags) -> Cow<'h, str> {
     let mut out = String::new();
     let mut cursor = 0;
@@ -369,22 +360,12 @@ mod tests {
         effective_base_url(page.base_href.as_deref(), document_url).into()
     }
 
-    /// The pre-fix behaviour: tl parses `html` directly, with no canonicalization pass first.
-    fn extract_raw_tl_only(html: &str) -> Vec<String> {
+    /// The `href` of each `<a>` when `html` is parsed directly, with no canonicalization pass first.
+    fn extract_raw_only(html: &str) -> Vec<String> {
         let dom = crate::html::parse_html(html).expect("valid HTML");
-        let parser = dom.parser();
-        let mut hrefs = Vec::new();
-        if let Some(iter) = dom.query_selector(SEL_A_HREF) {
-            for handle in iter {
-                let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
-                    continue;
-                };
-                if let Some(href) = get_url_attr(tag, "href") {
-                    hrefs.push(href.into_owned());
-                }
-            }
-        }
-        hrefs
+        select(&dom, SEL_A_HREF)
+            .filter_map(|tag| get_url_attr(tag, "href").map(Cow::into_owned))
+            .collect()
     }
 
     #[test]
@@ -398,18 +379,17 @@ mod tests {
     }
 
     #[test]
-    fn finds_a_link_an_unterminated_quote_hid_from_the_raw_tl_parse() {
+    fn finds_the_link_html5ever_reads_behind_an_unterminated_quote() {
         // ~keep #294's reproduction (bank/triage-op4/report.md): the unterminated `href="broken`
-        // ~keep makes tl read everything up to the next literal `"` -- the second link's own
-        // ~keep opening quote -- as part of the first value, so tl finds no `<a>` at all here.
-        // ~keep html5ever reads the same bytes the way a browser does: one `<a>` start tag ending
-        // ~keep at the first real `>`, with a garbled `href` and "real" as its text. Extraction now
-        // ~keep reports that one tag instead of silently dropping the whole line.
+        // ~keep makes an HTML parser read everything up to the next literal `"` -- the second
+        // ~keep link's own opening quote -- as part of the first value: one `<a>` start tag ending
+        // ~keep at the last `>` before "real", with a garbled `href` and "real" as its text. The
+        // ~keep raw parse and the canonicalized one must both report that one tag.
         let html = r#"<a href="broken>x</a> <a href="/rel/page.html">real</a>"#;
         assert_eq!(
-            extract_raw_tl_only(html),
-            Vec::<String>::new(),
-            "control: tl alone still finds nothing here"
+            extract_raw_only(html),
+            ["broken>x</a> <a href="],
+            "control: the raw parse reads the tag html5ever reads"
         );
         let links = extract(html, "https://example.com/");
         assert_eq!(links.len(), 1, "expected the one tag html5ever reads, got {links:?}");
@@ -430,35 +410,62 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_attribute_name_is_left_out_of_the_rewritten_tag() {
-        // ~keep html5ever's attribute-name state treats a `"` as a parse error but still appends
-        // ~keep it to the name (only whitespace, `/`, `>` and `=` end the name), so `x"y` is a
-        // ~keep real attribute name here. Writing it back unfiltered would put an unescaped `"`
-        // ~keep inside the tag, which reopens exactly the tag-boundary ambiguity this rewrite
-        // ~keep exists to remove: tl would read the embedded `"` as starting a new attribute value.
-        let html = r#"<a x"y="1" href="/ok">z</a>"#;
-        let page = crate::html::mask_raw_text_markup(html);
-        let tag = page.url_tags.iter().find(|tag| tag.name == "a").expect("one tag");
-        assert_eq!(
-            tag.attrs.len(),
-            2,
-            "expected html5ever to read two attributes, got {:?}",
-            tag.attrs
+    fn a_malformed_attribute_name_reads_back_unchanged_from_the_rewritten_tag() {
+        // ~keep html5ever's attribute-name state treats `"`, `'`, `<` and a leading `=` as parse
+        // ~keep errors but still keeps them in the name (only whitespace, `/`, `>` and a later `=`
+        // ~keep end it). Both HTML parsers that read a rewritten tag, html5ever and astral-html,
+        // ~keep read such a name back as written, so the rewrite keeps it.
+        for html in [
+            r#"<a x"y="1" href="/ok">z</a>"#,
+            r#"<a x'y="1" href="/ok">z</a>"#,
+            r#"<a x<y="1" href="/ok">z</a>"#,
+            r#"<a =x="1" href="/ok">z</a>"#,
+            r#"<a ="1" href="/ok">z</a>"#,
+        ] {
+            let page = crate::html::mask_raw_text_markup(html);
+            let tag = page.url_tags.iter().find(|tag| tag.name == "a").expect("one tag");
+            let read: Vec<(String, String)> = tag
+                .attrs
                 .iter()
-                .map(|a| (&*a.name, a.value.as_str()))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            &*tag.attrs[0].name, "x\"y",
-            "the malformed name html5ever actually read"
-        );
+                .map(|attr| (attr.name.to_string(), attr.value.clone()))
+                .collect();
+            assert_eq!(
+                read.len(),
+                2,
+                "expected html5ever to read two attributes in {html:?}, got {read:?}"
+            );
 
-        let mut out = String::new();
-        write_start_tag(&mut out, &tag, &[]);
-        assert_eq!(
-            out, r#"<a href="/ok">"#,
-            "the malformed attribute name must not reach the rewritten tag"
+            let mut written = String::new();
+            write_start_tag(&mut written, &tag, &[]);
+            let reread = crate::html::mask_raw_text_markup(&written);
+            let reread_tag = reread.url_tags.iter().find(|tag| tag.name == "a").expect("one tag");
+            let by_html5ever: Vec<(String, String)> = reread_tag
+                .attrs
+                .iter()
+                .map(|attr| (attr.name.to_string(), attr.value.clone()))
+                .collect();
+            assert_eq!(by_html5ever, read, "html5ever reading {written:?}");
+            let dom = crate::html::parse_html(&written).expect("valid HTML");
+            let by_astral: Vec<(String, String)> = dom
+                .elements()
+                .next()
+                .expect("one tag")
+                .attributes()
+                .map(|attr| (attr.name.to_string(), attr.value().to_owned()))
+                .collect();
+            assert_eq!(by_astral, read, "astral-html reading {written:?}");
+        }
+    }
+
+    #[test]
+    fn a_decoded_ampersand_in_an_address_is_not_decoded_twice() {
+        let links = extract(
+            r#"<a href="a?x=1&amp;y=2&amp;amp;z=&amp;lt;">x</a>"#,
+            "https://example.com/",
         );
+        assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");
+        assert_eq!(links[0].url, "https://example.com/a?x=1&y=2&amp;z=&lt;");
+        assert_eq!(links[0].original_url, "https://example.com/a?x=1&y=2&amp;z=&lt;");
     }
 
     #[test]

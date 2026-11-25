@@ -97,22 +97,11 @@ impl RealTags {
 }
 
 /// Write `tag` into `out` in an unambiguous form, substituting the named attribute values.
-///
-/// ~keep Attribute names outside this conservative set are omitted because tl stops at `=` or a
-/// ~keep quote inside a name; emitting them would reintroduce the parser-boundary ambiguity this
-/// ~keep canonical form exists to remove.
 pub(super) fn write_start_tag(out: &mut String, tag: &StartTag<'_>, replacements: &[(&str, String)]) {
     out.push('<');
     out.push_str(tag.name);
     for attr in tag.attrs {
         let name = &*attr.name;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
-        {
-            continue;
-        }
         let value = replacements
             .iter()
             .find_map(|(candidate, value)| (*candidate == name).then_some(value.as_str()))

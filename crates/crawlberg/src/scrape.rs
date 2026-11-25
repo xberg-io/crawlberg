@@ -189,8 +189,8 @@ struct BodyExtraction {
 /// Everything the extraction pipeline reads out of the response body.
 ///
 /// ~keep The document is parsed exactly once here: `extract_page_data`, the meta-robots probes,
-/// ~keep asset discovery and the render hint all read the same `VDom`. The `VDom` borrows the
-/// ~keep masked source, so both stay local to this function and only owned values cross back out.
+/// ~keep asset discovery and the render hint all read the same `Document`. The `Document` borrows
+/// ~keep the masked source, so both stay local to this function and only owned values cross back out.
 fn extract_from_body(
     decoded: &DecodedBody,
     page_scan: Option<PageScan>,
@@ -199,8 +199,8 @@ fn extract_from_body(
     header_robots: &RobotsDirectives,
     sent_user_agent: &str,
 ) -> Result<BodyExtraction, CrawlError> {
-    // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
-    // ~keep raw-text elements as markup, which both invents tags and hides real ones.
+    // ~keep Parse the masked source, never `decoded.body`, so the document reads the same tags,
+    // ~keep raw text and comments as the html5ever read that link extraction relies on.
     let parsed_html = match page_scan {
         Some(page_scan) => page_scan.attach(&decoded.body),
         None => mask_raw_text_markup(&decoded.body),
@@ -399,7 +399,7 @@ impl RobotsDirectives {
     }
 
     /// Add the directives from the document's robots meta tags.
-    pub(crate) fn with_meta_tags(mut self, doc: &tl::VDom<'_>, user_agent: &str) -> Self {
+    pub(crate) fn with_meta_tags(mut self, doc: &astral_html::Document<'_>, user_agent: &str) -> Self {
         for content in robots_meta_contents(doc, user_agent) {
             self.apply_directives(&content);
         }
@@ -452,7 +452,7 @@ fn strip_crawler_scope<'a>(value: &'a str, ua_lower: &str) -> Option<&'a str> {
 
 /// Asset references to download for this page, if asset downloading is enabled.
 fn discover_page_assets(
-    doc: &tl::VDom<'_>,
+    doc: &astral_html::Document<'_>,
     page: &MaskedHtml<'_>,
     parsed_url: &Url,
     is_html: bool,

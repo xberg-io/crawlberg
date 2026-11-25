@@ -84,6 +84,7 @@ full = [
 ahash = { workspace = true }
 aho-corasick = { workspace = true }
 arc-swap = { workspace = true }
+astral-html = { workspace = true }
 async-trait = { workspace = true }
 async-tungstenite = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
@@ -129,7 +130,6 @@ sha2 = { workspace = true }
 sysinfo = { workspace = true, optional = true, features = ["system"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tl = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 # ~keep The TLS stack and certificate check reqwest's default-tls uses, for the browser's SSRF
 # ~keep proxy to reach an https upstream.

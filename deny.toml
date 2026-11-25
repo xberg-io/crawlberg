@@ -7,11 +7,7 @@ no-default-features = false
 feature-depth = 1
 
 [advisories]
-ignore = [
-  "RUSTSEC-2024-0436",
-  { id = "RUSTSEC-2026-0444", reason = "Maintenance advisory only. Keep the existing HTML parser for this patch release." },
-  { id = "RUSTSEC-2026-0543", reason = "unmaintained notice only, no fixed release; chrono arrives transitively" },
-]
+ignore = ["RUSTSEC-2024-0436"]
 
 [licenses]
 allow = [

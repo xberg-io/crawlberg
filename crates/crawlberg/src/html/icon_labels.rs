@@ -1,13 +1,13 @@
 //! ~keep Optional omission of decorative SVG names from linked page text (#805).
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
-use tl::{HTMLTag, Node, Parser};
+use astral_html::{Reader, Token};
 
+use super::mask_raw_text_markup;
 use super::real_tags::{StartTag, TagAttribute, scan, write_start_tag};
-use super::{mask_raw_text_markup, parse_html};
 
 type Edit = (Range<usize>, String);
 
@@ -15,36 +15,152 @@ pub(crate) fn omit_linked_icon_labels(html: &str) -> Cow<'_, str> {
     let read = scan(html, |_| true);
     let starts: BTreeMap<_, _> = read.tags.iter().map(|tag| (tag.span.start, tag)).collect();
     let masked = mask_raw_text_markup(html);
-    let (source, insertions) = parser_source(&masked.text, &starts);
-    let Ok(dom) = parse_html(&source) else {
-        return Cow::Borrowed(html);
-    };
-    let parser = dom.parser();
+    let elements = read_elements(&masked.text);
     let mut edits = Vec::new();
-    for anchor in dom.nodes().iter().filter_map(Node::as_tag) {
-        if anchor.name().as_bytes() != b"a" {
+    for (index, anchor) in elements.iter().enumerate() {
+        if anchor.name != "a" {
             continue;
         }
-        if let Some(mut found) = anchor_edits(anchor, parser, html, &starts, &insertions) {
+        if let Some(mut found) = anchor_edits(&elements, index, &starts) {
             edits.append(&mut found);
         }
     }
     apply_edits(html, edits)
 }
 
-fn anchor_edits(
-    anchor: &HTMLTag<'_>,
-    parser: &Parser<'_>,
-    html: &str,
-    starts: &BTreeMap<usize, StartTag<'_>>,
-    insertions: &[usize],
-) -> Option<Vec<Edit>> {
-    let span = closed_range(anchor, parser, html, "a", starts, insertions)?;
+/// An element as the parser's lexical scopes nest it, with where it sits in the source.
+struct Element<'s> {
+    name: Cow<'s, str>,
+    /// The offset of its start tag's `<`.
+    start: usize,
+    /// Just past the `>` of its own end tag, or of its start tag when that tag closed it. `None`
+    /// when another tag, or the end of the document, closed it.
+    closed_at: Option<usize>,
+    /// Whether its start tag closed it: a void HTML element, or a self-closing SVG one.
+    self_closed: bool,
+    /// Whether its children are SVG elements.
+    svg_children: bool,
+    children: Vec<usize>,
+}
+
+/// Read the elements of `source` with their source offsets, nested as [`astral_html::Document`]
+/// nests them: an end tag closes the innermost open element of its name and everything inside
+/// it, a void HTML or self-closing SVG element closes at once, and a new HTML `a` or `option`
+/// closes an immediately open one of the same name.
+///
+/// ~keep The document reports no source offsets, so its scope rules are followed here over the
+/// ~keep same tokens. Each open name keeps its own stack of depths, so an end tag finds its element
+/// ~keep without a walk down the open elements.
+fn read_elements(source: &str) -> Vec<Element<'_>> {
+    let mut reader = Reader::new(source);
+    let mut elements: Vec<Element<'_>> = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
+    let mut open_by_name: HashMap<Cow<'_, str>, Vec<usize>> = HashMap::new();
+    loop {
+        let start = reader.position();
+        let Some(token) = reader.next() else {
+            break;
+        };
+        match token {
+            Token::StartTag(tag) => {
+                let in_svg = tag.name == "svg"
+                    || (open.last().is_some_and(|parent| elements[*parent].svg_children) && !breaks_out_of_svg(&tag));
+                if !in_svg
+                    && matches!(tag.name.as_ref(), "a" | "option")
+                    && open.last().is_some_and(|top| elements[*top].name == tag.name)
+                {
+                    let top = open.len() - 1;
+                    close_to(&mut open, &mut open_by_name, &elements, top);
+                }
+                let self_closed = if in_svg { tag.self_closing } else { is_void(&tag.name) };
+                let index = elements.len();
+                if let Some(parent) = open.last() {
+                    elements[*parent].children.push(index);
+                }
+                if !self_closed {
+                    open_by_name.entry(tag.name.clone()).or_default().push(open.len());
+                    open.push(index);
+                }
+                elements.push(Element {
+                    svg_children: in_svg && !matches!(tag.name.as_ref(), "foreignobject" | "title" | "desc"),
+                    name: tag.name,
+                    start,
+                    closed_at: self_closed.then(|| reader.position()),
+                    self_closed,
+                    children: Vec::new(),
+                });
+            }
+            Token::EndTag(tag) => {
+                if let Some(depth) = open_by_name.get(&tag.name).and_then(|depths| depths.last().copied()) {
+                    elements[open[depth]].closed_at = Some(reader.position());
+                    close_to(&mut open, &mut open_by_name, &elements, depth);
+                }
+            }
+            _ => {}
+        }
+    }
+    elements
+}
+
+/// Close the open elements from `depth` up.
+fn close_to<'s>(
+    open: &mut Vec<usize>,
+    open_by_name: &mut HashMap<Cow<'s, str>, Vec<usize>>,
+    elements: &[Element<'s>],
+    depth: usize,
+) {
+    while open.len() > depth {
+        let Some(index) = open.pop() else {
+            break;
+        };
+        if let Some(depths) = open_by_name.get_mut(&elements[index].name) {
+            depths.pop();
+        }
+    }
+}
+
+fn is_void(name: &str) -> bool {
+    matches!(
+        name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// The HTML start tags that end SVG content, as the parser's reader reads them.
+fn breaks_out_of_svg(tag: &astral_html::Tag<'_>) -> bool {
+    match tag.name.as_ref() {
+        "b" | "big" | "blockquote" | "body" | "br" | "center" | "code" | "dd" | "div" | "dl" | "dt" | "em"
+        | "embed" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head" | "hr" | "i" | "img" | "li" | "listing"
+        | "menu" | "meta" | "nobr" | "ol" | "p" | "pre" | "ruby" | "s" | "small" | "span" | "strong" | "strike"
+        | "sub" | "sup" | "table" | "tt" | "u" | "ul" | "var" => true,
+        "font" => tag
+            .attributes
+            .iter()
+            .any(|attribute| matches!(attribute.name.as_ref(), "color" | "face" | "size")),
+        _ => false,
+    }
+}
+
+fn anchor_edits(elements: &[Element<'_>], anchor: usize, starts: &BTreeMap<usize, StartTag<'_>>) -> Option<Vec<Edit>> {
+    let span = closed_range(&elements[anchor], "a", starts)?;
     let start = starts.get(&span.start)?;
     if start.name != "a" {
         return None;
     }
-    let mut edits = icon_edits(anchor, parser, html, starts, insertions)?;
+    let mut edits = icon_edits(elements, anchor, starts)?;
     if edits.is_empty()
         || edits
             .iter()
@@ -62,117 +178,71 @@ fn anchor_edits(
     Some(edits)
 }
 
-fn icon_edits(
-    anchor: &HTMLTag<'_>,
-    parser: &Parser<'_>,
-    html: &str,
-    starts: &BTreeMap<usize, StartTag<'_>>,
-    insertions: &[usize],
-) -> Option<Vec<Edit>> {
-    let mut pending: Vec<_> = anchor.children().top().iter().copied().collect();
+fn icon_edits(elements: &[Element<'_>], anchor: usize, starts: &BTreeMap<usize, StartTag<'_>>) -> Option<Vec<Edit>> {
+    let mut pending = elements[anchor].children.clone();
     let mut edits = Vec::new();
-    while let Some(handle) = pending.pop() {
-        let Node::Tag(tag) = handle.get(parser)? else {
-            continue;
-        };
-        match tag.name().as_bytes() {
-            b"a" => return None,
-            b"svg" => {
-                let span = closed_range(tag, parser, html, "svg", starts, insertions)?;
+    while let Some(index) = pending.pop() {
+        let element = &elements[index];
+        match element.name.as_ref() {
+            "a" => return None,
+            "svg" => {
+                let span = closed_range(element, "svg", starts)?;
                 if starts.get(&span.start)?.name != "svg" {
                     return None;
                 }
-                if is_decorative(tag, parser) {
+                if is_decorative(elements, index) {
                     // ~keep Empty wrappers suppress the converter's href-as-label fallback.
                     edits.push((span, "<span></span>".to_owned()));
                 }
             }
-            b"script" | b"style" | b"template" => {}
-            _ => pending.extend(tag.children().top().iter().copied()),
+            "script" | "style" | "template" => {}
+            _ => pending.extend_from_slice(&element.children),
         }
     }
     Some(edits)
 }
 
-fn is_decorative(svg: &HTMLTag<'_>, parser: &Parser<'_>) -> bool {
-    let mut pending: Vec<_> = svg.children().top().iter().copied().collect();
-    while let Some(handle) = pending.pop() {
-        let Some(Node::Tag(tag)) = handle.get(parser) else {
-            continue;
-        };
+fn is_decorative(elements: &[Element<'_>], svg: usize) -> bool {
+    let mut pending = elements[svg].children.clone();
+    while let Some(index) = pending.pop() {
+        let element = &elements[index];
         if !matches!(
-            tag.name().as_bytes(),
-            b"svg"
-                | b"g"
-                | b"path"
-                | b"use"
-                | b"rect"
-                | b"circle"
-                | b"ellipse"
-                | b"line"
-                | b"polyline"
-                | b"polygon"
-                | b"title"
-                | b"desc"
-                | b"defs"
-                | b"symbol"
+            element.name.as_ref(),
+            "svg"
+                | "g"
+                | "path"
+                | "use"
+                | "rect"
+                | "circle"
+                | "ellipse"
+                | "line"
+                | "polyline"
+                | "polygon"
+                | "title"
+                | "desc"
+                | "defs"
+                | "symbol"
         ) {
             return false;
         }
-        pending.extend(tag.children().top().iter().copied());
+        pending.extend_from_slice(&element.children);
     }
     true
 }
 
-fn parser_source(html: &str, starts: &BTreeMap<usize, StartTag<'_>>) -> (String, Vec<usize>) {
-    let mut source = String::with_capacity(html.len());
-    let mut insertions = Vec::new();
-    let mut cursor = 0;
-    for tag in starts.values().filter(|tag| tag.self_closing) {
-        let slash = tag.span.end - "/>".len();
-        if html.as_bytes().get(slash) != Some(&b'/') || html.as_bytes()[slash - 1].is_ascii_whitespace() {
-            continue;
-        }
-        source.push_str(&html[cursor..slash]);
-        insertions.push(source.len());
-        // ~keep tl reads `<path/>` as name `path/`; a parse-only space keeps source edits exact.
-        source.push(' ');
-        cursor = slash;
-    }
-    source.push_str(&html[cursor..]);
-    (source, insertions)
-}
-
-fn original_offset(offset: usize, insertions: &[usize]) -> Option<usize> {
-    if insertions.binary_search(&offset).is_ok() {
-        return None;
-    }
-    Some(offset - insertions.partition_point(|insertion| *insertion < offset))
-}
-
-fn closed_range(
-    tag: &HTMLTag<'_>,
-    parser: &Parser<'_>,
-    html: &str,
-    name: &str,
-    starts: &BTreeMap<usize, StartTag<'_>>,
-    insertions: &[usize],
-) -> Option<Range<usize>> {
-    let (start, end) = tag.boundaries(parser);
-    let span = original_offset(start, insertions)?..original_offset(end.checked_add(1)?, insertions)?;
-    let source = html.get(span.clone())?;
-    if name == "svg"
-        && starts
-            .get(&span.start)
-            .is_some_and(|start| start.name == "svg" && start.self_closing && start.span == span)
-    {
+/// The source span of `element`, named `name`, from its start tag to its own end tag, or the
+/// span of a self-closing `<svg/>` that the HTML read also reads as one. `None` when anything
+/// else closed it.
+fn closed_range(element: &Element<'_>, name: &str, starts: &BTreeMap<usize, StartTag<'_>>) -> Option<Range<usize>> {
+    let span = element.start..element.closed_at?;
+    if !element.self_closed {
         return Some(span);
     }
-    let closing = source.get(source.rfind('<')?..)?.trim_end_matches('>');
-    closing
-        .trim_ascii()
-        .eq_ignore_ascii_case(&format!("</{name}"))
-        .then_some(span)
+    (name == "svg"
+        && starts
+            .get(&span.start)
+            .is_some_and(|start| start.name == "svg" && start.self_closing && start.span == span))
+    .then_some(span)
 }
 
 fn unnamed_anchor(tag: &StartTag<'_>) -> String {
@@ -289,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn should_map_multiple_parse_only_spaces_back_to_original_unicode_bytes() {
+    fn should_keep_source_offsets_exact_around_multibyte_text_and_self_closing_tags() {
         let html = concat!(
             r##"α<a href="/x" title="Icon"><svg data-note="a/>b"><path/><use href="#x"/></svg></a>"##,
             r#"中<a href="/y" title="Next"><svg/></a>ω"#
@@ -304,12 +374,5 @@ mod tests {
     fn should_preserve_html_that_breaks_out_of_svg() {
         let html = r#"<a href="/x" title="Icon"><svg><p>real HTML text</p></svg></a>"#;
         assert_eq!(omit_linked_icon_labels(html), html);
-    }
-
-    #[test]
-    fn should_reject_a_boundary_inside_a_parse_only_insertion() {
-        assert_eq!(original_offset(4, &[4, 8]), None);
-        assert_eq!(original_offset(8, &[4, 8]), None);
-        assert_eq!(original_offset(9, &[4, 8]), Some(7));
     }
 }
