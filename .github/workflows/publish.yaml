@@ -3143,6 +3143,17 @@ jobs:
           set -euo pipefail
           gh release edit "${TAG}" --draft=false
           echo "promoted=true" >>"$GITHUB_OUTPUT"
+      # ~keep cli-release un-drafts the release earlier with GITHUB_TOKEN, whose events start no
+      # workflow, so publish-docker.yaml's `release: published` trigger never fires (no image
+      # after 1.12.3). Dispatch it explicitly with the App token once the release is public.
+      - name: Publish the Docker image for this release
+        continue-on-error: true
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run publish-docker.yaml --ref "${TAG}" -f tag="${TAG}"
 
   release-finalize:
     name: Finalize GitHub Release
