@@ -60,7 +60,7 @@
   "license": "MIT",
   "main": ".opencode/plugins/crawlberg.js",
   "name": "@xberg-io/opencode-crawlberg",
-  "packageManager": "pnpm@12.21.0",
+  "packageManager": "pnpm@12.23.0",
   "pi": {
     "prompts": [
       "./.pi/prompts/crawlberg-crawl.md",
