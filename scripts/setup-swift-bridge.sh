@@ -10,7 +10,9 @@ if stat -f '%m %N' "$BUILD_DIR" >/dev/null 2>&1; then
 else
   STAT_FMT=(-c '%Y %n')
 fi
-OUT=$(find "$BUILD_DIR" -maxdepth 2 -type d -name out -path '*crawlberg-swift-*' \
+# ~keep Cargo's per-package build-dir layout nests the output as build/crawlberg-swift/<hash>/out,
+# one level deeper than the flat build/crawlberg-swift-<hash>/out; accept both.
+OUT=$(find "$BUILD_DIR" -maxdepth 3 -type d -name out \( -path '*/crawlberg-swift-*/out' -o -path '*/crawlberg-swift/*/out' \) \
   -exec stat "${STAT_FMT[@]}" {} + 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
 if [ -z "$OUT" ]; then
   echo "ERROR: Could not find swift-bridge build output in ${BUILD_DIR}/"

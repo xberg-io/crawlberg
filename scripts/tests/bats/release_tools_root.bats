@@ -98,6 +98,18 @@ setup() {
 	xberg_assert_file packages/swift/Sources/RustBridge/crawlberg-swift.swift $'import RustBridgeC\nbridge-swift'
 }
 
+@test "swift bridge setup should_find_output_in_the_per_package_build_dir_layout" {
+	local out=target/debug/build/crawlberg-swift/fixture/out
+	mkdir -p "$out/crawlberg-swift"
+	printf core-header >"$out/SwiftBridgeCore.h"
+	printf bridge-header >"$out/crawlberg-swift/crawlberg-swift.h"
+	printf core-swift >"$out/SwiftBridgeCore.swift"
+	printf bridge-swift >"$out/crawlberg-swift/crawlberg-swift.swift"
+	run bash scripts/setup-swift-bridge.sh debug
+	xberg_assert_status 0
+	xberg_assert_file packages/swift/Sources/RustBridgeC/RustBridgeC.h core-headerbridge-header
+}
+
 @test "swift bridge setup should_fail_when_no_build_output_exists" {
 	run bash scripts/setup-swift-bridge.sh debug
 	xberg_assert_status 1
