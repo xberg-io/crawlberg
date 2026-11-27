@@ -171,6 +171,9 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep std::time::Instant::now() traps at runtime on wasm32-unknown-unknown (no clock
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
+# ~keep jiff::Timestamp::now() panics on wasm32-unknown-unknown without the `js` clock; the Retry-After
+# ~keep handling of every 429/503 reads it, so the wasm retry path hung until the test timeout.
+jiff = { workspace = true, features = ["js"] }
 
 # ~keep Keep sysinfo's iOS Mach bindings available: libc 0.2.190 hid them, and 0.2.191 restores them.
 [target.'cfg(target_os = "ios")'.dependencies]
