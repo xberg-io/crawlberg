@@ -4,6 +4,18 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.13.6] - 2026-11-27
+
+### Changed
+
+- Remove `chrono` from the dependency graph: `rmcp` 3.12 is built without its default `chrono` feature and `liter-llm` 2.7.7 no longer pulls it in through `gcp_auth`.
+- Regenerate the bindings with Alef 0.132.8. The Python, PHP and Ruby extensions now pass the macOS `dynamic_lookup` link flag from their own build scripts instead of `.cargo/config.toml`.
+- Update dependencies within their current major versions.
+
+### Fixed
+
+- Enable `jiff`'s `js` clock on wasm32, so rate-limited (429) and unavailable (503) responses no longer hang the WASM build, a regression from the move to `jiff` in 1.13.5.
+
 ## [1.13.5] - 2026-11-25
 
 ### Added

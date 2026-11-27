@@ -3,7 +3,7 @@
   "name": "io.github.xberg-io/crawlberg",
   "title": "Crawlberg",
   "description": "Scrape, crawl, and map websites to Markdown or JSON via local CLI.",
-  "version": "1.13.5",
+  "version": "1.13.6",
   "websiteUrl": "https://xberg.io",
   "repository": {
     "url": "https://github.com/xberg-io/crawlberg",
@@ -14,7 +14,7 @@
     {
       "registryType": "npm",
       "identifier": "@xberg-io/crawlberg-cli",
-      "version": "1.13.5",
+      "version": "1.13.6",
       "transport": {
         "type": "stdio"
       },

@@ -10,7 +10,7 @@
     }
   ],
   "name": "@xberg-io/crawlberg-win32-x64-msvc",
-  "version": "1.13.5",
+  "version": "1.13.6",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -33,7 +33,7 @@ let package = Package(
     // sibling RustBridge target below and link against this binary.
     .binaryTarget(
       name: "RustBridgeBinary",
-      url: "https://github.com/xberg-io/crawlberg/releases/download/v1.13.5/Crawlberg-rs.artifactbundle.zip",
+      url: "https://github.com/xberg-io/crawlberg/releases/download/v1.13.6/Crawlberg-rs.artifactbundle.zip",
       checksum: "2ec3ed6639b4089a83d6716aab75d4f8a54fd333d3ef0e3595ec68ebe644934b"
     ),
     // RustBridge: Swift wrapper module owning the swift-bridge generated

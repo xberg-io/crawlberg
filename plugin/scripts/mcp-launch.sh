@@ -4,7 +4,7 @@ set -euo pipefail
 # ~keep Rewritten by scripts/sync_plugin_version.py on every release. The plugin only accepts a
 # ~keep binary at or above this version, and fetches exactly this release (npm package or GitHub
 # ~keep archive), so a plugin update cannot keep running an older crawlberg that happens to be installed.
-PINNED_VERSION="1.13.5"
+PINNED_VERSION="1.13.6"
 NPM_PACKAGE="@xberg-io/crawlberg-cli"
 
 log() { printf 'crawlberg-launch: %s\n' "$*" >&2; }
