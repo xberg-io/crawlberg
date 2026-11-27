@@ -110,6 +110,22 @@ setup() {
 	xberg_assert_file packages/swift/Sources/RustBridgeC/RustBridgeC.h core-headerbridge-header
 }
 
+@test "swift bridge setup should_skip_newer_compile_unit_out_dirs_without_the_bridge_output" {
+	local out=target/debug/build/crawlberg-swift/aaa-run/out
+	mkdir -p "$out/crawlberg-swift"
+	printf core-header >"$out/SwiftBridgeCore.h"
+	printf bridge-header >"$out/crawlberg-swift/crawlberg-swift.h"
+	printf core-swift >"$out/SwiftBridgeCore.swift"
+	printf bridge-swift >"$out/crawlberg-swift/crawlberg-swift.swift"
+	mkdir -p target/debug/build/crawlberg-swift/zzz-objects/out
+	printf object >target/debug/build/crawlberg-swift/zzz-objects/out/crawlberg_swift.rcgu.o
+	touch -t 203001010000 target/debug/build/crawlberg-swift/zzz-objects/out
+	run bash scripts/setup-swift-bridge.sh debug
+	xberg_assert_status 0
+	xberg_assert_output_contains 'aaa-run/out'
+	xberg_assert_file packages/swift/Sources/RustBridgeC/RustBridgeC.h core-headerbridge-header
+}
+
 @test "swift bridge setup should_fail_when_no_build_output_exists" {
 	run bash scripts/setup-swift-bridge.sh debug
 	xberg_assert_status 1

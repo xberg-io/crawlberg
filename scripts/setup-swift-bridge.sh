@@ -10,10 +10,14 @@ if stat -f '%m %N' "$BUILD_DIR" >/dev/null 2>&1; then
 else
   STAT_FMT=(-c '%Y %n')
 fi
-# ~keep Cargo's per-package build-dir layout nests the output as build/crawlberg-swift/<hash>/out,
-# one level deeper than the flat build/crawlberg-swift-<hash>/out; accept both.
-OUT=$(find "$BUILD_DIR" -maxdepth 3 -type d -name out \( -path '*/crawlberg-swift-*/out' -o -path '*/crawlberg-swift/*/out' \) \
-  -exec stat "${STAT_FMT[@]}" {} + 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+# ~keep Cargo's per-package build-dir layout nests every compile unit of the package under
+# build/crawlberg-swift/<hash>/out (the build-script compile, the lib rmeta, the final objects), not
+# just the build-script run, so the newest `out` is not necessarily the one holding the bridge. Keep
+# only directories that actually contain SwiftBridgeCore.h; the flat build/crawlberg-swift-<hash>/out
+# layout is accepted too.
+OUT=$(find "$BUILD_DIR" -maxdepth 4 -type f -name SwiftBridgeCore.h \
+  \( -path '*/crawlberg-swift-*/out/*' -o -path '*/crawlberg-swift/*/out/*' \) \
+  -exec stat "${STAT_FMT[@]}" {} + 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- | xargs -I{} dirname {})
 if [ -z "$OUT" ]; then
   echo "ERROR: Could not find swift-bridge build output in ${BUILD_DIR}/"
   exit 1
