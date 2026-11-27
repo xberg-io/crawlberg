@@ -3,7 +3,7 @@
   "version": "1.13.5",
   "private": true,
   "devDependencies": {
-    "@napi-rs/cli": "^3.10.9",
+    "@napi-rs/cli": "^3.11.1",
     "@textlint-rule/textlint-rule-no-invalid-control-character": "^3.0.0",
     "@xberg-io/crawlberg": "workspace:*",
     "textlint": "^15.8.0",
@@ -14,12 +14,12 @@
     "textlint-rule-no-empty-section": "^1.1.0",
     "textlint-rule-no-start-duplicated-conjunction": "^2.0.2",
     "textlint-rule-no-surrogate-pair": "^1.0.1",
-    "textlint-rule-no-zero-width-spaces": "^1.0.1",
+    "textlint-rule-no-zero-width-spaces": "^1.0.2",
     "textlint-rule-stop-words": "^5.2.0",
     "textlint-rule-terminology": "^5.2.16",
     "textlint-rule-write-good": "^2.0.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.2"
   },
   "packageManager": "pnpm@12.23.0",
   "pi": {
