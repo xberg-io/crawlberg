@@ -79,7 +79,7 @@ idna = "1"
 ipnet = "2"
 jiff = "1.0"
 libc = "0.2.191"
-liter-llm = { version = "2.7.5", features = ["native-http"] }
+liter-llm = { version = "2.7.7", features = ["native-http"] }
 memchr = "2"
 minijinja = "3"
 notify = "9"
@@ -102,7 +102,8 @@ regex-syntax = "0.8"
 # native transport off wasm. Native-only features are re-added per-crate under
 # `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
 reqwest = { version = "0.13", default-features = false, features = ["cookies", "gzip", "brotli", "deflate"] }
-rmcp = { version = "3.11", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+# ~keep default-features = false drops the default `chrono` feature (and schemars/chrono04); the rest of the defaults are re-listed.
+rmcp = { version = "3.12", default-features = false, features = ["base64", "macros", "server", "transport-io", "transport-streamable-http-server"] }
 rustix = { version = "1", default-features = false }
 schemars = "1.2"
 selectors = "0.43"
